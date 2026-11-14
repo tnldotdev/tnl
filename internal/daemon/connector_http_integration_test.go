@@ -48,7 +48,7 @@ func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service
 	if f.defaultTiming {
 		heartbeat = 0
 	}
-	cfg := publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target,
+	cfg := publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: target,
 		Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: heartbeat,
 		RelayQUIC: quic, RelayTCP: tcp,
 		Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8, options publisherservice.ConnectOptions) (publisherservice.SlotSession, error) {
@@ -156,7 +156,7 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 					metadata.TargetTls = &controlv1.ServiceTargetTLS{Hostname: trust.Hostname, Digest: trust.Digest, Pem: &pem}
 				}
 				key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
-				service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "private-http", key, metadata)
+				service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "private-http", key, metadata, nil)
 				if err != nil {
 					t.Fatal(err)
 				}

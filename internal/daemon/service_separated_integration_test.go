@@ -68,12 +68,12 @@ func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, inde
 	id := fmt.Sprintf("private-ingress-%d", index)
 	if err := d.startIngressRuntime(ctx, ingressSettingsFrom(f.controlConfig), metrics, ingressRuntimeConfig{
 		client: client, ingressID: id, listener: listener, clusterSecret: serviceRuntimeClusterSecret,
-		configurePublicServices: func(config *ingress.PublicServicesConfig) {
+		configure: func(config *ingress.Config) {
 			if !f.defaultTiming {
 				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 500*time.Millisecond, 500*time.Millisecond, 3*time.Second
 			}
-			if f.configurePublicServices != nil {
-				f.configurePublicServices(config)
+			if f.configureIngress != nil {
+				f.configureIngress(config)
 			}
 			config.Forwarder = observingServiceForwarder{ServiceForwarder: config.Forwarder, id: id, opened: opened}
 		},
@@ -165,7 +165,7 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 			f := newServiceRuntimeFixture(t, standalone, nil)
 			target := startPrivateEchoTarget(t, f.owner)
 			key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
-			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "native-lifecycle", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
+			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "native-lifecycle", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

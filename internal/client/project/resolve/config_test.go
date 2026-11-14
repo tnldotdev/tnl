@@ -9,8 +9,6 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/client/team"
-	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/failure"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
@@ -47,7 +45,12 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 	membership := authorityv1.Membership{Id: "membership_1", TeamId: "team_1", Role: authorityv1.TeamRoleMember, ManagedLabel: "ecstatic-penguin", MemberSlug: "chase"}
 	domains := []authorityv1.Domain{{Id: "domain_1", Kind: authorityv1.Managed, CanonicalDomain: "tnl.dev", State: authorityv1.DomainStateReady}}
 	current := team.NewContext(selected, membership, domains, "")
-	service, err := ConfiguredService("api", worktree, clientproject.ResolvedService{}, current)
+	hostname, domain, err := PublishHostname("", clientproject.ServiceWorktreeLabel("api", worktree), "", current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace, _ := current.Namespace(domain)
+	service, err := meta.NewEndpoint(namespace, hostname, "http", 443, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +61,12 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 	claimed := "studio.example.test"
 	domains = append(domains, authorityv1.Domain{Id: "domain_2", Kind: authorityv1.Custom, CanonicalDomain: claimed, State: authorityv1.DomainStateReady})
 	current = team.NewContext(selected, membership, domains, "")
-	service, err = ConfiguredService("api", worktree, clientproject.ResolvedService{Tunnel: &config.Tunnel{Domain: &claimed}}, current)
+	hostname, domain, err = PublishHostname("", clientproject.ServiceWorktreeLabel("api", worktree), claimed, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace, _ = current.Namespace(domain)
+	service, err = meta.NewEndpoint(namespace, hostname, "http", 443, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,19 +76,12 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 	}
 }
 
-func TestConfiguredServiceRejectsNonHTTPPublicURLMetadata(t *testing.T) {
+func TestServiceEndpointRejectsMissingPublicPortAndUnknownProtocol(t *testing.T) {
 	for _, protocol := range []string{"tcp", "postgres", "mysql", "kubernetes", "", "ssh"} {
 		t.Run(protocol, func(t *testing.T) {
-			effective := clientproject.ResolvedService{
-				Publish: &config.Publish{Protocol: &protocol},
-				Tunnel:  &config.Tunnel{Name: new("api")},
-			}
-			metadata, err := ConfiguredService("api", clientproject.Worktree{}, effective, appliedTestContext())
+			metadata, err := meta.NewEndpoint("tnl.dev", "api.member.tnl.dev", protocol, 0, true)
 			if err == nil || !reflect.DeepEqual(metadata, meta.Service{}) {
-				t.Fatalf("non-HTTP public URL received endpoint metadata: %+v, error: %v", metadata, err)
-			}
-			if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ProjectConfigInvalid {
-				t.Fatalf("protocol rejection lost its configuration failure classification: %v", err)
+				t.Fatalf("invalid service endpoint received metadata: %+v, error: %v", metadata, err)
 			}
 		})
 	}

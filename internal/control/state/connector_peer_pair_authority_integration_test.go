@@ -36,7 +36,7 @@ func newConnectorPairCompanyFixture(t *testing.T) connectorPairCompanyFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := d.CreateServiceAt(ctx, team.ID, ownerID, "company-pair", "company-pair", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(ctx, team.ID, ownerID, "company-pair", "company-pair", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -122,7 +122,7 @@ func TestPublicServiceVisitorStalledRelayLeavesAlternateBudget(t *testing.T) {
 	for _, proxy := range []bool{false, true} {
 		t.Run(fmt.Sprintf("proxy=%t", proxy), func(t *testing.T) {
 			p, _, forwarder, _ := publicServiceTestSetup(t)
-			p.config.PendingTimeout = 600 * time.Millisecond
+			p.config.OpenTimeout = 600 * time.Millisecond
 			p.config.Forwarder = stalledServiceForwarder{alternate: forwarder, stallProxy: proxy}
 			connection, visitor := net.Pipe()
 			ctx, cancel := context.WithCancel(t.Context())
@@ -176,7 +176,7 @@ func TestPendingDirectMySQLServerFirstHalfClose(t *testing.T) {
 	visitor, ingress := tcpPair(t)
 	upstream, mysql := tcpPair(t)
 	p, c, _, _ := publicServiceTestSetup(t)
-	admission, reason := p.server.admitTrafficVisitor(trafficKey{service: c.service, id: c.run, run: 1}, p.server.config.Traffic.Default, netip.MustParseAddr("192.0.2.4"), true)
+	admission, reason := p.admitTrafficVisitor(trafficKey{service: c.service, id: c.run, run: 1}, p.config.Traffic.Default, netip.MustParseAddr("192.0.2.4"), true)
 	if admission == nil {
 		t.Fatal(reason)
 	}

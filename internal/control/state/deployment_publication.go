@@ -2,27 +2,16 @@ package state
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 )
 
-type DeploymentPublication struct {
-	PublicURL PublicURL
-	Limits    *ProjectPublicLimits
-}
-
 // publishing is not management. acquire team/project/deployment parents,
-// select the exact binding, then lock the URL before the signing identity.
+// select the exact binding, then lock the service before the signing identity.
 func (d *Database) deploymentPublicationSelection(ctx context.Context, tx pgx.Tx, scope DeploymentScope, selector string, now time.Time) (PublisherIdentity, controlstatedb.ControlDeploymentManagementGrant, controlstatedb.ControlDeployment, error) {
 	var approval controlstatedb.ControlDeploymentManagementGrant
 	var deployment controlstatedb.ControlDeployment
@@ -87,7 +76,7 @@ func (d *Database) currentDeploymentPublication(ctx context.Context, q *controls
 	return p, nil
 }
 
-func (d *Database) GetDeploymentPublication(ctx context.Context, scope DeploymentScope, selector, service string, now time.Time) (result DeploymentPublication, retErr error) {
+func (d *Database) GetDeploymentPublication(ctx context.Context, scope DeploymentScope, selector, service string, now time.Time) (result ServiceRecord, retErr error) {
 	clock := newAuthorizationClock(now)
 	if !naming.ValidServiceName(service) {
 		return result, ErrDeploymentAccess
@@ -102,61 +91,60 @@ func (d *Database) GetDeploymentPublication(ctx context.Context, scope Deploymen
 		return result, err
 	}
 	var id string
-	if err = tx.QueryRow(ctx, `SELECT public_url_id FROM control.applied_project_services WHERE deployment_id=$1 AND service=$2 AND public_url_id IS NOT NULL`, deployment.ID, service).Scan(&id); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT service_id FROM control.applied_project_services WHERE deployment_id=$1 AND service=$2 AND service_id IS NOT NULL`, deployment.ID, service).Scan(&id); err != nil {
 		return result, publisherLookupError(err, ErrDeploymentAccess)
 	}
 	q := controlstatedb.New(tx)
-	u, err := q.LockPublicURLForRun(ctx, id)
+	row, err := q.LockService(ctx, id)
+	if err != nil {
+		return result, publisherLookupError(err, ErrDeploymentAccess)
+	}
+	p, err = d.currentDeploymentPublication(ctx, q, scope.AccessToken, clock, true)
 	if err != nil {
 		return result, err
 	}
-	if _, err = d.currentDeploymentPublication(ctx, q, scope.AccessToken, clock, true); err != nil {
-		return result, err
+	if row.Protocol != "http" {
+		return result, ErrDeploymentAccess
 	}
-	if err = publisherOwnsRun(ctx, q, p, u); err != nil {
-		if errors.Is(err, ErrPublisherIdentity) {
-			return result, ErrDeploymentAccess
+	if _, err = publisherServicePermission(ctx, tx, p.ID, p.GrantID, p.KeyID, id, clock.current()); err != nil {
+		if errors.Is(err, ErrServiceAccess) {
+			return result, errors.Join(ErrDeploymentAccess, err)
 		}
 		return result, err
 	}
-	snapshot, err := d.openDeploymentConfiguration(deployment)
+	result, err = d.publisherServiceRecord(ctx, tx, row)
 	if err != nil {
-		return result, err
+		return ServiceRecord{}, err
 	}
-	s, ok := snapshot.Services[service]
-	if !ok || s.Protocol != "http" || s.PublicURL == nil {
-		return result, ErrDeploymentAccess
-	}
-	result.PublicURL = publicURLFromModel(u, "")
-	result.PublicURL.AllowedIPPrefixes, err = d.openIPPolicy(u.ID, u.AllowedIpPolicyStorageKeyID.String, u.AllowedIpPolicyCiphertext)
-	if err != nil {
-		return DeploymentPublication{}, err
-	}
-	result.Limits = s.PublicURL.Limits
 	if _, err = d.currentDeploymentPublication(ctx, q, scope.AccessToken, clock, false); err != nil {
-		return DeploymentPublication{}, err
+		return ServiceRecord{}, err
 	}
-	return result, tx.Commit(ctx)
+	if _, err = publisherServicePermission(ctx, tx, p.ID, p.GrantID, p.KeyID, id, clock.current()); err != nil {
+		if errors.Is(err, ErrServiceAccess) {
+			return ServiceRecord{}, errors.Join(ErrDeploymentAccess, err)
+		}
+		return ServiceRecord{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return ServiceRecord{}, err
+	}
+	return result, nil
 }
 
 type AllocateDeploymentPublicationRequest struct {
 	DeploymentScope
-	Deployment, Invocation, Target string
-	Prefixes                       []string
-	Binding                        []byte
-	Options                        PublisherPublicURLOptions
-	Now                            time.Time
+	AllocateServiceRequest
+	Deployment string
+	Now        time.Time
 }
 
-// only the allocation decision is new. URLs, expiry, run credentials, DNS,
-// certificates, visitor policy, and deletion use their existing owners.
-func (d *Database) AllocateDeploymentPublication(ctx context.Context, r AllocateDeploymentPublicationRequest) (result PublicURL, retErr error) {
+// temporary approval selects the same service allocator as namespace grants.
+// named publication, management and connector approval grant no allocation right.
+func (d *Database) AllocateDeploymentPublication(ctx context.Context, r AllocateDeploymentPublicationRequest) (result ServiceRecord, retErr error) {
 	clock := newAuthorizationClock(r.Now)
-	if !opaqueid.Valid(r.Invocation, opaqueid.InvocationPrefix) || !r.Options.AccessMode.Valid() {
-		return result, ErrPublicURLInvalid
-	}
-	if _, err := targetsyntax.ParseCanonicalTarget(r.Target); err != nil {
-		return result, ErrPublicURLInvalid
+	s, mode, err := normalizeServiceAllocation(r.AllocateServiceRequest)
+	if err != nil {
+		return result, err
 	}
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
@@ -167,50 +155,10 @@ func (d *Database) AllocateDeploymentPublication(ctx context.Context, r Allocate
 	if err != nil {
 		return result, err
 	}
-	if approval.TemporaryPublication == "" || r.Options.AccessMode == VisitorAccessAnonymous && approval.TemporaryPublication != "anonymous" {
+	if approval.TemporaryPublication == "" || mode == "anonymous" && approval.TemporaryPublication != "anonymous" {
 		return result, ErrDeploymentAccess
 	}
 	q := controlstatedb.New(tx)
-	encoded, err := json.Marshal([]any{p.ID, p.GrantID, deployment.ID, r.Invocation, r.Target, r.Prefixes, r.Binding, r.Options})
-	if err != nil {
-		return result, err
-	}
-	digest := sha256.Sum256(encoded)
-	existing, err := q.FindDeploymentPublicationAllocation(ctx, controlstatedb.FindDeploymentPublicationAllocationParams{PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, InvocationID: r.Invocation})
-	if err == nil {
-		u, err := q.LockPublicURLForRun(ctx, existing.PublicURLID)
-		if err != nil {
-			return result, err
-		}
-		if _, err = d.currentDeploymentPublication(ctx, q, r.AccessToken, clock, true); err != nil {
-			return result, err
-		}
-		if existing.DeploymentID.String != deployment.ID || u.LifecycleState != "enabled" || !u.ExpiresAt.Valid || !u.ExpiresAt.Time.After(clock.current()) {
-			return result, ErrPublicURLIdempotency
-		}
-		if err = publisherOwnsRun(ctx, q, p, u); err != nil {
-			return result, err
-		}
-		stored, _, err := d.openSecret(u.RequestDigestStorageKeyID.String, publicURLRequestDigestContext(u.ID), u.RequestDigestCiphertext)
-		if err != nil {
-			return result, err
-		}
-		if subtle.ConstantTimeCompare(stored, digest[:]) != 1 {
-			return result, ErrPublicURLIdempotency
-		}
-		result = publicURLFromModel(u, "")
-		result.AllowedIPPrefixes, err = d.openIPPolicy(u.ID, u.AllowedIpPolicyStorageKeyID.String, u.AllowedIpPolicyCiphertext)
-		if err != nil {
-			return PublicURL{}, err
-		}
-		if _, err = d.currentDeploymentPublication(ctx, q, r.AccessToken, clock, false); err != nil {
-			return PublicURL{}, err
-		}
-		return result, tx.Commit(ctx)
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return result, err
-	}
 	domain, err := q.GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: deployment.DomainID.String, TeamID: text(r.TeamID)})
 	if err != nil {
 		return result, err
@@ -222,47 +170,24 @@ func (d *Database) AllocateDeploymentPublication(ctx context.Context, r Allocate
 	if !claimed || domain.Kind == "custom" && !domain.DnsAuthorityReference.Valid {
 		return result, ErrDeploymentAccess
 	}
-	hostname, err := newEphemeralHostname(deployment.Namespace)
+	result, err = d.allocateService(ctx, tx, p, deployment.ID, domain.ID, deployment.Namespace, r.AllocateServiceRequest, s, mode, clock)
 	if err != nil {
-		return result, err
+		return ServiceRecord{}, err
 	}
-	key := sha256.Sum256([]byte(p.ID + "\x00" + p.GrantID + "\x00" + r.Invocation))
-	request := CreatePublicURLRequest{TeamID: r.TeamID, DomainID: domain.ID, ActingIdentityID: p.CreatorID, IdempotencyKey: "deployment/" + hex.EncodeToString(key[:]), RequestDigest: digest, CanonicalHostname: hostname, Target: r.Target, ServiceProtocol: PublicURLServiceHTTP, PublicURLScope: PublicURLScopeShared, Purpose: PublicURLPurposeApp, AccessMode: r.Options.AccessMode, AllowedIPPrefixes: r.Prefixes, RequirePostQuantum: r.Options.RequirePostQuantum, Ephemeral: true, DNSState: PublicURLDNSPending, DNSAuthorityReference: domain.DnsAuthorityReference.String}
-	prefixes, err := validateCreatePublicURLRequest(request)
-	if err != nil {
-		return result, err
+	if _, err = tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
+		return ServiceRecord{}, err
 	}
 	if _, err = d.currentDeploymentPublication(ctx, q, r.AccessToken, clock, true); err != nil {
-		return result, err
+		return ServiceRecord{}, err
 	}
-	allowed, err := q.LockPublicURLCreationControl(ctx)
-	if err != nil {
-		return result, err
-	}
-	if !allowed {
-		return result, ErrPublicURLCreationGated
-	}
-	var ingress string
-	var revision int64
-	if err = tx.QueryRow(ctx, `SELECT ingress_pool_id,policy_revision FROM control.teams WHERE id=$1`, r.TeamID).Scan(&ingress, &revision); err != nil {
-		return result, err
-	}
-	u, err := d.insertPublicURL(ctx, q, request, deployment.Namespace, ingress, revision, prefixes, r.Now)
-	if err != nil {
-		return result, err
-	}
-	if err = q.InsertPublisherAllocation(ctx, controlstatedb.InsertPublisherAllocationParams{PublicURLID: u.ID, PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, InvocationID: r.Invocation, DeploymentID: text(deployment.ID)}); err != nil {
-		return result, err
-	}
-	if err = q.InsertPublicURLCreateAuditEvent(ctx, controlstatedb.InsertPublicURLCreateAuditEventParams{ActorIdentityID: text(p.CreatorID), RequestID: request.IdempotencyKey, PublicURLID: u.ID, OccurredAt: timestamptz(r.Now)}); err != nil {
-		return result, err
+	if _, err = publisherServicePermission(ctx, tx, p.ID, p.GrantID, p.KeyID, result.ID, clock.current()); err != nil {
+		return ServiceRecord{}, err
 	}
 	if _, err = d.currentDeploymentPublication(ctx, q, r.AccessToken, clock, false); err != nil {
-		return result, err
+		return ServiceRecord{}, err
 	}
-	result = publicURLFromModel(u, "")
-	if len(prefixes) > 0 {
-		result.AllowedIPPrefixes = prefixes
+	if err = tx.Commit(ctx); err != nil {
+		return ServiceRecord{}, err
 	}
-	return result, tx.Commit(ctx)
+	return result, nil
 }

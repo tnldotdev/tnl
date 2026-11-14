@@ -9,6 +9,25 @@ SELECT * FROM control.services WHERE id = sqlc.arg(id) FOR UPDATE;
 -- name: GetService :one
 SELECT * FROM control.services WHERE id = sqlc.arg(id) AND deleted_at IS NULL;
 
+-- name: GetServiceConfiguration :one
+-- local normalization uses the logical service key, not its generated saved name.
+SELECT COALESCE(local.service,service.name)::text AS service,
+    service.configuration_ciphertext,service.storage_key_id,
+    (local.service_id IS NOT NULL)::boolean AS local_owned,
+    EXISTS(SELECT 1 FROM control.applied_project_services binding
+        WHERE binding.service_id=service.id) AS deployment_owned,
+    (allocation.service_id IS NOT NULL)::boolean AS allocation_owned,
+    COALESCE(allocation.required_temporary_approval,'')::text AS required_temporary_approval
+FROM control.services service
+LEFT JOIN control.local_project_services local ON local.service_id=service.id
+LEFT JOIN control.publisher_namespace_allocations allocation ON allocation.service_id=service.id
+WHERE service.id=sqlc.arg(service_id);
+
+-- name: SetServiceConfiguration :execrows
+UPDATE control.services
+SET configuration_ciphertext=sqlc.narg(ciphertext),storage_key_id=sqlc.narg(storage_key_id)
+WHERE id=sqlc.arg(service_id);
+
 -- name: DeleteService :one
 -- caller closes all current runs and publishes a tombstone under this service
 -- lock in the same transaction.
@@ -21,16 +40,18 @@ WHERE team_id = sqlc.arg(team_id) AND deleted_at IS NULL AND id > sqlc.arg(after
 ORDER BY id LIMIT 101;
 
 -- name: SelectServiceForPublisher :one
--- only an exact grant for an active team and service permits publication.
+-- current permission covers the selected service using the original grant.
 SELECT s.* FROM control.services s
-JOIN control.teams t ON t.id = s.team_id AND t.deleted_at IS NULL
-JOIN control.publisher_identities p ON p.team_id = s.team_id AND p.revoked_at IS NULL
-    AND control.active_publisher(p.id,sqlc.arg(now))
-JOIN control.publisher_grants g ON g.publisher_identity_id = p.id
-    AND g.kind = 'service' AND g.service_id = s.id
-    AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at > sqlc.arg(now))
-WHERE s.id = sqlc.arg(service_id) AND p.id = sqlc.arg(publisher_identity_id)
-    AND g.id = sqlc.arg(publisher_grant_id) AND s.enabled AND s.deleted_at IS NULL AND p.kind <> 'guest';
+WHERE s.id = sqlc.arg(service_id)
+AND EXISTS(SELECT 1 FROM control.publisher_service_permission(
+    sqlc.arg(publisher_identity_id)::text,sqlc.arg(publisher_grant_id)::text,s.id,sqlc.arg(now)));
+
+-- name: ListTeamNamespaceLabels :many
+-- invitations and quarantined memberships still own their reserved namespaces.
+SELECT COALESCE(member.managed_label,'')::text AS managed_label,reservation.member_slug
+FROM control.member_slug_reservations reservation
+LEFT JOIN control.team_memberships member ON member.slug_reservation_id=reservation.id
+WHERE reservation.team_id=sqlc.arg(team_id) AND reservation.state<>'released';
 
 -- name: InsertServiceGrant :one
 INSERT INTO control.visitor_grants(id, service_id, team_id, kind, identity_id, invitation_id,
@@ -105,12 +126,10 @@ JOIN control.identities i ON i.id = sqlc.arg(identity_id) AND i.disabled_at IS N
 LEFT JOIN control.service_runs r ON r.service_id=s.id AND r.id=(SELECT candidate.id
     FROM control.service_runs candidate WHERE candidate.service_id=s.id
     AND candidate.state='ready' AND candidate.healthy AND candidate.closed_at IS NULL AND candidate.publisher_expires_at>sqlc.arg(now)
-    AND EXISTS (SELECT 1 FROM control.publisher_grants pg
-        JOIN control.publisher_identities p ON p.id = pg.publisher_identity_id
-         WHERE pg.id = candidate.publisher_grant_id AND pg.service_id = s.id
-          AND pg.kind = 'service' AND pg.revoked_at IS NULL
-          AND (pg.expires_at IS NULL OR pg.expires_at > sqlc.arg(now))
-           AND p.team_id = s.team_id AND control.active_publisher(p.id,sqlc.arg(now)))
+    AND EXISTS (SELECT 1 FROM control.publisher_service_permission(candidate.publisher_identity_id,candidate.publisher_grant_id,s.id,sqlc.arg(now)))
+    AND EXISTS (SELECT 1 FROM control.publisher_identity_keys signing JOIN control.publisher_grants pg ON pg.id=candidate.publisher_grant_id
+        WHERE signing.id=candidate.publisher_key_id AND signing.publisher_identity_id=candidate.publisher_identity_id
+        AND (pg.kind='service' OR signing.retired_at IS NULL))
     AND EXISTS (SELECT 1 FROM control.service_connection_slots slot
         JOIN control.relay_leases lease ON lease.relay_id = slot.relay_id
           AND lease.relay_run_id = slot.relay_run_id AND lease.relay_lease_revision = slot.relay_lease_revision
@@ -120,31 +139,29 @@ LEFT JOIN control.service_runs r ON r.service_id=s.id AND r.id=(SELECT candidate
     ORDER BY candidate.run_number DESC LIMIT 1)
 WHERE s.deleted_at IS NULL AND s.enabled AND s.id > sqlc.arg(after_id)
     AND control.company_subject_session_authorized(s.team_id,i.id,sqlc.arg(control_session_id)::text,sqlc.arg(now))
-    AND (
-        EXISTS (SELECT 1 FROM control.visitor_grants g
-            LEFT JOIN control.team_memberships m ON m.team_id = s.team_id
-                AND m.identity_id = i.id AND control.active_membership(m.id,sqlc.arg(now))
-            WHERE g.service_id = s.id AND g.revoked_at IS NULL
-                 AND (g.expires_at IS NULL OR g.expires_at > sqlc.arg(now))
-                 AND (NOT g.auto_owner OR m.role IN ('owner','admin'))
-                AND ((g.kind = 'identity' AND g.identity_id = i.id)
-                  OR (g.kind = 'team' AND m.id IS NOT NULL)))
-    )
+    AND EXISTS(SELECT 1 FROM control.visitor_identity_permission(
+        'service',s.id,i.id,sqlc.arg(control_session_id)::text,'',sqlc.arg(now)))
 ORDER BY s.id LIMIT 101;
 
 -- name: PrepareServiceRun :one
 -- caller locks the service, checks the live publisher grant and enrolled key,
 -- allocates one run number and captures its managed certificate plan.
 -- a retry with the same idempotency key returns the same prepared row.
+-- endpoint retirement does not revoke the saved connector identity. capture
+-- retained provenance only for this exact service, hostname and domain.
 INSERT INTO control.service_runs(preferred_regions, traffic_limits, id, service_id, team_id, run_number,
     publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key,
     request_digest, preparation_expires_at, assignment_seed_ciphertext,
-    assignment_seed_storage_key_id, certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,certificate_hostname,state, created_at, publisher_expires_at)
+    assignment_seed_storage_key_id, certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,certificate_hostname,certificate_namespace,require_post_quantum,state, created_at, publisher_expires_at)
 VALUES (sqlc.arg(preferred_regions), convert_from(sqlc.arg(traffic_limits)::bytea,'UTF8')::jsonb, sqlc.arg(id), sqlc.arg(service_id), sqlc.arg(team_id), sqlc.arg(run_number),
     sqlc.arg(publisher_identity_id), sqlc.arg(publisher_grant_id), sqlc.arg(publisher_key_id),
     sqlc.arg(idempotency_key), sqlc.arg(request_digest),
     sqlc.arg(preparation_expires_at), sqlc.arg(assignment_seed_ciphertext),
-    sqlc.arg(assignment_seed_storage_key_id),sqlc.arg(certificate_cache_key),sqlc.arg(certificate_scope),sqlc.arg(certificate_identifiers),sqlc.narg(certificate_domain_id),sqlc.arg(certificate_hostname), 'prepared', sqlc.arg(now), sqlc.arg(publisher_expires_at)) RETURNING *;
+    sqlc.arg(assignment_seed_storage_key_id),sqlc.arg(certificate_cache_key),sqlc.arg(certificate_scope),sqlc.arg(certificate_identifiers),sqlc.narg(certificate_domain_id),sqlc.arg(certificate_hostname),
+    (SELECT endpoint.namespace FROM control.service_endpoints endpoint
+        WHERE endpoint.service_id=sqlc.arg(service_id) AND endpoint.hostname=sqlc.arg(certificate_hostname)
+        AND endpoint.domain_id=sqlc.narg(certificate_domain_id)),
+    sqlc.arg(require_post_quantum), 'prepared', sqlc.arg(now), sqlc.arg(publisher_expires_at)) RETURNING *;
 
 -- name: LockServiceRun :one
 SELECT * FROM control.service_runs
@@ -168,7 +185,6 @@ JOIN control.publisher_identities publisher ON publisher.id = run.publisher_iden
     AND control.active_publisher(publisher.id,sqlc.arg(now))
 JOIN control.publisher_grants grant_record ON grant_record.id = run.publisher_grant_id
     AND grant_record.publisher_identity_id = publisher.id
-    AND grant_record.kind = 'service' AND grant_record.service_id = run.service_id
     AND grant_record.revoked_at IS NULL
     AND (grant_record.expires_at IS NULL OR grant_record.expires_at > sqlc.arg(now))
 WHERE run.id = sqlc.arg(id) AND run.run_number = sqlc.arg(run_number)
@@ -176,7 +192,9 @@ WHERE run.id = sqlc.arg(id) AND run.run_number = sqlc.arg(run_number)
     AND run.publisher_identity_id = sqlc.arg(publisher_identity_id)
     AND run.publisher_grant_id = sqlc.arg(publisher_grant_id)
     AND run.publisher_key_id = sqlc.arg(publisher_key_id)
-    AND run.closed_at IS NULL;
+    AND run.closed_at IS NULL
+    AND (grant_record.kind='service' OR publisher_key.retired_at IS NULL)
+    AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,run.service_id,sqlc.arg(now)));
 
 -- name: AdvanceServiceRunNumber :one
 UPDATE control.services SET next_run_number = next_run_number + 1, updated_at = sqlc.arg(now)
@@ -205,7 +223,7 @@ WHERE id = sqlc.arg(id) AND service_id = sqlc.arg(service_id)
     AND run_number = sqlc.arg(run_number) AND state = 'ready' AND closed_at IS NULL;
 
 -- name: RenewServiceRun :one
-UPDATE control.service_runs run SET publisher_expires_at = sqlc.arg(publisher_expires_at)
+UPDATE control.service_runs run SET publisher_expires_at = LEAST(sqlc.arg(publisher_expires_at),service.expires_at,publisher_grant.expires_at)
 FROM control.services service, control.publisher_grants publisher_grant, control.publisher_identities publisher
 WHERE run.id = sqlc.arg(id) AND run.run_number = sqlc.arg(run_number)
     AND run.service_id = sqlc.arg(service_id)
@@ -213,12 +231,16 @@ WHERE run.id = sqlc.arg(id) AND run.run_number = sqlc.arg(run_number)
     AND run.closed_at IS NULL AND run.publisher_expires_at > sqlc.arg(now)
     AND sqlc.arg(publisher_expires_at)::timestamptz > sqlc.arg(now)
     AND service.id = run.service_id AND service.enabled AND service.deleted_at IS NULL
-    AND publisher_grant.id = run.publisher_grant_id AND publisher_grant.service_id = service.id
-    AND publisher_grant.kind = 'service' AND publisher_grant.revoked_at IS NULL
+    AND (service.expires_at IS NULL OR service.expires_at>sqlc.arg(now))
+    AND publisher_grant.id = run.publisher_grant_id AND publisher_grant.publisher_identity_id=run.publisher_identity_id
+    AND publisher_grant.revoked_at IS NULL
     AND (publisher_grant.expires_at IS NULL OR publisher_grant.expires_at > sqlc.arg(now))
     AND publisher.id = run.publisher_identity_id AND publisher.team_id = service.team_id
     AND publisher.revoked_at IS NULL
     AND control.active_publisher(publisher.id,sqlc.arg(now))
+    AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,run.service_id,sqlc.arg(now)))
+    AND EXISTS(SELECT 1 FROM control.publisher_identity_keys signing WHERE signing.id=run.publisher_key_id
+        AND signing.publisher_identity_id=run.publisher_identity_id AND (publisher_grant.kind='service' OR signing.retired_at IS NULL))
 RETURNING run.*;
 
 -- name: CloseServiceRun :execrows

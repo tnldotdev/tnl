@@ -24,7 +24,6 @@ func (d *Database) DeleteAuthorizedPublicURL(
 }
 
 func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublicURLDeleteRequest, now time.Time) (retErr error) {
-	clock := newAuthorizationClock(now)
 	identityID := request.ActingIdentityID
 	publicURLID := request.PublicURLID
 	if !validStateText(identityID) || !validStateText(publicURLID) {
@@ -45,23 +44,7 @@ func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublic
 	queries := controlstatedb.New(tx)
 	pendingEvents := pendingIngressRoutingTableEvents{}
 	var route controlstatedb.ControlPublicUrl
-	if request.GuestID == "" && request.PublisherIdentityID != "" {
-		if _, err := queries.LockLocalPublicURLTeamForMutation(ctx, publicURLID); errors.Is(err, pgx.ErrNoRows) {
-			return ErrPublicURLNotFound
-		} else if err != nil {
-			return fmt.Errorf("controlstate: delete ad-hoc public_url: lock team: %w", err)
-		}
-		route, err = queries.LockPublicURLForRun(ctx, publicURLID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrPublicURLNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("controlstate: delete ad-hoc public_url: lock URL: %w", err)
-		}
-		if err := d.validatePublisherDeletion(ctx, queries, request, route, clock.current()); err != nil {
-			return err
-		}
-	} else if request.GuestID == "" {
+	if request.GuestID == "" {
 		if _, err := queries.LockLocalPublicURLTeamForMutation(ctx, publicURLID); errors.Is(err, pgx.ErrNoRows) {
 			return ErrPublicURLNotFound
 		} else if err != nil {
@@ -129,11 +112,6 @@ func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublic
 	}
 	if err := pendingEvents.publish(ctx, queries); err != nil {
 		return err
-	}
-	if request.PublisherIdentityID != "" {
-		if _, _, err := d.livePublisher(ctx, queries, request.PublisherIdentityID, request.PublisherGrantID, "", clock.current()); err != nil {
-			return err
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("controlstate: delete public_url: commit: %w", err)

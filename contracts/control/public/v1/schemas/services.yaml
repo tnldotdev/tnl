@@ -97,11 +97,15 @@ schemas:
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }
       publisher_pool: { type: boolean, default: false }
       placement: { $ref: "../openapi.yaml#/components/schemas/ServicePlacement" }
+      configuration:
+        $ref: "../openapi.yaml#/components/schemas/ProjectServiceConfiguration"
+        description: Optional service-owned declaration. Control normalizes and encrypts it without creating project or deployment provenance. Explicit protocol, target trust, hostname, and domain selections must agree with the declaration. Exact create retries recover only equivalent normalized intent.
   ServicePlacement:
     type: object
     additionalProperties: false
     properties:
       domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
+      hostname: { type: string, minLength: 1, maxLength: 253 }
       worktree_key: { type: string, minLength: 1, maxLength: 128 }
       worktree_label: { type: string, minLength: 1, maxLength: 63 }
   ServiceProtocol:
@@ -167,6 +171,8 @@ schemas:
         publisher_pool,
         trust_revision,
         endpoint_revision,
+        ephemeral,
+        require_post_quantum,
       ]
     dependentRequired:
       service_run_id: [run_number]
@@ -179,6 +185,12 @@ schemas:
       source: { $ref: "../openapi.yaml#/components/schemas/LocalServiceSource" }
       name: { $ref: "../openapi.yaml#/components/schemas/ServiceName" }
       enabled: { type: boolean }
+      ephemeral: { type: boolean }
+      expires_at:
+        type: string
+        format: date-time
+        description: Fixed service expiration. Publisher renewal cannot extend it.
+      require_post_quantum: { type: boolean }
       endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
       endpoint_revision:
         type: string
@@ -347,6 +359,7 @@ schemas:
         hostname,
         domain_id,
         traffic,
+        require_post_quantum,
       ]
     properties:
       team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
@@ -368,6 +381,7 @@ schemas:
       hostname: { type: string, minLength: 1, maxLength: 253 }
       domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
       traffic: { $ref: "../openapi.yaml#/components/schemas/TrafficLimits" }
+      require_post_quantum: { type: boolean }
   ServiceRunSetup:
     type: object
     additionalProperties: false

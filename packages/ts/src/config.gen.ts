@@ -69,11 +69,34 @@ export interface TnlConfig {
                    */
                   public?: boolean;
                   inspection?: Inspection;
+                  /**
+                   * Exact canonical DNS hostname for the service endpoint; never an HTTPS origin.
+                   */
+                  hostname?: string;
+                  /**
+                   * Ready team domain used for the service endpoint.
+                   */
+                  domain?: string;
+                  /**
+                   * Remove the service after its publication stops.
+                   */
+                  ephemeral?: boolean;
+                  traffic?: {
+                    connections?: number;
+                    rate?: number;
+                    burst?: number;
+                    downloadBytes?: number;
+                    ratePer?: TnlRatePeriod;
+                    totalConnections?: number;
+                    totalDownloadBytes?: number;
+                    totalUploadBytes?: number;
+                    uploadBytes?: number;
+                  };
                   http?: {
                     access?:
-                      | "restricted"
+                      | ("restricted" | "anonymous")
                       | {
-                          mode?: "restricted";
+                          mode?: "restricted" | "anonymous";
                           /**
                            * @minItems 1
                            * @maxItems 256
@@ -97,7 +120,7 @@ export interface TnlConfig {
                     };
                     open?: boolean;
                     /**
-                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                     * Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts.
                      */
                     paths?: {
                       [k: string]:
@@ -110,69 +133,9 @@ export interface TnlConfig {
                     };
                   };
                   /**
-                   * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+                   * Require hybrid post-quantum key agreement for visitor TLS.
                    */
-                  publicURL?: {
-                    name?: never;
-                    /**
-                     * Ready team domain used for generated public URL hostnames.
-                     */
-                    domain?: string;
-                    /**
-                     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
-                     */
-                    hostname?: string;
-                    access?:
-                      | ("restricted" | "anonymous")
-                      | {
-                          mode?: "restricted" | "anonymous";
-                          /**
-                           * @minItems 1
-                           * @maxItems 256
-                           */
-                          ip?: [string, ...string[]];
-                        };
-                    /**
-                     * Remove the public URL when this tunnel stops.
-                     */
-                    ephemeral?: boolean;
-                    limits?: {
-                      http?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      tcp?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      traffic?: {
-                        connections?: number;
-                        rate?: number;
-                        burst?: number;
-                        downloadBytes?: number;
-                        ratePer?: TnlRatePeriod;
-                        totalConnections?: number;
-                        totalDownloadBytes?: number;
-                        totalUploadBytes?: number;
-                        uploadBytes?: number;
-                      };
-                    };
-                    publisherPool?: never;
-                    /**
-                     * Require hybrid post-quantum key agreement for public HTTPS visitors.
-                     */
-                    requirePostQuantum?: boolean;
-                  };
+                  requirePostQuantum?: boolean;
                 }
               | {
                   type?: "address";
@@ -209,11 +172,34 @@ export interface TnlConfig {
                    */
                   public?: boolean;
                   inspection?: Inspection;
+                  /**
+                   * Exact canonical DNS hostname for the service endpoint; never an HTTPS origin.
+                   */
+                  hostname?: string;
+                  /**
+                   * Ready team domain used for the service endpoint.
+                   */
+                  domain?: string;
+                  /**
+                   * Remove the service after its publication stops.
+                   */
+                  ephemeral?: boolean;
+                  traffic?: {
+                    connections?: number;
+                    rate?: number;
+                    burst?: number;
+                    downloadBytes?: number;
+                    ratePer?: TnlRatePeriod;
+                    totalConnections?: number;
+                    totalDownloadBytes?: number;
+                    totalUploadBytes?: number;
+                    uploadBytes?: number;
+                  };
                   http?: {
                     access?:
-                      | "restricted"
+                      | ("restricted" | "anonymous")
                       | {
-                          mode?: "restricted";
+                          mode?: "restricted" | "anonymous";
                           /**
                            * @minItems 1
                            * @maxItems 256
@@ -237,7 +223,7 @@ export interface TnlConfig {
                     };
                     open?: boolean;
                     /**
-                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                     * Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts.
                      */
                     paths?: {
                       [k: string]:
@@ -250,69 +236,9 @@ export interface TnlConfig {
                     };
                   };
                   /**
-                   * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+                   * Require hybrid post-quantum key agreement for visitor TLS.
                    */
-                  publicURL?: {
-                    name?: never;
-                    /**
-                     * Ready team domain used for generated public URL hostnames.
-                     */
-                    domain?: string;
-                    /**
-                     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
-                     */
-                    hostname?: string;
-                    access?:
-                      | ("restricted" | "anonymous")
-                      | {
-                          mode?: "restricted" | "anonymous";
-                          /**
-                           * @minItems 1
-                           * @maxItems 256
-                           */
-                          ip?: [string, ...string[]];
-                        };
-                    /**
-                     * Remove the public URL when this tunnel stops.
-                     */
-                    ephemeral?: boolean;
-                    limits?: {
-                      http?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      tcp?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      traffic?: {
-                        connections?: number;
-                        rate?: number;
-                        burst?: number;
-                        downloadBytes?: number;
-                        ratePer?: TnlRatePeriod;
-                        totalConnections?: number;
-                        totalDownloadBytes?: number;
-                        totalUploadBytes?: number;
-                        uploadBytes?: number;
-                      };
-                    };
-                    publisherPool?: never;
-                    /**
-                     * Require hybrid post-quantum key agreement for public HTTPS visitors.
-                     */
-                    requirePostQuantum?: boolean;
-                  };
+                  requirePostQuantum?: boolean;
                 }
               | {
                   type: "compose";
@@ -349,11 +275,34 @@ export interface TnlConfig {
                    */
                   public?: boolean;
                   inspection?: Inspection;
+                  /**
+                   * Exact canonical DNS hostname for the service endpoint; never an HTTPS origin.
+                   */
+                  hostname?: string;
+                  /**
+                   * Ready team domain used for the service endpoint.
+                   */
+                  domain?: string;
+                  /**
+                   * Remove the service after its publication stops.
+                   */
+                  ephemeral?: boolean;
+                  traffic?: {
+                    connections?: number;
+                    rate?: number;
+                    burst?: number;
+                    downloadBytes?: number;
+                    ratePer?: TnlRatePeriod;
+                    totalConnections?: number;
+                    totalDownloadBytes?: number;
+                    totalUploadBytes?: number;
+                    uploadBytes?: number;
+                  };
                   http?: {
                     access?:
-                      | "restricted"
+                      | ("restricted" | "anonymous")
                       | {
-                          mode?: "restricted";
+                          mode?: "restricted" | "anonymous";
                           /**
                            * @minItems 1
                            * @maxItems 256
@@ -377,7 +326,7 @@ export interface TnlConfig {
                     };
                     open?: boolean;
                     /**
-                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                     * Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts.
                      */
                     paths?: {
                       [k: string]:
@@ -390,69 +339,9 @@ export interface TnlConfig {
                     };
                   };
                   /**
-                   * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+                   * Require hybrid post-quantum key agreement for visitor TLS.
                    */
-                  publicURL?: {
-                    name?: never;
-                    /**
-                     * Ready team domain used for generated public URL hostnames.
-                     */
-                    domain?: string;
-                    /**
-                     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
-                     */
-                    hostname?: string;
-                    access?:
-                      | ("restricted" | "anonymous")
-                      | {
-                          mode?: "restricted" | "anonymous";
-                          /**
-                           * @minItems 1
-                           * @maxItems 256
-                           */
-                          ip?: [string, ...string[]];
-                        };
-                    /**
-                     * Remove the public URL when this tunnel stops.
-                     */
-                    ephemeral?: boolean;
-                    limits?: {
-                      http?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      tcp?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      traffic?: {
-                        connections?: number;
-                        rate?: number;
-                        burst?: number;
-                        downloadBytes?: number;
-                        ratePer?: TnlRatePeriod;
-                        totalConnections?: number;
-                        totalDownloadBytes?: number;
-                        totalUploadBytes?: number;
-                        uploadBytes?: number;
-                      };
-                    };
-                    publisherPool?: never;
-                    /**
-                     * Require hybrid post-quantum key agreement for public HTTPS visitors.
-                     */
-                    requirePostQuantum?: boolean;
-                  };
+                  requirePostQuantum?: boolean;
                 }
               | {
                   type: "docker";
@@ -489,11 +378,34 @@ export interface TnlConfig {
                    */
                   public?: boolean;
                   inspection?: Inspection;
+                  /**
+                   * Exact canonical DNS hostname for the service endpoint; never an HTTPS origin.
+                   */
+                  hostname?: string;
+                  /**
+                   * Ready team domain used for the service endpoint.
+                   */
+                  domain?: string;
+                  /**
+                   * Remove the service after its publication stops.
+                   */
+                  ephemeral?: boolean;
+                  traffic?: {
+                    connections?: number;
+                    rate?: number;
+                    burst?: number;
+                    downloadBytes?: number;
+                    ratePer?: TnlRatePeriod;
+                    totalConnections?: number;
+                    totalDownloadBytes?: number;
+                    totalUploadBytes?: number;
+                    uploadBytes?: number;
+                  };
                   http?: {
                     access?:
-                      | "restricted"
+                      | ("restricted" | "anonymous")
                       | {
-                          mode?: "restricted";
+                          mode?: "restricted" | "anonymous";
                           /**
                            * @minItems 1
                            * @maxItems 256
@@ -517,7 +429,7 @@ export interface TnlConfig {
                     };
                     open?: boolean;
                     /**
-                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                     * Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts.
                      */
                     paths?: {
                       [k: string]:
@@ -530,69 +442,9 @@ export interface TnlConfig {
                     };
                   };
                   /**
-                   * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+                   * Require hybrid post-quantum key agreement for visitor TLS.
                    */
-                  publicURL?: {
-                    name?: never;
-                    /**
-                     * Ready team domain used for generated public URL hostnames.
-                     */
-                    domain?: string;
-                    /**
-                     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
-                     */
-                    hostname?: string;
-                    access?:
-                      | ("restricted" | "anonymous")
-                      | {
-                          mode?: "restricted" | "anonymous";
-                          /**
-                           * @minItems 1
-                           * @maxItems 256
-                           */
-                          ip?: [string, ...string[]];
-                        };
-                    /**
-                     * Remove the public URL when this tunnel stops.
-                     */
-                    ephemeral?: boolean;
-                    limits?: {
-                      http?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      tcp?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      traffic?: {
-                        connections?: number;
-                        rate?: number;
-                        burst?: number;
-                        downloadBytes?: number;
-                        ratePer?: TnlRatePeriod;
-                        totalConnections?: number;
-                        totalDownloadBytes?: number;
-                        totalUploadBytes?: number;
-                        uploadBytes?: number;
-                      };
-                    };
-                    publisherPool?: never;
-                    /**
-                     * Require hybrid post-quantum key agreement for public HTTPS visitors.
-                     */
-                    requirePostQuantum?: boolean;
-                  };
+                  requirePostQuantum?: boolean;
                 }
               | {
                   type: "eks";
@@ -617,11 +469,34 @@ export interface TnlConfig {
                    */
                   public?: boolean;
                   inspection?: Inspection;
+                  /**
+                   * Exact canonical DNS hostname for the service endpoint; never an HTTPS origin.
+                   */
+                  hostname?: string;
+                  /**
+                   * Ready team domain used for the service endpoint.
+                   */
+                  domain?: string;
+                  /**
+                   * Remove the service after its publication stops.
+                   */
+                  ephemeral?: boolean;
+                  traffic?: {
+                    connections?: number;
+                    rate?: number;
+                    burst?: number;
+                    downloadBytes?: number;
+                    ratePer?: TnlRatePeriod;
+                    totalConnections?: number;
+                    totalDownloadBytes?: number;
+                    totalUploadBytes?: number;
+                    uploadBytes?: number;
+                  };
                   http?: {
                     access?:
-                      | "restricted"
+                      | ("restricted" | "anonymous")
                       | {
-                          mode?: "restricted";
+                          mode?: "restricted" | "anonymous";
                           /**
                            * @minItems 1
                            * @maxItems 256
@@ -645,7 +520,7 @@ export interface TnlConfig {
                     };
                     open?: boolean;
                     /**
-                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                     * Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts.
                      */
                     paths?: {
                       [k: string]:
@@ -658,69 +533,9 @@ export interface TnlConfig {
                     };
                   };
                   /**
-                   * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+                   * Require hybrid post-quantum key agreement for visitor TLS.
                    */
-                  publicURL?: {
-                    name?: never;
-                    /**
-                     * Ready team domain used for generated public URL hostnames.
-                     */
-                    domain?: string;
-                    /**
-                     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
-                     */
-                    hostname?: string;
-                    access?:
-                      | ("restricted" | "anonymous")
-                      | {
-                          mode?: "restricted" | "anonymous";
-                          /**
-                           * @minItems 1
-                           * @maxItems 256
-                           */
-                          ip?: [string, ...string[]];
-                        };
-                    /**
-                     * Remove the public URL when this tunnel stops.
-                     */
-                    ephemeral?: boolean;
-                    limits?: {
-                      http?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      tcp?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      traffic?: {
-                        connections?: number;
-                        rate?: number;
-                        burst?: number;
-                        downloadBytes?: number;
-                        ratePer?: TnlRatePeriod;
-                        totalConnections?: number;
-                        totalDownloadBytes?: number;
-                        totalUploadBytes?: number;
-                        uploadBytes?: number;
-                      };
-                    };
-                    publisherPool?: never;
-                    /**
-                     * Require hybrid post-quantum key agreement for public HTTPS visitors.
-                     */
-                    requirePostQuantum?: boolean;
-                  };
+                  requirePostQuantum?: boolean;
                 }
               | {
                   type: "rds";
@@ -745,11 +560,34 @@ export interface TnlConfig {
                    */
                   public?: boolean;
                   inspection?: Inspection;
+                  /**
+                   * Exact canonical DNS hostname for the service endpoint; never an HTTPS origin.
+                   */
+                  hostname?: string;
+                  /**
+                   * Ready team domain used for the service endpoint.
+                   */
+                  domain?: string;
+                  /**
+                   * Remove the service after its publication stops.
+                   */
+                  ephemeral?: boolean;
+                  traffic?: {
+                    connections?: number;
+                    rate?: number;
+                    burst?: number;
+                    downloadBytes?: number;
+                    ratePer?: TnlRatePeriod;
+                    totalConnections?: number;
+                    totalDownloadBytes?: number;
+                    totalUploadBytes?: number;
+                    uploadBytes?: number;
+                  };
                   http?: {
                     access?:
-                      | "restricted"
+                      | ("restricted" | "anonymous")
                       | {
-                          mode?: "restricted";
+                          mode?: "restricted" | "anonymous";
                           /**
                            * @minItems 1
                            * @maxItems 256
@@ -773,7 +611,7 @@ export interface TnlConfig {
                     };
                     open?: boolean;
                     /**
-                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                     * Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts.
                      */
                     paths?: {
                       [k: string]:
@@ -786,69 +624,9 @@ export interface TnlConfig {
                     };
                   };
                   /**
-                   * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+                   * Require hybrid post-quantum key agreement for visitor TLS.
                    */
-                  publicURL?: {
-                    name?: never;
-                    /**
-                     * Ready team domain used for generated public URL hostnames.
-                     */
-                    domain?: string;
-                    /**
-                     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
-                     */
-                    hostname?: string;
-                    access?:
-                      | ("restricted" | "anonymous")
-                      | {
-                          mode?: "restricted" | "anonymous";
-                          /**
-                           * @minItems 1
-                           * @maxItems 256
-                           */
-                          ip?: [string, ...string[]];
-                        };
-                    /**
-                     * Remove the public URL when this tunnel stops.
-                     */
-                    ephemeral?: boolean;
-                    limits?: {
-                      http?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      tcp?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      traffic?: {
-                        connections?: number;
-                        rate?: number;
-                        burst?: number;
-                        downloadBytes?: number;
-                        ratePer?: TnlRatePeriod;
-                        totalConnections?: number;
-                        totalDownloadBytes?: number;
-                        totalUploadBytes?: number;
-                        uploadBytes?: number;
-                      };
-                    };
-                    publisherPool?: never;
-                    /**
-                     * Require hybrid post-quantum key agreement for public HTTPS visitors.
-                     */
-                    requirePostQuantum?: boolean;
-                  };
+                  requirePostQuantum?: boolean;
                 }
               | {
                   type: "rds";
@@ -873,11 +651,34 @@ export interface TnlConfig {
                    */
                   public?: boolean;
                   inspection?: Inspection;
+                  /**
+                   * Exact canonical DNS hostname for the service endpoint; never an HTTPS origin.
+                   */
+                  hostname?: string;
+                  /**
+                   * Ready team domain used for the service endpoint.
+                   */
+                  domain?: string;
+                  /**
+                   * Remove the service after its publication stops.
+                   */
+                  ephemeral?: boolean;
+                  traffic?: {
+                    connections?: number;
+                    rate?: number;
+                    burst?: number;
+                    downloadBytes?: number;
+                    ratePer?: TnlRatePeriod;
+                    totalConnections?: number;
+                    totalDownloadBytes?: number;
+                    totalUploadBytes?: number;
+                    uploadBytes?: number;
+                  };
                   http?: {
                     access?:
-                      | "restricted"
+                      | ("restricted" | "anonymous")
                       | {
-                          mode?: "restricted";
+                          mode?: "restricted" | "anonymous";
                           /**
                            * @minItems 1
                            * @maxItems 256
@@ -901,7 +702,7 @@ export interface TnlConfig {
                     };
                     open?: boolean;
                     /**
-                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                     * Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts.
                      */
                     paths?: {
                       [k: string]:
@@ -914,69 +715,9 @@ export interface TnlConfig {
                     };
                   };
                   /**
-                   * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+                   * Require hybrid post-quantum key agreement for visitor TLS.
                    */
-                  publicURL?: {
-                    name?: never;
-                    /**
-                     * Ready team domain used for generated public URL hostnames.
-                     */
-                    domain?: string;
-                    /**
-                     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
-                     */
-                    hostname?: string;
-                    access?:
-                      | ("restricted" | "anonymous")
-                      | {
-                          mode?: "restricted" | "anonymous";
-                          /**
-                           * @minItems 1
-                           * @maxItems 256
-                           */
-                          ip?: [string, ...string[]];
-                        };
-                    /**
-                     * Remove the public URL when this tunnel stops.
-                     */
-                    ephemeral?: boolean;
-                    limits?: {
-                      http?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      tcp?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      traffic?: {
-                        connections?: number;
-                        rate?: number;
-                        burst?: number;
-                        downloadBytes?: number;
-                        ratePer?: TnlRatePeriod;
-                        totalConnections?: number;
-                        totalDownloadBytes?: number;
-                        totalUploadBytes?: number;
-                        uploadBytes?: number;
-                      };
-                    };
-                    publisherPool?: never;
-                    /**
-                     * Require hybrid post-quantum key agreement for public HTTPS visitors.
-                     */
-                    requirePostQuantum?: boolean;
-                  };
+                  requirePostQuantum?: boolean;
                 }
               | undefined;
           };
@@ -988,7 +729,7 @@ export interface TnlConfig {
     [k: string]:
       | {
           /**
-           * Configured local HTTP service with an explicit public_url block. App, address, Compose and Docker targets are supported.
+           * Configured local HTTP service. App, address, Compose and Docker targets are supported.
            */
           service: string;
           path: string;
@@ -1035,7 +776,7 @@ export interface TnlConfig {
     [k: string]:
       | {
           /**
-           * configured local HTTP entry service with an explicit public_url block.
+           * configured local HTTP entry service.
            */
           service: string;
           /**
@@ -1046,6 +787,10 @@ export interface TnlConfig {
            * Ready team domain; otherwise inherit the entry service's domain.
            */
           domain?: string;
+          /**
+           * Exact canonical DNS hostname; mutually exclusive with name and domain.
+           */
+          hostname?: string;
           access?:
             | ("restricted" | "anonymous")
             | {
@@ -1056,10 +801,6 @@ export interface TnlConfig {
                  */
                 ip?: [string, ...string[]];
               };
-          /**
-           * Exact authorized public URL hostname or HTTPS origin; mutually exclusive with name and domain.
-           */
-          publicURL?: string;
         }
       | undefined;
   };
@@ -1542,67 +1283,6 @@ export interface TnlConfig {
           maxDuration?: TnlRatePeriod;
         }
       | undefined;
-  };
-  publicURL?: {
-    name?: never;
-    /**
-     * Ready team domain used for generated public URL hostnames.
-     */
-    domain?: string;
-    /**
-     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
-     */
-    hostname?: string;
-    access?:
-      | ("restricted" | "anonymous")
-      | {
-          mode?: "restricted" | "anonymous";
-          /**
-           * @minItems 1
-           * @maxItems 256
-           */
-          ip?: [string, ...string[]];
-        };
-    /**
-     * Remove the public URL when this tunnel stops.
-     */
-    ephemeral?: boolean;
-    limits?: {
-      http?: {
-        total?: number;
-        concurrency?: number;
-        rate?: {
-          count?: number;
-          per?: TnlRatePeriod;
-          burst?: number;
-        };
-      };
-      tcp?: {
-        total?: number;
-        concurrency?: number;
-        rate?: {
-          count?: number;
-          per?: TnlRatePeriod;
-          burst?: number;
-        };
-      };
-      traffic?: {
-        connections?: number;
-        rate?: number;
-        burst?: number;
-        downloadBytes?: number;
-        ratePer?: TnlRatePeriod;
-        totalConnections?: number;
-        totalDownloadBytes?: number;
-        totalUploadBytes?: number;
-        uploadBytes?: number;
-      };
-    };
-    publisherPool?: never;
-    /**
-     * Require hybrid post-quantum key agreement for public HTTPS visitors.
-     */
-    requirePostQuantum?: boolean;
   };
 }
 export interface Inspection {

@@ -7,11 +7,11 @@ DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
 RETURNING id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled;
 
 -- name: GetPreview :one
-SELECT id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled, demo_publish_run_id
+SELECT id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled, demo_service_run_id
 FROM control.previews WHERE id = $1;
 
 -- name: LockPreviewForTeamAccess :one
-SELECT id, team_id, created_by_identity_id, team_access_enabled, demo_publish_run_id
+SELECT id, team_id, created_by_identity_id, team_access_enabled, demo_service_run_id
 FROM control.previews WHERE id = $1 FOR NO KEY UPDATE;
 
 -- name: SetPreviewTeamAccess :exec
@@ -19,32 +19,31 @@ UPDATE control.previews SET team_access_enabled = sqlc.arg(enabled)
 WHERE id = sqlc.arg(preview_id);
 
 -- name: OtherPreviewForTeamAccess :one
-SELECT other.preview_id FROM control.preview_public_urls AS other
-WHERE other.public_url_id = sqlc.arg(public_url_id)
+SELECT other.preview_id FROM control.preview_services AS other
+WHERE other.service_id = sqlc.arg(service_id)
   AND other.preview_id <> sqlc.arg(preview_id) LIMIT 1;
 
--- name: OtherTeamAccessForPublicURL :one
+-- name: OtherTeamAccessForService :one
 SELECT p.id FROM control.previews AS p
-JOIN control.preview_public_urls AS included ON included.preview_id = p.id
-WHERE included.public_url_id = sqlc.arg(public_url_id)
+JOIN control.preview_services AS included ON included.preview_id = p.id
+WHERE included.service_id = sqlc.arg(service_id)
   AND p.id <> sqlc.arg(preview_id)
   AND p.team_access_enabled = true LIMIT 1;
 
--- name: ListPreviewPublicURLs :many
-SELECT public_url_id FROM control.preview_public_urls
-WHERE preview_id = $1 ORDER BY public_url_id;
+-- name: ListPreviewServices :many
+SELECT service_id FROM control.preview_services
+WHERE preview_id = $1 ORDER BY service_id;
 
--- name: AddPreviewPublicURL :one
-INSERT INTO control.preview_public_urls (
-    preview_id, team_id, public_url_id, added_at
+-- name: AddPreviewService :one
+INSERT INTO control.preview_services (
+    preview_id, team_id, service_id, added_at
 )
 SELECT p.id, p.team_id, u.id, sqlc.arg(added_at)::timestamptz
 FROM control.previews p
-JOIN control.public_urls u ON u.id = sqlc.arg(public_url_id) AND u.team_id = p.team_id
+JOIN control.services u ON u.id = sqlc.arg(service_id) AND u.team_id = p.team_id
 WHERE p.id = sqlc.arg(preview_id)
   AND p.created_by_identity_id = sqlc.arg(identity_id)
-  AND u.mutation_revision = sqlc.arg(expected_mutation_revision)
-  AND u.lifecycle_state = 'enabled'
-ON CONFLICT (preview_id, public_url_id) DO UPDATE SET
-    added_at = control.preview_public_urls.added_at
-RETURNING public_url_id;
+  AND u.enabled AND u.deleted_at IS NULL AND u.protocol='http'
+ON CONFLICT (preview_id, service_id) DO UPDATE SET
+    added_at = control.preview_services.added_at
+RETURNING service_id;

@@ -16,7 +16,11 @@ import (
 func (w *Workers) runService(ctx context.Context, service Service, publication *ServicePublication, journal *publicationJournal, observe func(PublicationUpdate) error) error {
 	var entry *proofEntry
 	var observations sync.Mutex
+	var stopReadiness func()
 	defer func() {
+		if stopReadiness != nil {
+			stopReadiness()
+		}
 		w.mu.Lock()
 		defer w.mu.Unlock()
 		if w.proofs[service.RegistrationID] == entry {
@@ -35,6 +39,10 @@ func (w *Workers) runService(ctx context.Context, service Service, publication *
 		if entry != nil && run < entry.run.Number {
 			return ErrRegistrationStale
 		}
+		newRun := entry == nil || run != entry.run.Number
+		if stopReadiness != nil && (!routable || newRun) {
+			stopReadiness()
+		}
 		if routable {
 			if err := journal.tunnel.SetReady(ctx, publication.URL, run); err != nil {
 				return err
@@ -45,13 +53,21 @@ func (w *Workers) runService(ctx context.Context, service Service, publication *
 		if err := observe(PublicationUpdate{RunNumber: run, Routable: routable, TunnelID: journal.tunnel.ID(), Target: service.Target, PublicURL: publication.URL}); err != nil {
 			return err
 		}
-		entry = &proofEntry{service: service, run: publisher.PublishRunIdentity{Number: run}, serviceCheck: publication.Check}
-		w.mu.Lock()
-		if w.proofs == nil {
-			w.proofs = map[string]*proofEntry{}
+		if newRun {
+			entry = &proofEntry{service: service, run: publisher.PublishRunIdentity{Number: run}, serviceCheck: publication.Check}
+			w.mu.Lock()
+			if w.proofs == nil {
+				w.proofs = map[string]*proofEntry{}
+			}
+			w.proofs[service.RegistrationID] = entry
+			w.mu.Unlock()
+			stopReadiness = nil
 		}
-		w.proofs[service.RegistrationID] = entry
-		w.mu.Unlock()
+		// retain a stopped check until the run changes: repeated readiness or
+		// recovery of this same run must not grant another automatic budget.
+		if w.AutomaticReadiness && routable && stopReadiness == nil {
+			stopReadiness = w.startReadiness(ctx, service, run)
+		}
 		return nil
 	}, func(summary inspection.Summary) {
 		if record != nil {

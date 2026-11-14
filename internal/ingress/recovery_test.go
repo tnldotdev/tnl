@@ -3,6 +3,8 @@ package ingress
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -10,6 +12,56 @@ import (
 
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
+
+func TestCopyVisitorReportsRecoveryOnFirstPublisherByte(t *testing.T) {
+	type recovery struct {
+		id               string
+		version, episode uint64
+		at               time.Time
+	}
+	recovered := make(chan recovery, 2)
+	server := &Server{config: Config{ObserveRecovery: func(id string, version, episode uint64, at time.Time) {
+		recovered <- recovery{id, version, episode, at}
+	}}}
+	public, visitor := net.Pipe()
+	upstream, publisher := net.Pipe()
+	for _, connection := range []net.Conn{public, visitor, upstream, publisher} {
+		ownIngressConn(t, connection)
+	}
+	copied := ingressWorker(t, func() { _ = public.Close(); _ = upstream.Close() }, func() error {
+		return server.copyVisitor(public, upstream, public, PublicURL{ID: "public_url_test", PublishRunNumber: 1, RecoveryEpisodeID: 7}, false)
+	})
+	select {
+	case <-recovered:
+		t.Fatal("recovery reported before a publisher byte")
+	default:
+	}
+	for _, value := range []string{"pong", "more"} {
+		written := ingressWorker(t, func() { _ = publisher.Close() }, func() error {
+			_, err := publisher.Write([]byte(value))
+			return err
+		})
+		response := make([]byte, len(value))
+		if _, err := io.ReadFull(visitor, response); err != nil || string(response) != value {
+			t.Fatal("publisher bytes did not reach the visitor", string(response), err)
+		}
+		if err := ingressAwait(t, written); err != nil {
+			t.Fatal(err)
+		}
+		if value == "pong" {
+			r := ingressAwait(t, recovered)
+			if r.id != "public_url_test" || r.version != 1 || r.episode != 7 || r.at.IsZero() {
+				t.Fatalf("recovery = %+v", r)
+			}
+		}
+	}
+	_ = publisher.Close()
+	_ = visitor.Close()
+	ingressAwait(t, copied)
+	if len(recovered) != 0 {
+		t.Fatal("recovery reported more than once")
+	}
+}
 
 func TestNewRecoveryReporterRejectsNegativeRetryInterval(t *testing.T) {
 	t.Parallel()

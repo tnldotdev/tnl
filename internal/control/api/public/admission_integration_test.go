@@ -106,7 +106,7 @@ func TestIntegrationDrainingControlAuthenticatedRenewalAndCleanup(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := owner.CreateService(ctx, m.TeamID, "drain-db", "drain-db", controlv1.ServiceMetadata{Protocol: controlv1.Postgres, TrustRevision: 1})
+	service, err := owner.CreateService(ctx, m.TeamID, "drain-db", "drain-db", controlv1.ServiceMetadata{Protocol: controlv1.Postgres, TrustRevision: 1}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

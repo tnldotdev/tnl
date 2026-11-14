@@ -24,6 +24,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 	"golang.org/x/term"
@@ -90,7 +91,8 @@ type tunnelFlags struct {
 	domainFromCLI            bool
 	inspectionModeFromCLI    bool
 	inspectionModeFromConfig bool
-	workLimits               *config.Limits
+	httpLimits               *config.WorkLimits
+	traffic                  *trafficlimits.Selection
 	inspection               *config.Inspection
 	access                   *config.Access
 }

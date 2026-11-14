@@ -14,7 +14,7 @@ func TestSnapshotPreservesEvaluatedConfigurationAndPrimaryCheckout(t *testing.T)
 	root := t.TempDir()
 	address := config.Target("3000")
 	project := Project{Root: root, Selection: Selection{Path: filepath.Join(root, "selected.config.ts")}, Worktree: Worktree{Root: root, primaryRoot: filepath.Dir(root)}, Config: config.TNL{Services: config.Services{
-		"web": {Tunnel: &config.Tunnel{Access: &config.Access{Mode: "anonymous"}}, Target: &config.ServiceTarget{Type: "address", Address: &address}, HTTP: &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}}},
+		"web": {Target: &config.ServiceTarget{Type: "address", Address: &address}, HTTP: &config.HTTPService{Access: &config.Access{Mode: "anonymous"}, Readiness: &config.Readiness{Path: "/health"}}},
 	}}}
 	project.Worktree = ApplyWorktreeHashSalt(project.Worktree, root, [32]byte{})
 	encoded, digest, err := project.Snapshot()

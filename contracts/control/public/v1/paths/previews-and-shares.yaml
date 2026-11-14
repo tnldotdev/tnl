@@ -1,20 +1,24 @@
 paths:
-  /v1/publish-runs/{publish_run_id}/preview:
+  /v1/services/{service_id}/runs/{service_run_id}/preview:
     post:
-      operationId: createPublishRunPreview
+      operationId: createServiceRunPreview
       tags: [previews]
-      description: Create or reuse the run-scoped preview used for an ephemeral demo's feedback. Authenticate with that exact publish run token and number; this is not ordinary project preview management.
-      summary: Create feedback context for one ephemeral demo publish run
+      description: Create or reuse feedback context for an ephemeral HTTP service run, including a guest demo. Authenticate with that exact service run token and number, not normal project management permission.
+      summary: Create feedback context for one ephemeral service run
       security:
-        - publishRunAuth: []
+        - serviceRunAuth: []
       parameters:
-        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+        - $ref: "../openapi.yaml#/components/parameters/ServiceID"
+        - name: service_run_id
+          in: path
+          required: true
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "../openapi.yaml#/components/schemas/PublishRunVersionRequest"
+              $ref: "../openapi.yaml#/components/schemas/ServiceRunPreviewRequest"
       responses:
         "200":
           description: Run-scoped preview
@@ -30,7 +34,7 @@ paths:
       summary: List the caller's previews
       tags: [previews]
       security: [{ bearerAuth: [] }]
-      description: "List previews created by the signed-in identity in this team. Team visitor access does not grant access to another creator's preview records. Read each preview for its public URLs. Follow next_cursor unchanged; each page checks current access."
+      description: "List previews created by the signed-in identity in this team. Team visitor access does not grant access to another creator's preview records. Read each preview for its services. Follow next_cursor unchanged; each page checks current access."
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
         - { name: cursor, in: query, schema: { type: string, maxLength: 2048 } }
@@ -44,7 +48,7 @@ paths:
     post:
       operationId: createPreview
       tags: [previews]
-      description: Save or reuse a preview identity for the selected team and idempotency key. The preview groups public URLs; creation alone does not grant visitor access or start their publish runs.
+      description: Save or reuse a preview identity for the selected team and idempotency key. The preview groups services; creation alone does not grant visitor access or start their service runs.
       summary: Create or reuse a preview for one team
       security:
         - bearerAuth: []
@@ -69,8 +73,8 @@ paths:
     get:
       operationId: getPreview
       tags: [previews]
-      description: Read one preview's saved identity, public URL membership, and team access setting under current management authorization. Active publication and visitor permission are checked separately.
-      summary: Read a preview and its public URLs
+      description: Read one preview's saved identity, service membership, and team access setting under current management authorization. Active publication and visitor permission are checked separately.
+      summary: Read a preview and its services
       security:
         - bearerAuth: []
       parameters:
@@ -84,12 +88,12 @@ paths:
                 $ref: "../openapi.yaml#/components/schemas/Preview"
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
-  /v1/previews/{preview_id}/public-urls:
+  /v1/previews/{preview_id}/services:
     post:
-      operationId: addPreviewPublicURL
+      operationId: addPreviewService
       tags: [previews]
-      description: Add an existing authorized public URL to the preview. This changes future preview membership, not the immutable public URL snapshot held by an already-created share.
-      summary: Add an authorized public URL to a preview
+      description: Add an existing managed HTTP service to the preview. This changes future preview membership, not the immutable service snapshot held by an already-created share.
+      summary: Add an authorized service to a preview
       security:
         - bearerAuth: []
       parameters:
@@ -99,10 +103,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "../openapi.yaml#/components/schemas/AddPreviewPublicURLRequest"
+              $ref: "../openapi.yaml#/components/schemas/AddPreviewServiceRequest"
       responses:
         "200":
-          description: Preview with updated public URLs
+          description: Preview with updated services
           content:
             application/json:
               schema:
@@ -113,7 +117,7 @@ paths:
     put:
       operationId: setPreviewTeamAccess
       tags: [previews]
-      description: Set the preview's opt-in team access grant using current management authorization. Enabled access still requires a current team member's sign-in; it does not make the included public URLs anonymous.
+      description: Set the preview's opt-in HTTP team access using current management authorization. Enabled access requires current team sign-in; it does not make services anonymous or authorize connectors, devices, or workloads.
       summary: Enable or disable team visitor access for this preview
       security:
         - bearerAuth: []
@@ -138,8 +142,8 @@ paths:
     post:
       operationId: createShare
       tags: [shares]
-      description: "Create a share for the selected public URL IDs in this preview. entry_public_url_id chooses the landing URL and must be in that set. Later preview changes do not expand the share. Control returns the link and token source once; an identical retry returns the existing share ID in a credential_delivery_unavailable problem."
-      summary: Store one share for a snapshot of authorized public URLs
+      description: "Capture the selected service IDs and entry_service_id from this preview. Later preview changes do not expand the share. Control returns the link and token source once; an identical retry returns the existing share ID in a credential_delivery_unavailable problem."
+      summary: Store one share for a snapshot of authorized services
       security:
         - bearerAuth: []
       parameters:
@@ -187,10 +191,10 @@ paths:
           $ref: "../openapi.yaml#/components/responses/Problem"
   /v1/shares:
     post:
-      operationId: createURLShare
+      operationId: createServiceShare
       tags: [shares]
-      summary: Store one share for an exact authorized HTTP public URL
-      description: "Create a share for one public URL and return its link and token source once. Use that URL's ID as entry_public_url_id. An identical retry returns the existing share ID in a credential_delivery_unavailable problem; revoke and reissue if delivery was lost. Guest shares are limited to the trial's URL, source IP, and expiry."
+      summary: Store one share for an exact authorized HTTP service
+      description: "Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable; revoke and reissue if delivery was lost. Guest shares remain limited to the trial's service, source IP, and expiry."
       security:
         - bearerAuth: []
         - guestAuth: []
@@ -241,7 +245,7 @@ paths:
     get:
       operationId: getShare
       tags: [shares]
-      description: Read a manageable share's captured public URL IDs, deadline, and revocation state without revealing its secret. Reading the record does not redeem the share or create a visitor session.
+      description: Read a manageable share's captured service IDs, entry service, deadline, and revocation state without its secret. Reading the record does not redeem it or create a visitor session.
       summary: Read one share
       security:
         - bearerAuth: []
@@ -261,7 +265,7 @@ paths:
     post:
       operationId: revokeShare
       tags: [shares]
-      description: Revoke the share under current management authorization so it cannot grant new visitor access. Retain the saved record and its captured public URL snapshot for subsequent reads.
+      description: Revoke the share under current management authorization so it cannot grant new visitor access. Retain the saved record and its captured service snapshot for subsequent reads.
       summary: Stop new access through one share
       security:
         - bearerAuth: []
@@ -277,3 +281,28 @@ paths:
                 $ref: "../openapi.yaml#/components/schemas/Share"
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/services/{service_id}/runs/{service_run_id}/share-redemptions:
+    post:
+      operationId: redeemServiceShare
+      tags: [shares]
+      summary: Redeem a share or one-use cross-host handoff through an exact service run
+      description: Authenticate with the exact live service run token and number. Share membership, issuer authority, expiry, revocation, and captured handoff run bindings are checked separately. This does not authorize connector access.
+      security: [{ serviceRunAuth: [] }]
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/ServiceID"
+        - name: service_run_id
+          in: path
+          required: true
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/RedeemServiceShareRequest" }
+      responses:
+        "200":
+          description: Host-bound share credential and the next canonical origin
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ShareRedemption" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

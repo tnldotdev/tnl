@@ -28,7 +28,7 @@ func TestRelayAttemptReportsAssignedConnectionSlot(t *testing.T) {
 	first, second := newServiceTLSRelay(t), newServiceTLSRelay(t)
 	metrics := &relayAttemptMetrics{testMetrics: testMetrics{visitorOutcomes: make(chan string, 2)}}
 	config := serviceIngressConfig(t, first.open, second.open)
-	config.Metrics, config.PublicServices.config.Metrics = metrics, metrics
+	config.Metrics = metrics
 	_, address := startIngress(t, config)
 	for range 2 {
 		visitor := ingressClient(t, address, "route.example", "192.0.2.4:42000")
@@ -58,7 +58,7 @@ func TestVisitorLookupFailureIsCountedOnce(t *testing.T) {
 		opened = true
 		return nil, errors.New("missing service reached relay forwarding")
 	})
-	config.Metrics, config.PublicServices.config.Metrics = metrics, metrics
+	config.Metrics = metrics
 	server, address := startIngress(t, config)
 	visitor := ingressClient(t, address, "missing.example", "192.0.2.4:42000")
 	if err := visitor.Handshake(); err == nil {
@@ -89,7 +89,11 @@ func TestConcurrentBackendGaugeReturnsToZero(t *testing.T) {
 			defer group.Done()
 			left, right := net.Pipe()
 			defer right.Close()
-			backend := p.observeBackend(t.Context(), left)
+			backend, err := p.observeBackend(t.Context(), left)
+			if err != nil {
+				t.Error(err)
+				return
+			}
 			if err := backend.Close(); err != nil {
 				t.Error(err)
 			}
@@ -99,8 +103,8 @@ func TestConcurrentBackendGaugeReturnsToZero(t *testing.T) {
 		}()
 	}
 	group.Wait()
-	if p.streams != 0 {
-		t.Fatal("closed service backends retained ownership", p.streams)
+	if len(p.backends) != 0 {
+		t.Fatal("closed service backends retained ownership", len(p.backends))
 	}
 	families, err := metrics.Gather()
 	if err != nil {

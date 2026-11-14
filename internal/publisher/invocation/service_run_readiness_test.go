@@ -2,15 +2,23 @@ package invocation
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -22,6 +30,7 @@ func TestServiceRunReadinessReplacesTheExactBindingAndProof(t *testing.T) {
 			readiness, _, preparation := testServiceRunReadiness(t, http.NotFoundHandler())
 			readiness.path = path
 			original := readiness.load()
+			captured := readiness.current
 			proof := readiness.proof(original.run)
 			if proof == nil {
 				t.Fatal("current run did not receive a proof")
@@ -60,6 +69,9 @@ func TestServiceRunReadinessReplacesTheExactBindingAndProof(t *testing.T) {
 			if current.target != target || current.run.Number != uint64(preparation.RunNumber) || current.proof != nil {
 				t.Fatal("preparation did not replace the target/run and clear its proof")
 			}
+			if captured.run != original.run || captured.target != original.target || captured == readiness.current {
+				t.Fatal("a captured callback binding followed its replacement run")
+			}
 			if readiness.proof(original.run) != nil || readiness.load() != current {
 				t.Fatal("an old proof callback modified the replacement run")
 			}
@@ -67,6 +79,158 @@ func TestServiceRunReadinessReplacesTheExactBindingAndProof(t *testing.T) {
 				t.Fatal("replacement run did not receive its own fresh proof")
 			}
 		})
+	}
+}
+
+func TestServiceRunReadinessAvailabilityUsesExactRunAndSerializedPublication(t *testing.T) {
+	project, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	callbacks := make(chan func(uint64, bool) error, 2)
+	workers := &publisherapp.Workers{Database: database}
+	workers.Configure = func(_ context.Context, service publisherapp.Service) (publisherapp.Configuration, error) {
+		return publisherapp.Configuration{Service: &publisherapp.ServicePublication{
+			Options: clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: "https://control.example",
+				Project: project, Service: service.Name, Target: service.Target, ServiceProtocol: controlv1.ServiceProtocolHTTP},
+			URL: "https://public.example",
+			Run: func(ctx context.Context, observe func(uint64, bool) error, _ inspection.Observer) error {
+				callbacks <- observe
+				<-ctx.Done()
+				return ctx.Err()
+			},
+			Check: func(context.Context, publisherapp.Service) publisherapp.Observation {
+				return publisherapp.Observation{}
+			},
+		}}, nil
+	}
+	manager, err := publisherapp.New(t.Context(), project, database, []publisherapp.Service{{Name: "web", ServiceProtocol: "http"}}, workers.Run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	workers.Manager = manager
+	runtime := &ProjectRuntime{manager: manager}
+	id, err := manager.Reserve("web", "owner", 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := "http://127.0.0.1:3000"
+	if err := manager.Register(id, "owner", target, ""); err != nil {
+		t.Fatal(err)
+	}
+	var observe func(uint64, bool) error
+	select {
+	case observe = <-callbacks:
+	case <-time.After(5 * time.Second):
+		t.Fatal("service operation did not start")
+	}
+	run := httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_1111111111111111111111"},
+		ID: "srun_1111111111111111111111", Number: 7, Hostname: "public.example"}
+	if err := observe(run.Number, false); err != nil {
+		t.Fatal(err)
+	}
+	// the one-time Ready callback announces initial publication before ongoing
+	// RunStatus observations can change its availability.
+	if err := observe(run.Number, true); err != nil {
+		t.Fatal(err)
+	}
+	service := manager.Snapshot().Services[0]
+	for _, ready := range []bool{false, true} {
+		cursor := manager.Snapshot().Cursor
+		status := publisherservice.RunStatus{Ready: ready, TargetHealthy: true, ConfigurationCurrent: true,
+			LastCheck: time.Now(), LeaseExpiresAt: time.Now().Add(time.Minute)}
+		if err := runtime.observeServiceReadiness(service, run, status, observe); err != nil {
+			t.Fatal(err)
+		}
+		snapshot := manager.Snapshot()
+		state := clientstate.TunnelStateProvisioning
+		if ready {
+			state = clientstate.TunnelStateReady
+		}
+		current := snapshot.Services[0]
+		if current.Routable != ready || current.Ready || current.RunNumber != run.Number || current.RegistrationID != id ||
+			len(snapshot.Publications) != 1 || snapshot.Publications[0].State != state || snapshot.Publications[0].PublishRunNumber != run.Number {
+			t.Fatal("availability changed the run or conflated the owner check", snapshot)
+		}
+		events, err := publisherapp.EventsAfterFrom(t.Context(), database, project, cursor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var transitions []string
+		for _, event := range events {
+			if event.Publication != nil && event.Publication.ID == current.TunnelID {
+				transitions = append(transitions, "journal")
+			}
+			if event.Type == "service.publication" {
+				transitions = append(transitions, "manager")
+			}
+		}
+		if !reflect.DeepEqual(transitions, []string{"journal", "manager"}) {
+			t.Fatal("availability observation preceded its journal commit", transitions)
+		}
+		// repeated runtime reports do not write another publication transition.
+		cursor = snapshot.Cursor
+		if err := runtime.observeServiceReadiness(service, run, status, observe); err != nil {
+			t.Fatal(err)
+		}
+		if after := manager.Snapshot(); after.Cursor != cursor {
+			t.Fatal("unchanged runtime availability rewrote the journal", after)
+		}
+	}
+	observationFailure := errors.New("publication observation failed")
+	beforeFailure := manager.Snapshot()
+	if err := runtime.observeServiceReadiness(service, run, publisherservice.RunStatus{}, func(uint64, bool) error {
+		return errors.Join(context.Canceled, observationFailure)
+	}); !errors.Is(err, observationFailure) {
+		t.Fatal("availability discarded an independent observation failure", err)
+	}
+	if after := manager.Snapshot(); after.Cursor != beforeFailure.Cursor || !reflect.DeepEqual(after.Services, beforeFailure.Services) {
+		t.Fatal("failed availability observation changed the manager", after)
+	}
+	// hold a status after its current-run read, then replace the run before it
+	// reaches the worker's existing serialized publication transition.
+	entered, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
+	stale := make(chan error, 1)
+	go func() {
+		stale <- runtime.observeServiceReadiness(service, run, publisherservice.RunStatus{}, func(number uint64, ready bool) error {
+			close(entered)
+			<-release
+			return observe(number, ready)
+		})
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runtime status did not reach publication observation")
+	}
+	if err := observe(8, true); err != nil {
+		t.Fatal(err)
+	}
+	before := manager.Snapshot()
+	unblock()
+	select {
+	case err := <-stale:
+		if !errors.Is(err, publisherapp.ErrRegistrationStale) {
+			t.Fatal("stale in-flight status was accepted", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("stale runtime status did not finish")
+	}
+	for _, ready := range []bool{false, true} {
+		if err := runtime.observeServiceReadiness(service, run, publisherservice.RunStatus{Ready: ready}, observe); !errors.Is(err, publisherapp.ErrRegistrationStale) {
+			t.Fatal("old run status was accepted", err)
+		}
+	}
+	if after := manager.Snapshot(); after.Cursor != before.Cursor || !reflect.DeepEqual(after.Services, before.Services) {
+		t.Fatal("stale status changed the journal or manager", after)
 	}
 }
 

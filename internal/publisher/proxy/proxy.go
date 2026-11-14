@@ -29,9 +29,6 @@ import (
 
 const maxHeaderFields = 100
 
-// readiness probes keep HTML responses streaming and observe headers only.
-const ReadinessProbeHeader = "X-Tnl-Readiness-Probe"
-
 const defaultMaxConnsPerHost = 64
 
 // Preflight validates the target and verifies that it accepts a connection.
@@ -133,22 +130,13 @@ func waitForTarget(ctx context.Context, target string, preflight func(context.Co
 	}
 }
 
-// ResponseHooks separates header observation from body modification. observing
-// a response must not disable upstream compression or consume its body.
-type ResponseHooks struct {
-	ModifyHTML    func(*http.Response) error
-	Observe       func(*http.Response) error
-	ObserveStatus func(*http.Request, int)
-	OnForwarded   func(*http.Request)
-}
-
 // Config selects targets, target trust, response hooks, and transport sizing.
 // the publisher owns application admission for base, mounted, and inline handlers.
 type Config struct {
 	Target        string
 	Hostname      string
 	Mounts        []Mount
-	Hooks         ResponseHooks
+	Hooks         httpstream.ResponseHooks
 	TargetOptions TargetOptions
 	// ResolveTarget selects the base target before each request. its immutable
 	// identity retires pooled connections even when the address stays the same.
@@ -355,7 +343,7 @@ func New(config Config) (*Proxy, error) {
 	return owner, nil
 }
 
-func (p *Proxy) newReverseProxy(target string, maxConnsPerHost int, hooks ResponseHooks, options TargetOptions, onTargetFailure func()) (*targetProxy, error) {
+func (p *Proxy) newReverseProxy(target string, maxConnsPerHost int, hooks httpstream.ResponseHooks, options TargetOptions, onTargetFailure func()) (*targetProxy, error) {
 	canonicalTarget, err := targetsyntax.NormalizeTarget(target)
 	if err != nil {
 		return nil, err
@@ -397,24 +385,19 @@ func (p *Proxy) newReverseProxy(target string, maxConnsPerHost int, hooks Respon
 			observability.PublisherHTTPForward(request.Out.Context())
 			request.Out = observability.TargetRequest(request.Out)
 			host := request.In.Host
-			if hooks.ModifyHTML != nil && !IsReadinessProbe(request.In) {
-				request.Out.Header.Del("Accept-Encoding")
-			}
+			hooks.Rewrite(request)
 			// remove client forwarding identity before deriving trusted headers.
 			removeForwardingHeaders(request.Out.Header)
-			request.Out.Header.Del(ReadinessProbeHeader)
 			request.SetURL(targetURL)
 			request.Out.Host = host
 			request.SetXForwarded()
 		},
 		ErrorHandler: func(response http.ResponseWriter, request *http.Request, targetErr error) {
 			observability.PublisherHTTPError(request.Context(), targetErr)
+			hooks.ForwardingFailed(request)
 			if code, ok := diagnostic.CodeOf(targetErr); ok {
 				diagnostic.WriteHTTP(response, request, code, "")
 				return
-			}
-			if hooks.ObserveStatus != nil {
-				hooks.ObserveStatus(request, 0)
 			}
 			if failing.CompareAndSwap(false, true) && onTargetFailure != nil {
 				onTargetFailure()
@@ -429,25 +412,7 @@ func (p *Proxy) newReverseProxy(target string, maxConnsPerHost int, hooks Respon
 		},
 		ModifyResponse: func(response *http.Response) error {
 			failing.Store(false)
-			if hooks.ObserveStatus != nil && response.StatusCode >= 400 {
-				hooks.ObserveStatus(response.Request, response.StatusCode)
-			}
-			if hooks.Observe != nil {
-				if err := hooks.Observe(response); err != nil {
-					return err
-				}
-			}
-			if hooks.ModifyHTML != nil && !IsReadinessProbe(response.Request) {
-				if err := hooks.ModifyHTML(response); err != nil {
-					return err
-				}
-			}
-			if hooks.OnForwarded != nil {
-				hooks.OnForwarded(response.Request)
-			}
-			observability.PublisherHTTPResponse(response.Request.Context())
-			observability.PublisherHTTPUpgrade(response)
-			return nil
+			return hooks.ModifyResponse(response)
 		},
 	}
 	p.mu.Lock()

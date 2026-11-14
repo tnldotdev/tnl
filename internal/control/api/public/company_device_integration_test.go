@@ -109,7 +109,7 @@ func TestIntegrationCompanyDevicePublicServiceAdmissionAndReauthentication(t *te
 	ownerCtx := controlstate.WithControlPrincipal(ctx, f.principal(companyOwner))
 	companyCtx := controlstate.WithControlPrincipal(ctx, p)
 	personalCtx := controlstate.WithControlPrincipal(ctx, f.principal(person))
-	service, err := d.CreateServiceAt(ownerCtx, team.ID, companyOwner.Identity.Identity.Id, "database", "database", controlstate.ServicePlacement{}, time.Now(), controlstate.ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(ownerCtx, team.ID, companyOwner.Identity.Identity.Id, "database", "database", controlstate.ServicePlacement{}, time.Now(), controlstate.ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

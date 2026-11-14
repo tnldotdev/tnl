@@ -5,7 +5,7 @@ import (
 )
 
 func TestTelemetryInstallationPreservesInstallerChoiceForEveryJobKind(t *testing.T) {
-	for _, kind := range []Kind{KindPublicURL, KindService, KindConnector, KindDeployment} {
+	for _, kind := range []Kind{KindService, KindConnector, KindDeployment} {
 		for _, choice := range []string{"default", "disabled"} {
 			t.Run(string(kind)+"/"+choice, func(t *testing.T) {
 				options := testOptions(t)

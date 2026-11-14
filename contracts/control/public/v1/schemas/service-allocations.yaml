@@ -1,0 +1,15 @@
+schemas:
+  AllocateServiceRequest:
+    type: object
+    additionalProperties: false
+    required: [invocation_id, configuration]
+    description: Immutable HTTP declaration for one temporary service. Exact retries recover only the original live allocation. Automated DNS and shared ingress 443 are required. Callers cannot select a hostname, domain, worktree, or saved deployment service.
+    properties:
+      invocation_id:
+        $ref: "../openapi.yaml#/components/schemas/ResourceID"
+      configuration:
+        $ref: "../openapi.yaml#/components/schemas/ProjectServiceConfiguration"
+      expires_at:
+        type: string
+        format: date-time
+        description: Optional fixed deadline, captured once and clipped to the parent grant deadline. Omission adds no maximum lifetime; ordinary service run leases and ephemeral idle cleanup apply.

@@ -100,7 +100,7 @@ func TestIntegrationStateLockOrderServiceActor(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			d, now := newControlStateIntegrationDatabase(t, "service_actor_order")
 			r := appliedProjectRequest(t, d, now)
-			s, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActorID, "database", "database", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+			s, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActorID, "database", "database", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -134,7 +134,7 @@ func TestIntegrationStateLockOrderServiceActor(t *testing.T) {
 				case "create-grant":
 					_, err = d.CreateServiceGrant(signed, s.ID, r.ActorID, "team", "team", "", nil, now)
 				case "create-service":
-					_, err = d.CreateServiceAt(signed, r.TeamID, r.ActorID, "second", "second", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+					_, err = d.CreateServiceAt(signed, r.TeamID, r.ActorID, "second", "second", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 				case "delete-service":
 					err = d.DeleteService(signed, s.ID, r.ActorID, now)
 				}
@@ -216,7 +216,7 @@ func TestIntegrationStateLockOrderApplyExpiration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unrelated, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActorID, "unrelated", "unrelated", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	unrelated, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActorID, "unrelated", "unrelated", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

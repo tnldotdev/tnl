@@ -33,7 +33,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
-	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/observability"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
@@ -66,7 +65,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.identity.teamID = team.Id
-	direct := startSeparatedPrivateIngress(t, f, 0, "quic", nil).ingresses[0].publicServices
+	direct := startSeparatedPrivateIngress(t, f, 0, "quic", nil).ingresses[0].server
 	startSeparatedPrivateIngress(t, f, 1, "quic", nil)
 	var requests atomic.Int64
 	var targetConnection atomic.Value
@@ -138,22 +137,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if service.Endpoint == nil {
 		t.Fatal("missing managed endpoint")
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	server, err := ingress.New(listener, ingress.Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, PublicServices: direct, ServicePortRanges: nil, MaxConnections: 64})
-	if err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- server.Serve() }()
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		_ = server.Drain(ctx)
-		<-done
-	})
+	publicDial := workloadPublicEndpointDialer(t, direct, service.Endpoint.Port)
 	base := "https://" + service.Endpoint.Hostname
 	newTransport := func(certificate *tls.Certificate) *http.Transport {
 		roots := f.visitorRoots.RootCAs.Clone()
@@ -172,16 +156,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 			if address != net.JoinHostPort(service.Endpoint.Hostname, "443") {
 				return nil, net.InvalidAddrError("unexpected fixture destination")
 			}
-			conn, err := (&net.Dialer{}).DialContext(ctx, network, listener.Addr().String())
-			if err != nil {
-				return nil, err
-			}
-			metadata, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.44:4242"), Destination: netip.AddrPortFrom(netip.MustParseAddr("203.0.113.10"), uint16(service.Endpoint.Port))})
-			if _, err = conn.Write(metadata); err != nil {
-				_ = conn.Close()
-				return nil, err
-			}
-			return conn, nil
+			return publicDial(ctx, network, address)
 		}}
 		t.Cleanup(transport.CloseIdleConnections)
 		return transport
@@ -690,7 +665,7 @@ func startServiceHTTPDeploymentPublisher(t *testing.T, f *privateSeparatedFixtur
 	ctx, cancel := context.WithCancel(observability.WithMetrics(t.Context(), metrics))
 	ready, done := make(chan struct{}), make(chan error, 1)
 	go func() {
-		done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: native, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp})
+		done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: native, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: target, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp})
 	}()
 	t.Cleanup(func() {
 		cancel()

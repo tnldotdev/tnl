@@ -71,8 +71,8 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 	}
 	err = tx.QueryRow(ctx, `SELECT LEAST($4::timestamptz,p.revoked_at,g.revoked_at,g.expires_at)
 		FROM control.publisher_identities p JOIN control.publisher_grants g ON g.publisher_identity_id=p.id
-		WHERE p.id=$1 AND g.id=$2 AND p.team_id=$3 AND g.service_id=$5`,
-		run.PublisherIdentityID, run.PublisherGrantID, run.TeamID, until, serviceID).Scan(&until)
+		WHERE p.id=$1 AND g.id=$2 AND p.team_id=$3`,
+		run.PublisherIdentityID, run.PublisherGrantID, run.TeamID, until).Scan(&until)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
 	}

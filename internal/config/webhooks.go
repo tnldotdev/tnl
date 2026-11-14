@@ -72,8 +72,8 @@ func ValidateWebhooks(services Services, definitions map[string]Webhook) error {
 				return fmt.Errorf("webhooks.%s: service %q is not configured", name, endpoint.Service)
 			}
 			service := services[endpoint.Service]
-			if Protocol(service) != "http" || !IsPublicService(service) {
-				return fmt.Errorf("webhooks.%s: service must be a local public HTTP service", name)
+			if Protocol(service) != "http" {
+				return fmt.Errorf("webhooks.%s: service must be a local HTTP service", name)
 			}
 		}
 		if !targetsyntax.ValidMountPrefix(endpoint.Path) {

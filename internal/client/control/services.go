@@ -35,13 +35,16 @@ func (c *Client) SelectServiceRun(ctx context.Context, serviceID, deviceID strin
 
 // a person's control session may create the saved service and issue an exact
 // enrollment. the resulting publisher uses only its scoped grant for runs.
-func (c *Client) CreateService(ctx context.Context, team, name, key string, declaration controlv1.ServiceMetadata) (controlv1.Service, error) {
-	return c.CreateServiceAt(ctx, team, name, key, nil, declaration)
+func (c *Client) CreateService(ctx context.Context, team, name, key string, metadata controlv1.ServiceMetadata, configuration *controlv1.ProjectServiceConfiguration) (controlv1.Service, error) {
+	return c.CreateServiceAt(ctx, team, name, key, nil, metadata, configuration)
 }
 
-func (c *Client) CreateServiceAt(ctx context.Context, team, name, key string, placement *controlv1.ServicePlacement, declaration controlv1.ServiceMetadata) (controlv1.Service, error) {
+func (c *Client) CreateServiceAt(ctx context.Context, team, name, key string, placement *controlv1.ServicePlacement, metadata controlv1.ServiceMetadata, configuration *controlv1.ProjectServiceConfiguration) (controlv1.Service, error) {
 	body := controlv1.CreateServiceRequest{TeamId: team, Name: name, Placement: placement,
-		Protocol: &declaration.Protocol, TargetTls: declaration.TargetTls, PublisherPool: &declaration.PublisherPool}
+		TargetTls: metadata.TargetTls, PublisherPool: &metadata.PublisherPool, Configuration: configuration}
+	if metadata.Protocol != "" {
+		body.Protocol = &metadata.Protocol
+	}
 	return requestWithAccess[controlv1.Service](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.CreateService(ctx, &controlv1.CreateServiceParams{IdempotencyKey: key},
 			body, editors...)
@@ -145,9 +148,9 @@ func (c *Client) GetService(ctx context.Context, id string) (controlv1.Service, 
 	})
 }
 
-func (c *Client) GetPublisherService(ctx context.Context, publisherAccess string) (controlv1.Service, error) {
+func (c *Client) GetPublisherService(ctx context.Context, serviceID, publisherAccess string) (controlv1.Service, error) {
 	return request[controlv1.Service](ctx, c, publisherAccess, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.GetPublisherService(ctx, editors...)
+		return c.api.GetPublisherService(ctx, serviceID, editors...)
 	})
 }
 

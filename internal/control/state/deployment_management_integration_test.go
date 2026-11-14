@@ -107,7 +107,7 @@ func TestIntegrationDeploymentManagementScopeAndRecovery(t *testing.T) {
 	if _, err = d.GetServiceForPublisher(t.Context(), production.Services["db"].ID, access.PublisherIdentity, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("management implied publish", err)
 	}
-	if _, err = d.AllocatePublisherPublicURL(t.Context(), access.PublisherIdentity, "allocation", "http://localhost:3000", nil, nil, now, PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted}); !errors.Is(err, ErrPublisherIdentity) {
+	if _, err = d.AllocatePublisherService(t.Context(), access.PublisherIdentity, AllocateServiceRequest{}, now); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatal("management implied namespace allocation", err)
 	}
 	// explicit project-wide approval creates only the captured service names.

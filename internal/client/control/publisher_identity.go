@@ -46,14 +46,14 @@ func (c *Client) RevokePublisherGrant(ctx context.Context, team, id, grant strin
 func (c *Client) PublisherPublicURL(ctx context.Context, token string) (controlv1.PublicURL, error) {
 	return request[controlv1.PublicURL](ctx, c, token, c.api.GetPublisherPublicURL)
 }
-func (c *Client) AllocatePublisherPublicURL(ctx context.Context, token string, b controlv1.AllocateEphemeralPublicURLRequest) (controlv1.PublicURL, error) {
-	return request[controlv1.PublicURL](ctx, c, token, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.AllocatePublisherPublicURL(ctx, b, e...)
+func (c *Client) AllocatePublisherService(ctx context.Context, token string, b controlv1.AllocateServiceRequest) (controlv1.Service, error) {
+	return request[controlv1.Service](ctx, c, token, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.AllocatePublisherService(ctx, b, e...)
 	})
 }
-func (c *Client) DeletePublisherPublicURL(ctx context.Context, token, id string) error {
+func (c *Client) DeletePublisherService(ctx context.Context, token, id string) error {
 	_, err := request[struct{}](ctx, c, token, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.DeletePublisherPublicURL(ctx, id, e...)
+		return c.api.DeletePublisherService(ctx, id, e...)
 	})
 	return err
 }

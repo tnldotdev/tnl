@@ -70,11 +70,16 @@ SELECT * FROM control.publisher_access_tokens WHERE access_token_digest = sqlc.a
 SELECT * FROM control.domains WHERE id = sqlc.arg(id) AND state = 'ready' AND released_at IS NULL AND (kind = 'managed' OR team_id = sqlc.arg(team_id));
 
 -- name: InsertPublisherAllocation :exec
-INSERT INTO control.publisher_namespace_allocations(public_url_id, publisher_identity_id, publisher_grant_id, invocation_id, deployment_id)
-VALUES (sqlc.arg(public_url_id), sqlc.arg(publisher_identity_id), sqlc.arg(publisher_grant_id), sqlc.arg(invocation_id), sqlc.narg(deployment_id));
+INSERT INTO control.publisher_namespace_allocations(service_id, publisher_identity_id, publisher_grant_id, invocation_id, deployment_id, required_temporary_approval, requested_expires_at)
+VALUES (sqlc.arg(service_id), sqlc.arg(publisher_identity_id), sqlc.arg(publisher_grant_id), sqlc.arg(invocation_id), sqlc.narg(deployment_id), sqlc.arg(required_temporary_approval), sqlc.narg(requested_expires_at));
 
 -- name: GetPublisherAllocation :one
-SELECT * FROM control.publisher_namespace_allocations WHERE public_url_id = sqlc.arg(public_url_id);
+SELECT * FROM control.publisher_namespace_allocations WHERE service_id = sqlc.arg(service_id);
+
+-- name: FindPublisherAllocation :one
+SELECT * FROM control.publisher_namespace_allocations
+WHERE publisher_identity_id=sqlc.arg(publisher_identity_id)
+AND publisher_grant_id=sqlc.arg(publisher_grant_id) AND invocation_id=sqlc.arg(invocation_id);
 
 -- name: ListPublisherIdentities :many
 SELECT * FROM control.publisher_identities WHERE team_id = sqlc.arg(team_id) AND id > sqlc.arg(after_id) ORDER BY id LIMIT 101;

@@ -18,7 +18,7 @@ SET state = $1,
     close_reason = $3
 WHERE id = $4
   AND closed_at IS NULL
-RETURNING preferred_regions, id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+RETURNING preferred_regions, id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 `
 
 type ClosePublishRunParams struct {
@@ -49,7 +49,6 @@ func (q *Queries) ClosePublishRun(ctx context.Context, arg ClosePublishRunParams
 		&i.IdempotencyKey,
 		&i.RequestDigestCiphertext,
 		&i.RequestDigestStorageKeyID,
-		&i.ShareCapable,
 		&i.PublishRunTokenID,
 		&i.PublishRunTokenDigest,
 		&i.PolicyRevision,
@@ -928,39 +927,6 @@ func (q *Queries) ListIdentityPublicURLs(ctx context.Context, arg ListIdentityPu
 			&i.DeletedAt,
 			&i.OpenPublishRunID,
 		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listTeamNamespaceLabels = `-- name: ListTeamNamespaceLabels :many
-SELECT m.managed_label, s.member_slug
-FROM control.team_memberships AS m
-JOIN control.member_slug_reservations AS s ON s.id = m.slug_reservation_id
-WHERE m.team_id = $1
-  AND m.removed_at IS NULL
-`
-
-type ListTeamNamespaceLabelsRow struct {
-	ManagedLabel string
-	MemberSlug   string
-}
-
-func (q *Queries) ListTeamNamespaceLabels(ctx context.Context, teamID string) ([]ListTeamNamespaceLabelsRow, error) {
-	rows, err := q.db.Query(ctx, listTeamNamespaceLabels, teamID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListTeamNamespaceLabelsRow
-	for rows.Next() {
-		var i ListTeamNamespaceLabelsRow
-		if err := rows.Scan(&i.ManagedLabel, &i.MemberSlug); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -84,10 +84,10 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 				t.Fatal(err)
 			}
 			retry, err := d.RealizeLocalProjectService(ctx, request)
-			if err != nil || !reflect.DeepEqual(value, retry) || value.Kind != "service" || value.Metadata == nil || value.Metadata.PublisherPool {
+			if err != nil || !reflect.DeepEqual(value, retry) || value.ServiceID == "" || value.Metadata == nil || value.Metadata.PublisherPool {
 				t.Fatal("local realization lost its independent resource", value, retry, err)
 			}
-			resource := inspectAppliedPrivateResource(t, d, r, value.ServiceID, localProjectPrivateName(request, local.Name), false, outsider, extra)
+			resource := inspectAppliedPrivateResource(t, d, r, value.ServiceID, localProjectServiceName(request, local.Name), false, outsider, extra)
 			if active {
 				e := publisherEnrollment(t, d, CreatePublicURLRequest{TeamID: r.TeamID, ActingIdentityID: r.ActorID}, PublisherScope{TeamID: r.TeamID, Kind: "service", ServiceID: value.ServiceID}, now)
 				public, key, err := ed25519.GenerateKey(rand.Reader)
@@ -179,7 +179,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	if err != nil || len(projection.Services) != 0 {
 		t.Fatal("private resource leaked into public metadata", projection, err)
 	}
-	if _, err = d.GetProjectPublicMetadata(ctx, r.TeamID, r.ProjectKey, reader.IdentityID, now); !errors.Is(err, ErrPublicURLAccess) {
+	if _, err = d.GetProjectPublicMetadata(ctx, r.TeamID, r.ProjectKey, reader.IdentityID, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("private visitor permission authorized public project metadata", err)
 	}
 	applyPrivateOwnershipRevision(t, d, r)
@@ -345,7 +345,7 @@ func assertPrivateOwnershipAssignments(t *testing.T, d *Database, replicas []enr
 			t.Fatal("deployment lost its private assignment")
 		}
 		a := assignments.Services[0]
-		if a.Service != "db" || a.Kind != "service" || a.ServiceID != status.Services[0].ServiceID || a.TrustRevision != status.Services[0].TrustRevision || !reflect.DeepEqual(a.Configuration, status.Configuration.Services["db"]) {
+		if a.Service != "db" || a.ServiceID != status.Services[0].ServiceID || a.TrustRevision != status.Services[0].TrustRevision || !reflect.DeepEqual(a.Configuration, status.Configuration.Services["db"]) {
 			t.Fatal("deployment received wrong private resource or metadata", a)
 		}
 		var exact bool
@@ -413,7 +413,7 @@ func assertAppliedPrivateRetired(t *testing.T, d *Database, r ApplyProjectConfig
 	}
 }
 
-func readyAppliedServiceRun(t *testing.T, d *Database, access PublisherAccess, key ed25519.PrivateKey, service ServiceRecord, leases map[string]RelayLease, now time.Time) ServiceRunState {
+func readyAppliedServiceRun(t *testing.T, d *Database, access PublisherAccess, key ed25519.PrivateKey, service ServiceRecord, leases map[string]RelayLease, now time.Time, certificateLifetime ...time.Duration) ServiceRunState {
 	t.Helper()
 	prepared, err := d.PrepareServiceRun(t.Context(), service.ID, access.PublisherIdentity, "ownership", now, ServiceRunRequest{Metadata: service.ServiceMetadata})
 	if err != nil {
@@ -423,7 +423,7 @@ func readyAppliedServiceRun(t *testing.T, d *Database, access PublisherAccess, k
 	if err != nil {
 		t.Fatal(err)
 	}
-	installPrivateTestCertificate(t, d, prepared, run, now)
+	installPrivateTestCertificate(t, d, prepared, run, now, certificateLifetime...)
 	for _, slot := range run.Connections {
 		lease := leases[slot.RelayServiceID].RelayLeaseIdentity
 		if _, err = d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {

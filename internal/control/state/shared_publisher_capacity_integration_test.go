@@ -18,7 +18,7 @@ func TestIntegrationPublicAndPrivatePublishersShareRelayPlacementCapacity(t *tes
 		t.Fatal(err)
 	}
 	privateRequest := oidcRouteRequest(t, d, now)
-	service, err := d.CreateServiceAt(t.Context(), privateRequest.TeamID, privateRequest.ActingIdentityID, "private", "private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(t.Context(), privateRequest.TeamID, privateRequest.ActingIdentityID, "private", "private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

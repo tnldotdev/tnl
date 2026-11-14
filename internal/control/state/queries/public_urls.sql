@@ -59,13 +59,6 @@ WHERE t.id = sqlc.arg(team_id)
   AND t.deleted_at IS NULL
 FOR SHARE OF t, i, m, s, d;
 
--- name: ListTeamNamespaceLabels :many
-SELECT m.managed_label, s.member_slug
-FROM control.team_memberships AS m
-JOIN control.member_slug_reservations AS s ON s.id = m.slug_reservation_id
-WHERE m.team_id = sqlc.arg(team_id)
-  AND m.removed_at IS NULL;
-
 -- name: InsertPublicURL :one
 INSERT INTO control.public_urls (
     id,

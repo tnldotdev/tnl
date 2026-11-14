@@ -220,7 +220,7 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 			startSeparatedPrivateIngress(t, f, 1, transport, nil)
 			target := startPrivateEchoTarget(t, f.owner)
 			key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
-			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "trace", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
+			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "trace", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -241,7 +241,7 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 			ctx, cancel := context.WithCancel(collector.process(t, "publisher"))
 			ready, done := make(chan struct{}), make(chan error, 1)
 			go func() {
-				done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target.address,
+				done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: target.address,
 					Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool},
 					Ready:    func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp,
 				})
@@ -368,7 +368,7 @@ func TestIntegrationPublisherObservabilityPublicService(t *testing.T) {
 				if service.Protocol == "http" {
 					hostname = service.Endpoint.Hostname
 				}
-				_ = process.ingresses[0].publicServices.AcceptPublic(ctx, remote, netip.MustParseAddrPort("192.0.2.4:42000"), netip.AddrPortFrom(netip.MustParseAddr("203.0.113.8"), uint16(service.Endpoint.Port)), hostname, nil)
+				_ = process.ingresses[0].server.AcceptPublic(ctx, remote, netip.MustParseAddrPort("192.0.2.4:42000"), netip.AddrPortFrom(netip.MustParseAddr("203.0.113.8"), uint16(service.Endpoint.Port)), hostname, nil)
 			}()
 			t.Cleanup(func() {
 				_ = local.Close()

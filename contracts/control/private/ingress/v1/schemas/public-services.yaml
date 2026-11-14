@@ -63,6 +63,13 @@ schemas:
         description: Required exact inspected TLS hostname for shared HTTPS port 443. Must be absent on allocated non-HTTP service ports.
       observed_source_ip: { type: string, minLength: 1, maxLength: 64 }
       visitor_connection_id: { $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID" }
+      excluded_runs:
+        type: array
+        maxItems: 7
+        uniqueItems: true
+        x-go-type-skip-optional-pointer: true
+        description: Exact runs rejected by this ingress's local quotas before forwarding visitor bytes. All entries must name the resolved service, with distinct run IDs and run numbers. Each new run attempt uses a new visitor connection ID; retrying an existing ID never moves its reservation.
+        items: { $ref: "../openapi.yaml#/components/schemas/ServiceRunReference" }
   PublicServiceVisitorLookup:
     type: object
     additionalProperties: false

@@ -33,17 +33,15 @@ JOIN control.deployment_publisher_enrollments enrollment ON enrollment.id=member
 WHERE member.publisher_identity_id=$1 AND member.deployment_id=$2::text
 AND EXISTS(SELECT 1 FROM control.deployment_publisher_enrollment_services scope
     WHERE scope.enrollment_id=enrollment.id AND scope.service=$3
-    AND scope.service_id IS NOT DISTINCT FROM $4::text
-    AND scope.public_url_id IS NOT DISTINCT FROM $5::text
-    AND scope.revoked_at IS NULL AND scope.protocol=COALESCE((SELECT protocol FROM control.services WHERE id=scope.service_id),'http')))::boolean
+    AND scope.service_id=$4::text
+    AND scope.revoked_at IS NULL AND scope.protocol=(SELECT protocol FROM control.services WHERE id=scope.service_id)))::boolean
 `
 
 type DeploymentPublisherServiceAllowedParams struct {
 	PublisherID  string
 	DeploymentID string
 	Service      string
-	ServiceID    pgtype.Text
-	PublicURLID  pgtype.Text
+	ServiceID    string
 }
 
 func (q *Queries) DeploymentPublisherServiceAllowed(ctx context.Context, arg DeploymentPublisherServiceAllowedParams) (bool, error) {
@@ -52,7 +50,6 @@ func (q *Queries) DeploymentPublisherServiceAllowed(ctx context.Context, arg Dep
 		arg.DeploymentID,
 		arg.Service,
 		arg.ServiceID,
-		arg.PublicURLID,
 	)
 	var column_1 bool
 	err := row.Scan(&column_1)
@@ -138,7 +135,7 @@ func (q *Queries) GetDeploymentPublisherStatus(ctx context.Context, arg GetDeplo
 }
 
 const listDeploymentPublisherEnrollmentServices = `-- name: ListDeploymentPublisherEnrollmentServices :many
-SELECT enrollment_id, service, protocol, service_id, public_url_id, revoked_at FROM control.deployment_publisher_enrollment_services WHERE enrollment_id=$1 ORDER BY service
+SELECT enrollment_id, service, protocol, service_id, revoked_at FROM control.deployment_publisher_enrollment_services WHERE enrollment_id=$1 ORDER BY service
 `
 
 func (q *Queries) ListDeploymentPublisherEnrollmentServices(ctx context.Context, enrollmentID string) ([]ControlDeploymentPublisherEnrollmentService, error) {
@@ -155,7 +152,6 @@ func (q *Queries) ListDeploymentPublisherEnrollmentServices(ctx context.Context,
 			&i.Service,
 			&i.Protocol,
 			&i.ServiceID,
-			&i.PublicURLID,
 			&i.RevokedAt,
 		); err != nil {
 			return nil, err

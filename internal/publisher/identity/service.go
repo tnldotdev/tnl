@@ -15,11 +15,12 @@ import (
 )
 
 type ServiceControl interface {
+	ControlURL() string
 	serviceRunControl
 	ServiceCertificateControl
 	serviceHTTPControl
 	connectorPeerControl
-	GetPublisherService(context.Context, string) (controlv1.Service, error)
+	GetPublisherService(context.Context, string, string) (controlv1.Service, error)
 }
 
 type serviceRunControl interface {
@@ -48,7 +49,7 @@ func EnsureServiceOwner(ctx context.Context, state *clientstate.Store, control S
 }
 
 func (n *Native) serviceControl(serviceID string) (serviceRunControl, error) {
-	if n == nil || n.identity.kind != authorityv1.Service || n.identity.serviceID != serviceID {
+	if n == nil || n.selectedServiceID == "" || n.selectedServiceID != serviceID {
 		return nil, ErrScope
 	}
 	if n.Services == nil {
@@ -96,37 +97,57 @@ func (n *Native) CloseServiceRun(ctx context.Context, serviceID, runID string, t
 	return control.CloseServiceRun(ctx, serviceID, runID, token)
 }
 
-// SavedService reads only the exact service selected by this signing
-// identity. a public URL or namespace grant cannot discover services.
+// SavedService reads only the selected service; control checks its current
+// permission using the credential's actual grant and signing key.
 func (n *Native) SavedService(ctx context.Context) (controlv1.Service, error) {
-	if n == nil || n.identity.kind != authorityv1.Service || n.identity.serviceID == "" {
+	if n == nil || n.selectedServiceID == "" {
 		return controlv1.Service{}, ErrScope
 	}
 	access, err := n.Access(ctx)
 	if err != nil {
 		return controlv1.Service{}, err
 	}
-	return n.GetPublisherService(ctx, access)
+	return n.GetPublisherService(ctx, n.selectedServiceID, access)
 }
 
-func (n *Native) GetPublisherService(ctx context.Context, access string) (controlv1.Service, error) {
-	if n == nil || n.identity.kind != authorityv1.Service || n.identity.serviceID == "" || access == "" {
+func (n *Native) GetPublisherService(ctx context.Context, serviceID, access string) (controlv1.Service, error) {
+	if n == nil || n.selectedServiceID == "" || n.selectedServiceID != serviceID || access == "" {
 		return controlv1.Service{}, ErrScope
 	}
 	if n.Services == nil {
 		return controlv1.Service{}, ErrScope
 	}
-	service, err := n.Services.GetPublisherService(ctx, access)
+	service, err := n.Services.GetPublisherService(ctx, serviceID, access)
 	if err != nil {
 		return service, err
 	}
-	if service.Id != n.identity.serviceID || service.TeamId != n.identity.teamID || !service.Enabled {
+	if service.Id != n.selectedServiceID || service.TeamId != n.identity.teamID || !service.Enabled {
 		return controlv1.Service{}, ErrScope
 	}
 	if _, err := ServiceTrust(service); err != nil {
 		return controlv1.Service{}, err
 	}
 	return service, nil
+}
+
+// ForService makes one independently bound worker. selection changes no grant
+// facts and authorizes nothing until control checks this exact service.
+func (n *Native) ForService(ctx context.Context, serviceID string) (*Native, controlv1.Service, error) {
+	if n == nil || !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) ||
+		n.selectedServiceID != "" && n.selectedServiceID != serviceID ||
+		n.identity.kind != "deployment_credential" && n.identity.kind != "namespace" && (n.identity.kind != "service" || n.identity.serviceID != serviceID) {
+		return nil, controlv1.Service{}, ErrScope
+	}
+	copy, err := n.Fork()
+	if err != nil {
+		return nil, controlv1.Service{}, err
+	}
+	copy.selectedServiceID = serviceID
+	service, err := copy.SavedService(ctx)
+	if err != nil {
+		return nil, controlv1.Service{}, err
+	}
+	return copy, service, nil
 }
 
 // ServiceTrust validates approved publisher-to-target metadata. connectors

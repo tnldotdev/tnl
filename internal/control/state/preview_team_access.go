@@ -3,8 +3,6 @@ package state
 import (
 	"context"
 	"errors"
-	"fmt"
-	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,124 +11,78 @@ import (
 )
 
 type SetPreviewTeamAccessRequest struct {
-	PreviewID      string
-	TeamID         string
-	IdentityID     string
-	Enabled        bool
-	PolicyRevision uint64
-	PublicURLs     []AuthorizedSharePublicURL
+	PreviewID, TeamID, IdentityID string
+	Enabled                       bool
 }
 
 func (d *Database) SetPreviewTeamAccess(ctx context.Context, request SetPreviewTeamAccessRequest, now time.Time) (result Preview, retErr error) {
-	if !opaqueid.Valid(request.PreviewID, opaqueid.PreviewPrefix) || request.TeamID == "" || request.IdentityID == "" ||
-		request.Enabled && (request.PolicyRevision == 0 || len(request.PublicURLs) == 0 || len(request.PublicURLs) > 32) {
-		return Preview{}, ErrPreviewAccess
+	if !opaqueid.Valid(request.PreviewID, opaqueid.PreviewPrefix) || request.TeamID == "" || request.IdentityID == "" {
+		return result, ErrPreviewAccess
 	}
-	if err := d.requireOpen(); err != nil {
-		return Preview{}, err
-	}
-	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
 	if err != nil {
-		return Preview{}, fmt.Errorf("controlstate: set preview team access: begin transaction: %w", err)
+		return result, err
 	}
 	defer rollback(ctx, tx, "set preview team access", &retErr)()
-	queries := controlstatedb.New(tx)
-	var membership controlstatedb.GetActivePublishRunMembershipRow
-	{
-		if _, err := queries.LockLocalTeamForMutation(ctx, request.TeamID); errors.Is(err, pgx.ErrNoRows) {
-			return Preview{}, ErrPreviewAccess
-		} else if err != nil {
-			return Preview{}, fmt.Errorf("controlstate: lock team: %w", err)
-		}
-		membership, err = queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
-			TeamID: request.TeamID, IdentityID: request.IdentityID,
-		})
-		if errors.Is(err, pgx.ErrNoRows) || err == nil && request.Enabled && membership.PolicyRevision != positive(request.PolicyRevision) {
-			return Preview{}, ErrPreviewAccess
-		}
-		if err != nil {
-			return Preview{}, fmt.Errorf("controlstate: read membership: %w", err)
-		}
+	q := controlstatedb.New(tx)
+	if _, err = q.LockLocalTeamForMutation(ctx, request.TeamID); err != nil {
+		return result, publisherLookupError(err, ErrPreviewAccess)
 	}
-	preview, err := queries.LockPreviewForTeamAccess(ctx, request.PreviewID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Preview{}, ErrPreviewNotFound
-	}
+	member, err := serviceMembershipForActor(ctx, tx, request.TeamID, request.IdentityID, now)
 	if err != nil {
-		return Preview{}, fmt.Errorf("controlstate: lock preview: %w", err)
+		return result, err
 	}
-	if preview.TeamID != request.TeamID || preview.CreatedByIdentityID != request.IdentityID || request.Enabled && preview.DemoPublishRunID.Valid {
-		return Preview{}, ErrPreviewAccess
+	preview, err := q.LockPreviewForTeamAccess(ctx, request.PreviewID)
+	if err != nil {
+		return result, publisherLookupError(err, ErrPreviewNotFound)
 	}
-	if request.Enabled {
-		ids, err := queries.ListPreviewPublicURLs(ctx, preview.ID)
+	if preview.TeamID != request.TeamID || preview.CreatedByIdentityID != request.IdentityID || preview.DemoServiceRunID.Valid {
+		return result, ErrPreviewAccess
+	}
+	ids, err := q.ListPreviewServices(ctx, preview.ID)
+	if err != nil {
+		return result, err
+	}
+	if request.Enabled && (len(ids) == 0 || len(ids) > 32) {
+		return result, ErrPreviewAccess
+	}
+	// SQL supplies sorted IDs, so every multi-service mutation takes service
+	// locks in the same order and consumes its actor assertion only once.
+	for _, id := range ids {
+		service, err := q.LockService(ctx, id)
 		if err != nil {
-			return Preview{}, fmt.Errorf("controlstate: list preview public URLs: %w", err)
+			return result, publisherLookupError(err, ErrPreviewStale)
 		}
-		urls := slices.Clone(request.PublicURLs)
-		slices.SortFunc(urls, func(left, right AuthorizedSharePublicURL) int {
-			if left.PublicURLID < right.PublicURLID {
-				return -1
-			}
-			if left.PublicURLID > right.PublicURLID {
-				return 1
-			}
-			return 0
-		})
-		if len(ids) != len(urls) {
-			return Preview{}, ErrPreviewStale
+		if service.Protocol != "http" || !service.Enabled {
+			return result, ErrPreviewStale
 		}
-		for index, selected := range urls {
-			if selected.PublicURLID != ids[index] || selected.ExpectedMutationRevision == 0 || selected.ExpectedMutationRevision > 1<<63-1 {
-				return Preview{}, ErrPreviewStale
-			}
-			route, err := queries.LockPublicURLForRun(ctx, selected.PublicURLID)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return Preview{}, ErrPreviewStale
-			}
-			if err != nil {
-				return Preview{}, fmt.Errorf("controlstate: lock team public URL: %w", err)
-			}
-			if route.TeamID != request.TeamID || route.LifecycleState != string(PublicURLLifecycleEnabled) || route.Purpose != "app" || route.ServiceProtocol != "http" ||
-				route.MutationRevision != int64(selected.ExpectedMutationRevision) || route.PolicyRevision > positive(request.PolicyRevision) {
-				return Preview{}, ErrPreviewStale
-			}
-			if route.PublicURLScope == string(PublicURLScopeMember) &&
-				(!route.MembershipID.Valid || route.MembershipID.String != membership.ID) ||
-				route.PublicURLScope == string(PublicURLScopeShared) && membership.Role != string(TeamRoleAdmin) && membership.Role != string(TeamRoleOwner) {
-				return Preview{}, ErrPreviewAccess
-			}
-			if _, err := queries.OtherPreviewForTeamAccess(ctx, controlstatedb.OtherPreviewForTeamAccessParams{
-				PublicURLID: selected.PublicURLID, PreviewID: request.PreviewID,
-			}); err == nil {
-				return Preview{}, ErrPreviewStale
+		if err = requireServiceManagement(ctx, tx, service, member); err != nil {
+			return result, err
+		}
+		if request.Enabled {
+			if _, err = q.OtherPreviewForTeamAccess(ctx, controlstatedb.OtherPreviewForTeamAccessParams{ServiceID: id, PreviewID: preview.ID}); err == nil {
+				return result, ErrPreviewStale
 			} else if !errors.Is(err, pgx.ErrNoRows) {
-				return Preview{}, fmt.Errorf("controlstate: check other preview: %w", err)
+				return result, err
 			}
 		}
 	}
-	if err := queries.SetPreviewTeamAccess(ctx, controlstatedb.SetPreviewTeamAccessParams{
-		PreviewID: preview.ID, Enabled: request.Enabled,
-	}); err != nil {
-		return Preview{}, fmt.Errorf("controlstate: save preview team access: %w", err)
+	if err = q.SetPreviewTeamAccess(ctx, controlstatedb.SetPreviewTeamAccessParams{PreviewID: preview.ID, Enabled: request.Enabled}); err != nil {
+		return result, err
 	}
 	if preview.TeamAccessEnabled != request.Enabled {
-		ids, err := queries.ListPreviewPublicURLs(ctx, preview.ID)
-		if err != nil {
-			return Preview{}, err
-		}
 		operation := "grant.revoke"
 		if request.Enabled {
 			operation = "grant.create"
 		}
-		for _, service := range ids {
-			if err = auditPublicMutation(ctx, tx, service, request.IdentityID, operation, preview.ID+"/"+now.UTC().Format(time.RFC3339Nano), now); err != nil {
-				return Preview{}, err
+		for _, id := range ids {
+			if err = auditPrivateMutation(ctx, tx, id, request.IdentityID, operation, preview.ID+"/"+now.UTC().Format(time.RFC3339Nano), now); err != nil {
+				return result, err
 			}
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return Preview{}, fmt.Errorf("controlstate: commit preview team access: %w", err)
+	if err = tx.Commit(ctx); err != nil {
+		return result, err
 	}
-	return d.GetPreview(ctx, request.PreviewID)
+	return d.GetPreview(ctx, preview.ID)
 }

@@ -7,6 +7,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
@@ -40,14 +41,23 @@ func (AssignmentPublisher) String() string   { return "deployment publications" 
 func (AssignmentPublisher) GoString() string { return "deployment publications" }
 
 func (p AssignmentPublisher) Publish(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
-	if assignment.ServiceKind == "public_url" {
-		return p.publishPublicURL(ctx, assignment, health)
-	}
-	if assignment.ServiceKind != "service" || assignment.Configuration.Protocol == nil || assignment.TrustRevision < 1 || p.Member.DeploymentId == "" || p.Member.DeploymentName == "" || p.Member.DeploymentName == "local" {
+	if assignment.Configuration.Protocol == nil || !assignment.Configuration.Protocol.Valid() || assignment.Configuration.Target == "app" || assignment.TrustRevision < 1 || p.Member.DeploymentId == "" || p.Member.DeploymentName == "" || p.Member.DeploymentName == "local" {
 		return ErrAssignment
 	}
 	identity := authorityv1.PublisherEnrollmentResult{ClientId: p.Member.PublisherIdentityId, KeyId: p.Member.KeyId, TeamId: p.Member.TeamId, GrantId: assignment.GrantId, Kind: authorityv1.Service, ServiceId: &assignment.ServiceId}
 	native, err := publisheridentity.NewNative(p.Control, p.Authority, identity, p.Private)
+	if err != nil {
+		return err
+	}
+	var traffic *trafficlimits.Selection
+	if selected := assignment.Configuration.Traffic; selected != nil {
+		traffic = &trafficlimits.Selection{
+			Connections: selected.Connections, Rate: selected.Rate, RatePer: selected.RatePer, Burst: selected.Burst,
+			UploadBytes: selected.UploadBytes, DownloadBytes: selected.DownloadBytes,
+			TotalConnections: selected.TotalConnections, TotalUploadBytes: selected.TotalUploadBytes, TotalDownloadBytes: selected.TotalDownloadBytes,
+		}
+	}
+	native, err = native.WithTraffic(traffic)
 	if err != nil {
 		return err
 	}
@@ -58,7 +68,10 @@ func (p AssignmentPublisher) Publish(ctx context.Context, assignment controlv1.D
 	if service.Id != assignment.ServiceId || service.TrustRevision != assignment.TrustRevision || service.Protocol != *assignment.Configuration.Protocol {
 		return ErrAssignment
 	}
-	run := publisherservice.RunConfig{Telemetry: p.Telemetry, Control: native, State: p.State, Access: native.Access, Identity: identity, ServiceID: service.Id, Metadata: publisheridentity.ServiceMetadata(service), ObserveReadiness: func(status publisherservice.RunStatus) {
+	if health != nil {
+		defer health(false)
+	}
+	run := publisherservice.RunConfig{Telemetry: p.Telemetry, Control: native, State: p.State, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Metadata: publisheridentity.ServiceMetadata(service), ObserveReadiness: func(status publisherservice.RunStatus) {
 		if health != nil {
 			health(status.Ready)
 		}

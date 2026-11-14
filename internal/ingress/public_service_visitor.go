@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,7 +26,39 @@ import (
 // AcceptPublic selects HTTP by inspected hostname on 443 and other protocols by
 // trusted destination port. initial contains already-inspected visitor bytes,
 // absent from connection. anonymous accounting never grants target permission.
-func (p *PublicServices) AcceptPublic(ctx context.Context, connection net.Conn, source, destination netip.AddrPort, hostname string, initial []byte) (retErr error) {
+func (p *Server) AcceptPublic(ctx context.Context, connection net.Conn, source, destination netip.AddrPort, hostname string, initial []byte) (retErr error) {
+	if connection == nil {
+		return ErrServiceAdmission
+	}
+	connection = onceCloseConn(connection)
+	if !p.admit(connection) {
+		return errors.Join(ErrServiceAdmission, connection.Close())
+	}
+	defer p.active.Done()
+	defer func() { retErr = errors.Join(retErr, p.release(connection)) }()
+	finishInspection := sync.OnceFunc(p.finishInspection)
+	defer finishInspection()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stopped := make(chan struct{})
+	stop := context.AfterFunc(p.openContext, func() { defer close(stopped); cancel() })
+	defer func() {
+		if !stop() {
+			<-stopped
+		}
+	}()
+	release, reason := p.traffic.source(source.Addr())
+	if release == nil {
+		p.rejectCapacity(reason)
+		return ErrServiceAdmission
+	}
+	defer release()
+	finishInspection()
+	p.markVisitor(connection)
+	return p.forwardService(ctx, connection, source, destination, hostname, initial)
+}
+
+func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, destination netip.AddrPort, hostname string, initial []byte) (retErr error) {
 	ctx, finishConnection := observability.Start(ctx, "ingress.public_service_visitor_connection")
 	defer func() { finishConnection(retErr) }()
 	outcome := observability.VisitorLookupMissing
@@ -43,15 +76,9 @@ func (p *PublicServices) AcceptPublic(ctx context.Context, connection net.Conn, 
 	} else if destination.Port() < 1024 || hostname != "" {
 		return ErrServiceAdmission
 	}
-	ctx, release, ok := p.acquireSession(ctx, connection)
-	if !ok {
-		outcome = observability.VisitorCapacityDenied
-		return ErrServiceAdmission
-	}
-	defer release()
-	admission, reason := p.server.admitPendingService()
+	admission, reason := p.admitPendingService()
 	if admission == nil {
-		p.server.rejectCapacity(reason)
+		p.rejectCapacity(reason)
 		outcome = observability.VisitorCapacityDenied
 		return ErrServiceAdmission
 	}
@@ -61,52 +88,110 @@ func (p *PublicServices) AcceptPublic(ctx context.Context, connection net.Conn, 
 		outcome = observability.VisitorLookupUnavailable
 		return err
 	}
-	visitor, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
-	if err != nil {
-		return err
-	}
-	lookup := ingressv1.PublicServiceVisitorLookup{IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision, VisitorConnectionId: visitor}
+	lookup := ingressv1.PublicServiceVisitorLookup{IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision}
 	defer func() {
+		if lookup.VisitorConnectionId == "" {
+			return
+		}
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_ = control.ClosePublicServiceVisitor(cleanup, lease.IngressId, lookup)
 	}()
-	setup, finish := context.WithTimeout(ctx, min(p.config.PendingTimeout, time.Until(admission.deadline)))
+	setupDeadline := privateMinTime(time.Now().Add(p.config.OpenTimeout), privateMinTime(admission.deadline, lease.LeaseExpiresAt))
+	admission.deadline = setupDeadline
+	setup, finish := context.WithDeadline(ctx, setupDeadline)
 	defer finish()
 	stopSetup := context.AfterFunc(p.admissions, finish)
 	defer stopSetup()
-	claim := ingressv1.PublicServiceVisitorClaim{IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision, IngressPoolId: p.config.IngressPoolID, DestinationPort: int(destination.Port()), ObservedSourceIp: source.Addr().Unmap().String(), VisitorConnectionId: visitor}
+	claim := ingressv1.PublicServiceVisitorClaim{IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision, IngressPoolId: p.config.IngressPoolID, DestinationPort: int(destination.Port()), ObservedSourceIp: source.Addr().Unmap().String()}
 	if hostname != "" {
 		claim.Hostname = &hostname
 	}
-	claimed, err := control.AdmitPublicServiceVisitor(setup, lease.IngressId, claim)
-	if err != nil {
-		return err
+	var claimed ingressv1.PublicServiceVisitorAdmission
+	var serviceID, serviceVisitor string
+	selected, selectionReason := false, "unavailable"
+	defer func() {
+		if !selected && serviceID != "" {
+			serviceaudit.Emit(p.config.AuditSink, serviceaudit.Observation{ServiceID: serviceID, ServiceKind: "service",
+				VisitorConnectionID: serviceVisitor, SourceIP: source.Addr().Unmap().String(), EventType: "connection.open", Outcome: "denied", Reason: selectionReason})
+		}
+	}()
+	for attempt := range 8 {
+		if err := setup.Err(); err != nil {
+			return err
+		}
+		current, leaseErr := p.lease(time.Now())
+		if leaseErr != nil || !samePrivateLease(current, lease) || !setupDeadline.After(time.Now()) {
+			return ErrServiceAdmission
+		}
+		claim.VisitorConnectionId, err = opaqueid.New(opaqueid.VisitorConnectionPrefix)
+		if err != nil {
+			return err
+		}
+		lookup.VisitorConnectionId = claim.VisitorConnectionId
+		selectionReason = "unavailable"
+		claimed, err = control.AdmitPublicServiceVisitor(setup, lease.IngressId, claim)
+		if err != nil {
+			// an ambiguous response may have created this exact reservation.
+			// final cleanup closes it; never turn a transport error into reselection.
+			return err
+		}
+		current, leaseErr = p.lease(time.Now())
+		valid := claimed.VisitorConnectionId == claim.VisitorConnectionId && (!claimed.Anonymous || destination.Port() == 443) &&
+			validatePublicServiceAdmission(claimed, time.Now()) == nil && (serviceID == "" || claimed.ServiceId == serviceID)
+		for _, excluded := range claim.ExcludedRuns {
+			if claimed.ServiceRunId == excluded.ServiceRunId || claimed.RunNumber == excluded.RunNumber {
+				valid = false
+			}
+		}
+		if leaseErr != nil || !samePrivateLease(current, lease) || !valid || setup.Err() != nil || !setupDeadline.After(time.Now()) {
+			outcome, selectionReason = observability.VisitorInvalidProjection, "invalid_request"
+			return ErrServiceAdmission
+		}
+		serviceID, serviceVisitor = claimed.ServiceId, claimed.VisitorConnectionId
+		p.retireClosedTrafficRuns(setup, lease)
+		if err := setup.Err(); err != nil {
+			return err
+		}
+		limits, err := routingTraffic(claimed.Traffic)
+		if err != nil {
+			return ErrServiceAdmission
+		}
+		stage := "pending"
+		if claimed.Anonymous {
+			stage = "ordinary"
+		}
+		if reason := admission.selectRun(trafficKey{service: serviceID, id: claimed.ServiceRunId, run: uint64(claimed.RunNumber)}, limits, source.Addr().Unmap(), claimed.Anonymous); reason != "" {
+			p.rejectCapacity(reason)
+			p.observeTraffic(stage, "capacity")
+			outcome, selectionReason = observability.VisitorCapacityDenied, "capacity"
+			if !retryServiceRunSelection(reason) {
+				if reason == "invalid_traffic_projection" {
+					outcome, selectionReason = observability.VisitorInvalidProjection, "invalid_request"
+				}
+				return ErrServiceAdmission
+			}
+			// rejected candidates have no local reservation and no relay bytes.
+			// confirm their durable reservation is closed before selecting another.
+			if err := control.ClosePublicServiceVisitor(setup, lease.IngressId, lookup); err != nil {
+				return err
+			}
+			lookup.VisitorConnectionId = ""
+			if err := setup.Err(); err != nil {
+				return err
+			}
+			if attempt == 7 {
+				return errors.Join(ErrServiceAdmission, ErrServiceSelectionLimit)
+			}
+			claim.ExcludedRuns = append(claim.ExcludedRuns, ingressv1.ServiceRunReference{ServiceId: serviceID, ServiceRunId: claimed.ServiceRunId, RunNumber: claimed.RunNumber})
+			continue
+		}
+		selected = true
+		p.observeTraffic(stage, "accepted")
+		break
 	}
-	current, leaseErr := p.lease(time.Now())
-	if leaseErr != nil || !samePrivateLease(current, lease) || claimed.VisitorConnectionId != visitor || claimed.Anonymous && destination.Port() != 443 || validatePublicServiceAdmission(claimed, time.Now()) != nil {
-		outcome = observability.VisitorInvalidProjection
-		return ErrServiceAdmission
-	}
-	p.retireClosedTrafficRuns(setup, lease)
-	limits, err := routingTraffic(claimed.Traffic)
-	if err != nil {
-		return ErrServiceAdmission
-	}
-	key := trafficKey{service: claimed.ServiceId, id: claimed.ServiceRunId, run: uint64(claimed.RunNumber)}
-	stage := "pending"
-	if claimed.Anonymous {
-		stage = "ordinary"
-	}
-	if reason := admission.selectRun(key, limits, source.Addr().Unmap(), claimed.Anonymous); reason != "" {
-		p.server.rejectCapacity(reason)
-		p.server.observeTraffic(stage, "capacity")
-		outcome = observability.VisitorCapacityDenied
-		return ErrServiceAdmission
-	}
-	p.server.observeTraffic(stage, "accepted")
 	outcome = observability.VisitorOpenFailed
-	audit := serviceaudit.Observation{ServiceID: claimed.ServiceId, ServiceKind: "service", RunID: claimed.ServiceRunId, RunNumber: claimed.RunNumber, VisitorConnectionID: visitor, SourceIP: source.Addr().Unmap().String(), EventType: "connection.open", Outcome: "denied", Reason: "authorization"}
+	audit := serviceaudit.Observation{ServiceID: claimed.ServiceId, ServiceKind: "service", RunID: claimed.ServiceRunId, RunNumber: claimed.RunNumber, VisitorConnectionID: claimed.VisitorConnectionId, SourceIP: source.Addr().Unmap().String(), EventType: "connection.open", Outcome: "denied", Reason: "authorization"}
 	var opened atomic.Bool
 	defer func() {
 		if opened.Load() {
@@ -140,7 +225,7 @@ func (p *PublicServices) AcceptPublic(ctx context.Context, connection net.Conn, 
 			return err
 		}
 	}
-	first := int((p.nextRelay.Add(1) - 1) % uint64(len(claimed.ConnectedRelays)))
+	first := int((p.nextBackend.Add(1) - 1) % uint64(len(claimed.ConnectedRelays)))
 	var openingErr error
 	openingStarted := time.Now()
 	openingObserved := false
@@ -154,7 +239,7 @@ func (p *PublicServices) AcceptPublic(ctx context.Context, connection net.Conn, 
 		header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{
 			ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream, ServiceID: claimed.ServiceId, ServiceRunID: claimed.ServiceRunId, RunNumber: uint64(claimed.RunNumber),
 			PublicService: &tunnelv1.PublicServiceAdmission{IngressID: lease.IngressId, IngressRunID: lease.IngressRunId, IngressLeaseRevision: uint64(lease.IngressLeaseRevision), DestinationPort: destination.Port()},
-			SourceIP:      source.Addr().Unmap().String(), VisitorConnectionID: visitor, PublisherConnectionID: relay.PublisherConnectionId, ConnectionAssignmentRevision: uint64(relay.ConnectionAssignmentRevision), ExpiresAt: claimed.ExpiresAt,
+			SourceIP:      source.Addr().Unmap().String(), VisitorConnectionID: claimed.VisitorConnectionId, PublisherConnectionID: relay.PublisherConnectionId, ConnectionAssignmentRevision: uint64(relay.ConnectionAssignmentRevision), ExpiresAt: claimed.ExpiresAt,
 		}, ConnectionSlot: uint8(relay.ConnectionSlot), RelayServiceID: relay.RelayServiceId, RelayID: relay.RelayId, RelayRunID: relay.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLeaseRevision), LeaseExpiresAt: relay.LeaseExpiresAt}
 		attemptCtx, stopAttempt := backendAttemptContext(setup, len(claimed.ConnectedRelays)-attempt)
 		attemptStarted := time.Now()
@@ -240,8 +325,16 @@ func (p *PublicServices) AcceptPublic(ctx context.Context, connection net.Conn, 
 	return errors.Join(ErrServiceAdmission, openingErr)
 }
 
-func (p *PublicServices) retireClosedTrafficRuns(ctx context.Context, lease ingressv1.IngressLease) {
-	candidates := p.server.traffic.terminalCandidates(time.Now())
+func retryServiceRunSelection(reason string) bool {
+	switch reason {
+	case "service_connections", "service_connection_total", "service_connection_rate", "pending_service_connections", "pending_service_rate":
+		return true
+	}
+	return false
+}
+
+func (p *Server) retireClosedTrafficRuns(ctx context.Context, lease ingressv1.IngressLease) {
+	candidates := p.traffic.terminalCandidates(time.Now())
 	if len(candidates) == 0 {
 		return
 	}
@@ -262,7 +355,7 @@ func (p *PublicServices) retireClosedTrafficRuns(ctx context.Context, lease ingr
 		}
 		delete(requested, ref)
 	}
-	p.server.traffic.retireTerminal(closed.Closed)
+	p.traffic.retireTerminal(closed.Closed)
 }
 
 // public service admission uses the claim immediately, rather than installing history.
@@ -287,7 +380,7 @@ func validatePublicServiceAdmission(p ingressv1.PublicServiceVisitorAdmission, n
 	return nil
 }
 
-func (p *PublicServices) openPrivateRelay(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, proxy, initial []byte, deadline time.Time) (net.Conn, error) {
+func (p *Server) openPrivateRelay(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, proxy, initial []byte, deadline time.Time) (net.Conn, error) {
 	if header.Validate() != nil {
 		return nil, ErrServiceAdmission
 	}
@@ -295,7 +388,10 @@ func (p *PublicServices) openPrivateRelay(ctx context.Context, relay ingressv1.S
 	if err != nil {
 		return nil, err
 	}
-	connection = p.observeBackend(ctx, connection)
+	connection, err = p.observeBackend(ctx, connection)
+	if err != nil {
+		return nil, err
+	}
 	setup, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	// metadata is retryable, but any inspected visitor byte commits this relay.
@@ -307,19 +403,43 @@ func (p *PublicServices) openPrivateRelay(ctx context.Context, relay ingressv1.S
 	return connection, nil
 }
 
-func (p *PublicServices) guardPublicServiceVisitor(ctx context.Context, control PublicServiceControl, lease ingressv1.IngressLease, lookup ingressv1.PublicServiceVisitorLookup, deadline time.Time, admission *visitorAdmission, onAuthorized func()) error {
+func (p *Server) guardPublicServiceVisitor(ctx context.Context, control PublicServiceControl, lease ingressv1.IngressLease, lookup ingressv1.PublicServiceVisitorLookup, deadline time.Time, admission *visitorAdmission, onAuthorized func()) error {
 	reserved, authorized := admission.ordinary, false
 	for {
 		current, err := p.liveLease(time.Now())
-		if err != nil || !samePrivateLease(current, lease) || !deadline.After(time.Now()) {
+		if err != nil || !samePrivateLease(current, lease) {
 			return ErrServiceAdmission
 		}
+		deadline = privateMinTime(deadline, current.LeaseExpiresAt)
 		if current.Draining && current.DrainDeadline != nil {
 			deadline = privateMinTime(deadline, *current.DrainDeadline)
 		}
+		if !deadline.After(time.Now()) {
+			return ErrServiceAdmission
+		}
 		check, finish := context.WithTimeout(ctx, min(p.config.RecheckTimeout, time.Until(deadline)))
+		checkDeadline, _ := check.Deadline()
 		status, err := control.PublicServiceVisitorStatus(check, lease.IngressId, lookup)
+		if cause := context.Cause(check); cause != nil {
+			err = errors.Join(err, cause)
+		} else if !checkDeadline.After(time.Now()) {
+			err = errors.Join(err, context.DeadlineExceeded)
+		}
 		finish()
+		if ctx.Err() != nil {
+			return errors.Join(context.Cause(ctx), err)
+		}
+		current, leaseErr := p.liveLease(time.Now())
+		if leaseErr != nil || !samePrivateLease(current, lease) {
+			return ErrServiceAdmission
+		}
+		deadline = privateMinTime(deadline, current.LeaseExpiresAt)
+		if current.Draining && current.DrainDeadline != nil {
+			deadline = privateMinTime(deadline, *current.DrainDeadline)
+		}
+		if !deadline.After(time.Now()) {
+			return ErrServiceAdmission
+		}
 		if err == nil {
 			switch status.State {
 			case ingressv1.PublicServiceVisitorPending:
@@ -333,27 +453,54 @@ func (p *PublicServices) guardPublicServiceVisitor(ctx context.Context, control 
 				}
 				if !reserved {
 					if reason := admission.reserve(admission.limits); reason != "" {
-						p.server.rejectCapacity(reason)
-						p.server.observeTraffic("promotion", "capacity")
+						p.rejectCapacity(reason)
+						p.observeTraffic("promotion", "capacity")
 						return ErrServiceAdmission
 					}
-					p.server.observeTraffic("promotion", "accepted")
+					p.observeTraffic("promotion", "accepted")
 					reserved = true
 				}
 				if status.State == ingressv1.PublicServiceVisitorAuthenticated {
 					promote, cancel := context.WithTimeout(ctx, min(p.config.RecheckTimeout, time.Until(deadline)))
+					promoteDeadline, _ := promote.Deadline()
 					err = control.PromotePublicServiceVisitor(promote, lease.IngressId, lookup)
-					cancel()
-					if err != nil {
-						break
+					if cause := context.Cause(promote); cause != nil {
+						err = errors.Join(err, cause)
+					} else if !promoteDeadline.After(time.Now()) {
+						err = errors.Join(err, context.DeadlineExceeded)
 					}
+					cancel()
+				}
+				// reservation and promotion may wait. neither can replace the
+				// deadline or lease facts that authorized entering this attempt.
+				if ctx.Err() != nil {
+					return errors.Join(context.Cause(ctx), err)
+				}
+				current, leaseErr = p.liveLease(time.Now())
+				if leaseErr != nil || !samePrivateLease(current, lease) {
+					return errors.Join(ErrServiceAdmission, err)
+				}
+				deadline = privateMinTime(deadline, current.LeaseExpiresAt)
+				if current.Draining && current.DrainDeadline != nil {
+					deadline = privateMinTime(deadline, *current.DrainDeadline)
+				}
+				if !deadline.After(time.Now()) || !status.ValidUntil.After(time.Now()) {
+					return errors.Join(ErrServiceAdmission, err)
+				}
+				if err != nil {
+					// a lost acknowledgment retains both its original deadline
+					// and its once-only quota reservation until a fresh check.
+					break
 				}
 				if !authorized {
 					authorized = true
 					admission.meterOrdinaryBytes()
 					onAuthorized()
 				}
-				deadline = privateMinTime(status.ValidUntil, time.Now().Add(p.config.HardAuthorizationTTL))
+				deadline = privateMinTime(status.ValidUntil, privateMinTime(time.Now().Add(p.config.HardAuthorizationTTL), current.LeaseExpiresAt))
+				if current.Draining && current.DrainDeadline != nil {
+					deadline = privateMinTime(deadline, *current.DrainDeadline)
+				}
 			default:
 				return ErrServiceAdmission
 			}

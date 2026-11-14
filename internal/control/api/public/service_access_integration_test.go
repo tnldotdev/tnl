@@ -64,11 +64,11 @@ func TestIntegrationServiceAccessClient(t *testing.T) {
 	wrongEmail, _ := person("other", "other@example.test")
 	unverified, _ := person("unverified", "")
 	team := ownerSession.Identity.Memberships[0].TeamID
-	a, err := owner.CreateService(ctx, team, "orders", "orders", controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
+	a, err := owner.CreateService(ctx, team, "orders", "orders", controlv1.ServiceMetadata{Protocol: controlv1.Tcp}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := owner.CreateService(ctx, team, "another", "another", controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
+	b, err := owner.CreateService(ctx, team, "another", "another", controlv1.ServiceMetadata{Protocol: controlv1.Tcp}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

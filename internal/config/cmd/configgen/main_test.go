@@ -68,19 +68,16 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 			t.Fatalf("service %s property must be project-wide", property)
 		}
 	}
-	tunnel := schemaForType(reflect.TypeOf(config.Tunnel{}))
-	if _, found := tunnel.Properties.Get("ephemeral"); !found {
-		t.Fatal("tunnel ephemeral property is missing")
+	if _, found := binding.Properties.Get("ephemeral"); !found {
+		t.Fatal("service ephemeral property is missing")
 	}
-	if limits, found := tunnel.Properties.Get("limits"); !found || limits.Properties == nil {
-		t.Fatalf("tunnel limits schema = %#v", limits)
-	} else if http, found := limits.Properties.Get("http"); !found || http.Properties == nil {
+	if limits, found := http.Properties.Get("limits"); !found || limits.Properties == nil {
 		t.Fatal("HTTP limits are missing")
-	} else if concurrency, found := http.Properties.Get("concurrency"); !found || concurrency.Minimum != "1" || concurrency.Maximum != "9007199254740991" {
-		t.Fatalf("tunnel concurrency schema = %#v", concurrency)
+	} else if concurrency, found := limits.Properties.Get("concurrency"); !found || concurrency.Minimum != "1" || concurrency.Maximum != "9007199254740991" {
+		t.Fatalf("HTTP concurrency schema = %#v", concurrency)
 	}
-	if _, found := tunnel.Properties.Get("allow_providers"); found {
-		t.Fatal("tunnel-wide provider grants must not be generated")
+	if _, found := binding.Properties.Get("allow_providers"); found {
+		t.Fatal("service-wide provider grants must not be generated")
 	}
 	webhook := schemaForType(reflect.TypeOf(config.Webhook{}))
 	if provider, found := webhook.Properties.Get("provider"); !found || len(provider.Enum) != 23 || provider.Enum[0] != "amazon-sns" {
@@ -89,8 +86,8 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	if ips, found := webhook.Properties.Get("source_ips"); !found || ips.MinItems == nil || *ips.MinItems != 1 {
 		t.Fatalf("webhook source override schema = %#v", ips)
 	}
-	if access, found := tunnel.Properties.Get("access"); !found || len(access.OneOf) != 2 {
-		t.Fatalf("tunnel visitor access schema = %#v", access)
+	if access, found := http.Properties.Get("access"); !found || len(access.OneOf) != 2 {
+		t.Fatalf("HTTP visitor access schema = %#v", access)
 	}
 	keys := map[string]string{}
 	collectTypeScriptKeys(reflect.TypeOf(config.Project{}), keys)
@@ -103,7 +100,7 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	}
 }
 
-func TestServiceSchemaKeepsServicesSeparateFromPublicURLs(t *testing.T) {
+func TestServiceSchemaKeepsDeclarationsSeparateFromBindings(t *testing.T) {
 	deployments := schemaForType(reflect.TypeOf(map[string]config.Deployment{}))
 	if public, found := deployments.AdditionalProperties.Properties.Get("public"); !found || public != jsonschema.FalseSchema {
 		t.Fatal("deployment schema allows reachability outside a service binding")
@@ -125,8 +122,16 @@ func TestServiceSchemaKeepsServicesSeparateFromPublicURLs(t *testing.T) {
 		if _, found := binding.Properties.Get("protocol"); found {
 			t.Fatal("binding repeats a logical protocol")
 		}
-		if public, found := binding.Properties.Get("public"); !found || public.Type != "boolean" || len(binding.AllOf) != 2 || binding.AllOf[1].Not == nil || !slices.Equal(binding.AllOf[1].Not.Required, []string{"public", "public_url"}) {
-			t.Fatal("binding lost explicit exposure or permits two publication lifecycles")
+		if public, found := binding.Properties.Get("public"); !found || public.Type != "boolean" || len(binding.AllOf) != 0 {
+			t.Fatal("binding lost independent explicit exposure")
+		}
+		for _, field := range []string{"hostname", "domain", "ephemeral", "require_post_quantum", "traffic"} {
+			if _, found := binding.Properties.Get(field); !found {
+				t.Fatalf("binding lost direct field %s", field)
+			}
+		}
+		if _, found := binding.Properties.Get("public_url"); found {
+			t.Fatal("binding retains another publication family")
 		}
 	}
 }
@@ -134,13 +139,13 @@ func TestServiceSchemaKeepsServicesSeparateFromPublicURLs(t *testing.T) {
 func TestSchemaHasDisjointTargetsAndNoRetiredPublicFields(t *testing.T) {
 	reflector := &jsonschema.Reflector{Anonymous: true, ExpandedStruct: true, RequiredFromJSONSchemaTags: true, Mapper: schemaForType}
 	schema := reflector.Reflect(config.Document{})
-	for _, key := range []string{"publish", "readiness"} {
+	for _, key := range []string{"publish", "readiness", "public_url", "traffic", "hostname", "domain", "ephemeral", "require_post_quantum"} {
 		if _, found := schema.Definitions["Project"].Properties.Get(key); found {
 			t.Fatalf("retired root %s is generated", key)
 		}
 	}
 	service := deploymentBindingSchema().OneOf[0]
-	for _, key := range []string{"publish", "readiness", "paths", "directory"} {
+	for _, key := range []string{"publish", "readiness", "paths", "directory", "public_url", "limits", "open"} {
 		if _, found := service.Properties.Get(key); found {
 			t.Fatalf("retired service %s is generated", key)
 		}
@@ -168,16 +173,11 @@ func TestSchemaHasDisjointTargetsAndNoRetiredPublicFields(t *testing.T) {
 			}
 		}
 	}
-	if _, found := tunnelSchema().Properties.Get("open"); found {
-		t.Fatal("browser opening is still a tunnel field")
+	http, _ := service.Properties.Get("http")
+	if _, found := http.Properties.Get("open"); !found {
+		t.Fatal("browser opening is missing from HTTP settings")
 	}
-	limits, _ := tunnelSchema().Properties.Get("limits")
-	for _, key := range []string{"http", "tcp", "traffic"} {
-		if _, found := limits.Properties.Get(key); !found {
-			t.Fatalf("missing %s limits", key)
-		}
-	}
-	traffic, _ := limits.Properties.Get("traffic")
+	traffic, _ := service.Properties.Get("traffic")
 	for _, key := range []string{"connections", "rate", "rate_per", "burst", "upload_bytes", "download_bytes", "total_connections", "total_upload_bytes", "total_download_bytes"} {
 		if _, found := traffic.Properties.Get(key); !found {
 			t.Fatalf("traffic field %s is missing", key)

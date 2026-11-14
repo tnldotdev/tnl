@@ -137,7 +137,7 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 		if output.Delegated != nil {
 			output.Delegated()
 		}
-		private := ServiceOptions{PublicOptions: flags.PublicOptions, Protocol: string(service.Protocol), ConfiguredPrivate: true, TargetTLS: flags.TargetTLS, PublisherCredentialFile: selection.PublisherCredentialFile, PublisherIdentityID: identity.ClientId, EnrollmentInput: input}
+		private := ServiceOptions{PublicOptions: flags.PublicOptions, Protocol: string(service.Protocol), ConfiguredPrivate: true, TargetTLS: flags.TargetTLS, PublisherCredentialFile: selection.PublisherCredentialFile, PublisherIdentityID: identity.ClientId, EnrollmentInput: input, Traffic: flags.Traffic}
 		private.ServerURL = server
 		if private.PublisherCredentialFile != "" {
 			private.PublisherIdentityID = ""
@@ -252,11 +252,7 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 		prefixes = slices.Clone(*publicURL.AllowedIpPrefixes)
 	}
 	transportTLS := &tls.Config{MinVersion: tls.VersionTLS13}
-	traffic, err := config.ResolveTrafficSelection(flags.WorkLimits)
-	if err != nil {
-		return err
-	}
-	native, err = native.WithTraffic(traffic)
+	native, err = native.WithTraffic(flags.Traffic)
 	if err != nil {
 		return err
 	}

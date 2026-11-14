@@ -114,7 +114,7 @@ func TestIngressStalledAttemptLeavesFallbackBudget(t *testing.T) {
 			}
 			fallback := newServiceTLSRelay(t)
 			config := serviceIngressConfig(t, first, fallback.open)
-			config.PublicServices.config.PendingTimeout = 2 * time.Second
+			config.OpenTimeout = 2 * time.Second
 			_, address := startIngress(t, config)
 			client := ingressClient(t, address, "route.example", "192.0.2.4:42000")
 			if err := client.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
@@ -138,7 +138,7 @@ func TestIngressStalledAttemptLeavesFallbackBudget(t *testing.T) {
 func TestForcedDrainCancelsPendingOpen(t *testing.T) {
 	entered := make(chan struct{})
 	config := serviceIngressConfig(t, waitingServiceRelay(entered))
-	config.PublicServices.config.PendingTimeout = 2 * time.Second
+	config.OpenTimeout = 2 * time.Second
 	server, address := startIngress(t, config)
 	client := ingressClient(t, address, "route.example", "192.0.2.4:42000")
 	handshake := ingressWorker(t, func() { _ = client.Close() }, client.Handshake)
@@ -162,7 +162,7 @@ func TestForcedDrainCancelsPendingOpen(t *testing.T) {
 func TestIngressBothBackendsUnavailable(t *testing.T) {
 	first, second := make(chan struct{}), make(chan struct{})
 	config := serviceIngressConfig(t, waitingServiceRelay(first), waitingServiceRelay(second))
-	config.PublicServices.config.PendingTimeout = 200 * time.Millisecond
+	config.OpenTimeout = 200 * time.Millisecond
 	_, address := startIngress(t, config)
 	client := ingressClient(t, address, "route.example", "192.0.2.4:42000")
 	_ = client.SetDeadline(time.Now().Add(time.Second))

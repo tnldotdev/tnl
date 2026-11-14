@@ -91,7 +91,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	member := owner.Identity.Memberships[0]
-	service, err := d.CreateServiceAt(ctx, member.TeamID, owner.Identity.Identity.ID, "claims", "claims", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(ctx, member.TeamID, owner.Identity.Identity.ID, "claims", "claims", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 )
 
@@ -27,6 +28,7 @@ type HTTPFrontend interface {
 }
 
 type HTTPTarget struct {
+	Drain     httpstream.Drain
 	Address   string
 	Handler   http.Handler
 	Transport targettransport.Transport

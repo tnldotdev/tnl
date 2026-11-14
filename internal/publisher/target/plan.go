@@ -32,7 +32,7 @@ func (p *TargetPlan) Normalize() error {
 	}
 	if p.Project != nil {
 		definition, found := p.Project.Config.Services[p.ProjectService]
-		if !found || !filepath.IsAbs(p.Project.Root) || config.IsPublicService(definition) || config.Protocol(definition) != string(p.Protocol) || config.TargetType(definition) == "app" {
+		if !found || !filepath.IsAbs(p.Project.Root) || config.Protocol(definition) != string(p.Protocol) || config.TargetType(definition) == "app" {
 			return ErrScope
 		}
 	} else if p.ProjectService != "" {

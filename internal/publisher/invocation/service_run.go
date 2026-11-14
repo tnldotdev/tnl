@@ -72,7 +72,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	if err != nil {
 		return publisherapp.Configuration{}, err
 	}
-	traffic, err := config.ResolveTrafficSelection(effectiveTunnelLimits(effective))
+	traffic, err := config.ResolveTrafficSelection(effective.Traffic)
 	if err != nil {
 		return publisherapp.Configuration{}, err
 	}
@@ -103,7 +103,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	if err != nil {
 		return publisherapp.Configuration{}, err
 	}
-	publication := &publisherapp.ServicePublication{Options: clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish,
+	publication := &publisherapp.ServicePublication{Options: clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, ServiceID: saved.Id,
 		Server: auth.ServerEndpoint, Project: project.Root, Target: service.Target, Service: service.Name, ServiceProtocol: saved.Protocol}, Check: readiness.check, URL: readiness.publicURL}
 	publication.Run = func(ctx context.Context, observe func(uint64, bool) error, summary inspection.Observer) error {
 		var pending targetplan.TargetSnapshot
@@ -119,10 +119,16 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 			return nil
 		}
 		publish := func() error {
-			return targetplan.PublishPrivate(ctx, plan, publisherservice.RunConfig{Telemetry: a.Telemetry, Control: native, State: profile, Access: native.Access, Identity: identity, ServiceID: saved.Id, Target: plan.Target, Metadata: publisheridentity.ServiceMetadata(saved),
+			runCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			var prepared *serviceRunBinding
+			var notified bool
+			var observationError error
+			err := targetplan.PublishPrivate(runCtx, plan, publisherservice.RunConfig{Telemetry: a.Telemetry, Control: native, State: profile, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: saved.Id, Target: plan.Target, Metadata: publisheridentity.ServiceMetadata(saved),
 				InspectionMode: policy.Mode, ObserveSummary: summary,
 				Prepared: func(preparation controlv1.ServiceRunPreparation) error {
-					readiness.prepare(pending, preparation)
+					prepared = readiness.prepare(pending, preparation)
+					notified = false
 					return observe(uint64(preparation.RunNumber), false)
 				},
 				AdmitRequest: func(r *http.Request) error {
@@ -145,15 +151,27 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 					}
 					return observation.Ready
 				}, Ready: func() error {
-					run := readiness.load().run.Number
-					if err := observe(run, true); err != nil {
+					if prepared == nil {
+						return publisherapp.ErrRegistrationStale
+					}
+					if err := observe(prepared.run.Number, true); err != nil {
 						return err
 					}
-					current := service
-					current.RunNumber = run
-					a.manager.Observe(readiness.check(ctx, current))
+					notified = true
 					return nil
+				}, ObserveReadiness: func(status publisherservice.RunStatus) {
+					// the runtime reports status before its first Ready callback.
+					// only that callback announces initial publication; later status
+					// changes use the manager's current availability, not a copy.
+					if !notified || runCtx.Err() != nil || observationError != nil {
+						return
+					}
+					if err := a.observeServiceReadiness(service, prepared.run, status, observe); err != nil {
+						observationError = err
+						cancel()
+					}
 				}}, targetplan.TargetHooks{Resolver: a.TargetResolver, Capture: capture})
+			return errors.Join(err, observationError)
 		}
 		for attempt := 0; ctx.Err() == nil; attempt++ {
 			err := publish()
@@ -187,6 +205,17 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	return publisherapp.Configuration{Service: publication, Inspection: policy, PrimaryRoot: primary, SharedRoot: shared}, nil
 }
 
+func (a *ProjectRuntime) observeServiceReadiness(service publisherapp.Service, run httpaccess.ReadinessRun, status publisherservice.RunStatus, observe func(uint64, bool) error) error {
+	current, ok := a.manager.ServiceForRun(service.Name, service.RegistrationID, service.Target, run.Number)
+	if !ok {
+		return publisherapp.ErrRegistrationStale
+	}
+	if current.Routable == status.Ready {
+		return nil
+	}
+	return observe(run.Number, status.Ready)
+}
+
 type serviceRunBinding struct {
 	target targetplan.TargetSnapshot
 	run    httpaccess.ReadinessRun
@@ -195,6 +224,8 @@ type serviceRunBinding struct {
 
 // preparation replaces the entire binding, including its proof. public probes
 // serialize renewal through consumption without holding the binding mutex.
+// runtime callbacks borrow that same binding's immutable run facts rather than
+// following a later preparation or keeping another run counter.
 type serviceRunReadiness struct {
 	binding   *targetplan.TargetBinding
 	transport targettransport.Transport
@@ -202,28 +233,32 @@ type serviceRunReadiness struct {
 	publicURL string
 	mu        sync.Mutex
 	probeMu   sync.Mutex
-	current   serviceRunBinding
+	current   *serviceRunBinding
 }
 
 func (r *serviceRunReadiness) load() serviceRunBinding {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.current
+	if r.current == nil {
+		return serviceRunBinding{}
+	}
+	return *r.current
 }
 
-func (r *serviceRunReadiness) prepare(target targetplan.TargetSnapshot, preparation controlv1.ServiceRunPreparation) {
+func (r *serviceRunReadiness) prepare(target targetplan.TargetSnapshot, preparation controlv1.ServiceRunPreparation) *serviceRunBinding {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.current = serviceRunBinding{target: target, run: httpaccess.ReadinessRun{
+	r.current = &serviceRunBinding{target: target, run: httpaccess.ReadinessRun{
 		Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: preparation.ServiceId},
 		ID:      preparation.ServiceRunId, Number: uint64(preparation.RunNumber), Hostname: preparation.Hostname,
 	}}
+	return r.current
 }
 
 func (r *serviceRunReadiness) proof(run httpaccess.ReadinessRun) *httpaccess.ReadinessProof {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.current.run != run {
+	if r.current == nil || r.current.run != run {
 		return nil
 	}
 	path := r.path

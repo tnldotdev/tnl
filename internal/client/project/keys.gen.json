@@ -5,7 +5,6 @@
   "max_bytes": "maxBytes",
   "max_duration": "maxDuration",
   "pipeline_source": "pipelineSource",
-  "public_url": "publicURL",
   "publisher_pool": "publisherPool",
   "rate_per": "ratePer",
   "require_post_quantum": "requirePostQuantum",

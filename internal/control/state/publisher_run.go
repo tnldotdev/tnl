@@ -17,33 +17,13 @@ func publisherOwnsRun(ctx context.Context, q *controlstatedb.Queries, p Publishe
 	if p.Scope.TeamID != u.TeamID || u.LifecycleState != "enabled" {
 		return ErrPublisherIdentity
 	}
-	if p.Scope.Kind == DeploymentCredentialGrant {
-		allowed, err := q.DeploymentPublicationAllowed(ctx, controlstatedb.DeploymentPublicationAllowedParams{GrantID: p.GrantID, PublicURLID: u.ID})
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			return ErrPublisherIdentity
-		}
-		return nil
-	}
 	if p.Scope.Kind == "saved_public_url" {
 		if p.Scope.PublicURLID != u.ID || p.GuestID == "" && u.Ephemeral {
 			return ErrPublisherIdentity
 		}
 		return validatePublisherScope(ctx, q, p.Scope, p.GuestID)
 	}
-	if p.Scope.Kind != "namespace" || p.GuestID != "" || !u.Ephemeral || u.ServiceProtocol != "http" || u.DomainID != p.Scope.DomainID || u.Namespace != p.Scope.Namespace {
-		return ErrPublisherIdentity
-	}
-	a, err := q.GetPublisherAllocation(ctx, u.ID)
-	if err != nil {
-		return publisherLookupError(err, ErrPublisherIdentity)
-	}
-	if a.PublisherIdentityID != p.ID || a.PublisherGrantID != p.GrantID {
-		return ErrPublisherIdentity
-	}
-	return validatePublisherScope(ctx, q, p.Scope, "")
+	return ErrPublisherIdentity
 }
 
 func (d *Database) authorizePublisherRun(ctx context.Context, q *controlstatedb.Queries, u controlstatedb.ControlPublicUrl, r PublishRunRequest, now time.Time) ([32]byte, error) {
@@ -107,7 +87,7 @@ func (d *Database) publisherRunLive(ctx context.Context, q *controlstatedb.Queri
 }
 
 func (d *Database) PublisherRunPlan(ctx context.Context, p PublisherIdentity, u PublicURL, _ bool) (authorization.CertificatePlan, error) {
-	if p.Scope.Kind != "saved_public_url" && p.Scope.Kind != "namespace" && p.Scope.Kind != DeploymentCredentialGrant || u.TeamID != p.Scope.TeamID || u.LifecycleState != PublicURLLifecycleEnabled || p.Scope.Kind == "saved_public_url" && u.ID != p.Scope.PublicURLID || p.Scope.Kind == "namespace" && (!u.Ephemeral || u.ServiceProtocol != PublicURLServiceHTTP) {
+	if p.Scope.Kind != "saved_public_url" || u.TeamID != p.Scope.TeamID || u.LifecycleState != PublicURLLifecycleEnabled || u.ID != p.Scope.PublicURLID {
 		return authorization.CertificatePlan{}, ErrPublisherIdentity
 	}
 	domain, err := controlstatedb.New(d.pool).GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: u.DomainID, TeamID: text(u.TeamID)})
@@ -115,7 +95,7 @@ func (d *Database) PublisherRunPlan(ctx context.Context, p PublisherIdentity, u 
 		return authorization.CertificatePlan{}, err
 	}
 	plan := publisherCertificatePlan(p, u.CanonicalHostname, u.Namespace, domain.Kind == "custom" && u.PublicURLScope == PublicURLScopeShared)
-	if plan == nil || !certificateidentity.Covers(plan.Identifiers, u.CanonicalHostname) || p.Scope.Kind == "namespace" && plan.ChallengeMethod != certificateidentity.ChallengeDNS01 {
+	if plan == nil || !certificateidentity.Covers(plan.Identifiers, u.CanonicalHostname) {
 		return authorization.CertificatePlan{}, ErrPublisherIdentity
 	}
 	return *plan, nil
@@ -123,11 +103,8 @@ func (d *Database) PublisherRunPlan(ctx context.Context, p PublisherIdentity, u 
 
 func publisherCertificatePlan(p PublisherIdentity, hostname, namespace string, apexAllowed bool) *authorization.CertificatePlan {
 	// a saved-URL grant cannot give its publisher a key covering sibling URLs.
-	if p.Scope.Kind == "saved_public_url" || p.Scope.Kind == DeploymentCredentialGrant {
+	if p.Scope.Kind == "saved_public_url" {
 		return authorization.PublicURLCertificatePlan(hostname, hostname, false, false)
 	}
-	if p.Scope.Kind != "namespace" || p.Scope.Namespace != namespace {
-		return nil
-	}
-	return authorization.PublicURLCertificatePlan(hostname, namespace, apexAllowed, true)
+	return nil
 }

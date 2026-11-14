@@ -30,15 +30,14 @@ type ingressRuntime struct {
 	server             *ingress.Server
 	forwarder          *ingress.Forwarder
 	recovery           *ingress.RecoveryReporter
-	publicServices     *ingress.PublicServices
 	audit              *ingressServiceAudit
 }
 
 func (r *ingressRuntime) load() int64 {
-	if r.publicServices == nil {
+	if r.server == nil {
 		return 0
 	}
-	return r.publicServices.Load()
+	return r.server.Load()
 }
 
 // only fully constructed controllers enter the immutable collection snapshot.
@@ -102,12 +101,11 @@ type ingressRuntimeControl interface {
 }
 
 type ingressRuntimeConfig struct {
-	client                  ingressRuntimeControl
-	ingressID               string
-	listener                net.Listener
-	clusterSecret           string
-	configure               func(*ingress.Config)
-	configurePublicServices func(*ingress.PublicServicesConfig)
+	client        ingressRuntimeControl
+	ingressID     string
+	listener      net.Listener
+	clusterSecret string
+	configure     func(*ingress.Config)
 }
 
 type ingressSettings struct {
@@ -169,8 +167,8 @@ func (d *daemon) startIngressRuntime(
 			flush, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			_ = runtime.audit.Close(flush)
 			cancel()
-			if runtime.publicServices != nil {
-				_ = runtime.publicServices.Close()
+			if runtime.server != nil {
+				_ = runtime.server.Close()
 			}
 			if runtime.forwarder != nil {
 				_ = runtime.forwarder.Close()
@@ -246,6 +244,8 @@ func (d *daemon) startIngressRuntime(
 	}
 	ingressConfig := ingress.Config{
 		AuditSink: runtime.audit,
+		Control:   runtimeConfig.client, Forwarder: forwarder, CurrentLease: controller.Lease,
+		IngressPoolID: string(settings.ingressPoolID), ServicePortRanges: settings.servicePortRanges.Ranges(),
 		Lookup: func(hostname string) ([]ingress.PublicURL, ingress.LookupReason) {
 			entries, reason := controller.Lookup(hostname, time.Now())
 			if reason != ingress.LookupCurrent {
@@ -279,17 +279,6 @@ func (d *daemon) startIngressRuntime(
 		runtimeConfig.configure(&ingressConfig)
 	}
 	ingressConfig.AuditSink = runtime.audit
-	publicServicesConfig := ingress.PublicServicesConfig{IngressPoolID: string(settings.ingressPoolID), Control: runtimeConfig.client, Forwarder: forwarder, CurrentLease: controller.Lease, AuditSink: runtime.audit,
-		Metrics: ingressConfig.Metrics, Observer: ingressConfig.Observer}
-	if runtimeConfig.configurePublicServices != nil {
-		runtimeConfig.configurePublicServices(&publicServicesConfig)
-	}
-	publicServicesConfig.AuditSink = runtime.audit
-	runtime.publicServices, err = ingress.NewPublicServices(publicServicesConfig)
-	if err != nil {
-		return err
-	}
-	ingressConfig.PublicServices, ingressConfig.ServicePortRanges = runtime.publicServices, settings.servicePortRanges.Ranges()
 	ingressConfig.Traffic, ingressConfig.Pending, err = daemonconfig.ValidateIngressTraffic(ingressConfig.Traffic, ingressConfig.Pending)
 	if err != nil {
 		_ = forwarder.Close()

@@ -11,6 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -59,6 +60,8 @@ type ServiceOptions struct {
 	Install                 bool
 	System                  bool
 	ServiceName             string
+	StreamCapacity          int32
+	Traffic                 *trafficlimits.Selection
 	SystemStateDir          string
 	ServerCAFile            string
 	Installation            installedjobs.ServiceOptions
@@ -87,7 +90,7 @@ type EnrolledOptions struct {
 	Protocol            string
 	TargetTLS           *bool
 	Enrolled            bool
-	WorkLimits          *config.Limits
+	Traffic             *trafficlimits.Selection
 	ReadinessPath       string
 	SelectProtocol      func(controlv1.PublicURLServiceProtocol) (applicationlimits.Limits, error)
 	SelectPrivate       func(controlv1.ServiceProtocol) (applicationlimits.Limits, error)

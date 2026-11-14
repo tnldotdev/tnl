@@ -60,7 +60,7 @@ func deploymentFixture(t *testing.T) (*deploymentControl, ed25519.PrivateKey) {
 	deployment := "cloud"
 	return &deploymentControl{expires: time.Now().Add(time.Second), acks: make(chan controlv1.DeploymentPublisherAcknowledgement, 100), assignment: controlv1.DeploymentPublisherAssignments{
 		Member: controlv1.DeploymentPublisherIdentity{DeploymentId: "deployment-one", DeploymentName: deployment, ProjectKey: "project-one", PublisherIdentityId: "publisher-one", KeyId: "key-one", TeamId: "team-one"}, Revision: 1, ConfigurationHash: strings.Repeat("a", 64),
-		Services: []controlv1.DeploymentPublisherServiceAssignment{{Service: "db", ServiceId: "private-one", GrantId: "exact-grant", ServiceKind: "service", Configuration: controlv1.ProjectServiceConfiguration{Target: "db.internal:5432"}}},
+		Services: []controlv1.DeploymentPublisherServiceAssignment{{Service: "db", ServiceId: "private-one", GrantId: "exact-grant", Configuration: controlv1.ProjectServiceConfiguration{Target: "db.internal:5432"}}},
 	}}, key
 }
 func receive(t *testing.T, channel <-chan string) string {

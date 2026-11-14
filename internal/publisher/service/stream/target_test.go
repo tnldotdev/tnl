@@ -16,8 +16,8 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
-	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 )
 
 func TestManagedVisitorTLSWithPlaintextHTTPTarget(t *testing.T) {
@@ -37,16 +37,24 @@ func testManagedVisitorTLSWithPlaintextHTTPTarget(t *testing.T, h2 bool) {
 		if r.TLS != nil {
 			t.Error("plaintext target unexpectedly used TLS")
 		}
-		if r.Header.Get(publisherproxy.ReadinessProbeHeader) != "" || publisherproxy.IsReadinessProbe(r) {
+		if r.Header.Get(httpstream.ReadinessProbeHeader) != "" || httpstream.IsReadinessProbe(r) {
 			t.Error("connector request supplied an owner readiness proof")
 		}
 		_, _ = io.WriteString(w, "plaintext backend")
 	}))
 	defer target.Close()
 	summaries := make(chan inspection.Summary, 2)
+	var observed atomic.Int32
 	var replaced atomic.Bool
 	server := servicestream.Stream{Protocol: config.ProtocolHTTP, Hostname: host, Target: strings.TrimPrefix(target.URL, "http://"),
 		InspectionMode: inspection.SummaryMode, ObserveSummary: func(summary inspection.Summary) { summaries <- summary },
+		HTTPResponseHooks: httpstream.ResponseHooks{Observe: func(response *http.Response) error {
+			if response.Request.Host != host || response.Request.URL.Host != target.Listener.Addr().String() {
+				t.Error("connector hooks lost the admitted hostname or changed target identity")
+			}
+			observed.Add(1)
+			return nil
+		}},
 		AdmitRequest: func(*http.Request) error {
 			if replaced.Load() {
 				return errors.New("app owner replaced")
@@ -65,7 +73,7 @@ func testManagedVisitorTLSWithPlaintextHTTPTarget(t *testing.T, h2 bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request.Header.Set(publisherproxy.ReadinessProbeHeader, "forged-owner-proof")
+	request.Header.Set(httpstream.ReadinessProbeHeader, "forged-owner-proof")
 	response, err := client.Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -78,6 +86,9 @@ func testManagedVisitorTLSWithPlaintextHTTPTarget(t *testing.T, h2 bool) {
 	}
 	if err != nil || string(body) != "plaintext backend" || response.ProtoMajor != wantProtocol {
 		t.Fatalf("verified visitor to plaintext target: %q %v", body, err)
+	}
+	if observed.Load() != 1 {
+		t.Fatal("connector HTTP bypassed run response hooks", observed.Load())
 	}
 	select {
 	case summary := <-summaries:

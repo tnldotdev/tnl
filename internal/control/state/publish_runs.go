@@ -188,10 +188,6 @@ func (d *Database) createPublishRun(
 	if err := authenticatePublishRunRequest(route, request); err != nil {
 		return PublishRunSetup{}, err
 	}
-	request.TrafficSelection, err = d.appliedProjectTraffic(ctx, tx, request.PublicURLID, request.TrafficSelection)
-	if err != nil {
-		return result, err
-	}
 	request.RequestDigest, err = runTrafficDigest(request.RequestDigest, request.TrafficSelection)
 	if err != nil {
 		return result, err

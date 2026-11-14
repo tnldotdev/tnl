@@ -210,7 +210,7 @@ func privateFixture(t *testing.T, target string) (*Prepared, *Bound, tunnelv1.Se
 	plan := controlv1.CertificatePlan{CacheKey: "service-test", Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: controlv1.Dns01}
 	prep := controlv1.ServiceRunPreparation{TeamId: team, ServiceId: service, ServiceRunId: id(opaqueid.ServiceRunPrefix), RunNumber: 7, PublisherIdentityId: identity.ClientId, PublisherGrantId: identity.GrantId, PublisherKeyId: identity.KeyId, IdempotencyKey: id(opaqueid.IdempotencyPrefix), ExpiresAt: time.Now().Add(time.Minute), Hostname: hostname, DomainId: domain, CertificatePlan: &plan, Traffic: serviceTrafficFixture()}
 	approved := controlv1.Service{Id: service, TeamId: team, DomainId: &domain, Protocol: controlv1.Tcp, Enabled: true, TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: hostname, Port: 25443}}
-	p, err := newManagedPrepared(prep, approved, RunConfig{Identity: identity, Target: target})
+	p, err := newManagedPrepared(prep, approved, RunConfig{PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, Target: target})
 	if err != nil {
 		t.Fatal(err)
 	}

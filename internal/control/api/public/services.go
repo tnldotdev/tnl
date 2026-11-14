@@ -17,7 +17,7 @@ import (
 )
 
 type serviceVisitorStore interface {
-	CreateServiceAt(context.Context, string, string, string, string, controlstate.ServicePlacement, time.Time, controlstate.ServiceMetadata) (controlstate.ServiceRecord, error)
+	CreateServiceAt(context.Context, string, string, string, string, controlstate.ServicePlacement, time.Time, controlstate.ServiceMetadata, *controlstate.ProjectServiceConfiguration) (controlstate.ServiceRecord, error)
 	ConfigureService(context.Context, string, string, controlstate.ServiceMetadata, time.Time) (controlstate.ServiceRecord, error)
 	GetService(context.Context, string, string) (controlstate.ServiceRecord, error)
 	DeleteService(context.Context, string, string, time.Time) error
@@ -128,24 +128,36 @@ func (h *handler) CreateService(w http.ResponseWriter, r *http.Request, _ contro
 	if !ok {
 		return
 	}
-	metadata := controlstate.ServiceMetadata{Protocol: "tcp", TLS: targetTLSInput(body.TargetTls)}
+	var configuration *controlstate.ProjectServiceConfiguration
+	if body.Configuration != nil {
+		encoded, err := json.Marshal(body.Configuration)
+		if err != nil || json.Unmarshal(encoded, &configuration) != nil {
+			writeProblem(w, 400, controlv1.InvalidRequest, "invalid service declaration")
+			return
+		}
+	}
+	metadata := controlstate.ServiceMetadata{TLS: targetTLSInput(body.TargetTls)}
+	if configuration == nil {
+		metadata.Protocol = "tcp"
+	}
 	if body.Protocol != nil {
 		metadata.Protocol = string(*body.Protocol)
 	}
 	if body.PublisherPool != nil {
 		metadata.PublisherPool = *body.PublisherPool
 	}
-	if metadata.Validate() != nil {
+	if configuration == nil && metadata.Validate() != nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service protocol or TLS trust")
 		return
 	}
 	placement := controlstate.ServicePlacement{DNSAutomation: h.config.DNSAutomation}
 	if body.Placement != nil {
 		placement.DomainID = optionalFeedbackString(body.Placement.DomainId)
+		placement.Hostname = optionalFeedbackString(body.Placement.Hostname)
 		placement.WorktreeKey = optionalFeedbackString(body.Placement.WorktreeKey)
 		placement.WorktreeLabel = optionalFeedbackString(body.Placement.WorktreeLabel)
 	}
-	record, err := store.CreateServiceAt(r.Context(), body.TeamId, identity, body.Name, r.Header.Get("Idempotency-Key"), placement, time.Now(), metadata)
+	record, err := store.CreateServiceAt(r.Context(), body.TeamId, identity, body.Name, r.Header.Get("Idempotency-Key"), placement, time.Now(), metadata, configuration)
 	if err != nil {
 		serviceVisitorError(r.Context(), w, "create service", err)
 		return
@@ -190,13 +202,9 @@ func (h *handler) GetService(w http.ResponseWriter, r *http.Request, id controlv
 	writeJSON(w, 200, serviceaccess.Service(record))
 }
 
-func (h *handler) GetPublisherService(w http.ResponseWriter, r *http.Request) {
+func (h *handler) GetPublisherService(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID) {
 	_, publisher, ok := h.authenticatePublisher(w, r)
 	if !ok {
-		return
-	}
-	if publisher.Scope.Kind != "service" {
-		writeProblem(w, 404, controlv1.NotFound, "service not found")
 		return
 	}
 	store, ok := h.dependencies.Services, h.dependencies.Services != nil
@@ -204,7 +212,7 @@ func (h *handler) GetPublisherService(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, 503, controlv1.Unavailable, "service state is unavailable")
 		return
 	}
-	record, err := store.GetServiceForPublisher(r.Context(), publisher.Scope.ServiceID, publisher, time.Now())
+	record, err := store.GetServiceForPublisher(r.Context(), serviceID, publisher, time.Now())
 	if err != nil {
 		serviceVisitorError(r.Context(), w, "read publisher service", err)
 		return

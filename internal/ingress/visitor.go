@@ -203,7 +203,7 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		s.reportForwardingFailure(route, visitorID, ForwardingNoBackend, len(backends))
 		return openErr
 	}
-	defer s.releaseBackend(ctx, opened.connection)
+	defer func() { retErr = errors.Join(retErr, opened.connection.Close()) }()
 	upstreamClosed := make(chan struct{})
 	stopUpstream := context.AfterFunc(ctx, func() {
 		defer close(upstreamClosed)
@@ -335,8 +335,9 @@ func (s *Server) openVisitorStream(ctx context.Context, backends []Backend, visi
 			s.observeRelayAttempt(backend, observability.RelayAttemptOpenFailed)
 			continue
 		}
-		if !s.trackBackend(candidate) {
-			return committedVisitorStream{}, &tunnel.OpeningError{Committed: len(prefix) > 0, VisitorBytes: int64(len(prefix)), Err: errors.Join(errBackendTrackingClosed, candidate.Close())}
+		candidate, trackErr := s.observeBackend(ctx, candidate)
+		if trackErr != nil {
+			return committedVisitorStream{}, &tunnel.OpeningError{Committed: len(prefix) > 0, VisitorBytes: int64(len(prefix)), Err: trackErr}
 		}
 		s.observeAttempt(ctx, attempt, nil, started)
 		s.observeRelayAttempt(backend, observability.RelayAttemptCommitted)

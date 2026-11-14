@@ -22,6 +22,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
@@ -49,10 +50,12 @@ type Prepared struct {
 	managedHostname     string
 	managedProtocol     config.ProtocolName
 	managedTargetTLS    *tls.Config
+	visitorTLS          *tls.Config
 	managedVisitor      func(tunnelv1.ServiceForwardingHeader) servicestream.Authentication
 	servicePort         uint16
 	managedPublic       bool
 	serviceHTTPRequests *requestlimit.HTTP
+	httpResponseHooks   httpstream.ResponseHooks
 	policy              *visitorlease.Lease
 	metadataRevision    int64
 }
@@ -109,6 +112,9 @@ type boundState struct {
 	connectorPeers   map[string]*PeerSession
 	packetSlots      [2]*Claimed
 	closePolicy      func()
+	httpDrain        chan struct{}
+	httpDrainUntil   time.Time
+	httpWorkers      sync.WaitGroup
 }
 
 func (Bound) String() string   { return "private publisher run" }
@@ -524,6 +530,52 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 }
 
 func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor servicestream.Authentication, authority string) error {
+	b.mu.Lock()
+	if b.closed || !b.httpDrainUntil.IsZero() {
+		b.mu.Unlock()
+		return ErrPrivateStream
+	}
+	if b.httpDrain == nil {
+		b.httpDrain = make(chan struct{})
+	}
+	drain := httpstream.Drain{Started: b.httpDrain, Deadline: func() time.Time {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.httpDrainUntil
+	}}
+	http := b.prepared.managedProtocol == config.ProtocolHTTP || b.prepared.managedProtocol == config.ProtocolKubernetes
+	if http {
+		b.httpWorkers.Add(1)
+	}
+	b.mu.Unlock()
+	if http {
+		// cover target resolution and visitor TLS as well as the HTTP server.
+		// the run's fixed fence closes stalled setup without canceling responses
+		// when graceful drain starts.
+		life, cancel := context.WithCancel(ctx)
+		fenced := make(chan struct{})
+		go func() {
+			defer close(fenced)
+			select {
+			case <-life.Done():
+				return
+			case <-drain.Started:
+			}
+			timer := time.NewTimer(time.Until(drain.Deadline()))
+			defer timer.Stop()
+			select {
+			case <-life.Done():
+			case <-timer.C:
+				cancel()
+			}
+		}()
+		ctx = life
+		defer func() {
+			cancel()
+			<-fenced
+			b.httpWorkers.Done()
+		}()
+	}
 	check := func() error {
 		if native, ok := visitor.(servicestream.ConnectorVisitor); ok {
 			_, err := native.Admission.CheckUse(ctx)
@@ -559,10 +611,34 @@ func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor ser
 	}
 	managed := servicestream.Stream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, Handler: b.prepared.handler, HTTPRequests: b.prepared.serviceHTTPRequests,
 		InspectionMode: b.prepared.inspectionMode, ObserveSummary: b.prepared.observeSummary,
-		AdmitRequest: b.prepared.admitRequest,
-		Authority:    authority,
-		TLS:          &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: visitor}
+		AdmitRequest: b.prepared.admitRequest, HTTPResponseHooks: b.prepared.httpResponseHooks, HTTPDrain: drain,
+		Authority: authority,
+		TLS:       b.prepared.visitorTLS, TargetTLS: targetTLS, Visitor: visitor}
 	return managed.Forward(ctx, stream)
+}
+
+// startHTTPDrain fences new forwarding under the same lock as worker entry.
+// existing public, connector, and base HTTP work retains its authority checks.
+func (b *Bound) startHTTPDrain(until time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.httpDrain == nil {
+		b.httpDrain = make(chan struct{})
+	}
+	if b.httpDrainUntil.IsZero() {
+		b.httpDrainUntil = until
+		close(b.httpDrain)
+	}
+}
+
+func (b *Bound) joinHTTPDrain() error {
+	b.httpWorkers.Wait()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !time.Now().Before(b.httpDrainUntil) {
+		return context.DeadlineExceeded
+	}
+	return nil
 }
 
 func headerMatches(ref tunnelv1.ServicePublisherConnectionRef, h tunnelv1.ServiceForwardingHeader, now time.Time) bool {

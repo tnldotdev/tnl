@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -17,14 +18,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -57,19 +62,68 @@ func IsolatedPublishingTest(t *testing.T) bool {
 	return false
 }
 
-type PublishingHooks struct {
-	Ready func(context.Context, controlv1.PublishRunSetup) error
-	Close func(controlv1.PublishRunSetup) error
+type PublishingRun struct {
+	Service     controlv1.Service
+	Preparation controlv1.ServiceRunPreparation
+	Setup       controlv1.ServiceRunSetup
 }
 
-// PublishingFixture supplies local control/authority responses and real
-// TLS/yamux publisher connections. it drives the unmodified command and
-// publisher implementations without PostgreSQL, DNS, ACME, or paid resources.
+type PublishingHooks struct {
+	Ready func(context.Context, PublishingRun) error
+	Close func(PublishingRun) error
+}
+
+type publishingRunState struct {
+	PublishingRun
+	installed, closed, notified, healthy bool
+	issuance                             *controlv1.ServiceCertificateIssuance
+	csr                                  []byte
+	issuanceKey                          string
+}
+
+type publishingConnection struct {
+	session *tunnel.Session
+	ref     tunnelv1.ServicePublisherConnectionRef
+}
+
+// publishingfixture is a local fake control boundary with real TLS/yamux
+// connections. it contains no second publication engine or PostgreSQL dependency.
 type PublishingFixture struct {
-	URL         string
-	CAFile      string
-	AccessToken string
-	Namespace   string
+	URL, CAFile, AccessToken, Namespace string
+	mu                                  sync.Mutex
+	services                            map[string]controlv1.Service
+	configurations                      map[string]controlv1.ProjectServiceConfiguration
+	createKeys                          map[string]string
+	publishers                          map[string]authorityv1.PublisherEnrollmentResult
+	runs                                map[string]*publishingRunState
+	current                             map[string]string
+	connections                         map[string]publishingConnection
+	relayAddress                        string
+	ca                                  *x509.Certificate
+	key                                 *ecdsa.PrivateKey
+	hooks                               PublishingHooks
+	t                                   *testing.T
+}
+
+func publishingID(t *testing.T, prefix string) string {
+	t.Helper()
+	id, err := opaqueid.New(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func publishingClone[T any](value T) T {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	var result T
+	if err := json.Unmarshal(data, &result); err != nil {
+		panic(err)
+	}
+	return result
 }
 
 func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixture {
@@ -82,11 +136,9 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	ca := &x509.Certificate{
-		SerialNumber: big.NewInt(1), NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
+	ca := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
 		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
-		DNSNames: []string{"localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
-	}
+		DNSNames: []string{"localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}}
 	der, err := x509.CreateCertificate(rand.Reader, ca, ca, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)
@@ -99,186 +151,458 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 	roots.AddCert(ca)
 	t.Setenv("GODEBUG", os.Getenv("GODEBUG")+",x509usefallbackroots=1")
 	x509.SetFallbackRoots(roots)
-	certificate := tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: ca}
-	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}
-	fixture := &PublishingFixture{Namespace: "member.routes.example", CAFile: filepath.Join(t.TempDir(), "ca.pem")}
-	if err := os.WriteFile(fixture.CAFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key, Leaf: ca}}}
+	f := &PublishingFixture{Namespace: "member.services.example", CAFile: filepath.Join(t.TempDir(), "ca.pem"), ca: ca, key: key, hooks: hooks, t: t,
+		services: map[string]controlv1.Service{}, configurations: map[string]controlv1.ProjectServiceConfiguration{}, createKeys: map[string]string{},
+		publishers: map[string]authorityv1.PublisherEnrollmentResult{}, runs: map[string]*publishingRunState{}, current: map[string]string{},
+		connections: map[string]publishingConnection{}}
+	if err := os.WriteFile(f.CAFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	access, _, _, err := credentials.NewAccessToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture.AccessToken = access.String()
-	relayAddress := publishingRelay(t, tlsConfig)
-
-	const teamID = "tm_0000000000000000000001"
-	const domainID = "dom_0000000000000000000001"
-	const membershipID = "mem_0000000000000000000001"
-	identity := authorityv1.IdentityContext{
-		Identity: authorityv1.Identity{Id: "ident_0000000000000000000001"}, PersonalTeamId: teamID,
-		Memberships: []authorityv1.Membership{{Id: membershipID, TeamId: teamID, ManagedLabel: "member", MemberSlug: "member", Role: authorityv1.TeamRoleOwner, TeamKind: authorityv1.Personal}},
-	}
-	team := authorityv1.Team{Id: teamID, DefaultDomainId: domainID, PolicyRevision: 1, Kind: authorityv1.Personal}
-	domain := authorityv1.Domain{Id: domainID, CanonicalDomain: "routes.example", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady}
-	var mu sync.Mutex
-	routes := make(map[string]controlv1.PublicURL)
-	sessions := make(map[string]controlv1.PublishRunSetup)
-	writeJSON := func(w http.ResponseWriter, value any) {
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(value); err != nil {
-			t.Errorf("encode fixture response: %v", err)
-		}
-	}
-	problem := func(w http.ResponseWriter, err error) {
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusInternalServerError)
-		writeJSON(w, controlv1.Problem{Type: "about:blank", Title: err.Error(), Status: 500, Code: controlv1.Internal})
-	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/discovery", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, controlv1.ControlDiscovery{ManagedDomain: "routes.example", Authentication: controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{controlv1.Oidc}}})
-	})
-	mux.HandleFunc("GET /v1/identity", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, identity) })
-	mux.HandleFunc("GET /v1/teams/{team}", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, team) })
-	mux.HandleFunc("GET /v1/teams/{team}/domains", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, authorityv1.DomainPage{Domains: []authorityv1.Domain{domain}})
-	})
-	mux.HandleFunc("GET /v1/public-urls", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, controlv1.PublicURLPage{PublicUrls: []controlv1.PublicURL{}})
-	})
-	mux.HandleFunc("POST /v1/public-urls", func(w http.ResponseWriter, r *http.Request) {
-		var request controlv1.CreatePublicURLRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			problem(w, err)
-			return
-		}
-		mu.Lock()
-		id := fmt.Sprintf("%s%022x", opaqueid.PublicURLPrefix, len(routes)+1)
-		membership := membershipID
-		publicURL := controlv1.PublicURL{Id: id, CanonicalHostname: request.CanonicalHostname, Target: request.Target, TeamId: teamID, DomainId: domainID, MembershipId: &membership, PublicUrlScope: request.PublicUrlScope, Purpose: controlv1.PublicURLPurpose(request.Purpose), LifecycleState: controlv1.Enabled, NextPublishRunNumber: 1, PolicyRevision: 1}
-		publicURL.RequirePostQuantum = request.RequirePostQuantum != nil && *request.RequirePostQuantum
-		routes[id] = publicURL
-		mu.Unlock()
-		writeJSON(w, publicURL)
-	})
-	mux.HandleFunc("POST /v1/public-urls/{route}/publish-runs", func(w http.ResponseWriter, r *http.Request) {
-		token, _, _, err := credentials.NewPublishRunToken()
-		if err != nil {
-			problem(w, err)
-			return
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		publicURL := routes[r.PathValue("route")]
-		id := fmt.Sprintf("%s%022x", opaqueid.PublishRunPrefix, len(sessions)+1)
-		setup := controlv1.PublishRunSetup{
-			PublicUrl: publicURL, PublishRunToken: token.String(),
-			PublishRun:      controlv1.PublishRun{Id: id, PublicUrlId: publicURL.Id, TeamId: teamID, PublishRunNumber: 1, ExpiresAt: now.Add(time.Hour), State: controlv1.PublishRunStateStarting},
-			CertificatePlan: controlv1.CertificatePlan{CacheKey: publicURL.CanonicalHostname, Scope: publicURL.CanonicalHostname, Identifiers: []string{publicURL.CanonicalHostname}, ChallengeMethod: controlv1.Dns01},
-		}
-		for slot := range 2 {
-			setup.PublisherConnections = append(setup.PublisherConnections, controlv1.ConnectionAssignment{
-				ConnectionSlot: slot, ConnectionAssignmentRevision: 1, PublisherConnectionId: fmt.Sprintf("%s%022x", opaqueid.PublisherConnectionPrefix, len(sessions)*2+slot+1),
-				RelayServiceId: fmt.Sprintf("relay-%d", slot), RelayAddress: relayAddress, TlsServerName: "localhost", State: controlv1.PublisherConnectionStateAssigned,
-				PublisherConnectionCredential: "fixture-credential", PublisherConnectionCredentialExpiresAt: now.Add(time.Hour),
-			})
-		}
-		sessions[id] = setup
-		writeJSON(w, setup)
-	})
-	lookup := func(r *http.Request) controlv1.PublishRunSetup {
-		mu.Lock()
-		defer mu.Unlock()
-		return sessions[r.PathValue("session")]
-	}
-	mux.HandleFunc("POST /v1/publish-runs/{session}/renew", func(w http.ResponseWriter, r *http.Request) {
-		setup := lookup(r)
-		writeJSON(w, controlv1.PublishRunHeartbeat{PublishRun: setup.PublishRun, PublisherConnections: setup.PublisherConnections})
-	})
-	mux.HandleFunc("POST /v1/publish-runs/{session}/service-observations", func(w http.ResponseWriter, r *http.Request) {
-		setup := lookup(r)
-		var batch struct {
-			PublishRunNumber int64                      `json:"publish_run_number"`
-			Events           []serviceaudit.Observation `json:"events"`
-		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, serviceaudit.MaxPayloadBytes)).Decode(&batch); err != nil {
-			problem(w, err)
-			return
-		}
-		if setup.PublishRun.Id == "" || batch.PublishRunNumber != setup.PublishRun.PublishRunNumber ||
-			r.Header.Get("Authorization") != "Bearer "+setup.PublishRunToken || len(batch.Events) > serviceaudit.MaxBatch {
-			t.Error("audit fixture request did not match the current publish run")
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		for _, event := range batch.Events {
-			if event.Validate() != nil || event.RunID != setup.PublishRun.Id || event.RunNumber != batch.PublishRunNumber || event.ServiceID != setup.PublicUrl.Id {
-				t.Error("audit fixture observation did not match the current service")
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-		}
-		writeJSON(w, map[string]int{"accepted": len(batch.Events), "duplicates": 0})
-	})
-	mux.HandleFunc("POST /v1/publish-runs/{session}/certificate-issuances", func(w http.ResponseWriter, r *http.Request) {
-		setup := lookup(r)
-		var request controlv1.CreateCertificateIssuanceRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			problem(w, err)
-			return
-		}
-		csr, err := x509.ParseCertificateRequest(request.Csr)
-		if err != nil {
-			problem(w, err)
-			return
-		}
-		if err := csr.CheckSignature(); err != nil {
-			problem(w, err)
-			return
-		}
-		leaf := &x509.Certificate{SerialNumber: big.NewInt(2), DNSNames: csr.DNSNames, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
-		der, err := x509.CreateCertificate(rand.Reader, leaf, ca, csr.PublicKey, key)
-		if err != nil {
-			problem(w, err)
-			return
-		}
-		chain := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})) + string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.Raw}))
-		writeJSON(w, controlv1.CertificateIssuance{Id: "iss_0000000000000000000001", PublicUrlId: setup.PublicUrl.Id, PublishRunId: setup.PublishRun.Id, PublishRunNumber: 1, CertificatePlan: setup.CertificatePlan, CertificatePem: &chain, NotBefore: &leaf.NotBefore, NotAfter: &leaf.NotAfter, State: controlv1.CertificateIssuanceStateWaitingForInstall})
-	})
-	mux.HandleFunc("POST /v1/publish-runs/{session}/certificate-installed", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, lookup(r).PublishRun) })
-	mux.HandleFunc("POST /v1/publish-runs/{session}/ready", func(w http.ResponseWriter, r *http.Request) {
-		setup := lookup(r)
-		if hooks.Ready != nil {
-			if err := hooks.Ready(r.Context(), setup); err != nil {
-				problem(w, err)
-				return
-			}
-		}
-		writeJSON(w, setup.PublishRun)
-	})
-	mux.HandleFunc("DELETE /v1/publish-runs/{session}", func(w http.ResponseWriter, r *http.Request) {
-		if hooks.Close != nil {
-			if err := hooks.Close(lookup(r)); err != nil {
-				problem(w, err)
-				return
-			}
-		}
-		w.WriteHeader(http.StatusNoContent)
-	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("unexpected fixture request: %s %s", r.Method, r.URL.Path)
-		http.NotFound(w, r)
-	})
-	server := httptest.NewUnstartedServer(mux)
+	f.AccessToken = access.String()
+	f.relayAddress = publishingRelay(t, tlsConfig, f)
+	server := httptest.NewUnstartedServer(http.HandlerFunc(f.serve))
 	server.TLS = tlsConfig.Clone()
 	server.StartTLS()
-	fixture.URL = server.URL
+	f.URL = server.URL
 	t.Cleanup(server.Close)
-	return fixture
+	return f
 }
 
-func publishingRelay(t *testing.T, tlsConfig *tls.Config) string {
+func (f *PublishingFixture) Service(id string) (controlv1.Service, controlv1.ProjectServiceConfiguration, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	value, found := f.services[id]
+	return publishingClone(value), publishingClone(f.configurations[id]), found
+}
+
+// setserviceexpiration records the fixed deadline authorized by the allocation
+// fixture. later service reads and run preparation use the same captured value.
+func (f *PublishingFixture) SetServiceExpiration(id string, deadline *time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	service := f.services[id]
+	if deadline != nil {
+		value := *deadline
+		service.ExpiresAt = &value
+	}
+	f.services[id] = service
+}
+
+func (f *PublishingFixture) Run(id string) (PublishingRun, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	run := f.runs[id]
+	if run == nil || run.closed {
+		return PublishingRun{}, false
+	}
+	return publishingClone(run.PublishingRun), true
+}
+
+// bindpublisher receives facts already verified by the signed fixture's HTTP
+// boundary. no grant or signing key is manufactured during run preparation.
+func (f *PublishingFixture) BindPublisher(key string, identity authorityv1.PublisherEnrollmentResult) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.publishers[key] = publishingClone(identity)
+}
+
+func (f *PublishingFixture) Connection(service string) (*tunnel.Session, tunnelv1.ServicePublisherConnectionRef, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, connection := range f.connections {
+		if connection.ref.ServiceID == service && connection.ref.ServiceRunID == f.current[service] {
+			return connection.session, connection.ref, true
+		}
+	}
+	return nil, tunnelv1.ServicePublisherConnectionRef{}, false
+}
+
+func publishingWrite(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func publishingDecode(r *http.Request, value any) bool {
+	return httpjson.Decode(json.NewDecoder(r.Body), value) == nil
+}
+
+func (f *PublishingFixture) serve(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && r.URL.Path == "/v1/discovery" {
+		publishingWrite(w, 200, controlv1.ControlDiscovery{ManagedDomain: "services.example", Authentication: controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{controlv1.Oidc}}})
+		return
+	}
+	if r.Method == http.MethodGet && r.Header.Get("Authorization") == "Bearer "+f.AccessToken {
+		const team, domain = "tm_0000000000000000000001", "dom_0000000000000000000001"
+		switch r.URL.Path {
+		case "/v1/identity":
+			publishingWrite(w, 200, authorityv1.IdentityContext{Identity: authorityv1.Identity{Id: "ident_0000000000000000000001"}, PersonalTeamId: team,
+				Memberships: []authorityv1.Membership{{Id: "mem_0000000000000000000001", TeamId: team, ManagedLabel: "member", MemberSlug: "member", Role: authorityv1.TeamRoleOwner, TeamKind: authorityv1.Personal}}})
+			return
+		case "/v1/teams/" + team:
+			publishingWrite(w, 200, authorityv1.Team{Id: team, DefaultDomainId: domain, PolicyRevision: 1, Kind: authorityv1.Personal})
+			return
+		case "/v1/teams/" + team + "/domains":
+			publishingWrite(w, 200, authorityv1.DomainPage{Domains: []authorityv1.Domain{{Id: domain, CanonicalDomain: "services.example", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady}}})
+			return
+		}
+	}
+	if r.URL.Path == "/v1/services" && r.Method == http.MethodPost {
+		f.create(w, r)
+		return
+	}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 3 || parts[0] != "v1" || parts[1] != "services" {
+		f.t.Errorf("unexpected fixture operation %s %s", r.Method, r.URL.Path)
+		http.NotFound(w, r)
+		return
+	}
+	service := parts[2]
+	if len(parts) == 3 {
+		value, _, found := f.Service(service)
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method == http.MethodDelete {
+			f.mu.Lock()
+			value.Enabled = false
+			f.services[service] = value
+			f.mu.Unlock()
+			w.WriteHeader(204)
+			return
+		}
+		publishingWrite(w, 200, value)
+		return
+	}
+	if len(parts) == 4 && parts[3] == "runs" && r.Method == http.MethodPost {
+		f.prepare(w, r, service)
+		return
+	}
+	if len(parts) < 5 || parts[3] != "runs" {
+		http.NotFound(w, r)
+		return
+	}
+	f.runOperation(w, r, service, parts[4], parts[5:])
+}
+
+func (f *PublishingFixture) create(w http.ResponseWriter, r *http.Request) {
+	var request controlv1.CreateServiceRequest
+	if !publishingDecode(r, &request) || r.Header.Get("Authorization") != "Bearer "+f.AccessToken ||
+		r.Header.Get("Idempotency-Key") == "" || request.Configuration == nil || request.Configuration.Protocol == nil ||
+		*request.Configuration.Protocol != controlv1.ServiceProtocolHTTP || request.Configuration.Hostname == nil || request.Configuration.Target == "" {
+		w.WriteHeader(400)
+		return
+	}
+	c := publishingClone(*request.Configuration)
+	metadata := controlv1.ServiceTargetTLS{}
+	var trust *controlv1.ServiceTargetTLS
+	if c.TargetTls != nil {
+		pem := ""
+		if c.TargetTls.CaPem != nil {
+			pem = *c.TargetTls.CaPem
+		}
+		declaration, err := targettrust.NewDeclaration(c.TargetTls.Hostname, []byte(pem))
+		if err != nil || c.TargetTls.Digest != "" && c.TargetTls.Digest != declaration.Digest {
+			w.WriteHeader(400)
+			return
+		}
+		snapshot, err := declaration.Snapshot()
+		if err != nil {
+			w.WriteHeader(400)
+			return
+		}
+		metadata.Hostname, metadata.System, metadata.Digest = snapshot.Hostname, snapshot.System, snapshot.Digest
+		if len(snapshot.PEM) != 0 {
+			metadata.Pem = new(string(snapshot.PEM))
+		}
+		trust = &metadata
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := r.Header.Get("Idempotency-Key")
+	if id := f.createKeys[key]; id != "" {
+		if !reflect.DeepEqual(f.configurations[id], c) || !f.services[id].Enabled {
+			w.WriteHeader(409)
+			return
+		}
+		publishingWrite(w, 200, f.services[id])
+		return
+	}
+	value := controlv1.Service{Id: publishingID(f.t, opaqueid.ServicePrefix), TeamId: request.TeamId, Name: request.Name, DomainId: c.DomainId,
+		Enabled: true, CreatedAt: time.Now(), Protocol: *c.Protocol, TrustRevision: 1, EndpointRevision: 1, TargetTls: trust,
+		Ephemeral: c.Ephemeral != nil && *c.Ephemeral, RequirePostQuantum: c.RequirePostQuantum != nil && *c.RequirePostQuantum,
+		Endpoint: &controlv1.ServiceEndpoint{Hostname: *c.Hostname, Port: 443, Public: c.Public != nil && *c.Public}}
+	if c.Http != nil {
+		value.HttpLimits = c.Http.Limits
+	}
+	f.services[value.Id], f.configurations[value.Id], f.createKeys[key] = value, c, value.Id
+	publishingWrite(w, 201, value)
+}
+
+func (f *PublishingFixture) prepare(w http.ResponseWriter, r *http.Request, service string) {
+	var declaration controlv1.ServiceRunDeclaration
+	if !publishingDecode(r, &declaration) {
+		w.WriteHeader(400)
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	saved, found := f.services[service]
+	identity, bound := f.publishers[r.Header.Get("Idempotency-Key")]
+	if !found || !saved.Enabled || !bound || identity.TeamId != saved.TeamId || declaration.Protocol != saved.Protocol ||
+		declaration.TrustRevision != saved.TrustRevision || !reflect.DeepEqual(declaration.TargetTls, saved.TargetTls) {
+		w.WriteHeader(403)
+		return
+	}
+	number := int64(1)
+	for _, previous := range f.runs {
+		if previous.Service.Id != service {
+			continue
+		}
+		if previous.Preparation.IdempotencyKey == r.Header.Get("Idempotency-Key") && !previous.closed {
+			if previous.Preparation.PublisherGrantId != identity.GrantId || previous.Preparation.PublisherIdentityId != identity.ClientId || previous.Preparation.PublisherKeyId != identity.KeyId {
+				w.WriteHeader(403)
+				return
+			}
+			publishingWrite(w, 200, previous.Preparation)
+			return
+		}
+		if !previous.closed {
+			w.WriteHeader(409)
+			return
+		}
+		number = max(number, previous.Preparation.RunNumber+1)
+	}
+	runID := publishingID(f.t, opaqueid.ServiceRunPrefix)
+	token, _, err := credentials.NewServiceRunToken()
+	if err != nil {
+		w.WriteHeader(500)
+		return
+	}
+	selection := declaration.Traffic
+	if selection == nil {
+		selection = f.configurations[service].Traffic
+	}
+	var selected trafficlimits.Selection
+	if selection != nil {
+		selected = trafficlimits.Selection{Connections: selection.Connections, Rate: selection.Rate, RatePer: selection.RatePer, Burst: selection.Burst,
+			UploadBytes: selection.UploadBytes, DownloadBytes: selection.DownloadBytes, TotalConnections: selection.TotalConnections,
+			TotalUploadBytes: selection.TotalUploadBytes, TotalDownloadBytes: selection.TotalDownloadBytes}
+	}
+	limits, err := selected.Resolve(trafficlimits.Default(), trafficlimits.Ceiling())
+	if err != nil {
+		w.WriteHeader(400)
+		return
+	}
+	traffic := controlv1.TrafficLimits{Connections: limits.Connections, Rate: limits.Rate, RatePerNs: int64(limits.RatePer), Burst: limits.Burst,
+		UploadBytes: limits.UploadBytes, DownloadBytes: limits.DownloadBytes}
+	if limits.TotalConnections != 0 {
+		traffic.TotalConnections = &limits.TotalConnections
+	}
+	if limits.TotalUploadBytes != 0 {
+		traffic.TotalUploadBytes = &limits.TotalUploadBytes
+	}
+	if limits.TotalDownloadBytes != 0 {
+		traffic.TotalDownloadBytes = &limits.TotalDownloadBytes
+	}
+	p := controlv1.ServiceRunPreparation{ServiceId: service, ServiceRunId: runID, TeamId: saved.TeamId,
+		PublisherIdentityId: identity.ClientId, PublisherGrantId: identity.GrantId, PublisherKeyId: identity.KeyId,
+		RunNumber: number, Hostname: saved.Endpoint.Hostname, DomainId: *saved.DomainId, ExpiresAt: time.Now().Add(time.Hour),
+		IdempotencyKey: r.Header.Get("Idempotency-Key"), RequirePostQuantum: saved.RequirePostQuantum,
+		CertificatePlan: &controlv1.CertificatePlan{CacheKey: saved.Endpoint.Hostname, Scope: saved.Endpoint.Hostname,
+			Identifiers: []string{saved.Endpoint.Hostname}, ChallengeMethod: controlv1.Dns01},
+		Traffic: traffic}
+	if saved.ExpiresAt != nil && saved.ExpiresAt.Before(p.ExpiresAt) {
+		p.ExpiresAt = *saved.ExpiresAt
+	}
+	setup := controlv1.ServiceRunSetup{ServiceId: service, ServiceRunId: runID, RunNumber: number, RunToken: token.String()}
+	for slot := range 2 {
+		setup.PublisherConnections = append(setup.PublisherConnections, controlv1.ConnectionAssignment{ConnectionSlot: slot,
+			PublisherConnectionId: publishingID(f.t, opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 1,
+			RelayServiceId: fmt.Sprintf("relay-%d", slot), RelayAddress: f.relayAddress, TlsServerName: "localhost",
+			PublisherConnectionCredential: publishingID(f.t, "credential_"), PublisherConnectionCredentialExpiresAt: time.Now().Add(time.Hour)})
+	}
+	f.runs[runID] = &publishingRunState{PublishingRun: PublishingRun{saved, p, setup}}
+	f.current[service] = runID
+	publishingWrite(w, 200, p)
+}
+
+func (f *PublishingFixture) runOperation(w http.ResponseWriter, r *http.Request, service, id string, path []string) {
+	f.mu.Lock()
+	run := f.runs[id]
+	if run == nil || run.Service.Id != service {
+		f.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	snapshot := publishingClone(run.PublishingRun)
+	operation := strings.Join(path, "/")
+	if operation != "start" && r.Header.Get("Authorization") != "Bearer "+run.Setup.RunToken {
+		f.mu.Unlock()
+		w.WriteHeader(401)
+		return
+	}
+	if run.closed {
+		f.mu.Unlock()
+		if len(path) == 0 && r.Method == http.MethodDelete {
+			w.WriteHeader(204)
+		} else {
+			http.NotFound(w, r)
+		}
+		return
+	}
+	if f.current[service] != id {
+		f.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	f.mu.Unlock()
+	switch {
+	case operation == "start" && r.Method == http.MethodPost:
+		var body controlv1.StartServiceRunJSONRequestBody
+		if !publishingDecode(r, &body) || body.RunNumber != snapshot.Setup.RunNumber {
+			w.WriteHeader(400)
+			return
+		}
+		publishingWrite(w, 200, snapshot.Setup)
+	case operation == "certificate-issuances" && r.Method == http.MethodPost:
+		var body controlv1.CreateServiceCertificateIssuanceRequest
+		if !publishingDecode(r, &body) || body.RunNumber != snapshot.Setup.RunNumber {
+			w.WriteHeader(400)
+			return
+		}
+		csr, err := x509.ParseCertificateRequest(body.Csr)
+		if err != nil || csr.CheckSignature() != nil || !reflect.DeepEqual(csr.DNSNames, snapshot.Preparation.CertificatePlan.Identifiers) {
+			w.WriteHeader(400)
+			return
+		}
+		f.mu.Lock()
+		if run.issuance != nil && run.issuanceKey == r.Header.Get("Idempotency-Key") {
+			same, issuance := reflect.DeepEqual(run.csr, body.Csr), publishingClone(*run.issuance)
+			f.mu.Unlock()
+			if !same {
+				w.WriteHeader(409)
+				return
+			}
+			publishingWrite(w, 200, issuance)
+			return
+		}
+		f.mu.Unlock()
+		now := time.Now().UTC().Truncate(time.Second)
+		leaf := &x509.Certificate{SerialNumber: big.NewInt(time.Now().UnixNano()), DNSNames: csr.DNSNames, NotBefore: now.Add(-time.Minute),
+			NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+		der, err := x509.CreateCertificate(rand.Reader, leaf, f.ca, csr.PublicKey, f.key)
+		if err != nil {
+			w.WriteHeader(500)
+			return
+		}
+		chain := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.ca.Raw})...)
+		issuance := controlv1.ServiceCertificateIssuance{Id: publishingID(f.t, opaqueid.IssuancePrefix), ServiceId: service, ServiceRunId: id,
+			RunNumber: snapshot.Setup.RunNumber, PublisherIdentityId: snapshot.Preparation.PublisherIdentityId,
+			CertificatePlan: *snapshot.Preparation.CertificatePlan, CertificatePem: new(string(chain)), NotBefore: &leaf.NotBefore, NotAfter: &leaf.NotAfter}
+		f.mu.Lock()
+		run.issuance, run.issuanceKey, run.csr = &issuance, r.Header.Get("Idempotency-Key"), append([]byte(nil), body.Csr...)
+		f.mu.Unlock()
+		publishingWrite(w, 200, issuance)
+	case operation == "certificate-installed":
+		var body controlv1.ServiceCertificateInstalledRequest
+		if !publishingDecode(r, &body) || body.RunNumber != snapshot.Setup.RunNumber {
+			w.WriteHeader(400)
+			return
+		}
+		f.mu.Lock()
+		if run.issuance == nil || run.issuance.Id != body.IssuanceId || run.issuance.NotAfter == nil || !run.issuance.NotAfter.Equal(body.NotAfter) {
+			f.mu.Unlock()
+			w.WriteHeader(400)
+			return
+		}
+		run.installed = true
+		f.mu.Unlock()
+		w.WriteHeader(204)
+	case operation == "renew":
+		var body controlv1.ServiceRunHeartbeat
+		if !publishingDecode(r, &body) {
+			w.WriteHeader(400)
+			return
+		}
+		f.mu.Lock()
+		run.healthy = body.Healthy
+		connected := 0
+		for _, connection := range f.connections {
+			if connection.ref.ServiceRunID == id {
+				connected++
+			}
+		}
+		current := f.services[service]
+		enabled := current.Enabled && (current.ExpiresAt == nil || current.ExpiresAt.After(time.Now()))
+		ready := enabled && run.installed && connected == 2 && body.Healthy
+		notify := ready && !run.notified
+		if notify {
+			run.notified = true
+		}
+		f.mu.Unlock()
+		if notify && f.hooks.Ready != nil {
+			if err := f.hooks.Ready(r.Context(), snapshot); err != nil {
+				w.WriteHeader(503)
+				return
+			}
+		}
+		state := controlv1.ServiceRunStateState("starting")
+		if ready {
+			state = controlv1.ServiceRunStateStateReady
+		}
+		deadline := time.Now().Add(time.Minute)
+		if current.ExpiresAt != nil && current.ExpiresAt.Before(deadline) {
+			deadline = *current.ExpiresAt
+		}
+		publishingWrite(w, 200, controlv1.ServiceRunState{ServiceId: service, ServiceRunId: id, RunNumber: snapshot.Setup.RunNumber,
+			State: state, Healthy: &body.Healthy, PublisherExpiresAt: deadline, PublisherConnections: snapshot.Setup.PublisherConnections})
+	case operation == "connector-peer-pairs" && r.Method == http.MethodGet:
+		publishingWrite(w, 200, controlv1.ConnectorPeerPairCandidates{Items: []controlv1.ConnectorPeerPairCandidate{}})
+	case operation == "authorize-http-visitor":
+		var body controlv1.AuthorizeServiceHTTPVisitorRequest
+		if !publishingDecode(r, &body) || body.RunNumber != snapshot.Setup.RunNumber || body.DestinationPort != 443 || !opaqueid.Valid(body.VisitorConnectionId, opaqueid.VisitorConnectionPrefix) {
+			w.WriteHeader(400)
+			return
+		}
+		f.mu.Lock()
+		connected := false
+		for _, connection := range f.connections {
+			if connection.ref.ServiceRunID == id {
+				connected = true
+				break
+			}
+		}
+		allowed := run.installed && run.notified && run.healthy && connected && !run.closed && f.services[service].Enabled
+		if deadline := f.services[service].ExpiresAt; deadline != nil && !deadline.After(time.Now()) {
+			allowed = false
+		}
+		f.mu.Unlock()
+		publishingWrite(w, 200, controlv1.ServiceClientCertificateDecision{Allowed: allowed, Admitted: allowed, ValidUntil: time.Now().Add(time.Minute)})
+	case len(path) == 0 && r.Method == http.MethodDelete:
+		if f.hooks.Close != nil {
+			if err := f.hooks.Close(snapshot); err != nil {
+				w.WriteHeader(503)
+				return
+			}
+		}
+		f.mu.Lock()
+		run.closed = true
+		f.mu.Unlock()
+		w.WriteHeader(204)
+	default:
+		f.t.Errorf("unexpected service run operation %s %s", r.Method, r.URL.Path)
+		http.NotFound(w, r)
+	}
+}
+
+func publishingRelay(t *testing.T, tlsConfig *tls.Config, f *PublishingFixture) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -302,20 +626,42 @@ func publishingRelay(t *testing.T, tlsConfig *tls.Config) string {
 				if err != nil {
 					return
 				}
-				session, _, err := tunnel.Accept(ctx, transport, func(context.Context, tunnelv1.Message) error { return nil })
+				session, hello, err := tunnel.Accept(ctx, transport, func(_ context.Context, hello tunnelv1.Message) error {
+					ref := hello.ServiceConnection
+					if ref == nil {
+						return errors.New("service publisher reference missing")
+					}
+					f.mu.Lock()
+					defer f.mu.Unlock()
+					run := f.runs[ref.ServiceRunID]
+					if run == nil || run.closed || f.current[ref.ServiceID] != ref.ServiceRunID || ref.ServiceID != run.Service.Id || ref.RunNumber != uint64(run.Setup.RunNumber) {
+						return errors.New("stale service run")
+					}
+					for _, assignment := range run.Setup.PublisherConnections {
+						if ref.PublisherConnectionID == assignment.PublisherConnectionId && ref.ConnectionSlot == uint8(assignment.ConnectionSlot) &&
+							ref.ConnectionAssignmentRevision == uint64(assignment.ConnectionAssignmentRevision) && ref.RelayServiceID == assignment.RelayServiceId && hello.Credential == assignment.PublisherConnectionCredential {
+							return nil
+						}
+					}
+					return errors.New("service connection assignment mismatch")
+				})
 				if err != nil {
 					return
 				}
+				ref := *hello.ServiceConnection
 				defer session.Close()
+				f.mu.Lock()
+				f.connections[ref.PublisherConnectionID] = publishingConnection{session, ref}
+				f.mu.Unlock()
+				defer func() { f.mu.Lock(); delete(f.connections, ref.PublisherConnectionID); f.mu.Unlock() }()
 				_ = session.HandlePublisherDrain(ctx, func(context.Context) error { return nil })
+				select {
+				case <-session.Done():
+				case <-ctx.Done():
+				}
 			})
 		}
 	}()
-	t.Cleanup(func() {
-		cancel()
-		_ = listener.Close()
-		<-done
-		workers.Wait()
-	})
+	t.Cleanup(func() { cancel(); _ = listener.Close(); <-done; workers.Wait() })
 	return listener.Addr().String()
 }

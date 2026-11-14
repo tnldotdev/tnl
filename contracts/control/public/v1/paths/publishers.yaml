@@ -83,13 +83,36 @@ paths:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeResponse" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/publisher/service:
+  /v1/publisher/services/{service_id}:
+    delete:
+      operationId: deletePublisherService
+      tags: [services]
+      summary: Delete this credential's exact temporary service allocation
+      description: Requires the durable allocation owner and current publication permission. Named or sibling services cannot be deleted through this operation.
+      security: [{ publisherAuth: [] }]
+      parameters:
+        - {
+            name: service_id,
+            in: path,
+            required: true,
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceID" },
+          }
+      responses:
+        "204": { description: Temporary service removed }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     get:
       operationId: getPublisherService
       tags: [publisher-identities]
-      summary: Read the saved service selected by the current publisher grant
+      summary: Read one service covered by the current publisher grant
       security: [{ publisherAuth: [] }]
-      description: Read the exact granted service's approved protocol and public TLS trust metadata. The publisher must declare its own matching configuration when preparing a run.
+      description: Read the selected service's approved protocol and target TLS trust metadata. Control checks current publication permission for this exact service without changing the credential's grant. The publisher must declare its own matching configuration when preparing a run.
+      parameters:
+        - {
+            name: service_id,
+            in: path,
+            required: true,
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceID" },
+          }
       responses:
         "200":
           description: Exact granted service, without target addresses or credentials

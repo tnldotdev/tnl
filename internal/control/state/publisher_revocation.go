@@ -17,8 +17,8 @@ import (
 func lockPublisherPublications(ctx context.Context, tx pgx.Tx, team, publisher, grant string) error {
 	if _, err := tx.Exec(ctx, `SELECT service.id FROM control.services service
 		WHERE service.team_id=$1 AND service.id IN (
-			SELECT service_id FROM control.publisher_grants
-			WHERE publisher_identity_id=$2 AND ($3='' OR id=$3) AND kind='service')
+			SELECT service_id FROM control.service_runs
+			WHERE publisher_identity_id=$2 AND ($3='' OR publisher_grant_id=$3) AND closed_at IS NULL)
 		ORDER BY service.id FOR UPDATE OF service`, team, publisher, grant); err != nil {
 		return err
 	}
@@ -56,6 +56,36 @@ func closeRevokedPrivatePublication(ctx context.Context, tx pgx.Tx, q *controlst
 		ID: runID, ServiceID: serviceID, RunNumber: number, Now: timestamptz(now),
 	}); err != nil {
 		return err
+	}
+	return nil
+}
+
+// the stored run owns the service binding even when its grant covers several
+// services. revoking that grant closes only runs using that exact grant.
+func closePublisherServiceRuns(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, publisher, grant string, now time.Time) error {
+	rows, err := tx.Query(ctx, `SELECT DISTINCT service_id FROM control.service_runs
+		WHERE publisher_identity_id=$1 AND ($2='' OR publisher_grant_id=$2) AND closed_at IS NULL ORDER BY service_id`, publisher, grant)
+	if err != nil {
+		return err
+	}
+	var services []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		services = append(services, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range services {
+		if err := closeRevokedPrivatePublication(ctx, tx, q, id, publisher, grant, now); err != nil {
+			return err
+		}
 	}
 	return nil
 }

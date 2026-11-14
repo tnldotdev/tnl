@@ -22,16 +22,13 @@ func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor st
 		return result, err
 	}
 	defer rollback(ctx, tx, "create service HTTP grant", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, service); err != nil {
+	if _, err = lockService(ctx, tx, service, actor); err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
 	endpoint, err := q.ServiceHTTPBrowserEndpoint(ctx, controlstatedb.ServiceHTTPBrowserEndpointParams{ServiceID: service, Now: timestamptz(now)})
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
-	}
-	if err = serviceManager(ctx, tx, endpoint.TeamID, actor); err != nil {
-		return result, err
 	}
 	if _, _, err = privateVisitorAccess(ctx, tx, service, actor, now); err != nil {
 		if _, signed := serviceActor(ctx); signed && errors.Is(err, ErrServiceAccess) {
@@ -111,17 +108,10 @@ func (d *Database) RevokeServiceHTTPGrant(ctx context.Context, service, actor, i
 		return err
 	}
 	defer rollback(ctx, tx, "revoke service HTTP grant", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, service); err != nil {
+	if _, err = lockService(ctx, tx, service, actor); err != nil {
 		return err
 	}
 	q := controlstatedb.New(tx)
-	s, err := q.GetService(ctx, service)
-	if err != nil {
-		return publisherLookupError(err, ErrServiceAccess)
-	}
-	if err = serviceManager(ctx, tx, s.TeamID, actor); err != nil {
-		return err
-	}
 	n, err := q.RevokeServiceHTTPGrant(ctx, controlstatedb.RevokeServiceHTTPGrantParams{ID: id, ServiceID: service, Now: timestamptz(now)})
 	if err != nil {
 		return err

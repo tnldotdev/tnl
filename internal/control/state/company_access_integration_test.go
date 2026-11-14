@@ -166,7 +166,7 @@ func TestIntegrationCompanyApprovalSubjectNeedsCurrentCompanySignIn(t *testing.T
 		t.Fatal(err)
 	}
 	person := personal.Identity.Identity.ID
-	service, err := d.CreateServiceAt(t.Context(), team.ID, owner, "approval-private", "approval-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(t.Context(), team.ID, owner, "approval-private", "approval-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -464,7 +464,7 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 	if permission, err := identityPermission(companyCtx, q, public.ID, person.Identity.ID, "", now); err != nil || !permission.VisitAllowed || permission.ExpiresAt == nil || permission.ExpiresAt.After(now.Add(CompanyAuthenticationLifetime)) {
 		t.Fatal("company browser permission", permission, err)
 	}
-	service, err := d.CreateServiceAt(ownerCtx, team.ID, owner, "company-private", "company-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(ownerCtx, team.ID, owner, "company-private", "company-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +548,7 @@ func TestIntegrationCompanyOffboardingClosesMemberPublicAndServiceRuns(t *testin
 	if memberPublic.Ownership != "member" || teamPublic.Ownership != "team" {
 		t.Fatal("implicit publisher ownership", memberPublic, teamPublic)
 	}
-	service, err := d.CreateServiceAt(t.Context(), team, f.member.IdentityID, "offboarding", "create", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp", PublisherPool: true})
+	service, err := d.CreateServiceAt(t.Context(), team, f.member.IdentityID, "offboarding", "create", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp", PublisherPool: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

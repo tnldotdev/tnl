@@ -90,30 +90,30 @@ func (q *Queries) InsertRuntimeEvent(ctx context.Context, arg InsertRuntimeEvent
 	return err
 }
 
-const listKnownProjectURLs = `-- name: ListKnownProjectURLs :many
-SELECT public_url_id FROM project_url_inventory
+const listKnownProjectServices = `-- name: ListKnownProjectServices :many
+SELECT service_id FROM project_service_inventory
 WHERE project_root = ?1 AND server_origin = ?2
-ORDER BY last_seen_at DESC, public_url_id LIMIT 256
+ORDER BY last_seen_at DESC, service_id LIMIT 256
 `
 
-type ListKnownProjectURLsParams struct {
+type ListKnownProjectServicesParams struct {
 	ProjectRoot  string
 	ServerOrigin string
 }
 
-func (q *Queries) ListKnownProjectURLs(ctx context.Context, arg ListKnownProjectURLsParams) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, listKnownProjectURLs, arg.ProjectRoot, arg.ServerOrigin)
+func (q *Queries) ListKnownProjectServices(ctx context.Context, arg ListKnownProjectServicesParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listKnownProjectServices, arg.ProjectRoot, arg.ServerOrigin)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var items []string
 	for rows.Next() {
-		var public_url_id string
-		if err := rows.Scan(&public_url_id); err != nil {
+		var service_id string
+		if err := rows.Scan(&service_id); err != nil {
 			return nil, err
 		}
-		items = append(items, public_url_id)
+		items = append(items, service_id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

@@ -34,7 +34,7 @@ func TestIntegrationPublisherRuntimeResourceAvailability(t *testing.T) {
 				u := createTestPublicURL(t, d, r, now)
 				scope.PublicURLID, resource = u.ID, u.ID
 			case "service":
-				s, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActingIdentityID, "runtime-service", "runtime-service", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+				s, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActingIdentityID, "runtime-service", "runtime-service", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}

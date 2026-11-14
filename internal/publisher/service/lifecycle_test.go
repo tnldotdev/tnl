@@ -44,6 +44,8 @@ type lifecycleControl struct {
 	reports                             chan controlv1.ServiceRunHeartbeat
 }
 
+func (*lifecycleControl) ControlURL() string { return "https://control.example.test" }
+
 func (f *lifecycleControl) ReportServiceRunObservations(_ context.Context, service, run string, number int64, token credentials.ServiceRunToken, _ serviceaudit.Batch) error {
 	if service != f.prep.ServiceId || run != f.prep.ServiceRunId || number != f.prep.RunNumber || token.String() != f.setup.RunToken {
 		return ErrPrivateStream
@@ -86,7 +88,7 @@ func (*lifecycleControl) ConfirmConnectorPeerPairPrepared(context.Context, strin
 	return ErrPrivateStream
 }
 
-func (f *lifecycleControl) GetPublisherService(context.Context, string) (controlv1.Service, error) {
+func (f *lifecycleControl) GetPublisherService(context.Context, string, string) (controlv1.Service, error) {
 	if f.approved != nil {
 		return *f.approved, nil
 	}
@@ -191,7 +193,7 @@ func lifecycleFixture(t *testing.T) (RunConfig, *lifecycleControl) {
 		PublisherConnections: []controlv1.ConnectionAssignment{bound.connections[0], bound.connections[1]},
 	}}
 	base := RunConfig{Control: f, Access: func(context.Context) (string, error) { return "scoped-publisher-token", nil },
-		Identity: identity, ServiceID: service, Metadata: controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocol("tcp")}, Target: "127.0.0.1:5432", HeartbeatInterval: 5 * time.Millisecond, Healthy: func(context.Context) bool { return true }}
+		PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service, Metadata: controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocol("tcp")}, Target: "127.0.0.1:5432", HeartbeatInterval: 5 * time.Millisecond, Healthy: func(context.Context) bool { return true }}
 	database, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
@@ -264,7 +266,7 @@ func TestPrivateLifecycleRejectsUnapprovedProtocolOrTrustBeforePreparingRun(t *t
 	for _, name := range []string{"protocol", "stale-revision", "invalid-trust"} {
 		t.Run(name, func(t *testing.T) {
 			config, f := lifecycleFixture(t)
-			approved, _ := f.GetPublisherService(t.Context(), "")
+			approved, _ := f.GetPublisherService(t.Context(), config.ServiceID, "")
 			approved.TrustRevision = 2
 			f.approved = &approved
 			switch name {

@@ -9,11 +9,11 @@ import (
 	"net/http"
 	"slices"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/naming"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -60,16 +60,36 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 	for _, name := range names {
 		service := project.Config.Services[name]
 		savedName, protocol := config.ServiceName(name, service), controlv1.ServiceProtocol(config.Protocol(service))
-		entry := controlv1.ProjectServiceConfiguration{Name: &savedName, Protocol: &protocol, Public: service.Public}
-		httpSettings := service.HTTP
-		if protocol == controlv1.ServiceProtocolHTTP && service.Tunnel == nil {
-			resolved, err := config.ResolveServiceHTTP(project.Config.Tunnel, service.HTTP)
+		entry := controlv1.ProjectServiceConfiguration{Name: &savedName, Protocol: &protocol, Public: service.Public,
+			Hostname: service.Hostname, Ephemeral: service.Ephemeral, RequirePostQuantum: service.RequirePostQuantum}
+		if service.Domain != nil {
+			domain, err := current.ReadyDomain(*service.Domain)
 			if err != nil {
 				return declaration, err
 			}
-			httpSettings = resolved
+			entry.DomainId = &domain.Id
+		} else if service.Hostname != nil {
+			domain, err := team.ReadyDomainForHostname(current.Domains(), *service.Hostname)
+			if err != nil {
+				return declaration, err
+			}
+			entry.DomainId = &domain.Id
 		}
-		if httpSettings != nil {
+		traffic, err := config.ResolveTrafficSelection(service.Traffic)
+		if err != nil {
+			return declaration, err
+		}
+		entry.Traffic, err = clientcontrol.TrafficSelection(traffic)
+		if err != nil {
+			return declaration, err
+		}
+		if service.HTTP != nil {
+			httpSettings := *service.HTTP
+			if httpSettings.Access != nil {
+				access := *httpSettings.Access
+				access.IP = slices.Sorted(slices.Values(access.IP))
+				httpSettings.Access = &access
+			}
 			encoded, err := json.Marshal(httpSettings)
 			if err != nil {
 				return declaration, err
@@ -139,27 +159,6 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 				}
 			}
 		}
-		if config.IsPublicService(service) {
-			effective, err := project.EffectiveService(name)
-			if err != nil {
-				return declaration, err
-			}
-			entry.PublicUrl, err = projectPublicURL(effective.Tunnel)
-			if err != nil {
-				return declaration, err
-			}
-			if effective.Tunnel.PublicURL != nil {
-				hostname, _ := naming.ParseExactPublicURL(*effective.Tunnel.PublicURL)
-				entry.PublicUrl.Hostname = &hostname
-			}
-			if effective.Tunnel.Domain != nil {
-				domain, err := current.ReadyDomain(*effective.Tunnel.Domain)
-				if err != nil {
-					return declaration, err
-				}
-				entry.PublicUrl.DomainId = &domain.Id
-			}
-		}
 		declaration.Services[name] = entry
 	}
 	encoded, err := json.Marshal(declaration)
@@ -170,35 +169,4 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 		return declaration, failure.Wrap("encode project configuration", failure.ProjectConfigInvalid, errors.New("normalized configuration and trust snapshots exceed 512 KiB"))
 	}
 	return declaration, nil
-}
-
-func projectPublicURL(tunnel *config.Tunnel) (*controlv1.ProjectServicePublicURL, error) {
-	value := &controlv1.ProjectServicePublicURL{Ephemeral: tunnel.Ephemeral, RequirePostQuantum: tunnel.RequirePostQuantum}
-	if tunnel.Access != nil {
-		mode := controlv1.VisitorAccessMode(tunnel.Access.VisitorMode())
-		value.Access = &controlv1.ProjectPublicAccess{Mode: &mode}
-		if len(tunnel.Access.IP) != 0 {
-			ip := slices.Clone(tunnel.Access.IP)
-			slices.Sort(ip)
-			value.Access.Ip = &ip
-		}
-	}
-	if tunnel.Limits != nil && (tunnel.Limits.HTTP != nil || tunnel.Limits.Traffic != nil) {
-		wire := &controlv1.ProjectPublicLimits{}
-		if h := tunnel.Limits.HTTP; h != nil {
-			wire.Http = &controlv1.ProjectHTTPApplicationLimits{Total: h.Total, Concurrency: h.Concurrency}
-			if r := h.Rate; r != nil {
-				wire.Http.Rate = &controlv1.ProjectApplicationRate{Count: *r.Count, Per: r.Per.Value().String(), Burst: r.Burst}
-			}
-		}
-		traffic, err := config.ResolveTrafficSelection(tunnel.Limits)
-		if err != nil {
-			return nil, err
-		}
-		if traffic != nil {
-			wire.Traffic = &controlv1.TrafficSelection{Connections: traffic.Connections, Rate: traffic.Rate, RatePer: traffic.RatePer, Burst: traffic.Burst, UploadBytes: traffic.UploadBytes, DownloadBytes: traffic.DownloadBytes, TotalConnections: traffic.TotalConnections, TotalUploadBytes: traffic.TotalUploadBytes, TotalDownloadBytes: traffic.TotalDownloadBytes}
-		}
-		value.Limits = wire
-	}
-	return value, nil
 }

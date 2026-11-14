@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -21,6 +22,71 @@ type scopedAuthority struct {
 	identity authorityv1.PublisherEnrollmentResult
 	calls    int
 	accesses int
+}
+
+type serviceOnlySelectionControl struct {
+	ServiceControl
+	server string
+}
+
+func (c serviceOnlySelectionControl) ControlURL() string { return c.server }
+
+func TestNamespaceEnrollmentAndFileNeedNoRetiredURLClient(t *testing.T) {
+	database, err := clientstate.OpenWithOptions(t.Context(), t.TempDir(), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	const server = "https://control.example"
+	state, err := database.Server(t.Context(), server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := func(prefix string) string {
+		t.Helper()
+		value, err := opaqueid.New(prefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	domain, namespace := id(opaqueid.DomainPrefix), "member.example"
+	authority := &scopedAuthority{identity: authorityv1.PublisherEnrollmentResult{
+		ClientId: id(opaqueid.PublisherIdentityPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix),
+		GrantId: id(opaqueid.PublisherGrantPrefix), TeamId: "team", Kind: authorityv1.Namespace,
+		DomainId: &domain, Namespace: &namespace,
+	}}
+	control := NativeControl{Services: serviceOnlySelectionControl{server: server}}
+	enrollment := id(opaqueid.PublisherEnrollmentPrefix) + ".secret"
+	for range 2 {
+		native, identity, err := EnrollNative(t.Context(), state, control, authority, enrollment)
+		if err != nil || !reflect.DeepEqual(identity, authority.identity) || native.ControlURL() != server || native.NamespaceScope() != nil {
+			t.Fatal("service-only enrollment required the retired URL client", err)
+		}
+	}
+	if authority.calls != 1 {
+		t.Fatal("service-only enrollment retry changed its grant", authority.calls)
+	}
+	saved, found, err := state.PublisherIdentity(t.Context(), authority.identity.ClientId)
+	if err != nil || !found {
+		t.Fatal("service-only enrollment did not retain its signing identity", err)
+	}
+	file, err := credentialfile.New(server, authority.identity, ed25519.PrivateKey(saved.SigningKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "publisher.json")
+	if err := credentialfile.Write(path, file); err != nil {
+		t.Fatal(err)
+	}
+	native, err := LoadFile(path, server, control, authority)
+	if err != nil || native.PublisherIdentityID() != authority.identity.ClientId {
+		t.Fatal("service-only file loading required the retired URL client", err)
+	}
+	wrong := NativeControl{Services: serviceOnlySelectionControl{server: "https://other.example"}}
+	if _, err := LoadFile(path, server, wrong, authority); !errors.Is(err, ErrScope) {
+		t.Fatal("file loading accepted another service control origin", err)
+	}
 }
 
 func (a *scopedAuthority) RedeemPublisherEnrollment(context.Context, string, ed25519.PublicKey) (authorityv1.PublisherEnrollmentResult, error) {

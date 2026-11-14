@@ -1,7 +1,6 @@
 package state
 
 import (
-	"encoding/json"
 	"net"
 	"net/netip"
 	"net/url"
@@ -13,13 +12,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 )
-
-const maximumAppliedInteger = 1<<53 - 1
 
 var appliedDiscoveryName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
 
@@ -69,7 +66,7 @@ func normalizeAppliedProjectService(key string, s *ProjectServiceConfiguration, 
 	if (ServiceMetadata{Protocol: s.Protocol}).Validate() != nil || s.Access != nil && !s.Access.Team || (len(s.Target) == 0 && s.TargetDiscovery == nil) || len(s.Target) > 8192 || strings.ContainsAny(s.Target, "\x00\r\n") {
 		return ErrProjectConfigurationInvalid
 	}
-	if s.PublicURL != nil && s.Public != nil {
+	if s.Ephemeral && !local {
 		return ErrProjectConfigurationInvalid
 	}
 	if s.HTTP != nil {
@@ -82,7 +79,7 @@ func normalizeAppliedProjectService(key string, s *ProjectServiceConfiguration, 
 				return ErrProjectConfigurationInvalid
 			}
 		}
-		if config.ValidateServiceHTTP(s.HTTP) != nil || s.PublicURL != nil && (s.HTTP.Access != nil || s.HTTP.Limits != nil) {
+		if config.ValidateServiceHTTP(s.HTTP) != nil {
 			return ErrProjectConfigurationInvalid
 		}
 		if s.HTTP.Access != nil {
@@ -96,7 +93,7 @@ func normalizeAppliedProjectService(key string, s *ProjectServiceConfiguration, 
 		if r := s.HTTP.Readiness; r != nil && r.Path != "/" && !targetsyntax.ValidMountPrefix(r.Path) {
 			return ErrProjectConfigurationInvalid
 		}
-		if len(s.HTTP.Paths) > 32 || len(s.HTTP.Paths) > 0 && s.PublicURL == nil {
+		if len(s.HTTP.Paths) > 32 {
 			return ErrProjectConfigurationInvalid
 		}
 		for prefix, mount := range s.HTTP.Paths {
@@ -118,38 +115,21 @@ func normalizeAppliedProjectService(key string, s *ProjectServiceConfiguration, 
 	} else {
 		descriptor, err = appliedLocalTargetDescriptor(s.Target, s.Protocol)
 	}
-	if err != nil || descriptor && s.TargetDiscovery == nil && !local && !(s.Target == "app" && s.PublicURL != nil) {
-		return ErrProjectConfigurationInvalid
-	}
-	if s.PublicURL != nil && (s.Protocol != "http" || !local && s.PublicURL.Ephemeral) {
-		return ErrProjectConfigurationInvalid
-	}
-	if s.PublicURL != nil && !local && (s.TargetDiscovery != nil || s.HTTP != nil && (s.HTTP.Access != nil || s.HTTP.Limits != nil)) {
+	if err != nil || descriptor && s.TargetDiscovery == nil && !local && s.Target != "app" {
 		return ErrProjectConfigurationInvalid
 	}
 	if !descriptor {
-		if s.PublicURL != nil {
-			canonical, err := targetsyntax.NormalizeTarget(s.Target)
-			if err != nil {
-				return ErrProjectConfigurationInvalid
-			}
-			s.Target = canonical
-			if s.TargetTLS != nil && !strings.HasPrefix(canonical, "https://") {
-				return ErrProjectConfigurationInvalid
-			}
-		} else {
-			if s.Protocol == "http" && s.TargetTLS == nil && strings.HasPrefix(s.Target, "https://") {
-				return ErrProjectConfigurationInvalid
-			}
-			if s.Protocol == "http" && s.TargetTLS != nil && strings.HasPrefix(s.Target, "http://") {
-				return ErrProjectConfigurationInvalid
-			}
-			address, err := normalizeAppliedPrivateAddress(s.Target, s.Protocol)
-			if err != nil {
-				return err
-			}
-			s.Target = address
+		if s.Protocol == "http" && s.TargetTLS == nil && strings.HasPrefix(s.Target, "https://") {
+			return ErrProjectConfigurationInvalid
 		}
+		if s.Protocol == "http" && s.TargetTLS != nil && strings.HasPrefix(s.Target, "http://") {
+			return ErrProjectConfigurationInvalid
+		}
+		address, err := normalizeAppliedPrivateAddress(s.Target, s.Protocol)
+		if err != nil {
+			return err
+		}
+		s.Target = address
 	}
 	if s.TargetTLS != nil {
 		t := s.TargetTLS
@@ -159,35 +139,16 @@ func normalizeAppliedProjectService(key string, s *ProjectServiceConfiguration, 
 		}
 		t.Digest = declaration.Digest
 	}
-	if p := s.PublicURL; p != nil {
-		if p.Hostname != "" {
-			host, err := naming.CanonicalizeHostname(p.Hostname)
-			if err != nil || host != p.Hostname {
-				return ErrProjectConfigurationInvalid
-			}
-		}
-		if p.DomainID != "" && !opaqueid.Valid(p.DomainID, opaqueid.DomainPrefix) {
+	if s.Hostname != "" {
+		host, err := naming.CanonicalizeHostname(s.Hostname)
+		if err != nil || host != s.Hostname {
 			return ErrProjectConfigurationInvalid
-		}
-		if p.Access == nil {
-			p.Access = &ProjectPublicAccess{}
-		}
-		if p.Access.Mode == "" {
-			p.Access.Mode = "restricted"
-		}
-		if !VisitorAccessMode(p.Access.Mode).Valid() || len(p.Access.IP) > 256 {
-			return ErrProjectConfigurationInvalid
-		}
-		prefixes, err := authorization.CanonicalizeIPPrefixes(p.Access.IP)
-		if err != nil {
-			return ErrProjectConfigurationInvalid
-		}
-		p.Access.IP = prefixes
-		if err = normalizeAppliedLimits(p); err != nil {
-			return err
 		}
 	}
-	return nil
+	if s.DomainID != "" && !opaqueid.Valid(s.DomainID, opaqueid.DomainPrefix) {
+		return ErrProjectConfigurationInvalid
+	}
+	return normalizeAppliedTraffic(s)
 }
 
 func parseAppliedHTTPOrigin(target string) (*url.URL, error) {
@@ -241,58 +202,13 @@ func normalizeAppliedPrivateAddress(target, protocol string) (string, error) {
 	return net.JoinHostPort(host, strconv.Itoa(number)), nil
 }
 
-func normalizeAppliedLimits(p *ProjectServicePublicURL) error {
-	l := p.Limits
-	if l == nil {
-		return nil
-	}
-	if h := l.HTTP; h != nil {
-		v := applicationlimits.Limits{}
-		for _, n := range []*int{h.Total, h.Concurrency} {
-			if n != nil && (*n < 1 || *n > maximumAppliedInteger) {
-				return ErrProjectConfigurationInvalid
-			}
-		}
-		if h.Total != nil {
-			v.Requests = *h.Total
-		}
-		if h.Concurrency != nil {
-			v.Concurrency = *h.Concurrency
-		}
-		if r := h.Rate; r != nil {
-			period, err := time.ParseDuration(r.Per)
-			if err != nil || period <= 0 || len(r.Per) > 64 || r.Count < 1 || r.Count > maximumAppliedInteger || r.Burst != nil && (*r.Burst < 1 || *r.Burst > maximumAppliedInteger) {
-				return ErrProjectConfigurationInvalid
-			}
-			r.Per = period.String()
-			v.RateRequests, v.RatePer = r.Count, period
-			if r.Burst != nil {
-				v.RateBurst = *r.Burst
-			}
-		}
-		if !v.Valid() {
-			return ErrProjectConfigurationInvalid
-		}
-		if h.Total == nil && h.Concurrency == nil && h.Rate == nil {
-			l.HTTP = nil
-		}
-	}
-	if t := l.Traffic; t != nil {
+func normalizeAppliedTraffic(s *ProjectServiceConfiguration) error {
+	if t := s.Traffic; t != nil {
 		if t.Validate() != nil {
 			return ErrProjectConfigurationInvalid
 		}
-		for _, n := range []*int{t.Connections, t.Rate, t.Burst} {
-			if n != nil && (*n < 1 || *n > maximumAppliedInteger) {
-				return ErrProjectConfigurationInvalid
-			}
-		}
-		for _, n := range []*int64{t.UploadBytes, t.DownloadBytes} {
-			if n != nil && (*n < 1 || *n > maximumAppliedInteger) {
-				return ErrProjectConfigurationInvalid
-			}
-		}
 		for _, n := range []*int64{t.TotalConnections, t.TotalUploadBytes, t.TotalDownloadBytes} {
-			if n != nil && (*n < 0 || *n > maximumAppliedInteger) {
+			if n != nil && *n > config.MaxConfigInteger {
 				return ErrProjectConfigurationInvalid
 			}
 		}
@@ -301,13 +217,9 @@ func normalizeAppliedLimits(p *ProjectServicePublicURL) error {
 			value := period.String()
 			t.RatePer = &value
 		}
-		encoded, _ := json.Marshal(t)
-		if string(encoded) == "{}" {
-			l.Traffic = nil
+		if *t == (trafficlimits.Selection{}) {
+			s.Traffic = nil
 		}
-	}
-	if l.HTTP == nil && l.Traffic == nil {
-		p.Limits = nil
 	}
 	return nil
 }

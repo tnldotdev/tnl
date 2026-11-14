@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
@@ -26,8 +27,8 @@ func newDeploymentPublicationFixture(t *testing.T) deploymentPublicationFixture 
 	d, now := newControlStateIntegrationDatabase(t, "deployment_publication")
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
-		"web": {Target: "app", PublicURL: &ProjectServicePublicURL{Access: &ProjectPublicAccess{Mode: "anonymous"}}},
-		"api": {Target: "app", PublicURL: &ProjectServicePublicURL{}},
+		"web": {Target: "app", Public: new(true), HTTP: &config.HTTPService{Access: &config.Access{Mode: "anonymous"}}},
+		"api": {Target: "app", Public: new(true)},
 		"db":  {Protocol: "postgres", Target: "database.internal:5432"},
 	}}
 	r = selectedProjectRequest(r, "production")
@@ -43,7 +44,7 @@ func newDeploymentPublicationFixture(t *testing.T) deploymentPublicationFixture 
 	stage := r
 	stage.ExpectedRevision, stage.Deployment = first.Revision, "staging"
 	stage.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
-		"web": {Target: "app", PublicURL: &ProjectServicePublicURL{}},
+		"web": {Target: "app", Public: new(true)},
 	}}
 	if _, err = d.ApplyProjectConfiguration(t.Context(), stage); err != nil {
 		t.Fatal(err)
@@ -53,6 +54,64 @@ func newDeploymentPublicationFixture(t *testing.T) deploymentPublicationFixture 
 		t.Fatal(err)
 	}
 	return deploymentPublicationFixture{d, now, r, production, staging}
+}
+
+func assertDeploymentServiceHTTPMode(t *testing.T, d *Database, id string, expected VisitorAccessMode) {
+	t.Helper()
+	settings, err := d.serviceHTTPSettings(t.Context(), controlstatedb.New(d.pool), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode := VisitorAccessRestricted
+	if settings != nil && settings.Access != nil {
+		mode = VisitorAccessMode(settings.Access.VisitorMode())
+	}
+	if mode != expected {
+		t.Fatalf("service HTTP access: got %q, want %q", mode, expected)
+	}
+}
+
+type deploymentServiceRunFixture struct {
+	service  ServiceRecord
+	prepared ServiceRunPreparation
+	run      ServiceRunState
+}
+
+func startDeploymentServiceRun(t *testing.T, f deploymentPublicationFixture, access PublisherAccess, deployment, name, attempt string) deploymentServiceRunFixture {
+	t.Helper()
+	service, err := f.d.GetDeploymentPublication(t.Context(), f.scope(access), deployment, name, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := f.d.PrepareServiceRun(t.Context(), service.ID, access.PublisherIdentity, attempt, f.now, ServiceRunRequest{Metadata: service.ServiceMetadata})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := f.d.StartServiceRun(t.Context(), service.ID, prepared.RunID, prepared.RunNumber, access.PublisherIdentity, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.PublisherGrantID != access.GrantID || prepared.PublisherIdentityID != access.ID || prepared.PublisherKeyID != access.KeyID {
+		t.Fatal("service run substituted the registered grant, identity, or signing key")
+	}
+	return deploymentServiceRunFixture{service, prepared, run}
+}
+
+func readyDeploymentServiceRun(t *testing.T, d *Database, fixture deploymentServiceRunFixture, leases map[string]RelayLease, now time.Time) {
+	t.Helper()
+	installPrivateTestCertificate(t, d, fixture.prepared, fixture.run, now)
+	for _, slot := range fixture.run.Connections {
+		lease := leases[slot.RelayServiceID].RelayLeaseIdentity
+		if _, err := d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, fixture.run.ServiceID, fixture.run.RunID, fixture.run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.ReadyServicePublisherConnection(t.Context(), slot.PublisherConnectionID, fixture.run.RunID, fixture.run.RunNumber, slot.Revision, lease, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if state, err := d.HeartbeatServiceRun(t.Context(), fixture.run.ServiceID, fixture.run.RunID, fixture.run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil || state.State != "ready" {
+		t.Fatal("service run did not become ready with its certificate and relay connections", err)
+	}
 }
 
 func (f deploymentPublicationFixture) approve(t *testing.T, names map[string][]string, temporary string) (RegisterDeploymentCredentialRequest, DeploymentCredential, PublisherAccess, ed25519.PrivateKey) {
@@ -82,7 +141,7 @@ func (f deploymentPublicationFixture) allocation(t *testing.T, access PublisherA
 	if err != nil {
 		t.Fatal(err)
 	}
-	return AllocateDeploymentPublicationRequest{DeploymentScope: f.scope(access), Deployment: f.production.ID, Invocation: invocation, Target: "http://127.0.0.1:3000", Options: PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted}, Now: f.now}
+	return AllocateDeploymentPublicationRequest{DeploymentScope: f.scope(access), Deployment: f.production.ID, AllocateServiceRequest: AllocateServiceRequest{Invocation: invocation, Configuration: ProjectServiceConfiguration{Target: "http://127.0.0.1:3000"}}, Now: f.now}
 }
 
 func TestIntegrationDeploymentPublicationIndependentApproval(t *testing.T) {
@@ -96,14 +155,15 @@ func TestIntegrationDeploymentPublicationIndependentApproval(t *testing.T) {
 			}
 			publication, err := f.d.GetDeploymentPublication(t.Context(), f.scope(access), "production", "web", f.now)
 			if capability != "publish" {
-				if err == nil || publication.PublicURL.ID != "" {
+				if err == nil || publication.ID != "" {
 					t.Fatal("another capability implied publishing")
 				}
 				return
 			}
-			if err != nil || publication.PublicURL.ID != f.production.Services["web"].ID || publication.PublicURL.AccessMode != VisitorAccessAnonymous {
+			if err != nil || publication.ID != f.production.Services["web"].ID {
 				t.Fatal("named publication lost saved policy", err)
 			}
+			assertDeploymentServiceHTTPMode(t, f.d, publication.ID, VisitorAccessAnonymous)
 			if _, err := f.d.GetDeployment(t.Context(), f.scope(access), "production"); !errors.Is(err, ErrDeploymentAccess) {
 				t.Fatal("publish implied management", err)
 			}
@@ -114,7 +174,7 @@ func TestIntegrationDeploymentPublicationIndependentApproval(t *testing.T) {
 				t.Fatal("publish implied connection")
 			}
 			for _, selection := range [][2]string{{"production", "api"}, {"staging", "web"}, {"production", "db"}} {
-				if result, err := f.d.GetDeploymentPublication(t.Context(), f.scope(access), selection[0], selection[1], f.now); err == nil || result.PublicURL.ID != "" {
+				if result, err := f.d.GetDeploymentPublication(t.Context(), f.scope(access), selection[0], selection[1], f.now); err == nil || result.ID != "" {
 					t.Fatal("publication escaped service/deployment scope")
 				}
 			}
@@ -151,44 +211,58 @@ func TestIntegrationDeploymentPublicationTemporaryRecoveryAndCleanup(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	label, namespace, found := strings.Cut(first.CanonicalHostname, ".")
-	if !found || len(label) != 26 || namespace != deployment.Namespace || !first.Ephemeral || first.MembershipID != "" || first.AccessMode != VisitorAccessRestricted || first.PublicURLScope != PublicURLScopeShared {
+	label, namespace, found := strings.Cut(first.Endpoint.Hostname, ".")
+	if !found || len(label) != 26 || namespace != deployment.Namespace || !first.Ephemeral || !first.Endpoint.Public || first.Endpoint.Port != 443 {
 		t.Fatal("allocation borrowed a saved policy, developer namespace, or wrong lifetime")
+	}
+	assertDeploymentServiceHTTPMode(t, f.d, first.ID, VisitorAccessRestricted)
+	var ports, grants int
+	if err := f.d.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM control.service_port_claims WHERE service_id=$1),(SELECT count(*) FROM control.publisher_grants WHERE publisher_identity_id=$2)`, first.ID, access.ID).Scan(&ports, &grants); err != nil || ports != 0 || grants != 1 {
+		t.Fatal("temporary service reserved an HTTP port or created a child grant", ports, grants, err)
 	}
 	recovered, err := f.d.AllocateDeploymentPublication(ctx, request)
 	if err != nil || !reflect.DeepEqual(first, recovered) {
 		t.Fatal("lost allocation reply changed original URL/deadline", err)
 	}
 	changed := request
-	changed.Target = "http://127.0.0.1:4000"
-	if _, err = f.d.AllocateDeploymentPublication(ctx, changed); !errors.Is(err, ErrPublicURLIdempotency) {
+	changed.Configuration.Target = "http://127.0.0.1:4000"
+	if _, err = f.d.AllocateDeploymentPublication(ctx, changed); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("retry changed its target", err)
 	}
 	anonymous := f.allocation(t, access)
-	anonymous.Options.AccessMode = VisitorAccessAnonymous
+	anonymous.Configuration.HTTP = &config.HTTPService{Access: &config.Access{Mode: "anonymous"}}
 	if _, err = f.d.AllocateDeploymentPublication(ctx, anonymous); !errors.Is(err, ErrDeploymentAccess) {
 		t.Fatal("restricted approval allowed anonymous allocation", err)
 	}
 	_, _, other, _ := f.approve(t, nil, "restricted")
-	if owns, err := f.d.PublisherMayStartRun(ctx, other.PublisherIdentity, first.ID); err != nil || owns {
+	if _, err := f.d.GetServiceForPublisher(ctx, first.ID, other.PublisherIdentity, f.now); err == nil {
 		t.Fatal("another credential adopted the allocation", err)
 	}
-	if err := f.d.DeleteAuthorizedPublicURL(ctx, AuthorizedPublicURLDeleteRequest{PublicURLID: first.ID, TeamID: r.TeamID, ActingIdentityID: r.ActorID, PublisherIdentityID: access.ID, PublisherGrantID: access.GrantID, ExpectedMutationRevision: first.MutationRevision}, f.now); err != nil {
+	if err := f.d.DeletePublisherService(ctx, other.PublisherIdentity, first.ID, f.now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("another credential deleted the allocated service", err)
+	}
+	if err := f.d.DeletePublisherService(ctx, access.PublisherIdentity, f.production.Services["web"].ID, f.now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("temporary approval deleted a named service", err)
+	}
+	if err := f.d.DeletePublisherService(ctx, access.PublisherIdentity, first.ID, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.d.AllocateDeploymentPublication(ctx, request); !errors.Is(err, ErrPublicURLIdempotency) {
+	if _, err = f.d.AllocateDeploymentPublication(ctx, request); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("retry resurrected a deleted allocation", err)
 	}
 	fresh, err := f.d.AllocateDeploymentPublication(ctx, f.allocation(t, access))
-	if err != nil || fresh.ID == first.ID || fresh.CanonicalHostname == first.CanonicalHostname {
+	if err != nil || fresh.ID == first.ID || fresh.Endpoint.Hostname == first.Endpoint.Hostname {
 		t.Fatal("fresh invocation reused an allocation", err)
 	}
 	if err = f.d.DeleteDeployment(ctx, r.DeploymentScope, f.production.ID, f.production.Revision, f.now); err != nil {
 		t.Fatal(err)
 	}
-	u, err := controlstatedb.New(f.d.pool).LockPublicURLForRun(ctx, fresh.ID)
-	if err != nil || u.LifecycleState != "deleted" {
-		t.Fatal("deployment deletion retained its temporary URL", err)
+	u, err := controlstatedb.New(f.d.pool).LockService(ctx, fresh.ID)
+	if err != nil || !u.DeletedAt.Valid {
+		t.Fatal("deployment deletion retained its temporary service", err)
+	}
+	if _, err := controlstatedb.New(f.d.pool).GetPublisherAllocation(ctx, fresh.ID); err != nil {
+		t.Fatal("deployment deletion discarded the allocation tombstone", err)
 	}
 	if _, err = f.d.AllocateDeploymentPublication(ctx, f.allocation(t, access)); err == nil {
 		t.Fatal("deleted deployment retained allocation authority")
@@ -198,50 +272,68 @@ func TestIntegrationDeploymentPublicationTemporaryRecoveryAndCleanup(t *testing.
 func TestIntegrationDeploymentPublicationSignedRunAndRevocation(t *testing.T) {
 	f := newDeploymentPublicationFixture(t)
 	_, _, _, _ = publishRunPrerequisitesInDatabase(t, f.d, f.now, nil)
-	_, credential, access, key := f.approve(t, map[string][]string{"publish": {"web"}}, "anonymous")
+	_, credential, access, _ := f.approve(t, map[string][]string{"publish": {"web"}}, "anonymous")
 	until := f.now.Add(10 * time.Second)
 	if _, err := f.d.pool.Exec(t.Context(), `UPDATE control.publisher_grants SET expires_at=$2 WHERE id=$1`, credential.GrantID, until); err != nil {
 		t.Fatal(err)
 	}
-	for _, temporary := range []bool{false, true} {
-		var u PublicURL
-		if temporary {
-			r := f.allocation(t, access)
-			r.Options.AccessMode = VisitorAccessAnonymous
-			var err error
-			u, err = f.d.AllocateDeploymentPublication(t.Context(), r)
-			if err != nil {
-				t.Fatal(err)
-			}
-		} else {
-			result, err := f.d.GetDeploymentPublication(t.Context(), f.scope(access), "production", "web", f.now)
-			if err != nil {
-				t.Fatal(err)
-			}
-			u = result.PublicURL
-		}
-		request := reviewRunRequest(t, f.d, access.PublisherIdentity, key, u, "signed-deployment-"+u.ID)
-		run, err := f.d.CreatePublishRun(t.Context(), request, f.now, 30*time.Second, time.Minute)
+	t.Run("named-service", func(t *testing.T) {
+		service, err := f.d.GetDeploymentPublication(t.Context(), f.scope(access), "production", "web", f.now)
 		if err != nil {
 			t.Fatal(err)
 		}
-		recovered, err := f.d.CreatePublishRun(t.Context(), request, f.now, 30*time.Second, time.Minute)
-		if err != nil || recovered.PublishRunID != run.PublishRunID || recovered.PublishRunToken != run.PublishRunToken {
+		request := ServiceRunRequest{Metadata: service.ServiceMetadata}
+		prepared, err := f.d.PrepareServiceRun(t.Context(), service.ID, access.PublisherIdentity, "signed-deployment-service", f.now, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		recovered, err := f.d.PrepareServiceRun(t.Context(), service.ID, access.PublisherIdentity, "signed-deployment-service", f.now, request)
+		if err != nil || !reflect.DeepEqual(prepared, recovered) || prepared.PublisherGrantID != credential.GrantID || prepared.PublisherKeyID != credential.KeyID {
+			t.Fatal("signed service preparation recovery changed authority", err)
+		}
+		run, err := f.d.StartServiceRun(t.Context(), service.ID, prepared.RunID, prepared.RunNumber, access.PublisherIdentity, f.now)
+		if err != nil || !run.ExpiresAt.Equal(until) || !prepared.ExpiresAt.Equal(until) {
+			t.Fatal("service run outlived approval", err)
+		}
+		heartbeat, err := f.d.HeartbeatServiceRun(t.Context(), service.ID, run.RunID, run.Token, f.now.Add(time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+		if err != nil || !heartbeat.ExpiresAt.Equal(until) {
+			t.Fatal("service renewal extended the fixed grant deadline", err)
+		}
+		var grants int
+		if err := f.d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.publisher_grants WHERE publisher_identity_id=$1`, credential.ClientID).Scan(&grants); err != nil || grants != 1 {
+			t.Fatal("named publication created a child grant", grants, err)
+		}
+	})
+	t.Run("temporary-allocation", func(t *testing.T) {
+		r := f.allocation(t, access)
+		r.Configuration.HTTP = &config.HTTPService{Access: &config.Access{Mode: "anonymous"}}
+		service, err := f.d.AllocateDeploymentPublication(t.Context(), r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := ServiceRunRequest{Metadata: service.ServiceMetadata}
+		prepared, err := f.d.PrepareServiceRun(t.Context(), service.ID, access.PublisherIdentity, "signed-temporary-service", f.now, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		recovered, err := f.d.PrepareServiceRun(t.Context(), service.ID, access.PublisherIdentity, "signed-temporary-service", f.now, request)
+		if err != nil || !reflect.DeepEqual(prepared, recovered) || prepared.PublisherGrantID != credential.GrantID || prepared.PublisherKeyID != credential.KeyID {
 			t.Fatal("signed run recovery changed authority", err)
 		}
-		if !run.ExpiresAt.Equal(until) {
+		run, err := f.d.StartServiceRun(t.Context(), service.ID, prepared.RunID, prepared.RunNumber, access.PublisherIdentity, f.now)
+		if err != nil || !run.ExpiresAt.Equal(until) || service.ExpiresAt == nil || !service.ExpiresAt.Equal(until) {
 			t.Fatal("run outlived approval")
 		}
-		heartbeat, err := f.d.HeartbeatPublishRun(t.Context(), PublishRunAuthentication{PublishRunID: run.PublishRunID, PublicURLID: u.ID, PublishRunNumber: run.PublishRunNumber, PublishRunToken: run.PublishRunToken}, f.now.Add(time.Second), time.Minute, time.Minute)
+		heartbeat, err := f.d.HeartbeatServiceRun(t.Context(), service.ID, run.RunID, run.Token, f.now.Add(time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64})
 		if err != nil || !heartbeat.ExpiresAt.Equal(until) {
 			t.Fatal("renewal extended the fixed grant deadline", err)
 		}
-	}
+	})
 	if err := f.d.RevokePublisherIdentity(t.Context(), f.project.TeamID, credential.ClientID, f.project.ActorID, f.now); err != nil {
 		t.Fatal(err)
 	}
 	var open int
-	if err := f.d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.publish_runs WHERE publisher_identity_id=$1 AND closed_at IS NULL`, credential.ClientID).Scan(&open); err != nil || open != 0 {
+	if err := f.d.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM control.publish_runs WHERE publisher_identity_id=$1 AND closed_at IS NULL)+(SELECT count(*) FROM control.service_runs WHERE publisher_identity_id=$1 AND closed_at IS NULL)`, credential.ClientID).Scan(&open); err != nil || open != 0 {
 		t.Fatal("revocation retained active publication", err)
 	}
 }
@@ -257,7 +349,7 @@ func TestIntegrationDeploymentPublicationRetirementAndCrashExpiry(t *testing.T) 
 	if _, err = f.d.pool.Exec(t.Context(), `UPDATE control.domains SET state='releasing' WHERE id=$1`, u.DomainID); err != nil {
 		t.Fatal(err)
 	}
-	if result, err := f.d.GetDeploymentPublication(t.Context(), f.scope(access), "production", "web", f.now); !errors.Is(err, ErrDeploymentAccess) || result.PublicURL.ID != "" {
+	if result, err := f.d.GetDeploymentPublication(t.Context(), f.scope(access), "production", "web", f.now); !errors.Is(err, ErrDeploymentAccess) || result.ID != "" {
 		t.Fatal("publication retained a releasing domain", err)
 	}
 	if _, err = f.d.AllocateDeploymentPublication(t.Context(), request); err == nil {
@@ -266,10 +358,10 @@ func TestIntegrationDeploymentPublicationRetirementAndCrashExpiry(t *testing.T) 
 	if _, err = f.d.pool.Exec(t.Context(), `UPDATE control.domains SET state='ready' WHERE id=$1`, u.DomainID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.d.DeleteExpiredEphemeralPublicURLs(t.Context(), u.ExpiresAt.Add(time.Second)); err != nil {
+	if _, err = f.d.ExpireServiceRuns(t.Context(), f.now.Add(ephemeralServiceGracePeriod+time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.d.AllocateDeploymentPublication(t.Context(), request); !errors.Is(err, ErrPublicURLIdempotency) {
+	if _, err = f.d.AllocateDeploymentPublication(t.Context(), request); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("crash expiry resurrected an allocation", err)
 	}
 	for _, protocol := range []string{"tcp", "http"} {
@@ -318,8 +410,8 @@ func TestIntegrationDeploymentPublicationAuthorityAfterLockWait(t *testing.T) {
 				workers.Go(func() {
 					if operation == "named" {
 						result, err := f.d.GetDeploymentPublication(ctx, f.scope(access), "production", "web", f.now)
-						if err != nil && result.PublicURL.ID != "" {
-							err = errors.Join(err, errors.New("denied read returned URL"))
+						if err != nil && result.ID != "" {
+							err = errors.Join(err, errors.New("denied read returned service"))
 						}
 						done <- err
 						return

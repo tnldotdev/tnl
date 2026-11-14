@@ -14,14 +14,13 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/connector"
-	"github.com/tnldotdev/tnl/internal/ingress"
-	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -255,20 +254,28 @@ func (f *cliWorkflow) connectDirectListener(t *testing.T, endpoint *controlv1.Se
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := ingress.New(listener, ingress.Config{PublicServices: f.publicServices, ServicePortRanges: []tcpport.Range{{First: endpoint.Port, Last: endpoint.Port}}, MaxConnections: 16, OnError: func(err error) { t.Logf("direct ingress: %v", err) }})
-	if err != nil {
-		_ = listener.Close()
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- server.Serve() }()
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = server.Drain(ctx)
-		if err := <-done; err != nil {
-			t.Error(err)
+	done := make(chan struct{})
+	var workers sync.WaitGroup
+	go func() {
+		defer close(done)
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			workers.Go(func() {
+				if err := f.publicIngress.AcceptPublic(f.ctx, connection,
+					connection.RemoteAddr().(*net.TCPAddr).AddrPort(), connection.LocalAddr().(*net.TCPAddr).AddrPort(), "", nil); err != nil && f.ctx.Err() == nil {
+					t.Logf("direct ingress: %v", err)
+				}
+			})
 		}
+	}()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		<-done
+		_ = f.publicIngress.Close()
+		workers.Wait()
 	})
 }
 

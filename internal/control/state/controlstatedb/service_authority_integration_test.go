@@ -55,7 +55,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	}
 	identityID := owner.Identity.Identity.ID
 	teamID := owner.Identity.Memberships[0].TeamID
-	service, err := d.CreateServiceAt(ctx, teamID, identityID, "orders", "create-orders", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(ctx, teamID, identityID, "orders", "create-orders", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

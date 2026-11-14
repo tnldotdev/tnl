@@ -37,14 +37,15 @@ func (a *ProjectRuntime) PublicConfiguration(ctx context.Context, service app.Se
 		return app.Configuration{}, err
 	}
 	var access *config.Access
-	if effective.Tunnel != nil {
-		access = effective.Tunnel.Access
+	var httpLimits *config.WorkLimits
+	if effective.HTTP != nil {
+		access, httpLimits = effective.HTTP.Access, effective.HTTP.Limits
 	}
 	policy, err := resolveVisitorAccess(ctx, authenticated.Control, access, false, nil)
 	if err != nil {
 		return app.Configuration{}, err
 	}
-	limits, err := config.ResolveWorkLimits(effectiveTunnelLimits(effective), service.ServiceProtocol)
+	limits, err := config.ResolveWorkLimits(httpLimits)
 	if err != nil {
 		return app.Configuration{}, err
 	}
@@ -53,9 +54,7 @@ func (a *ProjectRuntime) PublicConfiguration(ctx context.Context, service app.Se
 		return app.Configuration{}, err
 	}
 	cfg := services.config(service.Target, policy.prefixes, limits)
-	if effective.Tunnel != nil {
-		cfg.RequirePostQuantum = effective.Tunnel.RequirePostQuantum
-	}
+	cfg.RequirePostQuantum = effective.RequirePostQuantum
 	if policy.explicit {
 		cfg.AccessMode = policy.access
 	}
@@ -92,7 +91,7 @@ func (a *ProjectRuntime) PublicConfiguration(ctx context.Context, service app.Se
 	if realized.Hostname == nil || *realized.Hostname != cfg.Hostname {
 		return app.Configuration{}, failure.Wrap("realize local public URL", failure.ServerResponseInvalid, errors.New("control returned another public hostname"))
 	}
-	traffic, err := config.ResolveTrafficSelection(effectiveTunnelLimits(effective))
+	traffic, err := config.ResolveTrafficSelection(effective.Traffic)
 	if err != nil {
 		return app.Configuration{}, err
 	}

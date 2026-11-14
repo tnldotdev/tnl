@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 )
 
@@ -100,7 +101,7 @@ func TestIntegrationLocalServiceExposureRetainsIdentityAndRuns(t *testing.T) {
 				t.Fatal("app restart changed its captured endpoint", retry, err)
 			}
 			projection, err := d.GetProjectPublicMetadata(ctx, r.TeamID, r.ProjectKey, r.ActorID, now)
-			if err != nil || protocol == "http" && (len(projection.Services) != 1 || projection.Services[0].ServiceID != private.ServiceID || projection.Services[0].Port != 443 || projection.Services[0].PublicURLID != "") || protocol != "http" && len(projection.Services) != 0 {
+			if err != nil || protocol == "http" && (len(projection.Services) != 1 || projection.Services[0].ServiceID != private.ServiceID || projection.Services[0].Port != 443 || !opaqueid.Valid(projection.Services[0].ServiceID, opaqueid.ServicePrefix)) || protocol != "http" && len(projection.Services) != 0 {
 				t.Fatal("local public projection lost resource identity or exposed a database", projection, err)
 			}
 		})

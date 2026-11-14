@@ -125,9 +125,9 @@ func (c *Client) SetPreviewTeamAccess(ctx context.Context, id string, enabled bo
 	})
 }
 
-func (c *Client) AddPreviewPublicURL(ctx context.Context, id, publicURLID string) (controlv1.Preview, error) {
+func (c *Client) AddPreviewService(ctx context.Context, id, serviceID string) (controlv1.Preview, error) {
 	return requestWithAccess[controlv1.Preview](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.AddPreviewPublicURL(ctx, id, controlv1.AddPreviewPublicURLRequest{PublicUrlId: publicURLID}, editors...)
+		return c.api.AddPreviewService(ctx, id, controlv1.AddPreviewServiceRequest{ServiceId: serviceID}, editors...)
 	})
 }
 
@@ -138,9 +138,9 @@ func (c *Client) CreateShare(ctx context.Context, previewID, key string, body co
 	})
 }
 
-func (c *Client) CreateURLShare(ctx context.Context, key string, body controlv1.CreateShareRequest) (controlv1.ShareCreation, error) {
+func (c *Client) CreateServiceShare(ctx context.Context, key string, body controlv1.CreateShareRequest) (controlv1.ShareCreation, error) {
 	return requestWithAccess[controlv1.ShareCreation](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreateURLShare(ctx, &controlv1.CreateURLShareParams{IdempotencyKey: key}, body, editors...)
+		return c.api.CreateServiceShare(ctx, &controlv1.CreateServiceShareParams{IdempotencyKey: key}, body, editors...)
 	})
 }
 
@@ -193,19 +193,6 @@ func (c *Client) RevokeShare(ctx context.Context, id string) (controlv1.Share, e
 	})
 }
 
-func (c *Client) EnableShareAccess(ctx context.Context, runID string, version uint64, previewID string, token credentials.PublishRunToken) error {
-	var selected *string
-	if previewID != "" {
-		selected = &previewID
-	}
-	_, err := request[struct{}](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.EnableShareAccess(ctx, runID, controlv1.EnableShareAccessRequest{
-			PublishRunNumber: int64(version), PreviewId: selected,
-		}, editors...)
-	})
-	return err
-}
-
 func (c *Client) RedeemBrowserHandoff(ctx context.Context, runID string, version uint64, ticket, shareID, shareSecret string, token credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
 	input := controlv1.BrowserHandoffRequest{PublishRunNumber: int64(version), Token: ticket}
 	if shareID != "" && shareSecret != "" {
@@ -229,9 +216,9 @@ func (c *Client) RevokeBrowserAccess(ctx context.Context, runID string, version 
 	return err
 }
 
-func (c *Client) RedeemPublishRunShare(ctx context.Context, runID string, body controlv1.RedeemShareRequest, token credentials.PublishRunToken) (controlv1.ShareRedemption, error) {
+func (c *Client) RedeemServiceShare(ctx context.Context, serviceID, runID string, body controlv1.RedeemServiceShareRequest, token credentials.ServiceRunToken) (controlv1.ShareRedemption, error) {
 	return request[controlv1.ShareRedemption](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RedeemPublishRunShare(ctx, runID, body, editors...)
+		return c.api.RedeemServiceShare(ctx, serviceID, runID, body, editors...)
 	})
 }
 

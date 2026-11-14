@@ -182,7 +182,7 @@ func TestIntegrationConnectorCarrierSwitchRetainsApplicationAndTarget(t *testing
 					f.publisherTCPOnly = tcp
 					target := startPrivateEchoTarget(t, f.owner)
 					key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
-					service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "native", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
+					service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "native", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp}, nil)
 					if err != nil {
 						t.Fatal(err)
 					}

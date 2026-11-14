@@ -16,10 +16,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/filelock"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
-	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	processidentity "github.com/tnldotdev/tnl/internal/publisher/processidentity"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
@@ -32,25 +29,141 @@ type jobAuthority struct {
 	public   ed25519.PublicKey
 }
 
+func (*jobAuthority) RedeemPublisherEnrollment(context.Context, string, ed25519.PublicKey) (authorityv1.PublisherEnrollmentResult, error) {
+	return authorityv1.PublisherEnrollmentResult{}, errors.New("unexpected enrollment")
+}
+func (a *jobAuthority) ExchangePublisherAssertion(_ context.Context, client, grant, key string, private ed25519.PrivateKey) (string, error) {
+	if client != a.identity.ClientId || grant != a.identity.GrantId || key != a.identity.KeyId || !private.Public().(ed25519.PublicKey).Equal(a.public) {
+		return "", publisheridentity.ErrScope
+	}
+	return "test-access-never-log", nil
+}
+
+type jobControl struct {
+	publisheridentity.ServiceControl
+	service         controlv1.Service
+	public          ed25519.PublicKey
+	runs            chan string
+	runError        error
+	renewError      error
+	onPrepare       func()
+	runtimeMu       sync.Mutex
+	runtimeRequests []controlv1.PublisherRuntimeRequest
+}
+
+func (*jobControl) ControlURL() string { return "https://control.example" }
+
+func jobClients(control *jobControl) PublisherClients {
+	return PublisherClients{NativeControl: publisheridentity.NativeControl{Services: control, Runtime: control}}
+}
+
+func (c *jobControl) PublisherRuntime(_ context.Context, r controlv1.PublisherRuntimeRequest) (controlv1.PublisherRuntimeResponse, error) {
+	c.runtimeMu.Lock()
+	defer c.runtimeMu.Unlock()
+	c.runtimeRequests = append(c.runtimeRequests, r)
+	if r.Action == controlv1.RuntimeRenew && c.renewError != nil {
+		return controlv1.PublisherRuntimeResponse{}, c.renewError
+	}
+	kid, err := publisherproof.KeyID(r.Assertion)
+	if err != nil {
+		return controlv1.PublisherRuntimeResponse{}, err
+	}
+	if _, err = publisherproof.Verify(r.Assertion, r.PublisherIdentityId, kid, publisherproof.RuntimeScope(r.ScopeId, string(r.Action), r.ProcessRunId, r.ExpectedEpoch, ""), "https://control.example/v1/publisher/runtimes/"+r.PublisherIdentityId+"/"+string(r.Action), c.public, time.Now()); err != nil {
+		return controlv1.PublisherRuntimeResponse{}, err
+	}
+	epoch := r.ExpectedEpoch
+	if r.Action == controlv1.RuntimeStart {
+		epoch++
+	}
+	return controlv1.PublisherRuntimeResponse{Epoch: epoch, LeaseExpiresAt: new(time.Now().Add(2 * time.Minute))}, nil
+}
+
+func (c *jobControl) GetPublisherService(_ context.Context, _, access string) (controlv1.Service, error) {
+	if access != "test-access-never-log" {
+		return controlv1.Service{}, publisheridentity.ErrScope
+	}
+	return c.service, nil
+}
+
+func (c *jobControl) PrepareServiceRun(ctx context.Context, service, key, access string, declaration controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error) {
+	if service != c.service.Id || access != "test-access-never-log" || declaration.Protocol != c.service.Protocol || declaration.TrustRevision != c.service.TrustRevision {
+		return controlv1.ServiceRunPreparation{}, publisheridentity.ErrScope
+	}
+	select {
+	case c.runs <- key:
+	default:
+	}
+	if c.onPrepare != nil {
+		c.onPrepare()
+	}
+	if c.runError != nil {
+		return controlv1.ServiceRunPreparation{}, c.runError
+	}
+	// bound the real service owner after its signed preparation. no synthetic
+	// ready callback replaces service certificates or claimed relay connections.
+	<-ctx.Done()
+	return controlv1.ServiceRunPreparation{}, ctx.Err()
+}
+
+func jobBoundary(job Job, identity authorityv1.PublisherEnrollmentResult, key ed25519.PrivateKey) (*jobControl, *jobAuthority) {
+	return &jobControl{service: controlv1.Service{Id: job.ServiceID, TeamId: identity.TeamId, Name: job.ID, Protocol: controlv1.ServiceProtocol(job.Protocol),
+		Enabled: true, TrustRevision: job.TrustRevision, PublisherPool: job.PublisherPool,
+		TargetTls: publisheridentity.ServiceTargetTLS(job.Trust), Endpoint: &controlv1.ServiceEndpoint{Hostname: job.ID + ".example", Port: 443}},
+		public: key.Public().(ed25519.PublicKey), runs: make(chan string, 32)}, &jobAuthority{identity: identity, public: key.Public().(ed25519.PublicKey)}
+}
+
+func startEngine(t *testing.T, engine Engine) (context.CancelFunc, <-chan error) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- engine.Serve(ctx) }()
+	t.Cleanup(cancel)
+	return cancel, done
+}
+
+func joinEngine(t *testing.T, cancel context.CancelFunc, done <-chan error) {
+	t.Helper()
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("service did not join its workers")
+	}
+}
+
+func await(t *testing.T, ready func() bool) {
+	t.Helper()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	for !ready() {
+		select {
+		case <-deadline.C:
+			t.Fatal("job did not reach expected boundary")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 func TestInstalledTelemetryOptOutSurvivesSupervisorRestart(t *testing.T) {
 	for _, disabled := range []bool{true, false} {
 		t.Run(fmt.Sprint(disabled), func(t *testing.T) {
-			registry := testRegistry(t)
-			job, identity, key := fixture(t, "web")
+			registry := userRegistry(t)
+			job, _, _ := kindFixture(t, KindConnector)
 			job.TelemetryDisabled = disabled
-			control, authority := jobBoundary(job, identity, key)
-			if err := registry.Install(t.Context(), job, identity, key); err != nil {
+			if err := registry.InstallConnector(t.Context(), job); err != nil {
 				t.Fatal(err)
 			}
 			for range 2 {
 				observed := make(chan bool, 1)
-				engine := Engine{Telemetry: &clienttelemetry.Collector{}, Registry: registry, PollInterval: 5 * time.Millisecond, Clients: func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
-					return jobClients(control), authority, nil
-				}, Publish: func(ctx context.Context, cfg publisher.Config) error {
-					observed <- cfg.Telemetry == nil
-					<-ctx.Done()
-					return nil
-				}}
+				engine := Engine{Telemetry: &clienttelemetry.Collector{}, Registry: registry, PollInterval: 5 * time.Millisecond,
+					Connect: func(ctx context.Context, _ Job, telemetry *clienttelemetry.Collector, _ func() error) error {
+						observed <- telemetry == nil
+						<-ctx.Done()
+						return nil
+					}}
 				cancel, done := startEngine(t, engine)
 				select {
 				case value := <-observed:
@@ -93,38 +206,7 @@ func TestUserJobRunnerSharesSupervisorLifetime(t *testing.T) {
 	}
 }
 
-func (*jobAuthority) RedeemPublisherEnrollment(context.Context, string, ed25519.PublicKey) (authorityv1.PublisherEnrollmentResult, error) {
-	return authorityv1.PublisherEnrollmentResult{}, errors.New("unexpected enrollment")
-}
-func (a *jobAuthority) ExchangePublisherAssertion(_ context.Context, client, grant, key string, private ed25519.PrivateKey) (string, error) {
-	if client != a.identity.ClientId || grant != a.identity.GrantId || key != a.identity.KeyId || !private.Public().(ed25519.PublicKey).Equal(a.public) {
-		return "", publisheridentity.ErrScope
-	}
-	return "test-access-never-log", nil
-}
-
-type jobControl struct {
-	publisheridentity.PublicURLControl
-	publicURL       controlv1.PublicURL
-	public          ed25519.PublicKey
-	runs            chan string
-	runError        error
-	renewError      error
-	runtimeMu       sync.Mutex
-	runtimeRequests []controlv1.PublisherRuntimeRequest
-}
-
-func (*jobControl) ControlURL() string { return "https://control.example" }
-
-func (*jobControl) Discovery(context.Context) (controlv1.ControlDiscovery, error) {
-	return controlv1.ControlDiscovery{}, nil
-}
-
-func jobClients(control *jobControl) PublisherClients {
-	return PublisherClients{NativeControl: publisheridentity.NativeControl{PublicURLControl: control, Runtime: control}, Discovery: control}
-}
-
-func TestInstalledURLRequiresExplicitDiscovery(t *testing.T) {
+func TestInstalledServiceRequiresExplicitServiceControl(t *testing.T) {
 	registry := testRegistry(t)
 	job, identity, private := fixture(t, "web")
 	control, authority := jobBoundary(job, identity, private)
@@ -133,80 +215,46 @@ func TestInstalledURLRequiresExplicitDiscovery(t *testing.T) {
 	}
 	engine := Engine{Registry: registry, Clients: func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		clients := jobClients(control)
-		clients.Discovery = nil
+		clients.Services = nil
 		return clients, authority, nil
 	}}
 	var runtime *processidentity.Owner
-	if _, err := engine.attempt(t.Context(), job, 1, &runtime); !errors.Is(err, ErrScope) || runtime != nil {
-		t.Fatal("missing discovery capability started a deployed URL runtime", err)
+	if _, err := engine.attempt(t.Context(), job, 1, &runtime); !errors.Is(err, publisheridentity.ErrScope) || runtime != nil {
+		t.Fatal("missing service capability started a publisher runtime", err)
 	}
-}
-
-func (c *jobControl) PublisherRuntime(_ context.Context, r controlv1.PublisherRuntimeRequest) (controlv1.PublisherRuntimeResponse, error) {
-	c.runtimeMu.Lock()
-	c.runtimeRequests = append(c.runtimeRequests, r)
-	c.runtimeMu.Unlock()
-	if r.Action == controlv1.RuntimeRenew && c.renewError != nil {
-		return controlv1.PublisherRuntimeResponse{}, c.renewError
-	}
-	kid, err := publisherproof.KeyID(r.Assertion)
-	if err != nil {
-		return controlv1.PublisherRuntimeResponse{}, err
-	}
-	if _, err = publisherproof.Verify(r.Assertion, r.PublisherIdentityId, kid, publisherproof.RuntimeScope(r.ScopeId, string(r.Action), r.ProcessRunId, r.ExpectedEpoch, ""), "https://control.example/v1/publisher/runtimes/"+r.PublisherIdentityId+"/"+string(r.Action), c.public, time.Now()); err != nil {
-		return controlv1.PublisherRuntimeResponse{}, err
-	}
-	epoch := r.ExpectedEpoch
-	if r.Action == controlv1.RuntimeStart {
-		epoch++
-	}
-	return controlv1.PublisherRuntimeResponse{Epoch: epoch, LeaseExpiresAt: new(time.Now().Add(2 * time.Minute))}, nil
 }
 
 func TestInstalledRunConflictRetriesOnlyWhileRuntimeIsCurrent(t *testing.T) {
 	for _, fenced := range []bool{false, true} {
 		t.Run(fmt.Sprint(fenced), func(t *testing.T) {
 			registry := testRegistry(t)
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+			defer target.Close()
 			job, identity, key := fixture(t, "web")
+			job.Target = target.URL
 			control, authority := jobBoundary(job, identity, key)
+			control.runError = clientcontrol.ErrStatusConflict
 			if fenced {
-				control.renewError = clientcontrol.ErrStatusConflict
+				control.onPrepare = func() {
+					control.runtimeMu.Lock()
+					control.renewError = clientcontrol.ErrStatusConflict
+					control.runtimeMu.Unlock()
+				}
 			}
 			if err := registry.Install(t.Context(), job, identity, key); err != nil {
 				t.Fatal(err)
 			}
-			var attempts atomic.Int64
 			engine := Engine{Registry: registry, PollInterval: 5 * time.Millisecond, RetryMin: 5 * time.Millisecond, RetryMax: 10 * time.Millisecond,
 				Clients: func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 					return jobClients(control), authority, nil
-				},
-				Publish: func(ctx context.Context, cfg publisher.Config) error {
-					if attempts.Add(1) == 1 {
-						return clientcontrol.ErrStatusConflict
-					}
-					if err := cfg.Observe(publisher.Event{Type: publisher.EventReady, PublishRunNumber: 2, PublicURL: "https://web.example"}); err != nil {
-						return err
-					}
-					<-ctx.Done()
-					return nil
 				}}
 			cancel, done := startEngine(t, engine)
 			await(t, func() bool {
-				jobs, err := registry.List(t.Context())
-				if err != nil || len(jobs) != 1 {
-					return false
-				}
-				if fenced {
-					return jobs[0].Status.State == "blocked" && jobs[0].Status.Failure == string(failure.ServerConflict)
-				}
-				return jobs[0].Status.State == "ready"
+				jobs, _ := registry.List(t.Context())
+				return len(jobs) == 1 && (fenced && jobs[0].Status.State == JobBlocked || !fenced && jobs[0].Status.Attempts >= 2 && jobs[0].Status.State == JobRetrying)
 			})
 			joinEngine(t, cancel, done)
-			want := int64(2)
-			if fenced {
-				want = 1
-			}
-			if attempts.Load() != want {
+			if fenced && len(control.runs) != 1 || !fenced && len(control.runs) < 2 {
 				t.Fatal("conflict retried across the runtime fence")
 			}
 			inspects, starts := 0, 0
@@ -225,68 +273,6 @@ func TestInstalledRunConflictRetriesOnlyWhileRuntimeIsCurrent(t *testing.T) {
 	}
 }
 
-func (c *jobControl) PublisherPublicURL(context.Context, string) (controlv1.PublicURL, error) {
-	return c.publicURL, nil
-}
-func (c *jobControl) CreatePublisherRun(_ context.Context, url, retry, access, proof string, selection *trafficlimits.Selection, _ ...string) (controlv1.PublishRunSetup, error) {
-	if selection != nil {
-		if err := selection.Validate(); err != nil {
-			return controlv1.PublishRunSetup{}, err
-		}
-	}
-	if access != "test-access-never-log" {
-		return controlv1.PublishRunSetup{}, publisheridentity.ErrScope
-	}
-	if _, err := publisherproof.VerifyRun(c.public, proof, url, retry); err != nil {
-		return controlv1.PublishRunSetup{}, err
-	}
-	select {
-	case c.runs <- retry:
-	default:
-	}
-	return controlv1.PublishRunSetup{}, c.runError
-}
-
-func jobBoundary(job Job, identity authorityv1.PublisherEnrollmentResult, key ed25519.PrivateKey) (*jobControl, *jobAuthority) {
-	domain, _ := opaqueid.New(opaqueid.DomainPrefix)
-	return &jobControl{publicURL: controlv1.PublicURL{Id: job.PublicURLID, TeamId: identity.TeamId, DomainId: domain, PublicUrlScope: controlv1.Shared, Purpose: controlv1.App, ServiceProtocol: controlv1.Http, CanonicalHostname: job.ID + ".example", Target: job.Target, LifecycleState: controlv1.Enabled}, public: key.Public().(ed25519.PublicKey), runs: make(chan string, 32)}, &jobAuthority{identity: identity, public: key.Public().(ed25519.PublicKey)}
-}
-
-func startEngine(t *testing.T, engine Engine) (context.CancelFunc, <-chan error) {
-	t.Helper()
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- engine.Serve(ctx) }()
-	t.Cleanup(cancel)
-	return cancel, done
-}
-
-func joinEngine(t *testing.T, cancel context.CancelFunc, done <-chan error) {
-	t.Helper()
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("service did not join its workers")
-	}
-}
-
-func await(t *testing.T, ready func() bool) {
-	t.Helper()
-	deadline := time.NewTimer(5 * time.Second)
-	defer deadline.Stop()
-	for !ready() {
-		select {
-		case <-deadline.C:
-			t.Fatal("job did not reach expected boundary")
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
-}
-
 func TestRealNativeRunSignsWithTheSameKeyAfterBoot(t *testing.T) {
 	options := testOptions(t)
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
@@ -294,11 +280,9 @@ func TestRealNativeRunSignsWithTheSameKeyAfterBoot(t *testing.T) {
 	job, identity, private := fixture(t, "web")
 	job.Target = target.URL
 	control, authority := jobBoundary(job, identity, private)
-	control.runError = errors.New("test ends after verified signed run creation")
-	var previousRun string
+	previousRun := ""
 	for boot := range 2 {
-		control.runtimeRequests = nil
-		control.runs = make(chan string, 32)
+		control.runtimeRequests, control.runs = nil, make(chan string, 32)
 		r, err := Open(t.Context(), options)
 		if err != nil {
 			t.Fatal(err)
@@ -308,16 +292,15 @@ func TestRealNativeRunSignsWithTheSameKeyAfterBoot(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, RetryMin: 10 * time.Millisecond, RetryMax: 20 * time.Millisecond, Clients: func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
-			return jobClients(control), authority, nil
-		}}
-		// Publish is deliberately unset: this executes publisher.Run, target
-		// preflight, URL reconciliation, and the signed native run adapter.
+		engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, RetryMin: 10 * time.Millisecond, RetryMax: 20 * time.Millisecond,
+			Clients: func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+				return jobClients(control), authority, nil
+			}}
 		cancel, done := startEngine(t, engine)
 		select {
 		case <-control.runs:
 		case <-time.After(5 * time.Second):
-			t.Fatal("native publisher did not create a signed run")
+			t.Fatal("native publisher did not prepare its run")
 		}
 		joinEngine(t, cancel, done)
 		requests := control.runtimeRequests
@@ -334,6 +317,10 @@ func TestRealNativeRunSignsWithTheSameKeyAfterBoot(t *testing.T) {
 				t.Fatal("installed retry changed runtime ownership")
 			}
 		}
+		profile, _ := r.Profile(t.Context(), job.Server)
+		if _, found, err := profile.ControlSession(t.Context()); err != nil || found {
+			t.Fatal("boot acquired an operator session", err)
+		}
 		if err := r.Close(); err != nil {
 			t.Fatal(err)
 		}
@@ -348,17 +335,18 @@ func TestIndependentTargetsAndServersUseBoundedRetries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	missingTarget := "http://" + closed.Addr().String()
-	closed.Close()
-	var boundaries = map[string]struct {
+	missing := "http://" + closed.Addr().String()
+	_ = closed.Close()
+	type boundary struct {
 		c *jobControl
 		a *jobAuthority
-	}{}
+	}
+	boundaries := map[string]boundary{}
 	for _, name := range []string{"healthy", "target-down", "server-down"} {
 		job, identity, private := fixture(t, name)
 		job.Target = target.URL
 		if name == "target-down" {
-			job.Target = missingTarget
+			job.Target = missing
 		}
 		if name == "server-down" {
 			job.Server = "https://unavailable.example"
@@ -366,37 +354,32 @@ func TestIndependentTargetsAndServersUseBoundedRetries(t *testing.T) {
 		if err := r.Install(t.Context(), job, identity, private); err != nil {
 			t.Fatal(err)
 		}
-		control, authority := jobBoundary(job, identity, private)
-		control.runError = errors.New("publisher retry must not leak access=secret")
-		boundaries[name] = struct {
-			c *jobControl
-			a *jobAuthority
-		}{control, authority}
+		c, a := jobBoundary(job, identity, private)
+		c.runError = errors.New("publisher retry must not leak access=secret")
+		boundaries[name] = boundary{c, a}
 	}
-	var retryMu sync.Mutex
+	var mu sync.Mutex
 	var retries []time.Time
-	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, RetryMin: 15 * time.Millisecond, RetryMax: 30 * time.Millisecond, Clients: func(job Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
-		if job.ID == "server-down" {
-			retryMu.Lock()
-			retries = append(retries, time.Now())
-			retryMu.Unlock()
-			return PublisherClients{}, nil, errors.New("server unavailable with token=secret")
-		}
-		boundary := boundaries[job.ID]
-		return jobClients(boundary.c), boundary.a, nil
-	}}
+	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, RetryMin: 15 * time.Millisecond, RetryMax: 30 * time.Millisecond,
+		Clients: func(job Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+			if job.ID == "server-down" {
+				mu.Lock()
+				retries = append(retries, time.Now())
+				mu.Unlock()
+				return PublisherClients{}, nil, errors.New("server unavailable with token=secret")
+			}
+			b := boundaries[job.ID]
+			return jobClients(b.c), b.a, nil
+		}}
 	cancel, done := startEngine(t, engine)
 	await(t, func() bool {
-		retryMu.Lock()
-		defer retryMu.Unlock()
-		jobs, err := r.List(t.Context())
-		if err != nil {
-			return false
-		}
+		mu.Lock()
+		defer mu.Unlock()
+		jobs, _ := r.List(t.Context())
 		targetRetried := false
-		for _, job := range jobs {
-			if job.ID == "target-down" {
-				targetRetried = job.Status.Attempts >= 3 && job.Status.State != "blocked"
+		for _, j := range jobs {
+			if j.ID == "target-down" {
+				targetRetried = j.Status.Attempts >= 3 && j.Status.State == JobRetrying
 			}
 		}
 		return len(retries) >= 4 && len(boundaries["healthy"].c.runs) >= 2 && targetRetried
@@ -405,91 +388,76 @@ func TestIndependentTargetsAndServersUseBoundedRetries(t *testing.T) {
 	if len(boundaries["target-down"].c.runs) != 0 {
 		t.Fatal("unavailable target reached run creation")
 	}
-	retryMu.Lock()
-	defer retryMu.Unlock()
+	mu.Lock()
+	defer mu.Unlock()
 	if retries[1].Sub(retries[0]) < 15*time.Millisecond || retries[3].Sub(retries[2]) < 30*time.Millisecond || retries[3].Sub(retries[2]) > time.Second {
-		t.Fatalf("unbounded/instant retry: %v", retries)
+		t.Fatal("unbounded or instant retry", retries)
 	}
 	jobs, err := r.List(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, job := range jobs {
-		if job.Status.Failure != "" {
-			t.Fatalf("joined service retained a failure: %+v", job.Status)
+	for _, j := range jobs {
+		if j.Status.Failure != "" {
+			t.Fatal("joined service retained failure", j.Status)
 		}
 	}
 }
 
 func TestReconcileDoesNotBlockOnAnotherJobsDrain(t *testing.T) {
-	r := testRegistry(t)
-	controls := map[string]*jobControl{}
-	authorities := map[string]*jobAuthority{}
+	r := userRegistry(t)
 	for _, name := range []string{"slow", "next"} {
-		job, identity, private := fixture(t, name)
-		if err := r.Install(t.Context(), job, identity, private); err != nil {
+		job, _, _ := kindFixture(t, KindConnector)
+		job.ID = name
+		if err := r.InstallConnector(t.Context(), job); err != nil {
 			t.Fatal(err)
 		}
-		controls[name], authorities[name] = jobBoundary(job, identity, private)
 	}
 	if err := r.Stop(t.Context(), "next"); err != nil {
 		t.Fatal(err)
 	}
 	release := make(chan struct{})
-	var releaseOnce sync.Once
-	defer releaseOnce.Do(func() { close(release) })
-	var slowDraining, nextRunning atomic.Bool
-	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, Clients: func(job Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
-		return jobClients(controls[job.ID]), authorities[job.ID], nil
-	}, Publish: func(ctx context.Context, cfg publisher.Config) error {
-		if err := cfg.Observe(publisher.Event{Type: publisher.EventReady, PublishRunNumber: 7}); err != nil {
+	var once sync.Once
+	defer once.Do(func() { close(release) })
+	var draining, running atomic.Bool
+	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, Connect: func(ctx context.Context, j Job, _ *clienttelemetry.Collector, ready func() error) error {
+		if err := ready(); err != nil {
 			return err
 		}
-		if cfg.Hostname == "next.example" {
-			nextRunning.Store(true)
+		if j.ID == "next" {
+			running.Store(true)
 		}
 		<-ctx.Done()
-		if cfg.Hostname == "slow.example" {
-			slowDraining.Store(true)
+		if j.ID == "slow" {
+			draining.Store(true)
 			<-release
 		}
 		return nil
 	}}
 	cancel, done := startEngine(t, engine)
-	await(t, func() bool { jobs, _ := r.List(t.Context()); return len(jobs) == 2 && jobs[1].Status.State == "ready" })
+	await(t, func() bool { jobs, _ := r.List(t.Context()); return len(jobs) == 2 && jobs[1].Status.State == JobReady })
 	if err := r.Stop(t.Context(), "slow"); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Start(t.Context(), "next"); err != nil {
 		t.Fatal(err)
 	}
-	await(t, func() bool { return slowDraining.Load() && nextRunning.Load() })
-	stopping, stopWait := context.WithTimeout(t.Context(), 20*time.Millisecond)
-	if err := r.WaitStopped(stopping, "slow"); !errors.Is(err, context.DeadlineExceeded) {
-		stopWait()
-		t.Fatalf("stop acknowledged before drain join: %v", err)
+	await(t, func() bool { return draining.Load() && running.Load() })
+	wait, stop := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	if err := r.WaitStopped(wait, "slow"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("stop preceded drain join", err)
 	}
-	stopWait()
+	stop()
 	cancel()
 	select {
 	case <-done:
-		t.Fatal("Serve returned before the slow worker joined")
+		t.Fatal("supervisor returned before worker join")
 	case <-time.After(30 * time.Millisecond):
 	}
-	releaseOnce.Do(func() { close(release) })
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("drain join failed")
-	}
+	once.Do(func() { close(release) })
+	joinEngine(t, cancel, done)
 	if err := r.WaitStopped(t.Context(), "slow"); err != nil {
-		t.Fatalf("joined stop was not acknowledged: %v", err)
-	}
-	if _, _, _, err := r.signingIdentity(t.Context(), func() Job { jobs, _ := r.List(t.Context()); return jobs[1] }()); err != nil {
-		t.Fatal("local stop revoked or removed the signing identity")
+		t.Fatal(err)
 	}
 }
 
@@ -500,7 +468,7 @@ func TestBlockedGrantCanRestartWithoutLeakingErrorText(t *testing.T) {
 		t.Fatal(err)
 	}
 	control, authority := jobBoundary(job, identity, private)
-	control.publicURL.Id, _ = opaqueid.New(opaqueid.PublicURLPrefix)
+	control.service.Id, _ = opaqueid.New(opaqueid.ServicePrefix)
 	var calls atomic.Int64
 	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, Clients: func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		calls.Add(1)
@@ -509,7 +477,7 @@ func TestBlockedGrantCanRestartWithoutLeakingErrorText(t *testing.T) {
 	cancel, done := startEngine(t, engine)
 	await(t, func() bool {
 		jobs, _ := r.List(t.Context())
-		return len(jobs) == 1 && jobs[0].Status.State == "blocked"
+		return len(jobs) == 1 && jobs[0].Status.State == JobBlocked
 	})
 	if calls.Load() != 1 {
 		t.Fatal("scope failure kept retrying")
@@ -517,26 +485,61 @@ func TestBlockedGrantCanRestartWithoutLeakingErrorText(t *testing.T) {
 	if err := r.Start(t.Context(), job.ID); err != nil {
 		t.Fatal(err)
 	}
-	await(t, func() bool { return calls.Load() == 2 })
+	await(t, func() bool {
+		jobs, _ := r.List(t.Context())
+		return calls.Load() == 2 && len(jobs) == 1 && jobs[0].Status.State == JobBlocked
+	})
 	joinEngine(t, cancel, done)
 	if safeFailure(errors.New("enrollment=secret assertion=secret")) != "publication unavailable" {
-		t.Fatal("raw failure escaped the boundary")
+		t.Fatal("raw failure escaped")
+	}
+}
+
+func TestServicePublicationRejectsDriftBeforePreparingAnyRun(t *testing.T) {
+	for _, name := range []string{"id", "protocol", "trust", "pool", "disabled"} {
+		t.Run(name, func(t *testing.T) {
+			r := testRegistry(t)
+			job, identity, key := fixture(t, "web")
+			if err := r.Install(t.Context(), job, identity, key); err != nil {
+				t.Fatal(err)
+			}
+			control, authority := jobBoundary(job, identity, key)
+			switch name {
+			case "id":
+				control.service.Id = ""
+			case "protocol":
+				control.service.Protocol = controlv1.Tcp
+			case "trust":
+				control.service.TrustRevision++
+			case "pool":
+				control.service.PublisherPool = !job.PublisherPool
+			case "disabled":
+				control.service.Enabled = false
+			}
+			engine := Engine{Registry: r, Clients: func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+				return jobClients(control), authority, nil
+			}}
+			var owner *processidentity.Owner
+			if _, err := engine.attempt(t.Context(), job, 1, &owner); err == nil || len(control.runs) != 0 {
+				t.Fatal("saved service drift reached preparation", err)
+			}
+			if owner != nil {
+				_ = owner.Stop(t.Context())
+			}
+		})
 	}
 }
 
 func TestServiceRejectsASecondSupervisor(t *testing.T) {
 	r := testRegistry(t)
 	locked := make(chan struct{})
-	cancel, done := startEngine(t, Engine{Registry: r, PollInterval: 5 * time.Millisecond, Initialize: func(context.Context) error {
-		close(locked)
-		return nil
-	}})
+	cancel, done := startEngine(t, Engine{Registry: r, PollInterval: 5 * time.Millisecond, Initialize: func(context.Context) error { close(locked); return nil }})
 	select {
 	case <-locked:
 	case err := <-done:
-		t.Fatal("first supervisor exited before acquiring its lock", err)
+		t.Fatal(err)
 	case <-time.After(5 * time.Second):
-		t.Fatal("first supervisor did not acquire its lock")
+		t.Fatal("supervisor lock missing")
 	}
 	ctx, stop := context.WithTimeout(t.Context(), time.Second)
 	defer stop()

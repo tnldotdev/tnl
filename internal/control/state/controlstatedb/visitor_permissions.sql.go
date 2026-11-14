@@ -465,9 +465,7 @@ SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.ser
     permission.reason::text AS visitor_access
 FROM control.public_urls u JOIN control.teams t ON t.id = u.team_id
 CROSS JOIN LATERAL control.visitor_identity_permission('public_url',u.id,$1::text,$2::text,
-    COALESCE((SELECT p.id FROM control.previews p JOIN control.preview_public_urls included ON included.preview_id = p.id
-      WHERE included.public_url_id = u.id AND p.team_access_enabled AND p.demo_publish_run_id IS NULL ORDER BY p.id LIMIT 1), ''),
-    $3::timestamptz) permission
+    '',$3::timestamptz) permission
 WHERE u.id > $4::text AND ($5::text = '' OR u.team_id = $5)
   AND control.company_subject_session_authorized(u.team_id,$1::text,$2::text,$3)
 ORDER BY u.id LIMIT 101
@@ -643,48 +641,6 @@ INSERT INTO control.visitor_ip_policy_sets(public_url_id) VALUES ($1) ON CONFLIC
 func (q *Queries) MarkVisitorIPSet(ctx context.Context, publicUrlID string) error {
 	_, err := q.db.Exec(ctx, markVisitorIPSet, publicUrlID)
 	return err
-}
-
-const readyBrowserHosts = `-- name: ReadyBrowserHosts :many
-SELECT DISTINCT ON(u.id) u.id AS public_url_id, u.canonical_hostname, r.id AS publish_run_id
-FROM control.public_urls u JOIN control.publish_runs r ON r.public_url_id = u.id
-WHERE u.lifecycle_state = 'enabled' AND u.purpose IN ('app', 'alias') AND u.service_protocol = 'http'
-  AND r.state = 'ready' AND r.publisher_expires_at > $1 AND r.closed_at IS NULL
-  AND (u.id = $2 OR EXISTS (SELECT 1 FROM control.preview_public_urls included
-       WHERE included.preview_id = $3::text AND included.public_url_id = u.id))
-ORDER BY u.id,r.publish_run_number DESC LIMIT 32
-`
-
-type ReadyBrowserHostsParams struct {
-	Now         pgtype.Timestamptz
-	PublicURLID string
-	PreviewID   string
-}
-
-type ReadyBrowserHostsRow struct {
-	PublicURLID       string
-	CanonicalHostname string
-	PublishRunID      string
-}
-
-func (q *Queries) ReadyBrowserHosts(ctx context.Context, arg ReadyBrowserHostsParams) ([]ReadyBrowserHostsRow, error) {
-	rows, err := q.db.Query(ctx, readyBrowserHosts, arg.Now, arg.PublicURLID, arg.PreviewID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ReadyBrowserHostsRow
-	for rows.Next() {
-		var i ReadyBrowserHostsRow
-		if err := rows.Scan(&i.PublicURLID, &i.CanonicalHostname, &i.PublishRunID); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const revokeVisitorGrant = `-- name: RevokeVisitorGrant :exec

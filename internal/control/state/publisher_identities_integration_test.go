@@ -22,7 +22,7 @@ func TestIntegrationPublisherResolvedScopeUsesAuthorizedFacts(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "publisher_resolved_scope")
 	r := oidcRouteRequest(t, d, now)
 	u := createTestPublicURL(t, d, r, now)
-	service, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActingIdentityID, "publisher-private", "publisher-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActingIdentityID, "publisher-private", "publisher-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,22 +275,26 @@ func TestIntegrationPublisherNamespaceMemberOwnershipAndRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	invocation, _ := opaqueid.New(opaqueid.InvocationPrefix)
-	options := PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted, RequirePostQuantum: true}
-	u, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://app.internal:3000", []string{}, []byte("null"), now, options)
+	request := AllocateServiceRequest{Invocation: invocation, Configuration: ProjectServiceConfiguration{Target: "http://app.internal:3000", RequirePostQuantum: new(true)}}
+	u, err := d.AllocatePublisherService(t.Context(), p, request, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	retry, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://app.internal:3000", []string{}, []byte("null"), now, options)
+	retry, err := d.AllocatePublisherService(t.Context(), p, request, now)
 	if err != nil || retry.ID != u.ID || !retry.RequirePostQuantum {
 		t.Fatalf("allocation retry = %+v, %v", retry, err)
 	}
-	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://other.internal:3000", []string{}, []byte("null"), now, options); !errors.Is(err, ErrPublicURLIdempotency) {
+	changed := request
+	changed.Configuration.Target = "http://other.internal:3000"
+	if _, err := d.AllocatePublisherService(t.Context(), p, changed, now); !errors.Is(err, ErrServiceConflict) {
 		t.Fatalf("changed retry target = %v", err)
 	}
-	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://app.internal:3000", []string{}, []byte("null"), now, PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted}); !errors.Is(err, ErrPublicURLIdempotency) {
+	changed = request
+	changed.Configuration.RequirePostQuantum = nil
+	if _, err := d.AllocatePublisherService(t.Context(), p, changed, now); !errors.Is(err, ErrServiceConflict) {
 		t.Fatalf("retry changed the post-quantum requirement: %v", err)
 	}
-	if !strings.HasSuffix(u.CanonicalHostname, "."+p.Scope.Namespace) || !u.Ephemeral {
+	if !strings.HasSuffix(u.Endpoint.Hostname, "."+p.Scope.Namespace) || !u.Ephemeral || u.ExpiresAt != nil {
 		t.Fatal("allocation escaped its namespace")
 	}
 	e2 := publisherEnrollment(t, d, r, p.Scope, now)
@@ -299,15 +303,13 @@ func TestIntegrationPublisherNamespaceMemberOwnershipAndRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if owns, err := d.PublisherMayStartRun(t.Context(), other, u.ID); err != nil || owns {
-		t.Fatalf("foreign allocation ownership = %t, %v", owns, err)
+	if _, err := d.GetServiceForPublisher(t.Context(), u.ID, other, now); err == nil {
+		t.Fatal("foreign credential adopted the service")
 	}
-	wrong := AuthorizedPublicURLDeleteRequest{PublicURLID: u.ID, TeamID: u.TeamID, ActingIdentityID: p.CreatorID, PublisherIdentityID: other.ID, PublisherGrantID: other.GrantID}
-	if err := d.DeleteAuthorizedPublicURL(t.Context(), wrong, now); !errors.Is(err, ErrPublisherIdentity) {
+	if err := d.DeletePublisherService(t.Context(), other, u.ID, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("foreign allocation cleanup = %v", err)
 	}
-	wrong.PublisherIdentityID, wrong.PublisherGrantID = p.ID, p.GrantID
-	if err := d.DeleteAuthorizedPublicURL(t.Context(), wrong, now); err != nil {
+	if err := d.DeletePublisherService(t.Context(), p, u.ID, now); err != nil {
 		t.Fatalf("exact allocation cleanup = %v", err)
 	}
 	if _, err := d.pool.Exec(t.Context(), `UPDATE control.team_memberships SET removed_at=$2, removed_by_identity_id=identity_id WHERE id=$1`, r.MembershipID, now); err != nil {
@@ -321,7 +323,8 @@ func TestIntegrationPublisherNamespaceMemberOwnershipAndRemoval(t *testing.T) {
 		t.Fatalf("member-owned credential survived removal: %v", err)
 	}
 	invocation2, _ := opaqueid.New(opaqueid.InvocationPrefix)
-	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation2, "http://app.internal:3000", []string{}, nil, now, PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted}); !errors.Is(err, ErrPublisherIdentity) {
+	request.Invocation = invocation2
+	if _, err := d.AllocatePublisherService(t.Context(), p, request, now); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatalf("removed member allocated another URL: %v", err)
 	}
 }
@@ -443,7 +446,7 @@ func TestIntegrationGuestPublisherScopeSourceAndExpiry(t *testing.T) {
 	if _, err := d.AuthenticatePublisherAccess(t.Context(), a.Token, "192.0.2.8/32", now); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatal("guest token moved to another IP")
 	}
-	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, "invocation", "http://127.0.0.1:3000", []string{}, nil, now, PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted}); !errors.Is(err, ErrPublisherIdentity) {
+	if _, err := d.AllocatePublisherService(t.Context(), p, AllocateServiceRequest{}, now); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatal("guest received namespace allocation")
 	}
 	if owns, err := d.PublisherMayStartRun(t.Context(), p, "some-other-demo"); err != nil || owns {

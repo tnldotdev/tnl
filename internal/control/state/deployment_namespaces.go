@@ -27,8 +27,8 @@ func resolveDeploymentDomain(ctx context.Context, tx pgx.Tx, team, project, name
 		return c, publisherLookupError(err, ErrProjectConfigurationInvalid)
 	}
 	for name, service := range c.Services {
-		if service.PublicURL != nil && service.PublicURL.DomainID == "" {
-			service.PublicURL.DomainID = c.Settings.DomainID
+		if service.DomainID == "" {
+			service.DomainID = c.Settings.DomainID
 			c.Services[name] = service
 		}
 	}

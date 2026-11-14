@@ -217,7 +217,7 @@ func publicServiceTraffic(limits TrafficLimits) ingressv1.IngressTrafficLimits {
 	return traffic
 }
 
-func publicServiceTestSetup(t *testing.T, unbound ...bool) (*PublicServices, *publicServiceControlFixture, *publicServiceForwarderFixture, ingressv1.IngressLease) {
+func publicServiceTestConfig(t *testing.T) (Config, *publicServiceControlFixture, *publicServiceForwarderFixture, ingressv1.IngressLease) {
 	t.Helper()
 	lease := ingressv1.IngressLease{IngressId: "ingress-a", IngressRunId: publicServiceTestID(t, opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}
 	control := &publicServiceControlFixture{service: publicServiceTestID(t, opaqueid.ServicePrefix), run: publicServiceTestID(t, opaqueid.ServiceRunPrefix), traffic: publicServiceTraffic(trafficFixture(t).config.Default)}
@@ -225,25 +225,27 @@ func publicServiceTestSetup(t *testing.T, unbound ...bool) (*PublicServices, *pu
 		control.relays = append(control.relays, ingressv1.ServiceRelay{PublisherConnectionId: publicServiceTestID(t, opaqueid.PublisherConnectionPrefix), ConnectionSlot: slot, ConnectionAssignmentRevision: 1, RelayServiceId: []string{"a", "b"}[slot], RelayId: []string{"relay-a", "relay-b"}[slot], RelayRunId: publicServiceTestID(t, opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, InternalRelayAddress: "127.0.0.1:443", TlsServerName: "relay.test", LeaseExpiresAt: time.Now().Add(time.Minute)})
 	}
 	forwarder := &publicServiceForwarderFixture{observed: make(chan tunnelv1.ServiceForwardingHeader, 8), metadata: make(chan proxyproto.Header, 8), data: make(chan []byte, 8), relayDone: make(chan struct{}, 8)}
-	direct, err := NewPublicServices(PublicServicesConfig{Control: control, Forwarder: forwarder, CurrentLease: func() ingressv1.IngressLease { return lease }})
+	t.Cleanup(forwarder.workers.Wait)
+	return Config{Control: control, Forwarder: forwarder, CurrentLease: func() ingressv1.IngressLease { return lease }, MaxConnections: 256}, control, forwarder, lease
+}
+
+func publicServiceTestSetup(t *testing.T) (*Server, *publicServiceControlFixture, *publicServiceForwarderFixture, ingressv1.IngressLease) {
+	t.Helper()
+	config, control, forwarder, lease := publicServiceTestConfig(t)
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(unbound) == 0 || !unbound[0] {
-		listener, err := net.Listen("tcp4", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = listener.Close() })
-		if _, err := New(listener, Config{PublicServices: direct, MaxConnections: 256}); err != nil {
-			t.Fatal(err)
-		}
+	server, err := New(listener, config)
+	if err != nil {
+		_ = listener.Close()
+		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = direct.Close(); forwarder.workers.Wait() })
-	return direct, control, forwarder, lease
+	t.Cleanup(func() { _ = server.Close() })
+	return server, control, forwarder, lease
 }
 
-func publicServiceTestConnect(t *testing.T, p *PublicServices) (net.Conn, <-chan error, func()) {
+func publicServiceTestConnect(t *testing.T, p *Server) (net.Conn, <-chan error, func()) {
 	t.Helper()
 	connection, visitor := net.Pipe()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -267,7 +269,7 @@ func publicServiceTestConnect(t *testing.T, p *PublicServices) (net.Conn, <-chan
 	return visitor, done, stop
 }
 
-func publicServiceActiveStream(t *testing.T, p *PublicServices, forwarder *publicServiceForwarderFixture) (net.Conn, func()) {
+func publicServiceActiveStream(t *testing.T, p *Server, forwarder *publicServiceForwarderFixture) (net.Conn, func()) {
 	t.Helper()
 	forwarder.holdAfterReply = true
 	visitor, _, stop := publicServiceTestConnect(t, p)
@@ -380,7 +382,7 @@ func TestPublicServiceVisitorRejectsLeaseLostDuringAdmission(t *testing.T) {
 	}
 }
 
-func TestPublicServicesCloseJoinsBlockedAdmission(t *testing.T) {
+func TestServerCloseJoinsBlockedServiceAdmission(t *testing.T) {
 	p, control, forwarder, _ := publicServiceTestSetup(t)
 	control.claimStarted, control.claimGate = make(chan struct{}, 1), make(chan struct{})
 	_, _, _ = publicServiceTestConnect(t, p)

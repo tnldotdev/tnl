@@ -85,9 +85,9 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		var states string
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		err := database.QueryRowContext(ctx, `SELECT jsonb_build_object('sessions',
-			(SELECT jsonb_agg(jsonb_build_object('state', state, 'public_url_id', public_url_id, 'version', publish_run_number, 'expires_at', publisher_expires_at)) FROM control.publish_runs),
-			'orders', (SELECT jsonb_agg(jsonb_build_object('state', state, 'public_url_id', public_url_id, 'attempts', attempts, 'available_at', available_at, 'claimed', work_owner IS NOT NULL, 'last_error', last_error)) FROM control.acme_orders))::text`).Scan(&states)
+		err := database.QueryRowContext(ctx, `SELECT jsonb_build_object('service_runs',
+			(SELECT jsonb_agg(jsonb_build_object('state', state, 'service_id', service_id, 'service_run_id', id, 'run_number', run_number, 'expires_at', publisher_expires_at)) FROM control.service_runs),
+			'orders', (SELECT jsonb_agg(jsonb_build_object('state', state, 'service_id', service_id, 'service_run_id', service_run_id, 'attempts', attempts, 'available_at', available_at, 'claimed', work_owner IS NOT NULL, 'error_present', last_error IS NOT NULL)) FROM control.acme_orders WHERE service_id<>''))::text`).Scan(&states)
 		t.Logf("separated_failure_state=%s error=%v", states, err)
 	}()
 	for _, name := range separatedPlan(t)["ready"] {

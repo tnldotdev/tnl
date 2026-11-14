@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"net/http"
 	"net/netip"
 	"slices"
@@ -12,7 +11,6 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -20,7 +18,7 @@ func (h *handler) CreateShare(response http.ResponseWriter, request *http.Reques
 	h.createShare(response, request, string(previewID))
 }
 
-func (h *handler) CreateURLShare(response http.ResponseWriter, request *http.Request, _ controlv1.CreateURLShareParams) {
+func (h *handler) CreateServiceShare(response http.ResponseWriter, request *http.Request, _ controlv1.CreateServiceShareParams) {
 	h.createShare(response, request, "")
 }
 
@@ -28,8 +26,8 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 	response.Header().Set("Cache-Control", "no-store")
 	var body controlv1.CreateShareRequest
 	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil || body.ExpiresAt.IsZero() ||
-		len(body.PublicUrlIds) == 0 || len(body.PublicUrlIds) > 32 || previewID == "" && len(body.PublicUrlIds) != 1 ||
-		!slices.Contains(body.PublicUrlIds, body.EntryPublicUrlId) || body.Label != nil && len(*body.Label) > 128 {
+		len(body.ServiceIds) == 0 || len(body.ServiceIds) > 32 || previewID == "" && len(body.ServiceIds) != 1 ||
+		!slices.Contains(body.ServiceIds, body.EntryServiceId) || body.Label != nil && len(*body.Label) > 128 {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid share request")
 		return
 	}
@@ -62,7 +60,7 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 			writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "guest demos are unavailable")
 			return
 		}
-		h.createGuestShare(response, request, *principal.guest, body.PublicUrlIds[0], key, label, secretFingerprint, encodedSecret, body.ExpiresAt)
+		h.createGuestShare(response, request, *principal.guest, body.ServiceIds[0], key, label, secretFingerprint, encodedSecret, body.ExpiresAt)
 		return
 	}
 	var preview controlstate.Preview
@@ -72,78 +70,28 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 			return
 		}
 	}
-	ids := slices.Clone(body.PublicUrlIds)
+	ids := slices.Clone(body.ServiceIds)
 	slices.Sort(ids)
 	for index, id := range ids {
-		if id == "" || index > 0 && id == ids[index-1] || previewID != "" && !slices.Contains(preview.PublicURLIDs, id) {
-			writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "share public URLs must be distinct and belong to the selected preview")
+		if id == "" || index > 0 && id == ids[index-1] || previewID != "" && !slices.Contains(preview.ServiceIDs, id) {
+			writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "share services must be distinct and belong to the selected preview")
 			return
-		}
-	}
-	authorized := make([]controlstate.AuthorizedSharePublicURL, 0, len(ids))
-	var revision uint64
-	entryHostname := ""
-	for _, id := range ids {
-		publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), id)
-		if errors.Is(err, controlstate.ErrPublicURLNotFound) {
-			writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
-			return
-		}
-		if err != nil {
-			writeControlStateProblem(request.Context(), response, "read share public URL", err)
-			return
-		}
-		if previewID == "" && preview.TeamID == "" {
-			preview.TeamID = publicURL.TeamID
-		}
-		if publicURL.TeamID != preview.TeamID || publicURL.LifecycleState != controlstate.PublicURLLifecycleEnabled ||
-			publicURL.ServiceProtocol != controlstate.PublicURLServiceHTTP ||
-			(publicURL.Purpose != controlstate.PublicURLPurposeApp && (previewID != "" || publicURL.Purpose != controlstate.PublicURLPurposeAlias && publicURL.Purpose != controlstate.PublicURLPurposeDemo)) {
-			writeProblem(response, http.StatusConflict, controlv1.Conflict, "public URL is not enabled for sharing")
-			return
-		}
-		prefixes := make([]string, len(publicURL.AllowedIPPrefixes))
-		for index, prefix := range publicURL.AllowedIPPrefixes {
-			prefixes[index] = prefix.String()
-		}
-		decision, ok := h.authorizeExistingRouteMutation(response, request, principal, authorization.Request{
-			Operation: authorization.OperationShareCreate, TeamID: publicURL.TeamID,
-			PublicURLMembershipID: publicURL.MembershipID, DomainID: publicURL.DomainID,
-			CanonicalHostname: publicURL.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(publicURL.PublicURLScope),
-			Target: publicURL.Target, AllowedIPPrefixes: prefixes, Ephemeral: publicURL.Ephemeral,
-			PublicURLID: publicURL.ID, PublicURLMutationRevision: publicURL.MutationRevision,
-		})
-		if !ok {
-			return
-		}
-		if decision.IdentityID != principal.identityID || decision.TeamID != preview.TeamID ||
-			revision != 0 && revision != decision.PolicyRevision {
-			writeProblem(response, http.StatusConflict, controlv1.Conflict, "share authorization changed; retry")
-			return
-		}
-		revision = decision.PolicyRevision
-		authorized = append(authorized, controlstate.AuthorizedSharePublicURL{
-			PublicURLID: id, ExpectedMutationRevision: publicURL.MutationRevision,
-		})
-		if id == body.EntryPublicUrlId {
-			entryHostname = publicURL.CanonicalHostname
 		}
 	}
 	share, err := h.shares.CreateShare(request.Context(), controlstate.CreateShareRequest{
 		PreviewID: previewID, TeamID: preview.TeamID, Label: label,
 		ActingIdentityID: principal.identityID, IdempotencyKey: key,
 		SecretFingerprint: secretFingerprint, ExpiresAt: body.ExpiresAt,
-		PolicyRevision: revision, PublicURLs: authorized,
-		EntryPublicURLID: body.EntryPublicUrlId,
+		ServiceIDs: ids, EntryServiceID: body.EntryServiceId,
 	}, time.Now())
 	if err != nil {
 		writeControlStateProblem(request.Context(), response, "create share", err)
 		return
 	}
-	writeJSON(response, http.StatusCreated, shareCreationResponse(share, entryHostname, encodedSecret))
+	writeJSON(response, http.StatusCreated, shareCreationResponse(share, share.EntryHostname, encodedSecret))
 }
 
-func (h *handler) createGuestShare(response http.ResponseWriter, request *http.Request, guest controlstate.GuestTrial, publicURLID, key, label string, fingerprint [32]byte, secret string, expiresAt time.Time) {
+func (h *handler) createGuestShare(response http.ResponseWriter, request *http.Request, guest controlstate.GuestTrial, serviceID, key, label string, fingerprint [32]byte, secret string, expiresAt time.Time) {
 	address, err := guestRequestAddress(request)
 	if err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid client address")
@@ -158,18 +106,13 @@ func (h *handler) createGuestShare(response http.ResponseWriter, request *http.R
 		writeProblem(response, http.StatusForbidden, controlv1.GuestIpChanged, "guest trial IP changed")
 		return
 	}
-	share, err := h.shares.CreateGuestShare(request.Context(), guest.ID, publicURLID, key, label, fingerprint, expiresAt, time.Now())
+	share, err := h.shares.CreateGuestShare(request.Context(), guest.ID, serviceID, key, label, fingerprint, expiresAt, time.Now())
 	if err != nil {
 		writeControlStateProblem(request.Context(), response, "create guest share", err)
 		return
 	}
-	publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), publicURLID)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "read guest share public URL", err)
-		return
-	}
 	response.Header().Set("Cache-Control", "no-store")
-	writeJSON(response, http.StatusCreated, shareCreationResponse(share, publicURL.CanonicalHostname, secret))
+	writeJSON(response, http.StatusCreated, shareCreationResponse(share, share.EntryHostname, secret))
 }
 
 func shareCreationResponse(share controlstate.Share, hostname, secret string) controlv1.ShareCreation {
@@ -285,7 +228,7 @@ func shareResponse(share controlstate.Share) controlv1.Share {
 	result := controlv1.Share{
 		SchemaVersion: controlv1.ReviewSchemaVersion(share.SchemaVersion),
 		Id:            share.ID, TeamId: share.TeamID, Scope: controlv1.ShareScope(share.Scope), Label: share.Label,
-		PublicUrlIds: share.PublicURLIDs, CreatedByIdentityId: share.CreatedByIdentityID,
+		ServiceIds: share.ServiceIDs, EntryServiceId: share.EntryServiceID, CreatedByIdentityId: share.CreatedByIdentityID,
 		CreatedAt: share.CreatedAt, ExpiresAt: share.ExpiresAt, RevokedAt: share.RevokedAt,
 	}
 	if share.PreviewID != "" {

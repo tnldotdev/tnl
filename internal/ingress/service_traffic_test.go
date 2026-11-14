@@ -25,6 +25,74 @@ type trafficWriteRecorder struct {
 	writes []int
 }
 
+type blockedPhysicalClose struct {
+	net.Conn
+	started chan struct{}
+	release <-chan struct{}
+	calls   atomic.Int32
+	err     error
+}
+
+func (c *blockedPhysicalClose) Close() error {
+	c.calls.Add(1)
+	err := c.Conn.Close()
+	close(c.started)
+	<-c.release
+	return errors.Join(c.err, err)
+}
+
+func TestServerCloseRetainsPhysicalLoadAndIndependentCloseFailureUntilJoined(t *testing.T) {
+	server, control, _, _ := publicServiceTestSetup(t)
+	control.claimStarted, control.claimGate = make(chan struct{}, 1), make(chan struct{})
+	local, peer := net.Pipe()
+	gate := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(gate) })
+	cause := errors.New("accepted connection close failed")
+	connection := &blockedPhysicalClose{Conn: local, started: make(chan struct{}), release: gate, err: cause}
+	ctx, cancel := context.WithCancel(t.Context())
+	requestDone, closeDone := make(chan struct{}), make(chan struct{})
+	var requestErr, closeErr error
+	closeStarted := false
+	go func() {
+		defer close(requestDone)
+		requestErr = server.AcceptPublic(ctx, connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"), "", nil)
+	}()
+	defer func() {
+		unblock()
+		cancel()
+		_ = peer.Close()
+		<-requestDone
+		if closeStarted {
+			<-closeDone
+		}
+	}()
+	select {
+	case <-control.claimStarted:
+	case <-requestDone:
+		t.Fatal("accepted connection ended before control admission", requestErr)
+	}
+	closeStarted = true
+	go func() { defer close(closeDone); closeErr = server.Close() }()
+	<-connection.started
+	if server.Load() != 1 {
+		t.Fatal("physical load disappeared before the accepted connection closed", server.Load())
+	}
+	select {
+	case <-closeDone:
+		t.Fatal("server close returned without joining the owned connection")
+	default:
+	}
+	unblock()
+	<-closeDone
+	<-requestDone
+	if !errors.Is(closeErr, cause) || !errors.Is(requestErr, cause) || connection.calls.Load() != 1 || server.Load() != 0 {
+		t.Fatal("accepted close lost its cause, ownership, or once-only close", requestErr, closeErr, connection.calls.Load(), server.Load())
+	}
+	if err := server.Close(); !errors.Is(err, cause) || connection.calls.Load() != 1 {
+		t.Fatal("repeated server close changed the retained failure", err, connection.calls.Load())
+	}
+}
+
 func (c *trafficWriteRecorder) Write(value []byte) (int, error) {
 	c.writes = append(c.writes, len(value))
 	return len(value), nil
@@ -48,9 +116,9 @@ func TestBudgetConnCannotBypassDirectionalAccounting(t *testing.T) {
 	}
 }
 
-func serviceTrafficVisitor(t *testing.T, p *PublicServices, key trafficKey, limits TrafficLimits) *visitorAdmission {
+func serviceTrafficVisitor(t *testing.T, p *Server, key trafficKey, limits TrafficLimits) *visitorAdmission {
 	t.Helper()
-	v, reason := p.server.admitPendingService()
+	v, reason := p.admitPendingService()
 	if v == nil {
 		t.Fatal(reason)
 	}
@@ -64,7 +132,7 @@ func serviceTrafficVisitor(t *testing.T, p *PublicServices, key trafficKey, limi
 func TestPublicServicePromotionDebitsLifetimeOnce(t *testing.T) {
 	p, c, _, _ := publicServiceTestSetup(t)
 	key := trafficKey{service: c.service, id: c.run, run: 1}
-	limits := p.server.config.Traffic.Default
+	limits := p.config.Traffic.Default
 	limits.Connections, limits.TotalConnections = 1, 1
 	first := serviceTrafficVisitor(t, p, key, limits)
 	var group sync.WaitGroup
@@ -88,9 +156,9 @@ func TestPublicServicePromotionDebitsLifetimeOnce(t *testing.T) {
 	if reason := second.reserve(limits); reason != "service_connection_total" {
 		t.Fatal("closing released the lifetime connection debit", reason)
 	}
-	p.server.traffic.mu.Lock()
-	run := *p.server.traffic.runs[key]
-	p.server.traffic.mu.Unlock()
+	p.traffic.mu.Lock()
+	run := *p.traffic.runs[key]
+	p.traffic.mu.Unlock()
 	if run.active != 0 || run.connections != 1 {
 		t.Fatal("promotion changed its lifetime debit on retry or close", run)
 	}
@@ -98,28 +166,22 @@ func TestPublicServicePromotionDebitsLifetimeOnce(t *testing.T) {
 
 func TestPublicServicePhysicalLoadCountsPendingAndPromotedVisitorOnce(t *testing.T) {
 	p, c, _, _ := publicServiceTestSetup(t)
-	connection, peer := net.Pipe()
-	defer connection.Close()
-	defer peer.Close()
-	_, release, ok := p.acquireSession(t.Context(), connection)
-	if !ok {
-		t.Fatal("physical connection was not acquired")
-	}
-	defer release()
-	limits := p.server.config.Traffic.Default
-	v := serviceTrafficVisitor(t, p, trafficKey{service: c.service, id: c.run, run: 1}, limits)
+	c.pending = true
+	c.recheckStarted, c.promoteStarted = make(chan struct{}, 1), make(chan struct{}, 1)
+	forwarder := p.config.Forwarder.(*publicServiceForwarderFixture)
+	_, stop := publicServiceActiveStream(t, p, forwarder)
+	<-c.recheckStarted
 	if pending, active := publicServiceAdmissionCounts(p); pending != 1 || active != 0 || p.Load() != 1 {
 		t.Fatal("pending connection had incorrect physical load", pending, active, p.Load())
 	}
-	if reason := v.reserve(limits); reason != "" {
-		t.Fatal(reason)
-	}
-	v.meterOrdinaryBytes()
+	c.mu.Lock()
+	c.pending, c.authenticated = false, true
+	c.mu.Unlock()
+	<-c.promoteStarted
 	if pending, active := publicServiceAdmissionCounts(p); pending != 0 || active != 1 || p.Load() != 1 {
 		t.Fatal("promotion counted a physical visitor twice", pending, active, p.Load())
 	}
-	v.close()
-	release()
+	stop()
 	if p.Load() != 0 || !publicServiceCapacityReleased(p) {
 		t.Fatal("closed physical visitor retained load")
 	}
@@ -128,12 +190,12 @@ func TestPublicServicePhysicalLoadCountsPendingAndPromotedVisitorOnce(t *testing
 func TestPublicServiceReservationKeepsUnacknowledgedBytesPending(t *testing.T) {
 	p, c, _, _ := publicServiceTestSetup(t)
 	key := trafficKey{service: c.service, id: c.run, run: 1}
-	limits := p.server.config.Traffic.Default
+	limits := p.config.Traffic.Default
 	v := serviceTrafficVisitor(t, p, key, limits)
 	if reason := v.reserve(limits); reason != "" {
 		t.Fatal(reason)
 	}
-	size := int(p.server.config.Pending.UploadBytes) + 1
+	size := int(p.config.Pending.UploadBytes) + 1
 	if err := v.beforeWrite(t.Context(), true, size); err == nil {
 		t.Fatal("budget reservation bypassed pending bytes before acknowledgment")
 	}
@@ -141,9 +203,9 @@ func TestPublicServiceReservationKeepsUnacknowledgedBytesPending(t *testing.T) {
 	if err := v.beforeWrite(t.Context(), true, size); err != nil {
 		t.Fatal("acknowledged visitor retained its pending byte budget", err)
 	}
-	p.server.traffic.mu.Lock()
-	uploaded := p.server.traffic.runs[key].upload
-	p.server.traffic.mu.Unlock()
+	p.traffic.mu.Lock()
+	uploaded := p.traffic.runs[key].upload
+	p.traffic.mu.Unlock()
 	if uploaded != int64(size) {
 		t.Fatal("ordinary bytes were not debited once", uploaded)
 	}
@@ -152,7 +214,7 @@ func TestPublicServiceReservationKeepsUnacknowledgedBytesPending(t *testing.T) {
 func TestPublicServiceDirectionalTotalsShareOnlyTheExactRunAndProcess(t *testing.T) {
 	p, c, _, _ := publicServiceTestSetup(t)
 	key := trafficKey{service: c.service, id: c.run, run: 1}
-	limits := p.server.config.Traffic.Default
+	limits := p.config.Traffic.Default
 	limits.TotalUploadBytes, limits.TotalDownloadBytes = 4, 8
 	first := serviceTrafficVisitor(t, p, key, limits)
 	second := serviceTrafficVisitor(t, p, key, limits)
@@ -189,13 +251,13 @@ func TestPublicServiceDirectionalTotalsShareOnlyTheExactRunAndProcess(t *testing
 
 func TestPublicServiceAnonymousAccountingSkipsPendingBudgetsAndKeepsRestrictedSetupIndependent(t *testing.T) {
 	p, c, _, _ := publicServiceTestSetup(t)
-	a := p.server.traffic
+	a := p.traffic
 	a.pending.SourceConnections, a.pending.PublicURLConnections = 1, 1
 	key := trafficKey{service: c.service, id: c.run, run: 1}
 	limits := a.config.Default
 	limits.TotalConnections, limits.TotalUploadBytes = 1, 4
 	restricted := serviceTrafficVisitor(t, p, key, limits)
-	anonymous, reason := p.server.admitPendingService()
+	anonymous, reason := p.admitPendingService()
 	if anonymous == nil {
 		t.Fatal(reason)
 	}
@@ -262,14 +324,17 @@ func TestPublicServiceAnonymousAccountingStillWaitsForPublisherAuthorization(t *
 		t.Fatal("anonymous accounting emitted authorized admission")
 	default:
 	}
-	a := p.server.traffic
+	a := p.traffic
 	key := trafficKey{service: c.service, id: c.run, run: 1}
 	a.mu.Lock()
 	run := *a.runs[key]
-	pendingRuns, sources := len(a.pendingRuns), len(a.sources)
+	pendingRuns, pendingSources := len(a.pendingRuns), 0
+	for _, source := range a.sources {
+		pendingSources += source.active
+	}
 	a.mu.Unlock()
-	if run.connections != 1 || run.upload != 4 || run.download != 4 || pendingRuns != 0 || sources != 0 || f.count() != 2 {
-		t.Fatal("anonymous accounting reset on fallback or charged metadata/pending budgets", run, pendingRuns, sources, f.count())
+	if run.connections != 1 || run.upload != 4 || run.download != 4 || pendingRuns != 0 || pendingSources != 0 || f.count() != 2 {
+		t.Fatal("anonymous accounting reset on fallback or charged metadata/pending budgets", run, pendingRuns, pendingSources, f.count())
 	}
 	c.mu.Lock()
 	c.pending, c.authenticated = false, true
@@ -297,7 +362,7 @@ func TestPublicServiceAnonymousAccountingStillWaitsForPublisherAuthorization(t *
 
 func TestAnonymousMalformedTLSUsesProcessAndSourceAdmissionWithoutPromotion(t *testing.T) {
 	p, c, f, _ := publicServiceTestSetup(t)
-	s := p.server
+	s := p
 	s.config.MaxClientHelloConnections = 1
 	left, peer := net.Pipe()
 	connection := &addressConn{Conn: left, remote: netip.MustParseAddrPort("192.0.2.4:42000"), local: netip.MustParseAddrPort("203.0.113.8:443")}
@@ -356,7 +421,7 @@ func TestPublicServiceChargesInitialBytesOnceAcrossFallbackWithoutMetadata(t *te
 	if _, err := io.ReadFull(visitor, reply); err != nil || string(reply) != "pong" {
 		t.Fatal("prefix forwarding failed", string(reply), err)
 	}
-	a := p.server.traffic
+	a := p.traffic
 	a.mu.Lock()
 	upload, download := a.uploads.tokens, a.downloads.tokens
 	a.mu.Unlock()
@@ -367,7 +432,7 @@ func TestPublicServiceChargesInitialBytesOnceAcrossFallbackWithoutMetadata(t *te
 
 func TestPublicServiceTerminalLookupIsExactAndOutsideMeterLock(t *testing.T) {
 	p, c, _, lease := publicServiceTestSetup(t)
-	a := p.server.traffic
+	a := p.traffic
 	key := trafficKey{service: c.service, id: c.run, run: 1}
 	sibling := trafficKey{service: c.service, id: "sibling", run: 2}
 	limits := a.config.Default
@@ -418,7 +483,7 @@ func TestPublicServiceTerminalLookupRetainsUnknownAndRejectsUnrequestedProof(t *
 	for _, mode := range []string{"unknown", "outage", "different service", "different run", "different number", "duplicate"} {
 		t.Run(mode, func(t *testing.T) {
 			p, c, _, lease := publicServiceTestSetup(t)
-			a := p.server.traffic
+			a := p.traffic
 			key := trafficKey{service: c.service, id: c.run, run: 1}
 			limits := a.config.Default
 			limits.TotalConnections = 1

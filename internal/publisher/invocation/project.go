@@ -8,7 +8,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
@@ -44,11 +43,4 @@ func valueOrEmpty(value *string) string {
 		return ""
 	}
 	return *value
-}
-
-func effectiveTunnelLimits(effective clientproject.ResolvedService) *config.Limits {
-	if effective.Tunnel == nil {
-		return nil
-	}
-	return effective.Tunnel.Limits
 }

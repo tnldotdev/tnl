@@ -18,7 +18,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
-	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -38,6 +37,13 @@ type HTTPControl interface {
 	RevokeServiceBrowserSession(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) error
 }
 
+// HTTPRun contains the validated publication facts used by response observers.
+// it contains no publisher, browser, or run credentials.
+type HTTPRun struct {
+	ServiceID, RunID, Hostname string
+	Number                     int64
+}
+
 // http binds each request to one trusted forwarding header. policy and
 // browser credential renewal are prepared once by the service run owner.
 type HTTP struct {
@@ -46,6 +52,7 @@ type HTTP struct {
 	ObserveSummary inspection.Observer
 	AdmitRequest   func(*http.Request) error
 	ReadinessProof *httpaccess.ReadinessProof
+	ResponseHooks  httpstream.ResponseHooks
 	Control        HTTPControl
 	Subject        visitorscope.Scope
 	RunID          string
@@ -168,7 +175,7 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 			state := client.ConnectionState()
 			r.TLS = &state
 			proof := len(state.PeerCertificates) == 0 && f.ReadinessProof.Consume(r, httpaccess.ReadinessRun{Subject: f.Subject, ID: f.RunID, Number: uint64(f.Number), Hostname: f.Hostname})
-			r.Header.Del(publisherproxy.ReadinessProbeHeader)
+			r.Header.Del(httpstream.ReadinessProbeHeader)
 			if f.AdmitRequest != nil {
 				if err := f.AdmitRequest(r); err != nil {
 					outcome, reason = "failed", "unavailable"
@@ -184,7 +191,7 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 					servicestream.DenyHTTP(w, http.StatusServiceUnavailable)
 					return
 				}
-				r = publisherproxy.WithReadinessProbe(r)
+				r = httpstream.WithReadinessProbe(r)
 				release, ok := f.probes.Admit(w, r)
 				if !ok {
 					return
@@ -198,7 +205,7 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 					servicestream.DenyHTTP(w, http.StatusServiceUnavailable)
 					return
 				}
-				r = serviceApplicationRequest(r)
+				r = httpstream.WithVisitorHost(serviceApplicationRequest(r), f.Hostname)
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -217,18 +224,19 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 			}
 			defer guard.Finish()
 			w, r = guard, guarded
-			release, ok := f.Requests.Admit(w, r)
+			reservation, ok := f.Requests.Reserve(w, r)
 			if !ok {
 				reason = "capacity"
 				return
 			}
-			defer release()
+			defer reservation.Finish()
 			if err := admit(r.Context()); err != nil {
+				reservation.Refund()
 				outcome, reason = "failed", "unavailable"
 				servicestream.DenyHTTP(w, http.StatusServiceUnavailable)
 				return
 			}
-			r = serviceApplicationRequest(r)
+			r = httpstream.WithVisitorHost(serviceApplicationRequest(r), f.Hostname)
 			// report the decision before an upgrade or long-lived response.
 			outcome, reason = "allowed", ""
 			report()
@@ -236,9 +244,9 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 		})
 	}
 	if target.Handler != nil {
-		return httpstream.ServeHandler(ctx, client, wrap(target.Handler))
+		return httpstream.ServeHandler(ctx, client, wrap(target.Handler), target.Drain)
 	}
-	return httpstream.Serve(ctx, client, &url.URL{Scheme: scheme, Host: target.Address}, target.Dial, wrap)
+	return httpstream.Serve(ctx, client, &url.URL{Scheme: scheme, Host: target.Address}, target.Dial, wrap, f.ResponseHooks, target.Drain)
 }
 
 // awaitServiceVisitorAdmission uses the same ingress acknowledgment for HTTP and

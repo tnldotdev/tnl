@@ -17,9 +17,7 @@ SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.ser
     permission.reason::text AS visitor_access
 FROM control.public_urls u JOIN control.teams t ON t.id = u.team_id
 CROSS JOIN LATERAL control.visitor_identity_permission('public_url',u.id,sqlc.arg(identity_id)::text,sqlc.arg(control_session_id)::text,
-    COALESCE((SELECT p.id FROM control.previews p JOIN control.preview_public_urls included ON included.preview_id = p.id
-      WHERE included.public_url_id = u.id AND p.team_access_enabled AND p.demo_publish_run_id IS NULL ORDER BY p.id LIMIT 1), ''),
-    sqlc.arg(now)::timestamptz) permission
+    '',sqlc.arg(now)::timestamptz) permission
 WHERE u.id > sqlc.arg(cursor)::text AND (sqlc.arg(team_id)::text = '' OR u.team_id = sqlc.arg(team_id))
   AND control.company_subject_session_authorized(u.team_id,sqlc.arg(identity_id)::text,sqlc.arg(control_session_id)::text,sqlc.arg(now))
 ORDER BY u.id LIMIT 101;
@@ -71,15 +69,6 @@ UPDATE control.teams SET feedback_authors = $2 WHERE id = $1;
 
 -- name: VisitorCurrentMembership :one
 SELECT id FROM control.team_memberships WHERE team_id = $1 AND identity_id = $2 AND control.active_membership(id,CURRENT_TIMESTAMP);
-
--- name: ReadyBrowserHosts :many
-SELECT DISTINCT ON(u.id) u.id AS public_url_id, u.canonical_hostname, r.id AS publish_run_id
-FROM control.public_urls u JOIN control.publish_runs r ON r.public_url_id = u.id
-WHERE u.lifecycle_state = 'enabled' AND u.purpose IN ('app', 'alias') AND u.service_protocol = 'http'
-  AND r.state = 'ready' AND r.publisher_expires_at > sqlc.arg(now) AND r.closed_at IS NULL
-  AND (u.id = sqlc.arg(public_url_id) OR EXISTS (SELECT 1 FROM control.preview_public_urls included
-       WHERE included.preview_id = sqlc.arg(preview_id)::text AND included.public_url_id = u.id))
-ORDER BY u.id,r.publish_run_number DESC LIMIT 32;
 
 -- name: BindBrowserSessionHost :exec
 INSERT INTO control.browser_session_run_bindings(session_digest, public_url_id, publish_run_id)

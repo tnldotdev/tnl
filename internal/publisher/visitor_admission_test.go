@@ -18,8 +18,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
-	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -36,7 +36,7 @@ func TestReadinessHasIndependentBoundedProbeCapacity(t *testing.T) {
 	var workers sync.WaitGroup
 	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof, Limits: applicationlimits.Limits{Requests: 1, Concurrency: 1, RateRequests: 1, RatePer: time.Hour},
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if publisherproxy.IsReadinessProbe(r) {
+			if httpstream.IsReadinessProbe(r) {
 				entered <- struct{}{}
 				<-release
 			}
@@ -56,7 +56,7 @@ func TestReadinessHasIndependentBoundedProbeCapacity(t *testing.T) {
 		r.Host = run.Hostname
 		r.TLS = &tls.ConnectionState{ServerName: run.Hostname}
 		if token != "" {
-			r.Header.Set(publisherproxy.ReadinessProbeHeader, token)
+			r.Header.Set(httpstream.ReadinessProbeHeader, token)
 		}
 		return r.WithContext(context.WithValue(r.Context(), visitorSessionKey{}, session))
 	}
@@ -98,18 +98,18 @@ func TestReadinessProofDoesNotAuthorizeBodiesOrUpgrades(t *testing.T) {
 	probeRun := httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: run.PublicURLID}, ID: run.PublishRunID, Number: run.Number, Hostname: run.Hostname}
 	proof, _ := httpaccess.NewReadinessProof(probeRun, "/health")
 	body := httptest.NewRequest("GET", "/health", strings.NewReader("private-body"))
-	body.Header.Set(publisherproxy.ReadinessProbeHeader, proof.HeaderValue())
+	body.Header.Set(httpstream.ReadinessProbeHeader, proof.HeaderValue())
 	if proof.Consume(body, probeRun) {
 		t.Fatal("body was admitted as a probe")
 	}
 	upgrade := httptest.NewRequest("GET", "/health", nil)
-	upgrade.Header.Set(publisherproxy.ReadinessProbeHeader, proof.HeaderValue())
+	upgrade.Header.Set(httpstream.ReadinessProbeHeader, proof.HeaderValue())
 	upgrade.Header.Set("Upgrade", "websocket")
 	if proof.Consume(upgrade, probeRun) {
 		t.Fatal("upgrade was admitted as a probe")
 	}
 	get := httptest.NewRequest("GET", "/health", nil)
-	get.Header.Set(publisherproxy.ReadinessProbeHeader, proof.HeaderValue())
+	get.Header.Set(httpstream.ReadinessProbeHeader, proof.HeaderValue())
 	if !proof.Consume(get, probeRun) {
 		t.Fatal("rejected requests consumed a valid proof")
 	}
@@ -172,7 +172,7 @@ func TestReadinessDoesNotPromoteOrSpendApplicationBudgets(t *testing.T) {
 						return nil
 					},
 					Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						if publisherproxy.IsReadinessProbe(r) {
+						if httpstream.IsReadinessProbe(r) {
 							probes.Add(1)
 						} else {
 							app.Add(1)
@@ -192,7 +192,7 @@ func TestReadinessDoesNotPromoteOrSpendApplicationBudgets(t *testing.T) {
 					t.Helper()
 					r, _ := http.NewRequest("GET", "https://route.example"+path, nil)
 					if token != "" {
-						r.Header.Set(publisherproxy.ReadinessProbeHeader, token)
+						r.Header.Set(httpstream.ReadinessProbeHeader, token)
 					}
 					response, err := client.Do(r)
 					if err != nil {
@@ -247,7 +247,7 @@ func TestReadinessDoesNotCacheRejectedApplicationPromotion(t *testing.T) {
 				return &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
 			},
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if !publisherproxy.IsReadinessProbe(r) {
+				if !httpstream.IsReadinessProbe(r) {
 					t.Error("ordinary request bypassed ingress decision")
 				}
 				w.WriteHeader(204)
@@ -261,7 +261,7 @@ func TestReadinessDoesNotCacheRejectedApplicationPromotion(t *testing.T) {
 		}
 		client := mixedVisitorClient(t, route, h2, false)
 		r, _ := http.NewRequest("GET", "https://route.example/health", nil)
-		r.Header.Set(publisherproxy.ReadinessProbeHeader, proof.HeaderValue())
+		r.Header.Set(httpstream.ReadinessProbeHeader, proof.HeaderValue())
 		response, err := client.Do(r)
 		if err != nil {
 			t.Fatal(err)
@@ -426,7 +426,7 @@ func TestHTTP2ProofDoesNotWaitForApplicationPromotion(t *testing.T) {
 	}()
 	awaitPublisherTest(t, started)
 	r, _ := http.NewRequest("GET", "https://route.example/health", nil)
-	r.Header.Set(publisherproxy.ReadinessProbeHeader, proof.HeaderValue())
+	r.Header.Set(httpstream.ReadinessProbeHeader, proof.HeaderValue())
 	response, err := client.Do(r)
 	if err != nil {
 		t.Fatal(err)

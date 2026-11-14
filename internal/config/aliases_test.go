@@ -10,8 +10,8 @@ import (
 
 func TestAliasDeclarationsArePortableAndServiceScoped(t *testing.T) {
 	for _, source := range []string{
-		`{"services":{"api":{"public_url":{}}},"aliases":{"review":{"service":"api"},"nested":{"service":"api","name":"api.shop"}}}`,
-		"services:\n  api:\n    public_url: {}\naliases:\n  review:\n    service: api\n  nested:\n    service: api\n    name: api.shop\n",
+		`{"services":{"api":{"http":{"access":"anonymous"}}},"aliases":{"review":{"service":"api"},"nested":{"service":"api","name":"api.shop"}}}`,
+		"services:\n  api:\n    http: {access: anonymous}\naliases:\n  review:\n    service: api\n  nested:\n    service: api\n    name: api.shop\n",
 	} {
 		var config TNL
 		var err error
@@ -23,34 +23,40 @@ func TestAliasDeclarationsArePortableAndServiceScoped(t *testing.T) {
 		if err != nil || ValidateTNL(config) != nil || config.Aliases["review"].RelativeName("review") != "review" || config.Aliases["nested"].RelativeName("nested") != "api.shop" {
 			t.Fatalf("valid alias declarations rejected: %v", err)
 		}
+		if config.Aliases["review"].Access != nil {
+			t.Fatal("alias borrowed its entry service's anonymous visitor policy")
+		}
 	}
 }
 
-func TestAliasFingerprintDistinguishesInheritedAndExplicitEmptyVisitorPolicy(t *testing.T) {
+func TestAliasFingerprintDistinguishesOmittedAndExplicitVisitorPolicy(t *testing.T) {
 	definition := Alias{Service: "api"}
-	_, inherited, err := definition.DefinitionBytes("review")
+	_, omitted, err := definition.DefinitionBytes("review")
 	if err != nil {
 		t.Fatal(err)
 	}
 	definition.Access = &Access{Mode: "restricted"}
 	_, explicit, err := definition.DefinitionBytes("review")
-	if err != nil || inherited == explicit {
-		t.Fatal("explicit visitor-policy override looked like inheritance")
+	if err != nil || omitted == explicit {
+		t.Fatal("explicit visitor policy looked like an omitted declaration")
 	}
 }
 
 func TestAliasExactHostnameHasOneIdentityAndFingerprint(t *testing.T) {
 	bare, origin := "review.example.test", "https://review.example.test"
-	_, bareHash, err := (Alias{Service: "api", PublicURL: &bare}).DefinitionBytes("review")
+	_, bareHash, err := (Alias{Service: "api", Hostname: &bare}).DefinitionBytes("review")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, originHash, err := (Alias{Service: "api", PublicURL: &origin}).DefinitionBytes("review")
-	if err != nil || bareHash != originHash {
-		t.Fatalf("equivalent exact aliases have different hashes: %x, %x, %v", bareHash, originHash, err)
+	_, sameHash, err := (Alias{Service: "api", Hostname: &bare}).DefinitionBytes("other-key")
+	if err != nil || bareHash != sameHash {
+		t.Fatalf("exact alias identity depended on its key: %x, %x, %v", bareHash, sameHash, err)
 	}
-	config := TNL{Services: Services{"api": {Tunnel: &Tunnel{}}}, Aliases: map[string]Alias{
-		"first": {Service: "api", PublicURL: &bare}, "second": {Service: "api", PublicURL: &origin},
+	if _, _, err := (Alias{Service: "api", Hostname: &origin}).DefinitionBytes("review"); err == nil {
+		t.Fatal("an origin was accepted as an alias hostname")
+	}
+	config := TNL{Services: Services{"api": {}}, Aliases: map[string]Alias{
+		"first": {Service: "api", Hostname: &bare}, "second": {Service: "api", Hostname: &bare},
 	}}
 	if err := ValidateAliases(config); err == nil || !strings.Contains(err.Error(), "also used") {
 		t.Fatalf("equivalent exact aliases were not detected: %v", err)
@@ -65,14 +71,14 @@ func TestInvalidAliasDeclarations(t *testing.T) {
 		{"uppercase", `{"review":{"service":"api","name":"API.shop"}}`, "name must"},
 		{"empty label", `{"review":{"service":"api","name":"api..shop"}}`, "name must"},
 		{"wildcard", `{"review":{"service":"api","name":"*.shop"}}`, "name must"},
-		{"exclusive name", `{"review":{"service":"api","name":"review","public_url":"https://review.example.test"}}`, "mutually exclusive"},
-		{"exclusive domain", `{"review":{"service":"api","domain":"example.test","public_url":"https://review.example.test"}}`, "omit domain"},
-		{"URL path", `{"review":{"service":"api","public_url":"https://review.example.test/path"}}`, "without a port"},
+		{"exclusive name", `{"review":{"service":"api","name":"review","hostname":"review.example.test"}}`, "mutually exclusive"},
+		{"exclusive domain", `{"review":{"service":"api","domain":"example.test","hostname":"review.example.test"}}`, "omit domain"},
+		{"URL path", `{"review":{"service":"api","hostname":"https://review.example.test/path"}}`, "canonical DNS hostname"},
 		{"duplicate names", `{"first":{"service":"api","name":"review"},"second":{"service":"api","name":"review"}}`, "also used"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var config TNL
-			if err := json.Unmarshal([]byte(`{"services":{"api":{"public_url":{}}},"aliases":`+test.declaration+`}`), &config); err != nil {
+			if err := json.Unmarshal([]byte(`{"services":{"api":{}},"aliases":`+test.declaration+`}`), &config); err != nil {
 				t.Fatal(err)
 			}
 			err := ValidateTNL(config)
@@ -82,7 +88,7 @@ func TestInvalidAliasDeclarations(t *testing.T) {
 		})
 	}
 	var duplicateInherited TNL
-	if err := json.Unmarshal([]byte(`{"public_url":{"domain":"custom.example.test"},"services":{"api":{"public_url":{}},"web":{"public_url":{"domain":"custom.example.test"}}},"aliases":{"first":{"service":"api","name":"review"},"second":{"service":"web","name":"review"}}}`), &duplicateInherited); err != nil {
+	if err := json.Unmarshal([]byte(`{"services":{"api":{"domain":"custom.example.test"},"web":{"domain":"custom.example.test"}},"aliases":{"first":{"service":"api","name":"review"},"second":{"service":"web","name":"review"}}}`), &duplicateInherited); err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidateTNL(duplicateInherited); err == nil {

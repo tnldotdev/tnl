@@ -12,7 +12,7 @@ import (
 type enrolledPublishSelection struct{ EnrollmentKey, PublisherIdentityID, PublisherCredentialFile string }
 
 func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enrolledPublishSelection, output *publishOutput, input io.Reader) error {
-	options := invocation.EnrolledOptions{PublicOptions: publicOptions(flags), Protocol: flags.Protocol, TargetTLS: flags.TargetTLS, Enrolled: flags.Enrolled, WorkLimits: flags.workLimits, ReadinessPath: flags.publicationReadinessPath(), ServicePresentation: privatePresentation(ctx, flags, output.stdout, output.stderr)}
+	options := invocation.EnrolledOptions{PublicOptions: publicOptions(flags), Protocol: flags.Protocol, TargetTLS: flags.TargetTLS, Enrolled: flags.Enrolled, Traffic: flags.traffic, ReadinessPath: flags.publicationReadinessPath(), ServicePresentation: privatePresentation(ctx, flags, output.stdout, output.stderr)}
 	options.Authenticate = publisherAuthentication(output.stderr)
 	options.SelectProtocol = func(protocol controlv1.PublicURLServiceProtocol) (applicationlimits.Limits, error) {
 		if err := selectPublishInspection(&flags, protocol); err != nil {

@@ -34,6 +34,11 @@ func pendingAdmissionFixture(t *testing.T) (*Server, *visitorAdmission, tunnelv1
 	return s, v, forwardingTestHeader(entry, "visitor_pending").Admission(), &route
 }
 
+func ordinaryLoad(s *Server) int {
+	_, ordinary := publicServiceAdmissionCounts(s)
+	return ordinary
+}
+
 func TestPendingPromotionTransfersCapacityExactlyOnce(t *testing.T) {
 	s, v, h, _ := pendingAdmissionFixture(t)
 	var group sync.WaitGroup
@@ -46,8 +51,8 @@ func TestPendingPromotionTransfersCapacityExactlyOnce(t *testing.T) {
 		})
 	}
 	group.Wait()
-	if accepted.Load() != 1 || s.Load() != 1 {
-		t.Fatalf("accepted %d, ordinary %d", accepted.Load(), s.Load())
+	if accepted.Load() != 1 || ordinaryLoad(s) != 1 {
+		t.Fatalf("accepted %d, ordinary %d", accepted.Load(), ordinaryLoad(s))
 	}
 	s.mu.Lock()
 	pending := s.admitted[pendingConnection]
@@ -57,7 +62,7 @@ func TestPendingPromotionTransfersCapacityExactlyOnce(t *testing.T) {
 	}
 	v.close()
 	v.close()
-	if s.Load() != 0 {
+	if ordinaryLoad(s) != 0 {
 		t.Fatal("promotion leaked ordinary capacity")
 	}
 }
@@ -98,8 +103,8 @@ func TestPendingPromotionRejectsClosedVisitor(t *testing.T) {
 	s, v, h, _ := pendingAdmissionFixture(t)
 	v.close()
 	result := s.PromotePendingAdmission(t.Context(), h)
-	if result.Type != tunnelv1.StreamRejected || result.Code != tunnelv1.StalePublishRunNumber || s.Load() != 0 {
-		t.Fatal("closed visitor acquired ordinary capacity", result, s.Load())
+	if result.Type != tunnelv1.StreamRejected || result.Code != tunnelv1.StalePublishRunNumber || ordinaryLoad(s) != 0 {
+		t.Fatal("closed visitor acquired ordinary capacity", result, ordinaryLoad(s))
 	}
 }
 
@@ -136,10 +141,10 @@ func TestPendingPromotionFindsOnlyItsExactRunInPool(t *testing.T) {
 			s.poolRuns = map[string]int{route.PublishRunID: s.config.Traffic.Default.Connections}
 			result := s.PromotePendingAdmission(t.Context(), h)
 			if test.want == "" {
-				if result.Type != tunnelv1.StreamAccepted || s.Load() != 1 {
+				if result.Type != tunnelv1.StreamAccepted || ordinaryLoad(s) != 1 {
 					t.Fatal("exact run behind sibling was not promoted", result)
 				}
-			} else if result.Type != tunnelv1.StreamRejected || result.Code != test.want || s.Load() != 0 {
+			} else if result.Type != tunnelv1.StreamRejected || result.Code != test.want || ordinaryLoad(s) != 0 {
 				t.Fatal("promotion switched to a sibling or accepted stale state", result)
 			}
 		})
@@ -160,7 +165,7 @@ func TestPendingBytesAndTimeFailClosedWithoutOrdinaryCapacity(t *testing.T) {
 	if result := s.PromotePendingAdmission(t.Context(), h); result.Type != tunnelv1.StreamRejected {
 		t.Fatal(result)
 	}
-	if s.Load() != 0 {
+	if ordinaryLoad(s) != 0 {
 		t.Fatal("expired visitor acquired ordinary capacity")
 	}
 }

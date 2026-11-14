@@ -16,9 +16,9 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
-	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -29,7 +29,7 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 	startSeparatedPrivateIngress(t, f, 1, "quic", nil)
 	var posts atomic.Int64
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get(publisherproxy.ReadinessProbeHeader) != "" {
+		if r.Header.Get(httpstream.ReadinessProbeHeader) != "" {
 			t.Error("owner readiness proof reached the target")
 		}
 		if r.Method == http.MethodPost {
@@ -90,7 +90,7 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 	}
 	verification := f.visitorRoots.Clone()
 	verification.ServerName = service.Endpoint.Hostname
-	publicTransport := &http.Transport{TLSClientConfig: verification, ForceAttemptHTTP2: true, DialContext: workloadPublicEndpointDialer(t, process.ingresses[0].publicServices, service.Endpoint.Port)}
+	publicTransport := &http.Transport{TLSClientConfig: verification, ForceAttemptHTTP2: true, DialContext: workloadPublicEndpointDialer(t, process.ingresses[0].server, service.Endpoint.Port)}
 	t.Cleanup(publicTransport.CloseIdleConnections)
 	publicClient := &http.Client{Transport: publicTransport, Timeout: 5 * time.Second}
 	base := "https://" + service.Endpoint.Hostname
@@ -102,7 +102,7 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		request.Header.Set(publisherproxy.ReadinessProbeHeader, secret)
+		request.Header.Set(httpstream.ReadinessProbeHeader, secret)
 		response, err := publicClient.Do(request)
 		if err != nil {
 			t.Fatal(err)
@@ -346,7 +346,7 @@ func TestIntegrationLocalHTTPServiceRequestLimitsAcrossPublicAndConnectorAccess(
 			defer stopPublisher()
 			verification := f.visitorRoots.Clone()
 			verification.ServerName = service.Endpoint.Hostname
-			publicTransport := &http.Transport{TLSClientConfig: verification, DialContext: workloadPublicEndpointDialer(t, process.ingresses[0].publicServices, service.Endpoint.Port)}
+			publicTransport := &http.Transport{TLSClientConfig: verification, DialContext: workloadPublicEndpointDialer(t, process.ingresses[0].server, service.Endpoint.Port)}
 			defer publicTransport.CloseIdleConnections()
 			publicClient := &http.Client{Transport: publicTransport, Timeout: 5 * time.Second}
 			publicBase := "https://" + service.Endpoint.Hostname

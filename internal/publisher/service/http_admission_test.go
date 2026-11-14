@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
-	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -256,7 +256,7 @@ func TestServiceHTTPAnonymousAndReadinessNeedIngressAcknowledgment(t *testing.T)
 				t.Fatal(err)
 			}
 			if readiness {
-				request.Header.Set(publisherproxy.ReadinessProbeHeader, proof.HeaderValue())
+				request.Header.Set(httpstream.ReadinessProbeHeader, proof.HeaderValue())
 			}
 			response, err := client.Do(request)
 			if err != nil {

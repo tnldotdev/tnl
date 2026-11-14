@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,12 +9,13 @@ import (
 	"time"
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"go.yaml.in/yaml/v3"
 )
 
-func TestLoadDocumentNormalizesBareExactPublicURLs(t *testing.T) {
+func TestLoadDocumentPreservesExactDNSHostnames(t *testing.T) {
 	for name, contents := range map[string]string{
-		"tnl.yml":  "version: 1\ntnl:\n  services:\n    api: {}\n  deployments:\n    local:\n      targets:\n        api:\n          public_url:\n            hostname: api.example.test\n  aliases:\n    review:\n      service: api\n      public_url: review.example.test\n",
-		"tnl.json": `{"version":1,"tnl":{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{"public_url":{"hostname":"api.example.test"}}}}},"aliases":{"review":{"service":"api","public_url":"review.example.test"}}}}`,
+		"tnl.yml":  "version: 1\ntnl:\n  services:\n    api: {}\n  deployments:\n    local:\n      targets:\n        api:\n          hostname: api.example.test\n  aliases:\n    review:\n      service: api\n      hostname: review.example.test\n",
+		"tnl.json": `{"version":1,"tnl":{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{"hostname":"api.example.test"}}}},"aliases":{"review":{"service":"api","hostname":"review.example.test"}}}}`,
 	} {
 		path := filepath.Join(t.TempDir(), name)
 		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
@@ -25,8 +27,8 @@ func TestLoadDocumentNormalizesBareExactPublicURLs(t *testing.T) {
 		}
 		service := document.TNL.Deployments["local"].Targets["api"]
 		alias := document.TNL.Aliases["review"]
-		if service.Tunnel == nil || service.Tunnel.PublicURL == nil || *service.Tunnel.PublicURL != "https://api.example.test" || alias.PublicURL == nil || *alias.PublicURL != "https://review.example.test" {
-			t.Fatalf("%s exact public URLs were not normalized: %#v", name, document.TNL)
+		if service.Hostname == nil || *service.Hostname != "api.example.test" || alias.Hostname == nil || *alias.Hostname != "review.example.test" {
+			t.Fatalf("%s exact DNS hostnames changed: %#v", name, document.TNL)
 		}
 	}
 }
@@ -40,6 +42,10 @@ func TestLoadDocumentRequiresVersionAndStrictFields(t *testing.T) {
 		"future.json":        {`{"version":2}`, "unsupported configuration version 2"},
 		"unknown.yml":        {"version: 1\ntnl:\n  unexpected_key: true\n", "field unexpected_key not found"},
 		"unknown.json":       {`{"version":1,"tnl":{"unexpected_key":true}}`, `unknown object member name "unexpected_key"`},
+		"root-public.yml":    {"version: 1\ntnl:\n  public_url: {}\n", "field public_url not found"},
+		"root-public.json":   {`{"version":1,"tnl":{"public_url":{}}}`, `unknown object member name "public_url"`},
+		"root-domain.yml":    {"version: 1\ntnl:\n  domain: example.test\n", "field domain not found"},
+		"root-limits.json":   {`{"version":1,"tnl":{"limits":{"http":{"total":1}}}}`, `unknown object member name "limits"`},
 		"service-oauth.json": {`{"version":1,"tnl":{"services":{"api":{"oauth":true}}}}`, `unknown object member name "oauth"`},
 		"retired-ca.yml":     {"version: 1\ntnl:\n  publish:\n    ca_file: ca.pem\n", "field publish not found"},
 		"retired-ca.json":    {`{"version":1,"tnl":{"publish":{"ca_file":"ca.pem"}}}`, `unknown object member name "publish"`},
@@ -73,13 +79,6 @@ tnl:
   server: https://control.example.com
   feedback: true
   oauth: true
-  public_url:
-    access: {ip: [192.0.2.1]}
-    limits:
-      http:
-        total: 20
-        rate: {count: 5, per: 1m}
-        concurrency: 750
   services:
     web: {}
   deployments:
@@ -89,6 +88,11 @@ tnl:
           address: 3000
           http:
             readiness: {path: /health}
+            access: {ip: [192.0.2.1]}
+            limits:
+              total: 20
+              rate: {count: 5, per: 1m}
+              concurrency: 750
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -101,21 +105,21 @@ tnl:
 		document.TNL.Feedback == nil || !*document.TNL.Feedback || !document.TNL.OAuth ||
 		document.TNL.Deployments["local"].Targets["web"].Address == nil || string(*document.TNL.Deployments["local"].Targets["web"].Address) != "3000" ||
 		document.TNL.Deployments["local"].Targets["web"].HTTP.Readiness.Path != "/health" ||
-		document.TNL.Tunnel == nil || document.TNL.Tunnel.Access == nil || document.TNL.Tunnel.Access.VisitorMode() != "restricted" || len(document.TNL.Tunnel.Access.IP) != 1 ||
-		document.TNL.Tunnel.Limits == nil || document.TNL.Tunnel.Limits.HTTP.Concurrency == nil || *document.TNL.Tunnel.Limits.HTTP.Concurrency != 750 ||
-		document.TNL.Tunnel.Limits.HTTP.Total == nil || *document.TNL.Tunnel.Limits.HTTP.Total != 20 ||
-		document.TNL.Tunnel.Limits.HTTP.Rate == nil || document.TNL.Tunnel.Limits.HTTP.Rate.Count == nil || *document.TNL.Tunnel.Limits.HTTP.Rate.Count != 5 ||
-		document.TNL.Tunnel.Limits.HTTP.Rate.Per == nil || document.TNL.Tunnel.Limits.HTTP.Rate.Per.Value() != time.Minute {
+		document.TNL.Deployments["local"].Targets["web"].HTTP.Access == nil || document.TNL.Deployments["local"].Targets["web"].HTTP.Access.VisitorMode() != "restricted" || len(document.TNL.Deployments["local"].Targets["web"].HTTP.Access.IP) != 1 ||
+		document.TNL.Deployments["local"].Targets["web"].HTTP.Limits == nil || document.TNL.Deployments["local"].Targets["web"].HTTP.Limits.Concurrency == nil || *document.TNL.Deployments["local"].Targets["web"].HTTP.Limits.Concurrency != 750 ||
+		document.TNL.Deployments["local"].Targets["web"].HTTP.Limits.Total == nil || *document.TNL.Deployments["local"].Targets["web"].HTTP.Limits.Total != 20 ||
+		document.TNL.Deployments["local"].Targets["web"].HTTP.Limits.Rate == nil || document.TNL.Deployments["local"].Targets["web"].HTTP.Limits.Rate.Count == nil || *document.TNL.Deployments["local"].Targets["web"].HTTP.Limits.Rate.Count != 5 ||
+		document.TNL.Deployments["local"].Targets["web"].HTTP.Limits.Rate.Per == nil || document.TNL.Deployments["local"].Targets["web"].HTTP.Limits.Rate.Per.Value() != time.Minute {
 		t.Fatalf("document = %#v", document)
 	}
 }
 
 func TestWebhookProviderAndSourceOverrideInStaticFiles(t *testing.T) {
 	for name, contents := range map[string]string{
-		"restricted.json":   `{"version":1,"tnl":{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{"public_url":{}}}}},"webhooks":{"payments":{"service":"api","path":"/hooks/payments","provider":"stripe","source_ips":["198.51.100.0/24"]}}}}`,
-		"unrestricted.json": `{"version":1,"tnl":{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{"public_url":{}}}}},"webhooks":{"payments":{"service":"api","path":"/hooks/payments","provider":"custom"}}}}`,
-		"restricted.yml":    "version: 1\ntnl:\n  services:\n    api: {}\n  deployments:\n    local:\n      targets:\n        api: {public_url: {}}\n  webhooks:\n    payments:\n      service: api\n      path: /hooks/payments\n      provider: stripe\n      source_ips: [198.51.100.0/24]\n",
-		"unrestricted.yml":  "version: 1\ntnl:\n  services:\n    api: {}\n  deployments:\n    local:\n      targets:\n        api: {public_url: {}}\n  webhooks:\n    payments:\n      service: api\n      path: /hooks/payments\n      provider: custom\n",
+		"restricted.json":   `{"version":1,"tnl":{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{}}}},"webhooks":{"payments":{"service":"api","path":"/hooks/payments","provider":"stripe","source_ips":["198.51.100.0/24"]}}}}`,
+		"unrestricted.json": `{"version":1,"tnl":{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{}}}},"webhooks":{"payments":{"service":"api","path":"/hooks/payments","provider":"custom"}}}}`,
+		"restricted.yml":    "version: 1\ntnl:\n  services:\n    api: {}\n  deployments:\n    local:\n      targets:\n        api: {}\n  webhooks:\n    payments:\n      service: api\n      path: /hooks/payments\n      provider: stripe\n      source_ips: [198.51.100.0/24]\n",
+		"unrestricted.yml":  "version: 1\ntnl:\n  services:\n    api: {}\n  deployments:\n    local:\n      targets:\n        api: {}\n  webhooks:\n    payments:\n      service: api\n      path: /hooks/payments\n      provider: custom\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), name)
@@ -171,8 +175,8 @@ func TestValidateTNLRejectsInvalidServiceNames(t *testing.T) {
 
 func TestPathMountsUseConfiguredServicesAndCleanPrefixes(t *testing.T) {
 	for name, contents := range map[string]string{
-		"json": `{"version":1,"tnl":{"services":{"web":{},"api":{}},"deployments":{"local":{"targets":{"web":{"public_url":{},"http":{"paths":{"/api":"api","/v1":{"service":"api","strip_prefix":true}}}},"api":{}}}}}}`,
-		"yml":  "version: 1\ntnl:\n  services:\n    web: {}\n    api: {}\n  deployments:\n    local:\n      targets:\n        web:\n          public_url: {}\n          http:\n            paths:\n              /api: api\n              /v1:\n                service: api\n                strip_prefix: true\n        api: {}\n",
+		"json": `{"version":1,"tnl":{"services":{"web":{},"api":{}},"deployments":{"local":{"targets":{"web":{"http":{"paths":{"/api":"api","/v1":{"service":"api","strip_prefix":true}}}},"api":{}}}}}}`,
+		"yml":  "version: 1\ntnl:\n  services:\n    web: {}\n    api: {}\n  deployments:\n    local:\n      targets:\n        web:\n          http:\n            paths:\n              /api: api\n              /v1:\n                service: api\n                strip_prefix: true\n        api: {}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			filename := "tnl." + name
@@ -203,23 +207,15 @@ func TestPathMountsUseConfiguredServicesAndCleanPrefixes(t *testing.T) {
 }
 
 func TestValidateTNLScopesFixedAddressesToOneService(t *testing.T) {
-	name, publicURL, domain, open := "preview", "https://preview.example.test", "example.test", true
-	for _, tunnel := range []*Tunnel{{Name: &name}, {PublicURL: &publicURL}} {
-		if err := ValidateTNL(TNL{Tunnel: tunnel, Services: Services{"web": {}}}); err == nil ||
-			!strings.Contains(err.Error(), "belong under services.NAME") {
-			t.Fatalf("root fixed address with named services: %v", err)
-		}
-		if err := ValidateTNL(TNL{Tunnel: tunnel}); err != nil {
-			t.Fatalf("unnamed service fixed address: %v", err)
-		}
-	}
-	if err := ValidateTNL(TNL{Tunnel: &Tunnel{Domain: &domain, Open: &open}, Services: Services{
-		"web": {Tunnel: &Tunnel{Name: &name}}, "api": {},
-	}}); err != nil {
+	name, hostname, domain := "preview", "preview.example.test", "example.test"
+	configuration := TNL{Name: &name, Services: Services{
+		"web": {Name: &name, Hostname: &hostname, Domain: &domain, HTTP: &HTTPService{Open: new(true)}}, "api": {},
+	}}
+	if err := ValidateTNL(configuration); err != nil {
 		t.Fatalf("per-service fixed address: %v", err)
 	}
-	if err := ValidateTNL(TNL{Services: Services{"web": {Tunnel: &Tunnel{Name: &name, PublicURL: &publicURL}}}}); err == nil {
-		t.Fatal("name and exact public URL were accepted together")
+	if configuration.Services["api"].Hostname != nil || configuration.Services["api"].Domain != nil || configuration.Services["api"].HTTP != nil {
+		t.Fatal("endpoint or browser settings leaked into another binding")
 	}
 }
 
@@ -227,8 +223,8 @@ func TestValidateTNLRejectsInvalidTargetsAndCanonicalIPDuplicates(t *testing.T) 
 	invalidTarget := Target("https://example.com")
 	for name, value := range map[string]TNL{
 		"target":            {Services: Services{"web": {Target: &ServiceTarget{Type: "address", Address: &invalidTarget}}}},
-		"masked prefix":     {Tunnel: &Tunnel{Access: &Access{IP: []string{"192.0.2.7/24"}}}},
-		"duplicate address": {Tunnel: &Tunnel{Access: &Access{IP: []string{"192.0.2.1", "192.0.2.1/32"}}}},
+		"masked prefix":     {Services: Services{"web": {HTTP: &HTTPService{Access: &Access{IP: []string{"192.0.2.7/24"}}}}}},
+		"duplicate address": {Services: Services{"web": {HTTP: &HTTPService{Access: &Access{IP: []string{"192.0.2.1", "192.0.2.1/32"}}}}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := ValidateTNL(value); err == nil {
@@ -340,8 +336,8 @@ func TestRemovedSSHProtocolDirectsExistingSSHDToTCP(t *testing.T) {
 
 func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 	for extension, valid := range map[string]string{
-		"json": `{"version":1,"tnl":{"inspection":{"mode":"none"},"services":{"web":{}},"deployments":{"local":{"targets":{"web":{"inspection":{"mode":"summary"},"address":3000,"http":{"readiness":{"path":"/health"}}}}}},"public_url":{"access":{"ip":["192.0.2.1"]}}}}`,
-		"yml":  "version: 1\ntnl:\n  inspection: {mode: none}\n  services:\n    web: {}\n  deployments:\n    local:\n      targets:\n        web:\n          inspection: {mode: summary}\n          address: 3000\n          http:\n            readiness: {path: /health}\n  public_url:\n    access: {ip: [192.0.2.1]}\n",
+		"json": `{"version":1,"tnl":{"inspection":{"mode":"none"},"services":{"web":{}},"deployments":{"local":{"targets":{"web":{"inspection":{"mode":"summary"},"address":3000,"http":{"readiness":{"path":"/health"},"access":{"ip":["192.0.2.1"]}}}}}}}}`,
+		"yml":  "version: 1\ntnl:\n  inspection: {mode: none}\n  services:\n    web: {}\n  deployments:\n    local:\n      targets:\n        web:\n          inspection: {mode: summary}\n          address: 3000\n          http:\n            readiness: {path: /health}\n            access: {ip: [192.0.2.1]}\n",
 	} {
 		t.Run(extension, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl."+extension)
@@ -353,38 +349,52 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 			}
 		})
 	}
-	for name, test := range map[string]struct{ json, yaml, category string }{
-		"zero concurrency":           {`{"version":1,"tnl":{"public_url":{"limits":{"http":{"concurrency":0}}}}}`, "version: 1\ntnl:\n  public_url:\n    limits:\n      http: {concurrency: 0}\n", "positive safe integers"},
-		"negative total":             {`{"version":1,"tnl":{"services":{"web":{}},"deployments":{"local":{"targets":{"web":{"public_url":{"limits":{"http":{"total":-1}}}}}}}}}`, "version: 1\ntnl:\n  services:\n    web: {}\n  deployments:\n    local:\n      targets:\n        web:\n          public_url:\n            limits:\n              http: {total: -1}\n", "positive safe integers"},
-		"missing rate period":        {`{"version":1,"tnl":{"public_url":{"limits":{"http":{"rate":{"count":2}}}}}}`, "version: 1\ntnl:\n  public_url:\n    limits:\n      http:\n        rate: {count: 2}\n", "rate requires count and per"},
-		"retired request limit":      {`{"version":1,"tnl":{"public_url":{"request_limit":2}}}`, "version: 1\ntnl:\n  public_url:\n    request_limit: 2\n", "request_limit"},
-		"invalid inspection":         {`{"version":1,"tnl":{"inspection":{"mode":"all"}}}`, "version: 1\ntnl:\n  inspection: {mode: all}\n", "inspection: mode must be none or summary"},
-		"invalid service inspection": {`{"version":1,"tnl":{"services":{"web":{}},"deployments":{"local":{"targets":{"web":{"inspection":{"mode":"all"}}}}}}}`, "version: 1\ntnl:\n  services:\n    web: {}\n  deployments:\n    local:\n      targets:\n        web:\n          inspection: {mode: all}\n", "services.web.inspection: mode must be none or summary"},
-		"retired dev":                {`{"version":1,"tnl":{"dev":{"startup_timeout":"+1s"}}}`, "version: 1\ntnl:\n  dev:\n    startup_timeout: +1s\n", "dev"},
-		"server URL":                 {`{"version":1,"tnl":{"server":"http://control.example"}}`, "version: 1\ntnl:\n  server: http://control.example\n", "server must be an HTTPS origin"},
-		"uppercase domain":           {`{"version":1,"tnl":{"public_url":{"domain":"API.EXAMPLE.TEST"}}}`, "version: 1\ntnl:\n  public_url:\n    domain: API.EXAMPLE.TEST\n", "public_url.domain must be a canonical domain name"},
-		"multi-label name":           {`{"version":1,"tnl":{"name":"api.example"}}`, "version: 1\ntnl:\n  name: api.example\n", "name must be one lowercase DNS label"},
-		"public URL path":            {`{"version":1,"tnl":{"public_url":{"hostname":"https://api.example.test/path"}}}`, "version: 1\ntnl:\n  public_url:\n    hostname: https://api.example.test/path\n", "public_url.hostname must be a canonical hostname or HTTPS public URL"},
-		"root name with service":     {`{"version":1,"tnl":{"name":"api","services":{"api":{}}}}`, "version: 1\ntnl:\n  name: api\n  services:\n    api: {}\n", "name and public_url.hostname belong under deployments.NAME.targets.SERVICE"},
-		"service server":             {`{"version":1,"tnl":{"services":{"web":{"server":"https://control.example"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      server: https://control.example\n", "server"},
-		"service team":               {`{"version":1,"tnl":{"services":{"web":{"team":"studio"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      team: studio\n", "team"},
-		"service feedback":           {`{"version":1,"tnl":{"services":{"web":{"feedback":true}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      feedback: true\n", "feedback"},
-		"obsolete subdomain":         {`{"version":1,"tnl":{"public_url":{"subdomain":"api"}}}`, "version: 1\ntnl:\n  public_url:\n    subdomain: api\n", "subdomain"},
-		"target":                     {`{"version":1,"tnl":{"services":{"web":{}},"deployments":{"local":{"targets":{"web":{"address":"https://example.com/path"}}}}}}`, "version: 1\ntnl:\n  services:\n    web: {}\n  deployments:\n    local:\n      targets:\n        web: {address: https://example.com/path}\n", "target.address:"},
-		"raw SSH":                    {`{"version":1,"tnl":{"services":{"shell":{"protocol":"ssh"}},"deployments":{"local":{"targets":{"shell":{"inspection":{"mode":"none"},"address":"sshd:22"}}}}}}`, "version: 1\ntnl:\n  services:\n    shell: {protocol: ssh}\n  deployments:\n    local:\n      targets:\n        shell:\n          inspection: {mode: none}\n          address: 'sshd:22'\n", "use tcp for an existing sshd"},
-		"raw SSH target TLS":         {`{"version":1,"tnl":{"services":{"shell":{"protocol":"ssh"}},"deployments":{"local":{"targets":{"shell":{"address":"sshd:22","tls":{}}}}}}}`, "version: 1\ntnl:\n  services:\n    shell: {protocol: ssh}\n  deployments:\n    local:\n      targets:\n        shell: {address: 'sshd:22', tls: {}}\n", "use tcp for an existing sshd"},
-		"ip":                         {`{"version":1,"tnl":{"public_url":{"access":{"ip":["192.0.2.7/24"]}}}}`, "version: 1\ntnl:\n  public_url:\n    access: {ip: [192.0.2.7/24]}\n", "distinct canonical addresses or prefixes"},
-		"duplicate":                  {`{"version":1,"tnl":{"public_url":{"access":{"ip":["192.0.2.1","192.0.2.1/32"]}}}}`, "version: 1\ntnl:\n  public_url:\n    access: {ip: [192.0.2.1, 192.0.2.1/32]}\n", "distinct canonical addresses or prefixes"},
-		"obsolete provider grant":    {`{"version":1,"tnl":{"public_url":{"allow_providers":["stripe"]}}}`, "version: 1\ntnl:\n  public_url:\n    allow_providers: [stripe]\n", "allow_providers"},
-		"unknown webhook provider":   {`{"version":1,"tnl":{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{"public_url":{}}}}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe","provider":"other"}}}}`, "version: 1\ntnl:\n  services:\n    api: {}\n  deployments:\n    local:\n      targets:\n        api: {public_url: {}}\n  webhooks:\n    stripe:\n      service: api\n      path: /hooks/stripe\n      provider: other\n", "provider must be"},
-		"missing webhook provider":   {`{"version":1,"tnl":{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{"public_url":{}}}}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe"}}}}`, "version: 1\ntnl:\n  services:\n    api: {}\n  deployments:\n    local:\n      targets:\n        api: {public_url: {}}\n  webhooks:\n    stripe:\n      service: api\n      path: /hooks/stripe\n", "provider must be"},
-		"obsolete webhook source":    {`{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe","provider":"stripe","allow_from":"*"}}}}`, "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    stripe:\n      service: api\n      path: /hooks/stripe\n      provider: stripe\n      allow_from: '*'\n", "allow_from"},
-		"obsolete webhook grant":     {`{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe","allow_providers":["stripe"]}}}}`, "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    stripe:\n      service: api\n      path: /hooks/stripe\n      allow_providers: [stripe]\n", "allow_providers"},
+	for name, test := range map[string]struct{ source, category string }{
+		"zero concurrency":           {serviceCase("web", "", `{"http":{"limits":{"concurrency":0}}}`), "positive safe integers"},
+		"negative total":             {serviceCase("web", "", `{"http":{"limits":{"total":-1}}}`), "positive safe integers"},
+		"missing rate period":        {serviceCase("web", "", `{"http":{"limits":{"rate":{"count":2}}}}`), "rate requires count and per"},
+		"retired request limit":      {serviceCase("web", "", `{"http":{"request_limit":2}}`), "request_limit"},
+		"invalid inspection":         {`{"inspection":{"mode":"all"}}`, "inspection: mode must be none or summary"},
+		"invalid service inspection": {serviceCase("web", "", `{"inspection":{"mode":"all"}}`), "services.web.inspection: mode must be none or summary"},
+		"retired dev":                {`{"dev":{"startup_timeout":"+1s"}}`, "dev"},
+		"server URL":                 {`{"server":"http://control.example"}`, "server must be an HTTPS origin"},
+		"uppercase domain":           {serviceCase("web", "", `{"domain":"API.EXAMPLE.TEST"}`), "domain must be a canonical DNS hostname"},
+		"multi-label name":           {`{"name":"api.example"}`, "name must be one lowercase DNS label"},
+		"hostname path":              {serviceCase("web", "", `{"hostname":"https://api.example.test/path"}`), "hostname must be a canonical DNS hostname"},
+		"root hostname":              {`{"hostname":"api.example"}`, "hostname"},
+		"service server":             {`{"services":{"web":{"server":"https://control.example"}}}`, "server"},
+		"service team":               {`{"services":{"web":{"team":"studio"}}}`, "team"},
+		"service feedback":           {`{"services":{"web":{"feedback":true}}}`, "feedback"},
+		"obsolete subdomain":         {serviceCase("web", "", `{"subdomain":"api"}`), "subdomain"},
+		"target":                     {serviceCase("web", "", `{"address":"https://example.com/path"}`), "target.address:"},
+		"raw SSH":                    {serviceCase("shell", "ssh", `{"inspection":{"mode":"none"},"address":"sshd:22"}`), "use tcp for an existing sshd"},
+		"raw SSH target TLS":         {serviceCase("shell", "ssh", `{"address":"sshd:22","tls":{}}`), "use tcp for an existing sshd"},
+		"ip":                         {serviceCase("web", "", `{"http":{"access":{"ip":["192.0.2.7/24"]}}}`), "distinct canonical addresses or prefixes"},
+		"duplicate":                  {serviceCase("web", "", `{"http":{"access":{"ip":["192.0.2.1","192.0.2.1/32"]}}}`), "distinct canonical addresses or prefixes"},
+		"obsolete provider grant":    {serviceCase("web", "", `{"http":{"access":{"allow_providers":["stripe"]}}}`), "allow_providers"},
+		"unknown webhook provider":   {`{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{}}}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe","provider":"other"}}}`, "provider must be"},
+		"missing webhook provider":   {`{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{}}}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe"}}}`, "provider must be"},
+		"obsolete webhook source":    {`{"services":{"api":{}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe","provider":"stripe","allow_from":"*"}}}`, "allow_from"},
+		"obsolete webhook grant":     {`{"services":{"api":{}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe","allow_providers":["stripe"]}}}`, "allow_providers"},
 	} {
-		for extension, invalid := range map[string]string{"json": test.json, "yml": test.yaml} {
+		var value map[string]any
+		if err := json.Unmarshal([]byte(test.source), &value); err != nil {
+			t.Fatal(err)
+		}
+		integerValues(value)
+		document := map[string]any{"version": 1, "tnl": value}
+		jsonData, err := json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		yamlData, err := yaml.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for extension, invalid := range map[string][]byte{"json": jsonData, "yml": yamlData} {
 			t.Run(name+"/"+extension, func(t *testing.T) {
 				path := filepath.Join(t.TempDir(), "tnl."+extension)
-				if err := os.WriteFile(path, []byte(invalid), 0o600); err != nil {
+				if err := os.WriteFile(path, invalid, 0o600); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := LoadDocument(path); err == nil || !strings.Contains(err.Error(), test.category) {

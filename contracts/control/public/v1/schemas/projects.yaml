@@ -81,16 +81,15 @@ schemas:
         items:
           type: object
           additionalProperties: false
-          required: [service, hostname, port]
+          required: [service, service_id, hostname, port]
           properties:
             service: { type: string }
-            public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
             service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
             port:
               type: integer
               minimum: 0
               maximum: 65535
-              description: Public reservation, or zero for a connector-only service with no public reservation.
+              description: Logical HTTP service port 443, independent of public reachability.
             hostname: { type: string }
   RealizeLocalProjectServiceRequest:
     type: object
@@ -101,18 +100,15 @@ schemas:
       source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
       worktree_key: { type: string, minLength: 1, maxLength: 128 }
       worktree_label: { type: string, minLength: 1, maxLength: 63 }
-      domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
-      public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
       configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceConfiguration" }
   LocalProjectService:
     type: object
     additionalProperties: false
-    required: [service, worktree_key, service_kind, service_id]
+    required: [service, worktree_key, service_id]
     properties:
       service: { type: string }
       worktree_key: { type: string }
-      service_kind: { type: string, enum: [service, public_url] }
-      service_id: { type: string }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       hostname: { type: string }
       metadata: { $ref: "../openapi.yaml#/components/schemas/ServiceMetadata" }
   ApplyProjectConfigurationRequest:
@@ -293,12 +289,25 @@ schemas:
       target:
         type: string
         maxLength: 8192
-        description: Public URL targets are HTTP/HTTPS origins with an explicit port and no trailing slash. Service targets normalize to host:port with separate target_tls trust. The app descriptor defers an HTTP public URL listener to its application owner in any deployment. Only local declarations may use compose:SERVICE:PORT or docker:CONTAINER:PORT descriptors; control does not discover targets.
+        description: Service targets normalize to host:port with separate target_tls trust. The app descriptor defers an HTTP listener to its application owner in any deployment. Only local declarations may use compose:SERVICE:PORT or docker:CONTAINER:PORT descriptors; control does not discover targets.
       target_discovery: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetDiscovery" }
       public:
         type: boolean
-        description: Public endpoint access for this service binding, independent of visitor authorization. Local bindings allocate only when realized by an authorized worktree. Omission or false keeps connector access only. Mutually exclusive with public_url.
-      public_url: { $ref: "../openapi.yaml#/components/schemas/ProjectServicePublicURL" }
+        description: Public endpoint access for this service binding, independent of visitor authorization. Local bindings allocate only when realized by an authorized worktree. Omission or false keeps connector access only.
+      hostname:
+        type: string
+        minLength: 1
+        maxLength: 253
+        description: Exact authorized service hostname, not an HTTPS origin. Does not enable public endpoint access.
+      domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
+      ephemeral:
+        type: boolean
+        default: false
+        description: Remove this service after its publication stops rather than retaining it for a later run.
+      require_post_quantum:
+        type: boolean
+        description: Require hybrid post-quantum key agreement for visitor TLS, independently of target TLS.
+      traffic: { $ref: "../openapi.yaml#/components/schemas/TrafficSelection" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetTLS" }
       access: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceAccess" }
       http: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceHTTP" }
@@ -307,7 +316,7 @@ schemas:
     additionalProperties: false
     description: HTTP visitor access and request limits for local and remote services, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Only local bindings support readiness, path mounts, and browser opening.
     properties:
-      access: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicAccess" }
+      access: { $ref: "../openapi.yaml#/components/schemas/ProjectHTTPAccess" }
       limits: { $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits" }
       readiness:
         type: object
@@ -326,21 +335,7 @@ schemas:
             service: { type: string }
             strip_prefix: { type: boolean }
       open: { type: boolean }
-  ProjectServicePublicURL:
-    type: object
-    additionalProperties: false
-    properties:
-      require_post_quantum: { type: boolean }
-      domain_id: { type: string }
-      hostname: { type: string, maxLength: 253 }
-      access: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicAccess" }
-      limits: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicLimits" }
-      ephemeral:
-        type: boolean
-        default: false
-        description: Local declarations may request an ephemeral worktree URL.
-    description: Enables an HTTP public URL. Local URLs belong to the developer preview; remote saved URLs belong to the team/project/deployment and retain their own visitor policy. Remote declarations cannot mark a named URL ephemeral; unnamed application publication allocates temporary URLs separately.
-  ProjectPublicAccess:
+  ProjectHTTPAccess:
     type: object
     additionalProperties: false
     properties:
@@ -351,12 +346,6 @@ schemas:
         maxItems: 256
         uniqueItems: true
         items: { type: string, maxLength: 64 }
-  ProjectPublicLimits:
-    type: object
-    additionalProperties: false
-    properties:
-      http: { $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits" }
-      traffic: { $ref: "../openapi.yaml#/components/schemas/TrafficSelection" }
   ProjectHTTPApplicationLimits:
     type: object
     additionalProperties: false

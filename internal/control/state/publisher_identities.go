@@ -134,6 +134,9 @@ func (d *Database) authorizePublisherScope(ctx context.Context, q *controlstated
 		if s.TeamID != scope.TeamID || !s.Enabled || s.DeletedAt.Valid {
 			return nil, ErrPublisherIdentity
 		}
+		if err := rejectAllocatedExactPublisher(ctx, q, s.ID); err != nil {
+			return nil, err
+		}
 		return servicePublisherScope{scope.TeamID, s.ID}, nil
 	}
 	if scope.Kind == "saved_public_url" {
@@ -172,6 +175,15 @@ func (d *Database) authorizePublisherScope(ctx context.Context, q *controlstated
 	return namespacePublisherScope{scope.TeamID, scope.DomainID, scope.Namespace, scope.MembershipID, scope.PublicURLScope}, nil
 }
 
+func rejectAllocatedExactPublisher(ctx context.Context, q *controlstatedb.Queries, service string) error {
+	if _, err := q.GetPublisherAllocation(ctx, service); err == nil {
+		return ErrPublisherIdentity
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	return nil
+}
+
 func resolvePublisherScope(ctx context.Context, q *controlstatedb.Queries, s PublisherScope, guest string) (resolvedPublisherScope, error) {
 	if err := validatePublisherScope(ctx, q, s, guest); err != nil {
 		return nil, err
@@ -202,7 +214,7 @@ func validatePublisherScope(ctx context.Context, q *controlstatedb.Queries, s Pu
 		if service.TeamID != s.TeamID || service.DeletedAt.Valid || !service.Enabled {
 			return ErrPublisherIdentity
 		}
-		return nil
+		return rejectAllocatedExactPublisher(ctx, q, service.ID)
 	}
 	if s.Kind == "saved_public_url" {
 		if s.ServiceID != "" {

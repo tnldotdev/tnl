@@ -101,22 +101,27 @@ func (v *visitorAdmission) selectRun(key trafficKey, limits TrafficLimits, sourc
 	if !limits.Within(v.server.config.Traffic.Ceiling) {
 		return "invalid_traffic_projection"
 	}
-	v.key, v.limits, v.source, v.runID = key, limits, source, key.id
+	if !v.deadline.After(time.Now()) {
+		return "pending_expired"
+	}
 	if anonymous {
 		// anonymous is an explicit control accounting fact, not target permission.
 		// skip pending run/source buckets and debit the ordinary run before open.
+		v.key = key
 		if reason := v.reserveLocked(limits); reason != "" {
+			v.key = trafficKey{}
 			return reason
 		}
 		v.metered = true
-		return ""
+	} else {
+		budgetRelease, reason := v.server.traffic.acquirePending(key, source)
+		if budgetRelease == nil {
+			return reason
+		}
+		release := v.release
+		v.release = func() { release(); budgetRelease() }
 	}
-	budgetRelease, reason := v.server.traffic.acquirePending(key, source)
-	if budgetRelease == nil {
-		return reason
-	}
-	release := v.release
-	v.release = func() { release(); budgetRelease() }
+	v.key, v.limits, v.source, v.runID = key, limits, source, key.id
 	return ""
 }
 

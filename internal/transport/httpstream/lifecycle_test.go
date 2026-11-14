@@ -48,7 +48,7 @@ func TestHTTPStreamServeJoinsHTTP2HandlersAfterConnectionClose(t *testing.T) {
 					close(canceled)
 					<-releaseHandler
 				})
-			})
+			}, httpstream.ResponseHooks{}, httpstream.Drain{})
 		}()
 		transport := &http.Transport{ForceAttemptHTTP2: true,
 			TLSClientConfig: &tls.Config{RootCAs: visitorfixture.Roots(t, certificate)},
@@ -152,7 +152,7 @@ func testHTTPStreamServeJoinsHijackedHandlerAfterSocketClose(t *testing.T, cance
 					close(handlerReturned)
 					<-releaseHandler
 				})
-			})
+			}, httpstream.ResponseHooks{}, httpstream.Drain{})
 		}()
 		if _, err := io.WriteString(visitor, "GET / HTTP/1.1\r\nHost: proxy.test\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"); err != nil {
 			t.Fatal(err)
@@ -228,7 +228,7 @@ func TestHTTPStreamServeJoinsCancellationClose(t *testing.T) {
 			served <- httpstream.Serve(ctx, connection, &url.URL{Scheme: "http", Host: "target.test"}, func(context.Context) (net.Conn, error) {
 				t.Error("idle visitor opened the target")
 				return nil, httpstream.ErrClosed
-			}, nil)
+			}, nil, httpstream.ResponseHooks{}, httpstream.Drain{})
 		}()
 		synctest.Wait()
 		cancel()
@@ -260,7 +260,7 @@ func TestHTTPStreamApplicationFailureKeepsAuthoredMessage(t *testing.T) {
 			served <- httpstream.Serve(t.Context(), client, &url.URL{Scheme: "http", Host: "target.test"}, func(context.Context) (net.Conn, error) {
 				calls++
 				return nil, errors.New("private target credentials must not reach the visitor")
-			}, nil)
+			}, nil, httpstream.ResponseHooks{}, httpstream.Drain{})
 		}()
 		if _, err := io.WriteString(visitor, "GET / HTTP/1.1\r\nHost: proxy.test\r\n\r\n"); err != nil {
 			t.Fatal(err)

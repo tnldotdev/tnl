@@ -10,13 +10,13 @@ FROM control.feedback_event_clock WHERE id = 1;
 
 -- name: CreateFeedbackThread :one
 INSERT INTO control.feedback_threads (
-    id, preview_id, team_id, public_url_id, publish_run_id,
-    publish_run_number, service_name, page_path, page_title, report_text, author_display_name, author_identity_id, author_verified,
+    id, preview_id, team_id, service_id, service_run_id,
+    run_number, service_name, page_path, page_title, report_text, author_display_name, author_identity_id, author_verified,
     pin, evidence, report_source_state, created_at, state_updated_at,
     idempotency_key, request_digest
 ) VALUES (
-    sqlc.arg(id), sqlc.arg(preview_id), sqlc.arg(team_id), sqlc.arg(public_url_id),
-    sqlc.arg(publish_run_id), sqlc.arg(publish_run_number), sqlc.arg(service),
+    sqlc.arg(id), sqlc.arg(preview_id), sqlc.arg(team_id), sqlc.arg(service_id),
+    sqlc.arg(service_run_id), sqlc.arg(run_number), sqlc.arg(service),
     sqlc.arg(page_path), sqlc.arg(page_title), sqlc.arg(report_text), sqlc.narg(author_display_name), sqlc.narg(author_identity_id), sqlc.arg(author_verified),
     convert_from(sqlc.narg(anchor)::bytea, 'UTF8')::jsonb,
     convert_from(sqlc.arg(evidence)::bytea, 'UTF8')::jsonb,
@@ -24,15 +24,15 @@ INSERT INTO control.feedback_threads (
     sqlc.arg(created_at), sqlc.arg(state_updated_at),
     sqlc.arg(idempotency_key), sqlc.arg(request_digest)
 )
-ON CONFLICT (publish_run_id, idempotency_key)
+ON CONFLICT (service_run_id, idempotency_key)
 DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
 RETURNING *;
 
 -- name: GetFeedbackThread :one
 SELECT * FROM control.feedback_threads WHERE id = $1;
 
--- name: GetFeedbackPublicURL :one
-SELECT * FROM control.public_urls WHERE id = $1;
+-- name: GetFeedbackService :one
+SELECT * FROM control.services WHERE id = $1;
 
 -- name: LockFeedbackThread :one
 SELECT * FROM control.feedback_threads WHERE id = $1 FOR UPDATE;
@@ -40,7 +40,7 @@ SELECT * FROM control.feedback_threads WHERE id = $1 FOR UPDATE;
 -- name: ListFeedbackThreadsForPage :many
 SELECT * FROM control.feedback_threads
 WHERE preview_id = sqlc.arg(preview_id)
-  AND public_url_id = sqlc.arg(public_url_id)
+  AND service_id = sqlc.arg(service_id)
    AND (sqlc.arg(page_path)::text = '' OR page_path = sqlc.arg(page_path))
    AND (sqlc.arg(thread_state)::text = '' OR state = sqlc.arg(thread_state))
   AND id > sqlc.arg(after_id)
@@ -99,45 +99,48 @@ WHERE team_id = sqlc.arg(team_id) AND cursor > sqlc.arg(after_cursor)
 ORDER BY cursor LIMIT 26;
 
 -- name: FeedbackRunScope :one
-SELECT run.id AS publish_run_id, run.public_url_id, run.publish_run_number,
-       url.team_id, preview.id AS preview_id
-FROM control.publish_runs AS run
-JOIN control.public_urls AS url ON url.id = run.public_url_id
-JOIN control.preview_public_urls AS included ON included.public_url_id = url.id
+SELECT run.id AS service_run_id, run.service_id, run.run_number,
+       service.team_id, preview.id AS preview_id
+FROM control.service_runs AS run
+JOIN control.services AS service ON service.id = run.service_id
+JOIN control.preview_services AS included ON included.service_id = service.id
 JOIN control.previews AS preview ON preview.id = included.preview_id
-WHERE run.id = sqlc.arg(publish_run_id)
+WHERE run.id = sqlc.arg(service_run_id)
+  AND run.service_id = sqlc.arg(service_id)
   AND preview.id = sqlc.arg(preview_id)
-  AND run.publish_run_number = sqlc.arg(publish_run_number)
+  AND run.run_number = sqlc.arg(run_number)
   AND run.publisher_expires_at > sqlc.arg(now)
   AND run.state IN ('starting', 'ready')
-   AND url.lifecycle_state = 'enabled'
+   AND run.closed_at IS NULL AND service.enabled AND service.deleted_at IS NULL AND service.protocol='http'
 FOR UPDATE OF run;
 
--- name: CreatePublishRunPreview :one
-INSERT INTO control.previews (id, team_id, created_by_identity_id, idempotency_key, created_at, demo_publish_run_id)
+-- name: CreateServiceRunPreview :one
+-- guest provenance is added only with the paused guest service ownership seam.
+INSERT INTO control.previews (id, team_id, created_by_identity_id, idempotency_key, created_at, demo_service_run_id)
 SELECT sqlc.arg(id), u.team_id, u.created_by_identity_id, 'demo/' || r.id,
     sqlc.arg(now)::timestamptz, r.id
-FROM control.publish_runs r JOIN control.public_urls u ON u.id = r.public_url_id
-WHERE r.id = sqlc.arg(publish_run_id) AND r.publish_run_number = sqlc.arg(publish_run_number)
+FROM control.service_runs r JOIN control.services u ON u.id = r.service_id
+WHERE r.id = sqlc.arg(service_run_id) AND r.service_id=sqlc.arg(service_id) AND r.run_number = sqlc.arg(run_number)
     AND r.closed_at IS NULL AND r.publisher_expires_at > sqlc.arg(now)
-    AND u.ephemeral AND u.lifecycle_state = 'enabled'
-ON CONFLICT (demo_publish_run_id) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
+    AND u.ephemeral AND u.enabled AND u.deleted_at IS NULL AND u.protocol='http'
+ON CONFLICT (demo_service_run_id) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
 RETURNING *;
 
--- name: AddPublishRunPreviewURL :exec
-INSERT INTO control.preview_public_urls (preview_id, team_id, public_url_id, added_at)
-SELECT p.id, p.team_id, r.public_url_id, sqlc.arg(now)::timestamptz
-FROM control.previews p JOIN control.publish_runs r ON r.id = p.demo_publish_run_id
+-- name: AddServiceRunPreviewService :exec
+INSERT INTO control.preview_services (preview_id, team_id, service_id, added_at)
+SELECT p.id, p.team_id, r.service_id, sqlc.arg(now)::timestamptz
+FROM control.previews p JOIN control.service_runs r ON r.id = p.demo_service_run_id
 WHERE p.id = sqlc.arg(preview_id)
-ON CONFLICT (preview_id, public_url_id) DO NOTHING;
+ON CONFLICT (preview_id, service_id) DO NOTHING;
 
 -- name: ReviewerShareCookieValid :one
 SELECT LEAST(share.expires_at, cookie.expires_at)::timestamptz FROM control.shares AS share
 JOIN control.share_cookies AS cookie ON cookie.share_id = share.id
-JOIN control.share_public_urls AS included ON included.share_id = share.id
+JOIN control.share_services AS included ON included.share_id = share.id
 WHERE share.id = sqlc.arg(share_id)
-  AND cookie.public_url_id = sqlc.arg(public_url_id)
-  AND included.public_url_id = sqlc.arg(public_url_id)
+  AND cookie.service_id = sqlc.arg(service_id)
+  AND included.service_id = sqlc.arg(service_id)
+  AND sqlc.arg(service_run_id)::text=ANY(cookie.run_ids)
   AND cookie.token_digest = sqlc.arg(token_digest)
   AND cookie.expires_at > sqlc.arg(now)
   AND share.expires_at > sqlc.arg(now)

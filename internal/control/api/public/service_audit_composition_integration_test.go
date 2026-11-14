@@ -122,7 +122,7 @@ func newAuditCompositionRun(t *testing.T, d *controlstate.Database, inspect *pgx
 	actor, team, member, name string, now time.Time) auditCompositionRun {
 	t.Helper()
 	ctx := t.Context()
-	service, err := d.CreateServiceAt(ctx, team, actor, name, name, controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "http"})
+	service, err := d.CreateServiceAt(ctx, team, actor, name, name, controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "http"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,18 +249,14 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	if err != nil {
 		t.Fatal(err)
 	}
-	connector, err := ingress.NewPublicServices(ingress.PublicServicesConfig{Control: direct, Forwarder: target,
-		AuditSink: sink, CurrentLease: func() ingressv1.IngressLease {
-			return ingressv1.IngressLease{IngressId: lease.IngressID, IngressRunId: lease.IngressRunID, IngressLeaseRevision: int64(lease.IngressLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt}
-		}})
-	if err != nil {
-		t.Fatal(err)
-	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := ingress.New(listener, ingress.Config{MaxConnections: 20, PublicServices: connector,
+	server, err := ingress.New(listener, ingress.Config{MaxConnections: 20, Control: direct, Forwarder: target,
+		AuditSink: sink, CurrentLease: func() ingressv1.IngressLease {
+			return ingressv1.IngressLease{IngressId: lease.IngressID, IngressRunId: lease.IngressRunID, IngressLeaseRevision: int64(lease.IngressLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt}
+		},
 		RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}})
 	if err != nil {
 		_ = listener.Close()
@@ -269,7 +265,6 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	done := make(chan error, 1)
 	go func() { done <- server.Serve() }()
 	t.Cleanup(func() {
-		_ = connector.Close()
 		stop, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		if err := server.Drain(stop); err != nil {
@@ -285,7 +280,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	forwarded := make(chan error, 1)
 	go func() {
 		defer accepted.Close()
-		forwarded <- connector.AcceptPublic(ctx, accepted, netip.MustParseAddrPort("127.0.0.1:40000"), netip.MustParseAddrPort("203.0.113.1:443"), prepared.Hostname, nil)
+		forwarded <- server.AcceptPublic(ctx, accepted, netip.MustParseAddrPort("127.0.0.1:40000"), netip.MustParseAddrPort("203.0.113.1:443"), prepared.Hostname, nil)
 	}()
 	secureDirect := tls.Client(valid, clientTLS.Clone())
 	defer secureDirect.Close()

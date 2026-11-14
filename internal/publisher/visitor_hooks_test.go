@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -115,7 +116,7 @@ func TestReadinessProofIsExactSingleUseAndStripped(t *testing.T) {
 	var forwarded, promoted, checked int
 	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get(publisherproxy.ReadinessProbeHeader) != "" || !publisherproxy.IsReadinessProbe(r) {
+			if r.Header.Get(httpstream.ReadinessProbeHeader) != "" || !httpstream.IsReadinessProbe(r) {
 				t.Error("unverified or unstripped readiness proof")
 			}
 			forwarded++
@@ -135,7 +136,7 @@ func TestReadinessProofIsExactSingleUseAndStripped(t *testing.T) {
 		r := httptest.NewRequest(test.method, test.path, nil)
 		r.Host = run.Hostname
 		r.TLS = &tls.ConnectionState{ServerName: run.Hostname}
-		r.Header.Set(publisherproxy.ReadinessProbeHeader, test.proof)
+		r.Header.Set(httpstream.ReadinessProbeHeader, test.proof)
 		r = r.WithContext(context.WithValue(r.Context(), denialContextKey{}, true))
 		r = r.WithContext(context.WithValue(r.Context(), visitorSessionKey{}, &visitorSession{visitor: Visitor{Run: run}, guard: func(_ context.Context, v Visitor) error {
 			if !v.Readiness {
@@ -155,7 +156,7 @@ func TestReadinessProofIsExactSingleUseAndStripped(t *testing.T) {
 	}
 	other, _ := httpaccess.NewReadinessProof(probeRun, "/health")
 	r := httptest.NewRequest("GET", "/health", nil)
-	r.Header.Set(publisherproxy.ReadinessProbeHeader, other.HeaderValue())
+	r.Header.Set(httpstream.ReadinessProbeHeader, other.HeaderValue())
 	probeRun.Number++
 	if other.Consume(r, probeRun) {
 		t.Fatal("proof crossed publish runs")
@@ -166,7 +167,7 @@ func TestReadinessProofForHTTPSTargetIsSingleUseAndPrivate(t *testing.T) {
 	var forwarded atomic.Int32
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		forwarded.Add(1)
-		if r.Header.Get("Authorization") != "caller-value" || r.Header.Get(publisherproxy.ReadinessProbeHeader) != "" {
+		if r.Header.Get("Authorization") != "caller-value" || r.Header.Get(httpstream.ReadinessProbeHeader) != "" {
 			t.Error("application auth or readiness credential separation failed")
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -198,7 +199,7 @@ func TestReadinessProofForHTTPSTargetIsSingleUseAndPrivate(t *testing.T) {
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil)
 		r.Host = run.Hostname
 		r.TLS = &tls.ConnectionState{ServerName: run.Hostname}
-		r.Header.Set(publisherproxy.ReadinessProbeHeader, secret)
+		r.Header.Set(httpstream.ReadinessProbeHeader, secret)
 		r.Header.Set("Authorization", "caller-value")
 		r = r.WithContext(context.WithValue(r.Context(), denialContextKey{}, true))
 		w := httptest.NewRecorder()

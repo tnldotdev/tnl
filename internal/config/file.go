@@ -65,9 +65,6 @@ func LoadDocument(path string) (Document, error) {
 	if err := ValidateDocument(document); err != nil {
 		return Document{}, fmt.Errorf("load config %s: %w", path, err)
 	}
-	if document.TNL != nil {
-		NormalizeProjectPublicURLs(document.TNL)
-	}
 	return document, nil
 }
 
@@ -169,18 +166,6 @@ func ValidateTNL(config TNL) error {
 	if config.Name != nil && !naming.ValidServiceName(*config.Name) {
 		return errors.New("name must be one lowercase DNS label beginning with a letter")
 	}
-	if err := validateTunnel(config.Tunnel); err != nil {
-		return err
-	}
-	if err := validateLimits(tunnelLimits(config.Tunnel), nil, ""); err != nil {
-		return err
-	}
-	if config.Name != nil && config.Tunnel != nil && config.Tunnel.PublicURL != nil {
-		return errors.New("name and public_url.hostname are mutually exclusive")
-	}
-	if len(config.Services) != 0 && (config.Name != nil || config.Tunnel != nil && (config.Tunnel.Name != nil || config.Tunnel.PublicURL != nil)) {
-		return errors.New("name and public_url.hostname belong under services.NAME when services are configured")
-	}
 	if len(config.Services) > 32 {
 		return errors.New("services may contain at most 32 entries")
 	}
@@ -219,12 +204,9 @@ func ValidateTNL(config TNL) error {
 	}
 	slices.Sort(names)
 	savedNames := make(map[string]string)
-	publicHostnames := make(map[string]string)
+	hostnames := make(map[string]string)
 	for _, name := range names {
 		service := config.Services[name]
-		if service.Tunnel != nil && service.Public != nil {
-			return fmt.Errorf("services.%s: public and public_url are mutually exclusive", name)
-		}
 		if service.Access != nil && !service.Access.Team {
 			return fmt.Errorf("services.%s.access requires team: true", name)
 		}
@@ -235,31 +217,11 @@ func ValidateTNL(config TNL) error {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
 		if deployment != "local" {
-			if kind := TargetType(service); kind != "address" && kind != "eks" && kind != "rds" && !(kind == "app" && IsPublicService(service)) {
-				return fmt.Errorf("services.%s: remote publishers require an address, eks, rds, or public HTTP app target", name)
+			if kind := TargetType(service); kind != "address" && kind != "eks" && kind != "rds" && kind != "app" {
+				return fmt.Errorf("services.%s: remote deployments require an address, eks, rds, or app target", name)
 			}
-			if service.Tunnel != nil && service.Tunnel.Ephemeral != nil && *service.Tunnel.Ephemeral {
-				return fmt.Errorf("services.%s.public_url: save visitor policy here, omit http access/limits, and publish unnamed apps for temporary URLs", name)
-			}
-		}
-		if service.Tunnel != nil {
-			if service.HTTP != nil && (service.HTTP.Access != nil || service.HTTP.Limits != nil) {
-				return fmt.Errorf("services.%s.http: public_url owns this URL's access and limits", name)
-			}
-			if deployment != "local" {
-				if err := ValidateRemoteHTTP(service.HTTP); err != nil {
-					return fmt.Errorf("services.%s.http: %w", name, err)
-				}
-			}
-		} else if Protocol(service) == "http" {
-			resolved, err := ResolveServiceHTTP(config.Tunnel, service.HTTP)
-			if err != nil {
+			if err := ValidateRemoteHTTP(service.HTTP); err != nil {
 				return fmt.Errorf("services.%s.http: %w", name, err)
-			}
-			if deployment != "local" {
-				if err := ValidateRemoteHTTP(resolved); err != nil {
-					return fmt.Errorf("services.%s.http: %w", name, err)
-				}
 			}
 		}
 		savedName := ServiceName(name, service)
@@ -270,18 +232,13 @@ func ValidateTNL(config TNL) error {
 			return fmt.Errorf("services.%s: saved name %q is already used by services.%s", name, savedName, existing)
 		}
 		savedNames[savedName] = name
-		if service.Name != nil && service.Tunnel != nil && service.Tunnel.PublicURL != nil {
-			return fmt.Errorf("services.%s: name and public_url.hostname are mutually exclusive", name)
-		}
-		if Protocol(service) != "http" {
-			if service.Tunnel != nil {
-				return fmt.Errorf("services.%s: services cannot use public_url settings", name)
-			}
-		}
 		if service.HTTP != nil && Protocol(service) != "http" {
 			return fmt.Errorf("services.%s: http settings require protocol http", name)
 		}
 		if service.HTTP != nil {
+			if err := ValidateServiceHTTP(service.HTTP); err != nil {
+				return fmt.Errorf("services.%s.http: %w", name, err)
+			}
 			if err := validateReadiness(service.HTTP.Readiness); err != nil {
 				return fmt.Errorf("services.%s: %w", name, err)
 			}
@@ -289,26 +246,19 @@ func ValidateTNL(config TNL) error {
 		if err := ValidateInspection(service.Inspection); err != nil {
 			return fmt.Errorf("services.%s.inspection: %w", name, err)
 		}
-		if err := validateTunnel(service.Tunnel); err != nil {
+		if err := validateServiceEndpoint(service.Hostname, service.Domain); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
-		if service.Tunnel != nil && service.Tunnel.PublicURL != nil {
-			hostname, _ := naming.ParseExactPublicURL(*service.Tunnel.PublicURL)
-			if existing := publicHostnames[hostname]; existing != "" {
-				return fmt.Errorf("services.%s: public_url.hostname is already used by services.%s", name, existing)
+		if service.Hostname != nil {
+			if existing := hostnames[*service.Hostname]; existing != "" {
+				return fmt.Errorf("services.%s: hostname is already used by services.%s", name, existing)
 			}
-			publicHostnames[hostname] = name
+			hostnames[*service.Hostname] = name
 		}
-		protocol := Protocol(service)
-		if IsPublicService(service) {
-			if err := validateLimits(tunnelLimits(service.Tunnel), tunnelLimits(config.Tunnel), protocol); err != nil {
-				return fmt.Errorf("services.%s: %w", name, err)
-			}
+		if _, err := ResolveTrafficSelection(service.Traffic); err != nil {
+			return fmt.Errorf("services.%s.traffic: %w", name, err)
 		}
 		paths := ServicePaths(service)
-		if len(paths) != 0 && !IsPublicService(service) {
-			return fmt.Errorf("services.%s.http.paths requires an explicit public_url block", name)
-		}
 		if len(paths) > 32 {
 			return fmt.Errorf("services.%s.http.paths may contain at most 32 mounts", name)
 		}
@@ -354,31 +304,7 @@ func ValidateServiceHTTP(value *HTTPService) error {
 			return err
 		}
 	}
-	return validateLimits(&Limits{HTTP: value.Limits}, nil, "http")
-}
-
-// inherited HTTP defaults never change service reachability.
-func ResolveServiceHTTP(defaults *Tunnel, value *HTTPService) (*HTTPService, error) {
-	if value == nil {
-		return nil, nil
-	}
-	result := *value
-	if defaults != nil {
-		if result.Access == nil {
-			result.Access = defaults.Access
-		}
-		limits := MergeLimits(defaults.Limits, &Limits{HTTP: result.Limits})
-		if limits != nil {
-			if limits.Traffic != nil {
-				return nil, errors.New("service HTTP settings do not support traffic-limit overrides")
-			}
-			result.Limits = limits.HTTP
-		}
-	}
-	if err := ValidateServiceHTTP(&result); err != nil {
-		return nil, err
-	}
-	return &result, nil
+	return validateWorkLimits(value.Limits)
 }
 
 func validateReadiness(value *Readiness) error {
@@ -406,33 +332,20 @@ func validateServerAndTeam(server, team *string) error {
 	return nil
 }
 
-func validateTunnel(tunnel *Tunnel) error {
-	if tunnel != nil {
-		if tunnel.Name != nil && tunnel.PublicURL != nil {
-			return errors.New("name and public_url.hostname are mutually exclusive")
-		}
-		if tunnel.Domain != nil {
-			canonical, err := naming.CanonicalizeHostname(*tunnel.Domain)
-			if err != nil || canonical != *tunnel.Domain {
-				return errors.New("public_url.domain must be a canonical domain name")
+func validateServiceEndpoint(hostname, domain *string) error {
+	for _, field := range []struct {
+		name  string
+		value *string
+	}{{"hostname", hostname}, {"domain", domain}} {
+		if field.value != nil {
+			canonical, err := naming.CanonicalizeHostname(*field.value)
+			if err != nil || canonical != *field.value {
+				return fmt.Errorf("%s must be a canonical DNS hostname", field.name)
 			}
 		}
-		if tunnel.Name != nil {
-			canonical, err := naming.CanonicalizeHostname(*tunnel.Name)
-			if err != nil || canonical != *tunnel.Name || strings.Contains(*tunnel.Name, ".") {
-				return errors.New("name must be one lowercase ASCII DNS label")
-			}
-		}
-		if tunnel.PublicURL != nil {
-			if _, err := naming.ParseExactPublicURL(*tunnel.PublicURL); err != nil {
-				return errors.New("public_url.hostname must be a canonical hostname or HTTPS public URL without a port, path, query, or fragment")
-			}
-		}
-		if tunnel.Access != nil {
-			if err := tunnel.Access.Validate(); err != nil {
-				return fmt.Errorf("public_url.access: %w", err)
-			}
-		}
+	}
+	if hostname != nil && domain != nil && *hostname != *domain && !strings.HasSuffix(*hostname, "."+*domain) {
+		return errors.New("hostname must belong to domain")
 	}
 	return nil
 }

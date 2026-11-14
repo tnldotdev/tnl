@@ -2,53 +2,46 @@ package state
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
-func (d *Database) CreatePublishRunPreview(ctx context.Context, auth PublishRunAuthentication, now time.Time) (result Preview, retErr error) {
-	if err := validatePublishRunAuthentication(auth); err != nil {
-		return Preview{}, err
-	}
-	if err := d.requireOpen(); err != nil {
-		return Preview{}, err
+func (d *Database) CreateServiceRunPreview(ctx context.Context, auth ServiceHTTPRun, now time.Time) (result Preview, retErr error) {
+	if !auth.valid() {
+		return result, ErrFeedbackAccess
 	}
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
-		return Preview{}, err
+		return result, err
 	}
 	defer rollback(ctx, tx, "create demo preview", &retErr)()
-	queries := controlstatedb.New(tx)
-	if _, err := queries.LockPublicURLForRun(ctx, auth.PublicURLID); err != nil {
-		return Preview{}, ErrFeedbackAccess
+	if err = lockServiceAdmission(ctx, tx, auth.Subject.ID); err != nil {
+		return result, err
 	}
-	run, err := queries.LockPublishRun(ctx, auth.PublishRunID)
-	if err != nil || run.ClosedAt.Valid || run.PublicURLID != auth.PublicURLID || uint64(run.PublishRunNumber) != auth.PublishRunNumber {
-		return Preview{}, ErrFeedbackAccess
+	q := controlstatedb.New(tx)
+	run, err := serviceRunAuthorization(ctx, tx, q, auth.Subject.ID, auth.RunID, auth.Token.String(), now)
+	if err != nil {
+		return result, err
+	}
+	if run.RunNumber != auth.Number || run.State != "starting" && run.State != "ready" {
+		return result, ErrFeedbackAccess
 	}
 	id, err := opaqueid.New(opaqueid.PreviewPrefix)
 	if err != nil {
-		return Preview{}, err
+		return result, err
 	}
-	row, err := queries.CreatePublishRunPreview(ctx, controlstatedb.CreatePublishRunPreviewParams{
-		ID: id, PublishRunID: auth.PublishRunID, PublishRunNumber: int64(auth.PublishRunNumber), Now: timestamptz(now),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Preview{}, ErrFeedbackAccess
-	}
+	row, err := q.CreateServiceRunPreview(ctx, controlstatedb.CreateServiceRunPreviewParams{
+		ID: id, ServiceID: auth.Subject.ID, ServiceRunID: auth.RunID, RunNumber: auth.Number, Now: timestamptz(now)})
 	if err != nil {
-		return Preview{}, fmt.Errorf("controlstate: create demo preview: %w", err)
+		return result, publisherLookupError(err, ErrFeedbackAccess)
 	}
-	if err := queries.AddPublishRunPreviewURL(ctx, controlstatedb.AddPublishRunPreviewURLParams{PreviewID: row.ID, Now: timestamptz(now)}); err != nil {
-		return Preview{}, err
+	if err = q.AddServiceRunPreviewService(ctx, controlstatedb.AddServiceRunPreviewServiceParams{PreviewID: row.ID, Now: timestamptz(now)}); err != nil {
+		return result, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return Preview{}, err
+	if err = tx.Commit(ctx); err != nil {
+		return result, err
 	}
 	return d.GetPreview(ctx, row.ID)
 }

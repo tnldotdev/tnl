@@ -75,20 +75,30 @@ func (d *Database) SelectServiceRun(ctx context.Context, serviceID, identityID, 
 
 // both access paths select only runs with a current relay that can accept work.
 // callers hold service admission while selecting; existing streams never reselect.
-func selectRoutableServiceRun(ctx context.Context, tx pgx.Tx, serviceID string, now time.Time) (id string, number int64, until time.Time, err error) {
-	err = tx.QueryRow(ctx, `SELECT run.id,run.run_number,LEAST(run.publisher_expires_at,g.expires_at,run.certificate_expires_at)
+func selectRoutableServiceRun(ctx context.Context, tx pgx.Tx, serviceID string, now time.Time, excluded ...ServiceRunReference) (id string, number int64, until time.Time, err error) {
+	ids, numbers := make([]string, len(excluded)), make([]int64, len(excluded))
+	for i, run := range excluded {
+		if run.ServiceID != serviceID {
+			return "", 0, time.Time{}, ErrServiceAccess
+		}
+		ids[i], numbers[i] = run.RunID, run.RunNumber
+	}
+	err = tx.QueryRow(ctx, `SELECT run.id,run.run_number,LEAST(run.publisher_expires_at,permission.expires_at,run.certificate_expires_at)
 	    FROM control.service_runs run
 	    JOIN control.publisher_grants g ON g.id=run.publisher_grant_id
-	    JOIN control.publisher_identities p ON p.id=run.publisher_identity_id
+	    JOIN LATERAL control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,run.service_id,$2) permission ON true
+	    JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id AND signing.publisher_identity_id=run.publisher_identity_id
 	    WHERE run.service_id=$1 AND run.state='ready' AND run.healthy AND run.closed_at IS NULL AND run.publisher_expires_at>$2
-	    AND g.revoked_at IS NULL AND(g.expires_at IS NULL OR g.expires_at>$2) AND p.revoked_at IS NULL
+	    AND (g.kind='service' OR signing.retired_at IS NULL)
 	    AND run.certificate_expires_at>$2
+	    AND NOT EXISTS(SELECT 1 FROM unnest($3::text[],$4::bigint[]) excluded(id,run_number)
+	        WHERE excluded.id=run.id AND excluded.run_number=run.run_number)
 	    AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.relay_leases lease ON lease.relay_id=slot.relay_id
 	        AND lease.relay_run_id=slot.relay_run_id AND lease.relay_lease_revision=slot.relay_lease_revision
 	        AND lease.relay_service_id=slot.relay_service_id
 	        WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open AND lease.lease_expires_at>$2 AND NOT lease.draining AND lease.reported_streams<lease.stream_capacity)
 	    AND GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))<run.stream_capacity
-	    ORDER BY GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))::numeric/run.stream_capacity,run.run_number LIMIT 1`, serviceID, now).
+	    ORDER BY GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))::numeric/run.stream_capacity,run.run_number LIMIT 1`, serviceID, now, ids, numbers).
 		Scan(&id, &number, &until)
 	return
 }

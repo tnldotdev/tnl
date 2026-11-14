@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -16,7 +15,7 @@ type ServiceCertificateControl interface {
 }
 
 func (n *Native) serviceCertificates(service string) (ServiceCertificateControl, error) {
-	if n.identity.kind != authorityv1.Service || n.identity.serviceID != service {
+	if n == nil || n.selectedServiceID == "" || n.selectedServiceID != service {
 		return nil, ErrScope
 	}
 	if n.Services == nil {

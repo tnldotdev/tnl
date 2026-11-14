@@ -16,8 +16,6 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-var testForwardingSourceSequence atomic.Uint64
-
 func TestVisitorSourceRefreshesBeforeShortIngressLeaseDelegationExpires(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		// whole-second delegation timestamps leave only 1.25 seconds initially.
@@ -114,25 +112,6 @@ func TestVisitorSourceRefreshesBeforeShortIngressLeaseDelegationExpires(t *testi
 			t.Fatal("failed refresh did not retain bounded retries", retries)
 		}
 	})
-}
-
-func testForwardingSourceSigner(entry ingressv1.IngressRoutingTableEntry, visitorID string, source, destination netip.AddrPort) (string, error) {
-	now := time.Now()
-	authority, child, err := visitortoken.IssueVisitorSourceAuthority([32]byte{1}, tunnelv1.VisitorSourceAuthority{
-		PublicURLID: entry.PublicUrlId, PublishRunID: entry.PublishRunId, PublishRunNumber: uint64(entry.PublishRunNumber),
-		IngressID: "fixture-ingress", IngressRunID: "fixture-process", IngressLeaseRevision: 1, VisitorPolicyRevision: 1, ValidUntil: now.Add(10 * time.Second).Unix(),
-	}, now)
-	if err != nil {
-		return "", err
-	}
-	proof, err := visitortoken.SignVisitorSource(child, authority, testForwardingSourceSequence.Add(1), tunnelv1.VisitorSourceBinding{
-		PublicURLID: entry.PublicUrlId, PublishRunID: entry.PublishRunId, PublishRunNumber: uint64(entry.PublishRunNumber), VisitorID: visitorID, Source: source, Destination: destination,
-	}, now)
-	if err != nil {
-		return "", err
-	}
-	wire, err := proof.MarshalBinary()
-	return string(wire), err
 }
 
 func TestVisitorSourceSequenceSurvivesPolicyOwnerReplacement(t *testing.T) {

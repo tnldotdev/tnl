@@ -25,14 +25,14 @@ export const grouped = defineConfig({
 
 test("deployments select declared bindings and reject infrastructure settings", () => {
   assertType<TnlConfig>(grouped);
+  // @ts-expect-error every binding needs a logical declaration.
   defineConfig({
     services: { db: {} },
-    // @ts-expect-error every binding needs a logical declaration.
     deployments: { cloud: { targets: { missing: { address: 3000 } } } },
   });
   defineConfig({
     services: { web: {} },
-    // @ts-expect-error remote deployments cannot use app discovery.
+    // app-owned bindings are independent of public reachability.
     deployments: { cloud: { targets: { web: { type: "app" } } } },
   });
   // @ts-expect-error local is client-side and has no server reachability.
@@ -77,37 +77,37 @@ test("saved services select exposure independently of protocol and placement", (
     },
   });
   expectTypeOf(app.deployments.local.targets.app.public).toEqualTypeOf<true>();
+  // @ts-expect-error publicURL is removed, even alongside explicit reachability.
   defineConfig({
     services: { app: {} },
-    // @ts-expect-error one binding cannot select both service and legacy preview URL lifecycles.
     deployments: { local: { targets: { app: { public: true, publicURL: {} } } } },
   });
 });
 
 const config = defineConfig({
   inspection: { mode: "summary", retention: "24h", maxBytes: "64MiB" },
-  publicURL: {
-    access: { ip: ["192.0.2.0/24"] },
-    limits: {
-      http: { total: 100, concurrency: 5, rate: { count: 10, per: "1m", burst: 3 } },
-      traffic: {
-        connections: 8,
-        rate: 5,
-        ratePer: "1s",
-        burst: 10,
-        uploadBytes: 1048576,
-        downloadBytes: 2097152,
-      },
-    },
-  },
   services: { web: {}, api: {}, db: { protocol: "postgres" }, cache: { protocol: "tcp" } },
   deployments: {
     local: {
       targets: {
         web: {
-          publicURL: {},
+          public: true,
+          hostname: "web.example.test",
+          domain: "example.test",
+          ephemeral: false,
+          requirePostQuantum: true,
+          traffic: {
+            connections: 8,
+            rate: 5,
+            ratePer: "1s",
+            burst: 10,
+            uploadBytes: 1048576,
+            downloadBytes: 2097152,
+          },
           type: "app",
           http: {
+            access: { ip: ["192.0.2.0/24"] },
+            limits: { total: 100, concurrency: 5, rate: { count: 10, per: "1m", burst: 3 } },
             open: true,
             readiness: { path: "/health" },
             paths: { "/api": "api", "/v1": { service: "api", stripPrefix: true } },
@@ -115,7 +115,7 @@ const config = defineConfig({
         },
         api: {
           name: "api-preview",
-          publicURL: {},
+          public: true,
           type: "address",
           address: "https://localhost:4000",
           tls: { ca: "system", hostname: "localhost" },
@@ -133,7 +133,9 @@ test("configuration preserves service, target, name, and path literals", () => {
   expectTypeOf(config.services.db.protocol).toEqualTypeOf<"postgres">();
   expectTypeOf(config.deployments.local.targets.cache.name).toEqualTypeOf<"shared-cache">();
   expectTypeOf(config.deployments.local.targets.api.name).toEqualTypeOf<"api-preview">();
-  assertType<object>(config.deployments.local.targets.api.publicURL);
+  expectTypeOf(config.deployments.local.targets.api.public).toEqualTypeOf<true>();
+  expectTypeOf(config.deployments.local.targets.web.hostname).toEqualTypeOf<"web.example.test">();
+  expectTypeOf(config.deployments.local.targets.web.requirePostQuantum).toEqualTypeOf<true>();
   expectTypeOf(config.deployments.local.targets.web.http.paths["/api"]).toEqualTypeOf<"api">();
 });
 
@@ -142,7 +144,7 @@ export const factory = defineConfig(async ({ worktree, project, env, cwd }) => (
   deployments: {
     local: {
       targets: {
-        web: { publicURL: {}, http: { paths: { "/api": "api" } } },
+        web: { public: true, http: { paths: { "/api": "api" } } },
         api: {
           name: `${env.USER ?? "user"}-${worktree.label.id}-${cwd.length}-${project.relativeDirectory.length}`,
         },
@@ -162,21 +164,21 @@ export const literalAsyncAddressFactory = defineConfig(async () =>
 );
 export const addressFactory = defineConfig(({ worktree }) => ({
   inspection: { mode: "summary", retention: "24h", maxBytes: "64MiB" },
-  publicURL: {
-    access: { ip: ["192.0.2.0/24"] },
-    limits: { http: { rate: { count: 5, per: "1m" } } },
-  },
   services: { web: { protocol: "http" }, api: {}, db: { protocol: "tcp" } },
   deployments: {
     local: {
       targets: {
         web: {
-          publicURL: {},
+          public: true,
           type: "address",
           address: 3000,
-          http: { paths: { "/api": { service: "api", stripPrefix: true } } },
+          http: {
+            access: { ip: ["192.0.2.0/24"] },
+            limits: { rate: { count: 5, per: "1m" } },
+            paths: { "/api": { service: "api", stripPrefix: true } },
+          },
         },
-        api: { publicURL: {}, type: "app", name: worktree.label.id },
+        api: { public: true, type: "app", name: worktree.label.id },
         db: { address: 5432 },
       },
     },
@@ -185,13 +187,17 @@ export const addressFactory = defineConfig(({ worktree }) => ({
   webhooks: { payments: { service: "api", path: "/hooks/payments", provider: "stripe" } },
 }));
 export const asyncAddressFactory = defineConfig(async ({ worktree }) => ({
-  publicURL: { access: { ip: ["192.0.2.0/24"] } },
   services: { web: {}, api: {}, db: { protocol: "tcp" }, cache: { protocol: "tcp" } },
   deployments: {
     local: {
       targets: {
-        web: { publicURL: {}, type: "address", address: 3000, http: { paths: { "/api": "api" } } },
-        api: { publicURL: {}, type: "app", name: worktree.label.id },
+        web: {
+          public: true,
+          type: "address",
+          address: 3000,
+          http: { access: { ip: ["192.0.2.0/24"] }, paths: { "/api": "api" } },
+        },
+        api: { public: true, type: "app", name: worktree.label.id },
         db: { type: "compose", service: "db", port: 5432 },
         cache: { name: "cache", type: "docker", container: "cache", port: 6379 },
       },
@@ -273,10 +279,10 @@ test("configuration enforces service ownership and references for literals and f
       },
     },
   });
+  // @ts-expect-error HTTP policy cannot revive the removed publicURL wrapper.
   defineConfig({
     services: { web: {} },
     deployments: {
-      // @ts-expect-error legacy preview URL policy has one owner, in either placement.
       local: { targets: { web: { publicURL: {}, http: { access: "restricted" } } } },
     },
   });
@@ -285,11 +291,12 @@ test("configuration enforces service ownership and references for literals and f
     deployments: {
       production: {
         targets: {
-          web: { publicURL: {} },
+          web: { public: true },
           api: {
             address: "https://api.internal:8443",
             tls: {},
-            publicURL: { access: "anonymous" },
+            public: true,
+            http: { access: "anonymous" },
           },
         },
       },
@@ -298,15 +305,13 @@ test("configuration enforces service ownership and references for literals and f
   defineConfig({
     services: { web: {} },
     deployments: {
-      // @ts-expect-error named remote URLs cannot be temporary.
-      production: { targets: { web: { publicURL: { ephemeral: true } } } },
+      production: { targets: { web: { ephemeral: true } } },
     },
   });
   defineConfig({
     services: { web: {} },
     deployments: {
-      // @ts-expect-error named visitor policy belongs on publicURL, not http.
-      production: { targets: { web: { publicURL: {}, http: { access: "restricted" } } } },
+      production: { targets: { web: { public: true, http: { access: "restricted" } } } },
     },
   });
   // @ts-expect-error service-owned target definitions have been replaced.
@@ -321,14 +326,14 @@ test("configuration enforces service ownership and references for literals and f
   ({ publicURL: { limits: { requests: 3 } } }) satisfies TnlConfig;
   // @ts-expect-error browser opening belongs in a binding's HTTP settings.
   ({ publicURL: { open: true } }) satisfies TnlConfig;
-  // @ts-expect-error protocol limits use duration-literal periods.
-  ({ publicURL: { limits: { tcp: { rate: { count: 1, per: "minute" } } } } }) satisfies TnlConfig;
+  defineConfig(
+    // @ts-expect-error HTTP limits use duration-literal periods.
+    local({ web: {} }, { web: { http: { limits: { rate: { count: 1, per: "minute" } } } } }),
+  );
   // @ts-expect-error combined byte totals are removed.
-  ({ publicURL: { limits: { traffic: { totalBytes: 1024 } } } }) satisfies TnlConfig;
-  ({
-    // @ts-expect-error combined byte rates are removed.
-    publicURL: { limits: { traffic: { rate: { bytes: 1024, per: "1s" } } } },
-  }) satisfies TnlConfig;
+  defineConfig(local({ web: {} }, { web: { traffic: { totalBytes: 1024 } } }));
+  // @ts-expect-error combined byte rates are removed.
+  defineConfig(local({ web: {} }, { web: { traffic: { rate: { bytes: 1024, per: "1s" } } } }));
   // @ts-expect-error version is implicit for TypeScript configuration.
   defineConfig({ version: 1 });
   // @ts-expect-error daemon configuration is static-only.
@@ -400,8 +405,8 @@ test("configuration enforces service ownership and references for literals and f
     { web: {} },
     { web: { name: "site", publicURL: { name: "other", access: "anonymous" } } },
   );
-  // @ts-expect-error saved names are never duplicated inside publicURL.
-  duplicatedPublicName satisfies TnlConfig;
+  // @ts-expect-error removed wrappers are rejected on spread objects.
+  defineConfig({ ...duplicatedPublicName });
   // @ts-expect-error inferred public names are checked.
   defineConfig(duplicatedPublicName);
   // @ts-expect-error factory public names are checked.
@@ -410,8 +415,8 @@ test("configuration enforces service ownership and references for literals and f
     { web: {} },
     { web: { publicURL: { publisherPool: true, access: "anonymous" } } },
   );
-  // @ts-expect-error public URL policy does not contain publisher pools.
-  publicPool satisfies TnlConfig;
+  // @ts-expect-error factories reject removed wrappers and their former settings.
+  defineConfig(() => publicPool);
   // @ts-expect-error inferred pool settings are rejected.
   defineConfig(publicPool);
 
@@ -450,13 +455,13 @@ test("configuration enforces service ownership and references for literals and f
     { db: { protocol: "tcp" } },
     { db: { address: 5432, publicURL: { hostname: "db.example" } } },
   );
-  // @ts-expect-error TCP bindings cannot enable public URLs.
+  // @ts-expect-error TCP bindings also reject the removed wrapper.
   defineConfig(tcpPublicURL);
 
   const known = {
     ...local(
       { api: {}, web: {} },
-      { api: {}, web: { publicURL: {}, http: { paths: { "/api": "api" } } } },
+      { api: {}, web: { public: true, http: { paths: { "/api": "api" } } } },
     ),
     aliases: { review: { service: "web" } },
   } satisfies TnlConfigForServices<"api" | "web">;
@@ -467,24 +472,21 @@ test("configuration enforces service ownership and references for literals and f
   defineConfig(() => ({ services: { api: {} }, aliases: { review: { service: "missing" } } }));
   const missingMount = local(
     { web: {}, api: {} },
-    { web: { publicURL: {}, http: { paths: { "/api": "missing" } } }, api: {} },
+    { web: { http: { paths: { "/api": "missing" } } }, api: {} },
   );
   // @ts-expect-error path mounts name existing bindings.
   defineConfig(missingMount);
   const missingObjectMount = local(
     { web: {}, api: {} },
-    { web: { publicURL: {}, http: { paths: { "/api": { service: "missing" } } } }, api: {} },
+    { web: { http: { paths: { "/api": { service: "missing" } } } }, api: {} },
   );
   // @ts-expect-error object mounts name existing bindings.
   defineConfig(missingObjectMount);
   // @ts-expect-error services cannot mount themselves.
-  defineConfig(local({ api: {} }, { api: { publicURL: {}, http: { paths: { "/api": "api" } } } }));
+  defineConfig(local({ api: {} }, { api: { http: { paths: { "/api": "api" } } } }));
   // @ts-expect-error async factories retain mount references.
   defineConfig(async () =>
-    local(
-      { api: {}, web: {} },
-      { api: {}, web: { publicURL: {}, http: { paths: { "/api": "missing" } } } },
-    ),
+    local({ api: {}, web: {} }, { api: {}, web: { http: { paths: { "/api": "missing" } } } }),
   );
   const tcpAlias = {
     ...local({ db: { protocol: "tcp" } }, { db: { address: 5432 } }),
@@ -508,7 +510,7 @@ test("configuration enforces service ownership and references for literals and f
   defineConfig(async () => tcpWebhook);
   const tcpMount = local(
     { web: {}, db: { protocol: "tcp" } },
-    { web: { publicURL: {}, http: { paths: { "/db": "db" } } }, db: { address: 5432 } },
+    { web: { http: { paths: { "/db": "db" } } }, db: { address: 5432 } },
   );
   // @ts-expect-error mounts select HTTP services.
   defineConfig(tcpMount);
@@ -519,7 +521,7 @@ test("configuration enforces service ownership and references for literals and f
   const tcpObjectMount = local(
     { web: {}, db: { protocol: "tcp" } },
     {
-      web: { publicURL: {}, http: { paths: { "/db": { service: "db" } } } },
+      web: { http: { paths: { "/db": { service: "db" } } } },
       db: { address: 5432 },
     },
   );
@@ -542,45 +544,43 @@ test("configuration enforces service ownership and references for literals and f
   const unnamedWebhook = {
     webhooks: { hook: { service: "", path: "/hook", provider: "custom" } },
   } as const;
-  // @ts-expect-error receivers require a local public binding.
+  // @ts-expect-error receivers require a named local HTTP binding.
   defineConfig(unnamedWebhook);
-  // @ts-expect-error sync factories require a local public binding.
+  // @ts-expect-error sync factories require a named local HTTP binding.
   defineConfig(() => unnamedWebhook);
-  // @ts-expect-error async factories require a local public binding.
+  // @ts-expect-error async factories require a named local HTTP binding.
   defineConfig(async () => unnamedWebhook);
   const privateAlias = {
     ...local({ web: {} }, { web: {} }),
     aliases: { review: { service: "web" } },
   } as const;
-  // @ts-expect-error aliases require an explicit public URL.
+  // aliases have their own endpoint and visitor policy; the source can stay private.
   defineConfig(privateAlias);
-  // @ts-expect-error sync factories cannot alias private bindings.
   defineConfig(() => privateAlias);
-  // @ts-expect-error async factories cannot alias private bindings.
   defineConfig(async () => privateAlias);
   const privateWebhook = {
     ...local({ api: {} }, { api: {} }),
     webhooks: { hook: { service: "api", path: "/hook", provider: "custom" } },
   } as const;
-  // @ts-expect-error private HTTP is not a webhook receiver.
+  // the webhook endpoint does not expose the source service's other paths.
   defineConfig(privateWebhook);
   const remote = {
     services: { web: {}, api: {} },
     deployments: { cloud: { targets: { web: { address: 3000 }, api: { address: 4000 } } } },
   } as const;
+  // @ts-expect-error remote assignments cannot honor local readiness.
   defineConfig({
     ...remote,
     deployments: {
-      // @ts-expect-error remote assignments cannot honor local readiness.
       cloud: { targets: { web: { address: 3000, http: { readiness: { path: "/health" } } } } },
     },
   });
+  // @ts-expect-error remote assignments cannot honor local mounts.
   defineConfig({
     ...remote,
     deployments: {
       cloud: {
         targets: {
-          // @ts-expect-error remote assignments cannot honor local mounts.
           web: { address: 3000, http: { paths: { "/api": "api" } } },
           api: { address: 4000 },
         },
@@ -623,9 +623,9 @@ test("configuration enforces service ownership and references for literals and f
   defineConfig(instanceReader);
   // @ts-expect-error existing sshd services use opaque TCP.
   ({ services: { shell: { protocol: "ssh" } } }) satisfies TnlConfig;
+  // @ts-expect-error workloads select bindings in their exact deployment.
   defineConfig({
     ...remote,
-    // @ts-expect-error workloads select bindings in their exact deployment.
     workloads: { ci: { deployment: "cloud", fly: { app: "web" }, services: ["missing"] } },
   });
   const missingDeployment = {

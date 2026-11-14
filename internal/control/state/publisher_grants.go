@@ -94,32 +94,10 @@ func (d *Database) RevokePublisherIdentity(ctx context.Context, team, id, editor
 // callers authorize under the team guard and lock all publication parents first.
 // deployment and general management share the same retirement and audit operation.
 func revokePublisherIdentity(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, team, id, editor string, now time.Time) error {
-	rows, err := tx.Query(ctx, `SELECT DISTINCT service_id FROM control.publisher_grants
-		WHERE publisher_identity_id=$1 AND kind='service' AND service_id IS NOT NULL
-		ORDER BY service_id`, id)
-	if err != nil {
+	if err := closePublisherServiceRuns(ctx, tx, q, id, "", now); err != nil {
 		return err
 	}
-	var services []string
-	for rows.Next() {
-		var serviceID string
-		if err = rows.Scan(&serviceID); err != nil {
-			rows.Close()
-			return err
-		}
-		services = append(services, serviceID)
-	}
-	if err = rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
-	for _, serviceID := range services {
-		if err = closeRevokedPrivatePublication(ctx, tx, q, serviceID, id, "", now); err != nil {
-			return err
-		}
-	}
-	if err = closeRevokedPublicPublications(ctx, tx, q, id, "", now); err != nil {
+	if err := closeRevokedPublicPublications(ctx, tx, q, id, "", now); err != nil {
 		return err
 	}
 	n, err := q.RevokePublisherIdentity(ctx, controlstatedb.RevokePublisherIdentityParams{ID: id, TeamID: team, Now: timestamptz(now)})
@@ -167,10 +145,8 @@ func (d *Database) RevokePublisherGrant(ctx context.Context, team, id, grant, ed
 	if err = rejectProjectManagedGrant(ctx, tx, grant); err != nil {
 		return err
 	}
-	if selected.Kind == "service" {
-		if err = closeRevokedPrivatePublication(ctx, tx, q, selected.ServiceID.String, id, grant, now); err != nil {
-			return err
-		}
+	if err = closePublisherServiceRuns(ctx, tx, q, id, grant, now); err != nil {
+		return err
 	}
 	if selected.Kind != "service" {
 		if err = closeRevokedPublicPublications(ctx, tx, q, id, grant, now); err != nil {

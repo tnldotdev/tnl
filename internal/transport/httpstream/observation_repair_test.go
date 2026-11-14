@@ -58,7 +58,7 @@ func observedProxyAddress(t *testing.T, kind, backend string, m *observability.M
 		defer conn.Close()
 		_ = httpstream.Serve(ctx, conn, target, func(ctx context.Context) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "tcp", target.Host)
-		}, nil)
+		}, nil, httpstream.ResponseHooks{}, httpstream.Drain{})
 	}()
 	t.Cleanup(func() {
 		cancel()

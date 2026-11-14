@@ -87,12 +87,14 @@ func TestConnectLocalProtocolTargets(t *testing.T) {
 		tls                          bool
 	}{
 		{"http address", `{"address":"127.0.0.1:3000"}`, "http", "http://127.0.0.1:3000", false},
+		{"public http address", `{"address":"127.0.0.1:3000","public":true,"http":{"access":"anonymous"}}`, "http", "http://127.0.0.1:3000", false},
 		{"http compose tls", `{"type":"compose","service":"web","port":443,"tls":{"hostname":"web.local"}}`, "http", "https://web.local:15443", true},
 		{"tcp address", `{"address":6379}`, "tcp", "", false},
 		{"tcp tls", `{"address":"127.0.0.1:6379","tls":{"hostname":"redis.local"}}`, "tcp", "", true},
 		{"mysql docker", `{"type":"docker","container":"db","port":3306}`, "mysql", "", false},
 		{"mysql tls", `{"address":"localhost:3306","tls":{}}`, "mysql", "", true},
 		{"postgres compose", `{"type":"compose","service":"db","port":5432}`, "postgres", "", false},
+		{"public postgres compose", `{"type":"compose","service":"db","port":5432,"public":true}`, "postgres", "", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := localProject(t, test.protocol, test.service)

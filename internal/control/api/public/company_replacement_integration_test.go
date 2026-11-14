@@ -423,7 +423,7 @@ func replacementPublications(t *testing.T, f *companyHTTPFixture, team controlst
 		return replacementPublicPublication{publisher: p, key: key, url: u, run: replacementPublicRun(t, f, p, key, u, "before-replacement")}
 	}
 	teamPublic, memberPublic := public("team"), public("member")
-	service, err := d.CreateServiceAt(actorCtx, team.ID, actor.IdentityID, "replacement-private", "replacement-private", controlstate.ServicePlacement{}, time.Now().UTC(), controlstate.ServiceMetadata{Protocol: "tcp", PublisherPool: true})
+	service, err := d.CreateServiceAt(actorCtx, team.ID, actor.IdentityID, "replacement-private", "replacement-private", controlstate.ServicePlacement{}, time.Now().UTC(), controlstate.ServiceMetadata{Protocol: "tcp", PublisherPool: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

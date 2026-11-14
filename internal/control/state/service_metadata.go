@@ -98,6 +98,15 @@ func (d *Database) ConfigureService(ctx context.Context, serviceID, actorID stri
 	if err = rejectProjectManagedDefinition(ctx, tx, serviceID); err != nil {
 		return result, err
 	}
+	// metadata-only updates cannot contradict a saved declaration. allocations
+	// also retain their immutable invocation intent even if storage is damaged.
+	var allocated bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.publisher_namespace_allocations WHERE service_id=$1)`, serviceID).Scan(&allocated); err != nil {
+		return result, err
+	}
+	if allocated || row.ConfigurationCiphertext != nil || row.StorageKeyID.Valid {
+		return result, ErrServiceConflict
+	}
 	saved, err := checkedServiceMetadata(row)
 	if err != nil {
 		return result, err
@@ -195,7 +204,8 @@ type LocalServiceSource struct {
 }
 
 func (d *Database) GetServiceForPublisher(ctx context.Context, id string, publisher PublisherIdentity, now time.Time) (result ServiceRecord, retErr error) {
-	if !servicePublisherMatches(publisher, id) {
+	clock := newAuthorizationClock(now)
+	if !servicePublisherSelectionMatches(publisher, id) {
 		return result, ErrServiceAccess
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -206,18 +216,35 @@ func (d *Database) GetServiceForPublisher(ctx context.Context, id string, publis
 	if err = lockServiceAdmission(ctx, tx, id); err != nil {
 		return result, err
 	}
-	row, err := controlstatedb.New(tx).SelectServiceForPublisher(ctx, controlstatedb.SelectServiceForPublisherParams{ServiceID: id, PublisherIdentityID: publisher.ID, PublisherGrantID: publisher.GrantID, Now: timestamptz(now)})
+	row, err := controlstatedb.New(tx).SelectServiceForPublisher(ctx, controlstatedb.SelectServiceForPublisherParams{ServiceID: id, PublisherIdentityID: publisher.ID, PublisherGrantID: publisher.GrantID, Now: timestamptz(clock.current())})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
 	}
 	if err != nil {
 		return result, err
 	}
-	result, err = checkedServiceRecord(row)
+	if _, err = publisherServicePermission(ctx, tx, publisher.ID, publisher.GrantID, publisher.KeyID, id, clock.current()); err != nil {
+		return result, err
+	}
+	result, err = d.publisherServiceRecord(ctx, tx, row)
 	if err != nil {
 		return result, err
 	}
-	settings, err := d.serviceHTTPSettings(ctx, controlstatedb.New(tx), id)
+	if _, err = publisherServicePermission(ctx, tx, publisher.ID, publisher.GrantID, publisher.KeyID, id, clock.current()); err != nil {
+		return ServiceRecord{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return ServiceRecord{}, err
+	}
+	return result, nil
+}
+
+func (d *Database) publisherServiceRecord(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlService) (ServiceRecord, error) {
+	result, err := checkedServiceRecord(row)
+	if err != nil {
+		return result, err
+	}
+	settings, err := d.serviceHTTPSettings(ctx, controlstatedb.New(tx), row.ID)
 	if err != nil {
 		return result, err
 	}
@@ -229,9 +256,6 @@ func (d *Database) GetServiceForPublisher(ctx context.Context, id string, publis
 		}
 	}
 	if err = serviceSource(ctx, controlstatedb.New(tx), &result); err != nil {
-		return result, err
-	}
-	if err = tx.Commit(ctx); err != nil {
 		return result, err
 	}
 	return result, nil

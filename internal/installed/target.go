@@ -5,21 +5,10 @@ import (
 	"errors"
 	"net"
 	"strconv"
-	"strings"
-
-	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/naming"
-	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 )
 
 func validateTarget(job *Job) error {
 	if job.Kind == KindService || job.Kind == KindConnector {
-		if job.TargetTLSName != "" || len(job.TargetCAPEM) != 0 {
-			return ErrScope
-		}
-		if job.Limits.Requests != 0 || job.Limits.RateRequests != 0 || job.Limits.RatePer != 0 || job.Limits.RateBurst != 0 || job.Limits.Concurrency > 4096 {
-			return ErrScope
-		}
 		if !job.Protocol.Valid() {
 			return ErrScope
 		}
@@ -47,27 +36,7 @@ func validateTarget(job *Job) error {
 		job.Target = plan.Target
 		return nil
 	}
-	if job.Kind != KindPublicURL || job.Protocol != config.ProtocolHTTP {
-		return ErrScope
-	}
-	var err error
-	job.Target, err = targetsyntax.NormalizeTarget(job.Target)
-	if (len(job.TargetCAPEM) > 0 || job.TargetTLSName != "") && !strings.HasPrefix(job.Target, "https://") {
-		return ErrScope
-	}
-	if job.TargetTLSName != "" && net.ParseIP(job.TargetTLSName) == nil {
-		if _, e := naming.CanonicalizeHostname(job.TargetTLSName); e != nil {
-			return ErrScope
-		}
-	}
-	if err != nil {
-		return ErrScope
-	}
-	if _, err := trustRoots(job.TargetCAPEM); err != nil {
-		return err
-	}
-	_, err = trustRoots(job.ServerCAPEM)
-	return err
+	return ErrScope
 }
 
 func trustRoots(pem []byte) (*x509.CertPool, error) {

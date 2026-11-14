@@ -42,9 +42,11 @@ func TestAssignmentPublisherRejectsInvalidAssignmentBeforeIdentityPreparation(t 
 		name   string
 		change func(*AssignmentPublisher, *controlv1.DeploymentPublisherServiceAssignment)
 	}{
-		{"missing service kind", func(_ *AssignmentPublisher, a *controlv1.DeploymentPublisherServiceAssignment) { a.ServiceKind = "" }},
-		{"public URL", func(_ *AssignmentPublisher, a *controlv1.DeploymentPublisherServiceAssignment) {
-			a.ServiceKind = "public_url"
+		{"app-owned target", func(_ *AssignmentPublisher, a *controlv1.DeploymentPublisherServiceAssignment) {
+			a.Configuration.Target = "app"
+		}},
+		{"invalid protocol", func(_ *AssignmentPublisher, a *controlv1.DeploymentPublisherServiceAssignment) {
+			a.Configuration.Protocol = new(controlv1.ServiceProtocol("invalid"))
 		}},
 		{"missing protocol", func(_ *AssignmentPublisher, a *controlv1.DeploymentPublisherServiceAssignment) {
 			a.Configuration.Protocol = nil
@@ -62,7 +64,7 @@ func TestAssignmentPublisherRejectsInvalidAssignmentBeforeIdentityPreparation(t 
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			assignment := controlv1.DeploymentPublisherServiceAssignment{ServiceKind: "service", TrustRevision: 1, Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocol("http"))}}
+			assignment := controlv1.DeploymentPublisherServiceAssignment{TrustRevision: 1, Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocol("http"))}}
 			publisher := AssignmentPublisher{Member: controlv1.DeploymentPublisherIdentity{DeploymentId: "deployment-one", DeploymentName: "application"}}
 			test.change(&publisher, &assignment)
 			healthCalls := 0

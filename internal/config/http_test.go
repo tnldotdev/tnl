@@ -1,7 +1,6 @@
 package config
 
 import (
-	"reflect"
 	"testing"
 	"time"
 )
@@ -34,20 +33,20 @@ func TestServiceHTTPRequestPolicyIsIndependentOfPlacementAndExposure(t *testing.
 	}
 }
 
-func TestServiceHTTPDefaultsRequireExplicitHTTPSettings(t *testing.T) {
-	defaults := &Tunnel{Access: &Access{IP: []string{"192.0.2.1"}}, Limits: &Limits{HTTP: &WorkLimits{Total: new(100)}}}
-	value, err := ResolveServiceHTTP(defaults, nil)
-	if err != nil || value != nil {
-		t.Fatal("defaults implicitly enabled service HTTP settings", value, err)
+func TestServiceHTTPSettingsDoNotInheritFromAnotherBinding(t *testing.T) {
+	configuration := TNL{Services: Services{
+		"web": {HTTP: &HTTPService{Access: &Access{Mode: "anonymous", IP: []string{"192.0.2.1"}}, Limits: &WorkLimits{Total: new(100)}}},
+		"api": {HTTP: &HTTPService{Limits: &WorkLimits{Concurrency: new(2)}}},
+	}}
+	if err := ValidateTNL(configuration); err != nil {
+		t.Fatal(err)
 	}
-	value, err = ResolveServiceHTTP(defaults, &HTTPService{Limits: &WorkLimits{Concurrency: new(2)}})
-	if err != nil || !reflect.DeepEqual(value.Access, defaults.Access) || value.Limits == nil || *value.Limits.Total != 100 || *value.Limits.Concurrency != 2 {
-		t.Fatal("service HTTP defaults or per-field overrides lost", value, err)
+	api := configuration.Services["api"].HTTP
+	if api.Access != nil || api.Limits.Total != nil || *api.Limits.Concurrency != 2 || configuration.Services["web"].HTTP.Limits.Concurrency != nil {
+		t.Fatal("HTTP validation inherited or changed another binding's settings")
 	}
-	if defaults.Limits.HTTP.Concurrency != nil {
-		t.Fatal("resolving a service changed project defaults")
-	}
-	if _, err := ResolveServiceHTTP(defaults, &HTTPService{Limits: &WorkLimits{Total: new(0)}}); err == nil {
+	api.Limits.Total = new(0)
+	if err := ValidateTNL(configuration); err == nil {
 		t.Fatal("invalid request limit accepted")
 	}
 }

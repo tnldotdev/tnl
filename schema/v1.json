@@ -40,185 +40,6 @@
         "inspection": {
           "$ref": "#/$defs/Inspection"
         },
-        "public_url": {
-          "properties": {
-            "name": false,
-            "publisher_pool": false,
-            "domain": {
-              "type": "string",
-              "description": "Ready team domain used for generated public URL hostnames."
-            },
-            "hostname": {
-              "type": "string",
-              "description": "Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL."
-            },
-            "access": {
-              "oneOf": [
-                {
-                  "type": "string",
-                  "enum": ["restricted", "anonymous"]
-                },
-                {
-                  "properties": {
-                    "mode": {
-                      "type": "string",
-                      "enum": ["restricted", "anonymous"]
-                    },
-                    "ip": {
-                      "items": {
-                        "type": "string"
-                      },
-                      "type": "array",
-                      "maxItems": 256,
-                      "minItems": 1,
-                      "uniqueItems": true
-                    }
-                  },
-                  "additionalProperties": false,
-                  "type": "object"
-                }
-              ]
-            },
-            "ephemeral": {
-              "type": "boolean",
-              "description": "Remove the public URL when this tunnel stops."
-            },
-            "require_post_quantum": {
-              "type": "boolean",
-              "description": "Require hybrid post-quantum key agreement for public HTTPS visitors."
-            },
-            "limits": {
-              "properties": {
-                "http": {
-                  "properties": {
-                    "total": {
-                      "type": "integer",
-                      "maximum": 9007199254740991,
-                      "minimum": 1
-                    },
-                    "concurrency": {
-                      "type": "integer",
-                      "maximum": 9007199254740991,
-                      "minimum": 1
-                    },
-                    "rate": {
-                      "properties": {
-                        "count": {
-                          "type": "integer",
-                          "maximum": 9007199254740991,
-                          "minimum": 1
-                        },
-                        "per": {
-                          "type": "string",
-                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                        },
-                        "burst": {
-                          "type": "integer",
-                          "maximum": 9007199254740991,
-                          "minimum": 1
-                        }
-                      },
-                      "additionalProperties": false,
-                      "type": "object"
-                    }
-                  },
-                  "additionalProperties": false,
-                  "type": "object"
-                },
-                "tcp": {
-                  "properties": {
-                    "total": {
-                      "type": "integer",
-                      "maximum": 9007199254740991,
-                      "minimum": 1
-                    },
-                    "concurrency": {
-                      "type": "integer",
-                      "maximum": 9007199254740991,
-                      "minimum": 1
-                    },
-                    "rate": {
-                      "properties": {
-                        "count": {
-                          "type": "integer",
-                          "maximum": 9007199254740991,
-                          "minimum": 1
-                        },
-                        "per": {
-                          "type": "string",
-                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                        },
-                        "burst": {
-                          "type": "integer",
-                          "maximum": 9007199254740991,
-                          "minimum": 1
-                        }
-                      },
-                      "additionalProperties": false,
-                      "type": "object"
-                    }
-                  },
-                  "additionalProperties": false,
-                  "type": "object"
-                },
-                "traffic": {
-                  "properties": {
-                    "connections": {
-                      "type": "integer",
-                      "maximum": 9007199254740991,
-                      "minimum": 1
-                    },
-                    "rate": {
-                      "type": "integer",
-                      "maximum": 9007199254740991,
-                      "minimum": 1
-                    },
-                    "burst": {
-                      "type": "integer",
-                      "maximum": 9007199254740991,
-                      "minimum": 1
-                    },
-                    "upload_bytes": {
-                      "type": "integer",
-                      "maximum": 9007199254740991,
-                      "minimum": 1
-                    },
-                    "download_bytes": {
-                      "type": "integer",
-                      "maximum": 9007199254740991,
-                      "minimum": 1
-                    },
-                    "total_connections": {
-                      "type": "integer",
-                      "maximum": 9007199254740991,
-                      "minimum": 1
-                    },
-                    "total_upload_bytes": {
-                      "type": "integer",
-                      "maximum": 9007199254740991,
-                      "minimum": 1
-                    },
-                    "total_download_bytes": {
-                      "type": "integer",
-                      "maximum": 9007199254740991,
-                      "minimum": 1
-                    },
-                    "rate_per": {
-                      "type": "string",
-                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                    }
-                  },
-                  "additionalProperties": false,
-                  "type": "object"
-                }
-              },
-              "additionalProperties": false,
-              "type": "object"
-            }
-          },
-          "additionalProperties": false,
-          "type": "object"
-        },
         "services": {
           "additionalProperties": {
             "properties": {
@@ -255,23 +76,6 @@
                 "additionalProperties": {
                   "oneOf": [
                     {
-                      "allOf": [
-                        {
-                          "not": {
-                            "properties": {
-                              "public_url": {
-                                "required": ["hostname"]
-                              }
-                            },
-                            "required": ["name", "public_url"]
-                          }
-                        },
-                        {
-                          "not": {
-                            "required": ["public", "public_url"]
-                          }
-                        }
-                      ],
                       "properties": {
                         "type": {
                           "type": "string",
@@ -329,18 +133,78 @@
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
                         },
-                        "public_url": {
+                        "hostname": {
+                          "type": "string",
+                          "maxLength": 253,
+                          "minLength": 1,
+                          "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
+                        },
+                        "domain": {
+                          "type": "string",
+                          "maxLength": 253,
+                          "minLength": 1,
+                          "description": "Ready team domain used for the service endpoint."
+                        },
+                        "ephemeral": {
+                          "type": "boolean",
+                          "description": "Remove the service after its publication stops."
+                        },
+                        "require_post_quantum": {
+                          "type": "boolean",
+                          "description": "Require hybrid post-quantum key agreement for visitor TLS."
+                        },
+                        "traffic": {
                           "properties": {
-                            "name": false,
-                            "publisher_pool": false,
-                            "domain": {
-                              "type": "string",
-                              "description": "Ready team domain used for generated public URL hostnames."
+                            "connections": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
                             },
-                            "hostname": {
-                              "type": "string",
-                              "description": "Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL."
+                            "rate": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
                             },
+                            "burst": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "upload_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "download_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_connections": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_upload_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_download_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "rate_per": {
+                              "type": "string",
+                              "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object"
+                        },
+                        "http": {
+                          "properties": {
                             "access": {
                               "oneOf": [
                                 {
@@ -352,176 +216,6 @@
                                     "mode": {
                                       "type": "string",
                                       "enum": ["restricted", "anonymous"]
-                                    },
-                                    "ip": {
-                                      "items": {
-                                        "type": "string"
-                                      },
-                                      "type": "array",
-                                      "maxItems": 256,
-                                      "minItems": 1,
-                                      "uniqueItems": true
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                }
-                              ]
-                            },
-                            "ephemeral": {
-                              "type": "boolean",
-                              "description": "Remove the public URL when this tunnel stops."
-                            },
-                            "require_post_quantum": {
-                              "type": "boolean",
-                              "description": "Require hybrid post-quantum key agreement for public HTTPS visitors."
-                            },
-                            "limits": {
-                              "properties": {
-                                "http": {
-                                  "properties": {
-                                    "total": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "concurrency": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "properties": {
-                                        "count": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        },
-                                        "per": {
-                                          "type": "string",
-                                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                        },
-                                        "burst": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        }
-                                      },
-                                      "additionalProperties": false,
-                                      "type": "object"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                },
-                                "tcp": {
-                                  "properties": {
-                                    "total": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "concurrency": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "properties": {
-                                        "count": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        },
-                                        "per": {
-                                          "type": "string",
-                                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                        },
-                                        "burst": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        }
-                                      },
-                                      "additionalProperties": false,
-                                      "type": "object"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                },
-                                "traffic": {
-                                  "properties": {
-                                    "connections": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "burst": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "upload_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "download_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_connections": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_upload_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_download_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate_per": {
-                                      "type": "string",
-                                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                }
-                              },
-                              "additionalProperties": false,
-                              "type": "object"
-                            }
-                          },
-                          "additionalProperties": false,
-                          "type": "object",
-                          "description": "Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present."
-                        },
-                        "http": {
-                          "properties": {
-                            "access": {
-                              "oneOf": [
-                                {
-                                  "type": "string",
-                                  "enum": ["restricted"]
-                                },
-                                {
-                                  "properties": {
-                                    "mode": {
-                                      "type": "string",
-                                      "enum": ["restricted"]
                                     },
                                     "ip": {
                                       "items": {
@@ -614,7 +308,7 @@
                               },
                               "type": "object",
                               "maxProperties": 32,
-                              "description": "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts."
+                              "description": "Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts."
                             }
                           },
                           "additionalProperties": false,
@@ -625,23 +319,6 @@
                       "type": "object"
                     },
                     {
-                      "allOf": [
-                        {
-                          "not": {
-                            "properties": {
-                              "public_url": {
-                                "required": ["hostname"]
-                              }
-                            },
-                            "required": ["name", "public_url"]
-                          }
-                        },
-                        {
-                          "not": {
-                            "required": ["public", "public_url"]
-                          }
-                        }
-                      ],
                       "properties": {
                         "type": {
                           "type": "string",
@@ -711,18 +388,78 @@
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
                         },
-                        "public_url": {
+                        "hostname": {
+                          "type": "string",
+                          "maxLength": 253,
+                          "minLength": 1,
+                          "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
+                        },
+                        "domain": {
+                          "type": "string",
+                          "maxLength": 253,
+                          "minLength": 1,
+                          "description": "Ready team domain used for the service endpoint."
+                        },
+                        "ephemeral": {
+                          "type": "boolean",
+                          "description": "Remove the service after its publication stops."
+                        },
+                        "require_post_quantum": {
+                          "type": "boolean",
+                          "description": "Require hybrid post-quantum key agreement for visitor TLS."
+                        },
+                        "traffic": {
                           "properties": {
-                            "name": false,
-                            "publisher_pool": false,
-                            "domain": {
-                              "type": "string",
-                              "description": "Ready team domain used for generated public URL hostnames."
+                            "connections": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
                             },
-                            "hostname": {
-                              "type": "string",
-                              "description": "Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL."
+                            "rate": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
                             },
+                            "burst": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "upload_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "download_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_connections": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_upload_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_download_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "rate_per": {
+                              "type": "string",
+                              "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object"
+                        },
+                        "http": {
+                          "properties": {
                             "access": {
                               "oneOf": [
                                 {
@@ -734,176 +471,6 @@
                                     "mode": {
                                       "type": "string",
                                       "enum": ["restricted", "anonymous"]
-                                    },
-                                    "ip": {
-                                      "items": {
-                                        "type": "string"
-                                      },
-                                      "type": "array",
-                                      "maxItems": 256,
-                                      "minItems": 1,
-                                      "uniqueItems": true
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                }
-                              ]
-                            },
-                            "ephemeral": {
-                              "type": "boolean",
-                              "description": "Remove the public URL when this tunnel stops."
-                            },
-                            "require_post_quantum": {
-                              "type": "boolean",
-                              "description": "Require hybrid post-quantum key agreement for public HTTPS visitors."
-                            },
-                            "limits": {
-                              "properties": {
-                                "http": {
-                                  "properties": {
-                                    "total": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "concurrency": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "properties": {
-                                        "count": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        },
-                                        "per": {
-                                          "type": "string",
-                                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                        },
-                                        "burst": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        }
-                                      },
-                                      "additionalProperties": false,
-                                      "type": "object"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                },
-                                "tcp": {
-                                  "properties": {
-                                    "total": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "concurrency": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "properties": {
-                                        "count": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        },
-                                        "per": {
-                                          "type": "string",
-                                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                        },
-                                        "burst": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        }
-                                      },
-                                      "additionalProperties": false,
-                                      "type": "object"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                },
-                                "traffic": {
-                                  "properties": {
-                                    "connections": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "burst": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "upload_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "download_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_connections": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_upload_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_download_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate_per": {
-                                      "type": "string",
-                                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                }
-                              },
-                              "additionalProperties": false,
-                              "type": "object"
-                            }
-                          },
-                          "additionalProperties": false,
-                          "type": "object",
-                          "description": "Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present."
-                        },
-                        "http": {
-                          "properties": {
-                            "access": {
-                              "oneOf": [
-                                {
-                                  "type": "string",
-                                  "enum": ["restricted"]
-                                },
-                                {
-                                  "properties": {
-                                    "mode": {
-                                      "type": "string",
-                                      "enum": ["restricted"]
                                     },
                                     "ip": {
                                       "items": {
@@ -996,7 +563,7 @@
                               },
                               "type": "object",
                               "maxProperties": 32,
-                              "description": "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts."
+                              "description": "Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts."
                             }
                           },
                           "additionalProperties": false,
@@ -1008,23 +575,6 @@
                       "required": ["address"]
                     },
                     {
-                      "allOf": [
-                        {
-                          "not": {
-                            "properties": {
-                              "public_url": {
-                                "required": ["hostname"]
-                              }
-                            },
-                            "required": ["name", "public_url"]
-                          }
-                        },
-                        {
-                          "not": {
-                            "required": ["public", "public_url"]
-                          }
-                        }
-                      ],
                       "properties": {
                         "type": {
                           "type": "string",
@@ -1096,18 +646,78 @@
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
                         },
-                        "public_url": {
+                        "hostname": {
+                          "type": "string",
+                          "maxLength": 253,
+                          "minLength": 1,
+                          "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
+                        },
+                        "domain": {
+                          "type": "string",
+                          "maxLength": 253,
+                          "minLength": 1,
+                          "description": "Ready team domain used for the service endpoint."
+                        },
+                        "ephemeral": {
+                          "type": "boolean",
+                          "description": "Remove the service after its publication stops."
+                        },
+                        "require_post_quantum": {
+                          "type": "boolean",
+                          "description": "Require hybrid post-quantum key agreement for visitor TLS."
+                        },
+                        "traffic": {
                           "properties": {
-                            "name": false,
-                            "publisher_pool": false,
-                            "domain": {
-                              "type": "string",
-                              "description": "Ready team domain used for generated public URL hostnames."
+                            "connections": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
                             },
-                            "hostname": {
-                              "type": "string",
-                              "description": "Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL."
+                            "rate": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
                             },
+                            "burst": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "upload_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "download_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_connections": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_upload_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_download_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "rate_per": {
+                              "type": "string",
+                              "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object"
+                        },
+                        "http": {
+                          "properties": {
                             "access": {
                               "oneOf": [
                                 {
@@ -1119,176 +729,6 @@
                                     "mode": {
                                       "type": "string",
                                       "enum": ["restricted", "anonymous"]
-                                    },
-                                    "ip": {
-                                      "items": {
-                                        "type": "string"
-                                      },
-                                      "type": "array",
-                                      "maxItems": 256,
-                                      "minItems": 1,
-                                      "uniqueItems": true
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                }
-                              ]
-                            },
-                            "ephemeral": {
-                              "type": "boolean",
-                              "description": "Remove the public URL when this tunnel stops."
-                            },
-                            "require_post_quantum": {
-                              "type": "boolean",
-                              "description": "Require hybrid post-quantum key agreement for public HTTPS visitors."
-                            },
-                            "limits": {
-                              "properties": {
-                                "http": {
-                                  "properties": {
-                                    "total": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "concurrency": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "properties": {
-                                        "count": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        },
-                                        "per": {
-                                          "type": "string",
-                                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                        },
-                                        "burst": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        }
-                                      },
-                                      "additionalProperties": false,
-                                      "type": "object"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                },
-                                "tcp": {
-                                  "properties": {
-                                    "total": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "concurrency": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "properties": {
-                                        "count": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        },
-                                        "per": {
-                                          "type": "string",
-                                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                        },
-                                        "burst": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        }
-                                      },
-                                      "additionalProperties": false,
-                                      "type": "object"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                },
-                                "traffic": {
-                                  "properties": {
-                                    "connections": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "burst": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "upload_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "download_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_connections": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_upload_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_download_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate_per": {
-                                      "type": "string",
-                                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                }
-                              },
-                              "additionalProperties": false,
-                              "type": "object"
-                            }
-                          },
-                          "additionalProperties": false,
-                          "type": "object",
-                          "description": "Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present."
-                        },
-                        "http": {
-                          "properties": {
-                            "access": {
-                              "oneOf": [
-                                {
-                                  "type": "string",
-                                  "enum": ["restricted"]
-                                },
-                                {
-                                  "properties": {
-                                    "mode": {
-                                      "type": "string",
-                                      "enum": ["restricted"]
                                     },
                                     "ip": {
                                       "items": {
@@ -1381,7 +821,7 @@
                               },
                               "type": "object",
                               "maxProperties": 32,
-                              "description": "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts."
+                              "description": "Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts."
                             }
                           },
                           "additionalProperties": false,
@@ -1393,23 +833,6 @@
                       "required": ["type", "service", "port"]
                     },
                     {
-                      "allOf": [
-                        {
-                          "not": {
-                            "properties": {
-                              "public_url": {
-                                "required": ["hostname"]
-                              }
-                            },
-                            "required": ["name", "public_url"]
-                          }
-                        },
-                        {
-                          "not": {
-                            "required": ["public", "public_url"]
-                          }
-                        }
-                      ],
                       "properties": {
                         "type": {
                           "type": "string",
@@ -1474,18 +897,78 @@
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
                         },
-                        "public_url": {
+                        "hostname": {
+                          "type": "string",
+                          "maxLength": 253,
+                          "minLength": 1,
+                          "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
+                        },
+                        "domain": {
+                          "type": "string",
+                          "maxLength": 253,
+                          "minLength": 1,
+                          "description": "Ready team domain used for the service endpoint."
+                        },
+                        "ephemeral": {
+                          "type": "boolean",
+                          "description": "Remove the service after its publication stops."
+                        },
+                        "require_post_quantum": {
+                          "type": "boolean",
+                          "description": "Require hybrid post-quantum key agreement for visitor TLS."
+                        },
+                        "traffic": {
                           "properties": {
-                            "name": false,
-                            "publisher_pool": false,
-                            "domain": {
-                              "type": "string",
-                              "description": "Ready team domain used for generated public URL hostnames."
+                            "connections": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
                             },
-                            "hostname": {
-                              "type": "string",
-                              "description": "Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL."
+                            "rate": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
                             },
+                            "burst": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "upload_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "download_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_connections": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_upload_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_download_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "rate_per": {
+                              "type": "string",
+                              "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object"
+                        },
+                        "http": {
+                          "properties": {
                             "access": {
                               "oneOf": [
                                 {
@@ -1497,176 +980,6 @@
                                     "mode": {
                                       "type": "string",
                                       "enum": ["restricted", "anonymous"]
-                                    },
-                                    "ip": {
-                                      "items": {
-                                        "type": "string"
-                                      },
-                                      "type": "array",
-                                      "maxItems": 256,
-                                      "minItems": 1,
-                                      "uniqueItems": true
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                }
-                              ]
-                            },
-                            "ephemeral": {
-                              "type": "boolean",
-                              "description": "Remove the public URL when this tunnel stops."
-                            },
-                            "require_post_quantum": {
-                              "type": "boolean",
-                              "description": "Require hybrid post-quantum key agreement for public HTTPS visitors."
-                            },
-                            "limits": {
-                              "properties": {
-                                "http": {
-                                  "properties": {
-                                    "total": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "concurrency": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "properties": {
-                                        "count": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        },
-                                        "per": {
-                                          "type": "string",
-                                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                        },
-                                        "burst": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        }
-                                      },
-                                      "additionalProperties": false,
-                                      "type": "object"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                },
-                                "tcp": {
-                                  "properties": {
-                                    "total": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "concurrency": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "properties": {
-                                        "count": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        },
-                                        "per": {
-                                          "type": "string",
-                                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                        },
-                                        "burst": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        }
-                                      },
-                                      "additionalProperties": false,
-                                      "type": "object"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                },
-                                "traffic": {
-                                  "properties": {
-                                    "connections": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "burst": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "upload_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "download_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_connections": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_upload_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_download_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate_per": {
-                                      "type": "string",
-                                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                }
-                              },
-                              "additionalProperties": false,
-                              "type": "object"
-                            }
-                          },
-                          "additionalProperties": false,
-                          "type": "object",
-                          "description": "Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present."
-                        },
-                        "http": {
-                          "properties": {
-                            "access": {
-                              "oneOf": [
-                                {
-                                  "type": "string",
-                                  "enum": ["restricted"]
-                                },
-                                {
-                                  "properties": {
-                                    "mode": {
-                                      "type": "string",
-                                      "enum": ["restricted"]
                                     },
                                     "ip": {
                                       "items": {
@@ -1759,7 +1072,7 @@
                               },
                               "type": "object",
                               "maxProperties": 32,
-                              "description": "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts."
+                              "description": "Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts."
                             }
                           },
                           "additionalProperties": false,
@@ -1771,23 +1084,6 @@
                       "required": ["type", "container", "port"]
                     },
                     {
-                      "allOf": [
-                        {
-                          "not": {
-                            "properties": {
-                              "public_url": {
-                                "required": ["hostname"]
-                              }
-                            },
-                            "required": ["name", "public_url"]
-                          }
-                        },
-                        {
-                          "not": {
-                            "required": ["public", "public_url"]
-                          }
-                        }
-                      ],
                       "properties": {
                         "type": {
                           "type": "string",
@@ -1834,18 +1130,78 @@
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
                         },
-                        "public_url": {
+                        "hostname": {
+                          "type": "string",
+                          "maxLength": 253,
+                          "minLength": 1,
+                          "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
+                        },
+                        "domain": {
+                          "type": "string",
+                          "maxLength": 253,
+                          "minLength": 1,
+                          "description": "Ready team domain used for the service endpoint."
+                        },
+                        "ephemeral": {
+                          "type": "boolean",
+                          "description": "Remove the service after its publication stops."
+                        },
+                        "require_post_quantum": {
+                          "type": "boolean",
+                          "description": "Require hybrid post-quantum key agreement for visitor TLS."
+                        },
+                        "traffic": {
                           "properties": {
-                            "name": false,
-                            "publisher_pool": false,
-                            "domain": {
-                              "type": "string",
-                              "description": "Ready team domain used for generated public URL hostnames."
+                            "connections": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
                             },
-                            "hostname": {
-                              "type": "string",
-                              "description": "Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL."
+                            "rate": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
                             },
+                            "burst": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "upload_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "download_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_connections": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_upload_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_download_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "rate_per": {
+                              "type": "string",
+                              "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object"
+                        },
+                        "http": {
+                          "properties": {
                             "access": {
                               "oneOf": [
                                 {
@@ -1857,176 +1213,6 @@
                                     "mode": {
                                       "type": "string",
                                       "enum": ["restricted", "anonymous"]
-                                    },
-                                    "ip": {
-                                      "items": {
-                                        "type": "string"
-                                      },
-                                      "type": "array",
-                                      "maxItems": 256,
-                                      "minItems": 1,
-                                      "uniqueItems": true
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                }
-                              ]
-                            },
-                            "ephemeral": {
-                              "type": "boolean",
-                              "description": "Remove the public URL when this tunnel stops."
-                            },
-                            "require_post_quantum": {
-                              "type": "boolean",
-                              "description": "Require hybrid post-quantum key agreement for public HTTPS visitors."
-                            },
-                            "limits": {
-                              "properties": {
-                                "http": {
-                                  "properties": {
-                                    "total": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "concurrency": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "properties": {
-                                        "count": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        },
-                                        "per": {
-                                          "type": "string",
-                                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                        },
-                                        "burst": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        }
-                                      },
-                                      "additionalProperties": false,
-                                      "type": "object"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                },
-                                "tcp": {
-                                  "properties": {
-                                    "total": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "concurrency": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "properties": {
-                                        "count": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        },
-                                        "per": {
-                                          "type": "string",
-                                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                        },
-                                        "burst": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        }
-                                      },
-                                      "additionalProperties": false,
-                                      "type": "object"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                },
-                                "traffic": {
-                                  "properties": {
-                                    "connections": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "burst": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "upload_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "download_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_connections": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_upload_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_download_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate_per": {
-                                      "type": "string",
-                                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                }
-                              },
-                              "additionalProperties": false,
-                              "type": "object"
-                            }
-                          },
-                          "additionalProperties": false,
-                          "type": "object",
-                          "description": "Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present."
-                        },
-                        "http": {
-                          "properties": {
-                            "access": {
-                              "oneOf": [
-                                {
-                                  "type": "string",
-                                  "enum": ["restricted"]
-                                },
-                                {
-                                  "properties": {
-                                    "mode": {
-                                      "type": "string",
-                                      "enum": ["restricted"]
                                     },
                                     "ip": {
                                       "items": {
@@ -2119,7 +1305,7 @@
                               },
                               "type": "object",
                               "maxProperties": 32,
-                              "description": "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts."
+                              "description": "Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts."
                             }
                           },
                           "additionalProperties": false,
@@ -2131,23 +1317,6 @@
                       "required": ["type", "region", "cluster"]
                     },
                     {
-                      "allOf": [
-                        {
-                          "not": {
-                            "properties": {
-                              "public_url": {
-                                "required": ["hostname"]
-                              }
-                            },
-                            "required": ["name", "public_url"]
-                          }
-                        },
-                        {
-                          "not": {
-                            "required": ["public", "public_url"]
-                          }
-                        }
-                      ],
                       "properties": {
                         "type": {
                           "type": "string",
@@ -2200,18 +1369,78 @@
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
                         },
-                        "public_url": {
+                        "hostname": {
+                          "type": "string",
+                          "maxLength": 253,
+                          "minLength": 1,
+                          "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
+                        },
+                        "domain": {
+                          "type": "string",
+                          "maxLength": 253,
+                          "minLength": 1,
+                          "description": "Ready team domain used for the service endpoint."
+                        },
+                        "ephemeral": {
+                          "type": "boolean",
+                          "description": "Remove the service after its publication stops."
+                        },
+                        "require_post_quantum": {
+                          "type": "boolean",
+                          "description": "Require hybrid post-quantum key agreement for visitor TLS."
+                        },
+                        "traffic": {
                           "properties": {
-                            "name": false,
-                            "publisher_pool": false,
-                            "domain": {
-                              "type": "string",
-                              "description": "Ready team domain used for generated public URL hostnames."
+                            "connections": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
                             },
-                            "hostname": {
-                              "type": "string",
-                              "description": "Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL."
+                            "rate": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
                             },
+                            "burst": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "upload_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "download_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_connections": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_upload_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_download_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "rate_per": {
+                              "type": "string",
+                              "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object"
+                        },
+                        "http": {
+                          "properties": {
                             "access": {
                               "oneOf": [
                                 {
@@ -2223,176 +1452,6 @@
                                     "mode": {
                                       "type": "string",
                                       "enum": ["restricted", "anonymous"]
-                                    },
-                                    "ip": {
-                                      "items": {
-                                        "type": "string"
-                                      },
-                                      "type": "array",
-                                      "maxItems": 256,
-                                      "minItems": 1,
-                                      "uniqueItems": true
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                }
-                              ]
-                            },
-                            "ephemeral": {
-                              "type": "boolean",
-                              "description": "Remove the public URL when this tunnel stops."
-                            },
-                            "require_post_quantum": {
-                              "type": "boolean",
-                              "description": "Require hybrid post-quantum key agreement for public HTTPS visitors."
-                            },
-                            "limits": {
-                              "properties": {
-                                "http": {
-                                  "properties": {
-                                    "total": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "concurrency": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "properties": {
-                                        "count": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        },
-                                        "per": {
-                                          "type": "string",
-                                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                        },
-                                        "burst": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        }
-                                      },
-                                      "additionalProperties": false,
-                                      "type": "object"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                },
-                                "tcp": {
-                                  "properties": {
-                                    "total": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "concurrency": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "properties": {
-                                        "count": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        },
-                                        "per": {
-                                          "type": "string",
-                                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                        },
-                                        "burst": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        }
-                                      },
-                                      "additionalProperties": false,
-                                      "type": "object"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                },
-                                "traffic": {
-                                  "properties": {
-                                    "connections": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "burst": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "upload_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "download_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_connections": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_upload_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_download_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate_per": {
-                                      "type": "string",
-                                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                }
-                              },
-                              "additionalProperties": false,
-                              "type": "object"
-                            }
-                          },
-                          "additionalProperties": false,
-                          "type": "object",
-                          "description": "Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present."
-                        },
-                        "http": {
-                          "properties": {
-                            "access": {
-                              "oneOf": [
-                                {
-                                  "type": "string",
-                                  "enum": ["restricted"]
-                                },
-                                {
-                                  "properties": {
-                                    "mode": {
-                                      "type": "string",
-                                      "enum": ["restricted"]
                                     },
                                     "ip": {
                                       "items": {
@@ -2485,7 +1544,7 @@
                               },
                               "type": "object",
                               "maxProperties": 32,
-                              "description": "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts."
+                              "description": "Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts."
                             }
                           },
                           "additionalProperties": false,
@@ -2497,23 +1556,6 @@
                       "required": ["type", "region", "instance"]
                     },
                     {
-                      "allOf": [
-                        {
-                          "not": {
-                            "properties": {
-                              "public_url": {
-                                "required": ["hostname"]
-                              }
-                            },
-                            "required": ["name", "public_url"]
-                          }
-                        },
-                        {
-                          "not": {
-                            "required": ["public", "public_url"]
-                          }
-                        }
-                      ],
                       "properties": {
                         "type": {
                           "type": "string",
@@ -2567,18 +1609,78 @@
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
                         },
-                        "public_url": {
+                        "hostname": {
+                          "type": "string",
+                          "maxLength": 253,
+                          "minLength": 1,
+                          "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
+                        },
+                        "domain": {
+                          "type": "string",
+                          "maxLength": 253,
+                          "minLength": 1,
+                          "description": "Ready team domain used for the service endpoint."
+                        },
+                        "ephemeral": {
+                          "type": "boolean",
+                          "description": "Remove the service after its publication stops."
+                        },
+                        "require_post_quantum": {
+                          "type": "boolean",
+                          "description": "Require hybrid post-quantum key agreement for visitor TLS."
+                        },
+                        "traffic": {
                           "properties": {
-                            "name": false,
-                            "publisher_pool": false,
-                            "domain": {
-                              "type": "string",
-                              "description": "Ready team domain used for generated public URL hostnames."
+                            "connections": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
                             },
-                            "hostname": {
-                              "type": "string",
-                              "description": "Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL."
+                            "rate": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
                             },
+                            "burst": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "upload_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "download_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_connections": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_upload_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "total_download_bytes": {
+                              "type": "integer",
+                              "maximum": 9007199254740991,
+                              "minimum": 1
+                            },
+                            "rate_per": {
+                              "type": "string",
+                              "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object"
+                        },
+                        "http": {
+                          "properties": {
                             "access": {
                               "oneOf": [
                                 {
@@ -2590,176 +1692,6 @@
                                     "mode": {
                                       "type": "string",
                                       "enum": ["restricted", "anonymous"]
-                                    },
-                                    "ip": {
-                                      "items": {
-                                        "type": "string"
-                                      },
-                                      "type": "array",
-                                      "maxItems": 256,
-                                      "minItems": 1,
-                                      "uniqueItems": true
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                }
-                              ]
-                            },
-                            "ephemeral": {
-                              "type": "boolean",
-                              "description": "Remove the public URL when this tunnel stops."
-                            },
-                            "require_post_quantum": {
-                              "type": "boolean",
-                              "description": "Require hybrid post-quantum key agreement for public HTTPS visitors."
-                            },
-                            "limits": {
-                              "properties": {
-                                "http": {
-                                  "properties": {
-                                    "total": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "concurrency": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "properties": {
-                                        "count": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        },
-                                        "per": {
-                                          "type": "string",
-                                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                        },
-                                        "burst": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        }
-                                      },
-                                      "additionalProperties": false,
-                                      "type": "object"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                },
-                                "tcp": {
-                                  "properties": {
-                                    "total": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "concurrency": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "properties": {
-                                        "count": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        },
-                                        "per": {
-                                          "type": "string",
-                                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                        },
-                                        "burst": {
-                                          "type": "integer",
-                                          "maximum": 9007199254740991,
-                                          "minimum": 1
-                                        }
-                                      },
-                                      "additionalProperties": false,
-                                      "type": "object"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                },
-                                "traffic": {
-                                  "properties": {
-                                    "connections": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "burst": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "upload_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "download_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_connections": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_upload_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "total_download_bytes": {
-                                      "type": "integer",
-                                      "maximum": 9007199254740991,
-                                      "minimum": 1
-                                    },
-                                    "rate_per": {
-                                      "type": "string",
-                                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                    }
-                                  },
-                                  "additionalProperties": false,
-                                  "type": "object"
-                                }
-                              },
-                              "additionalProperties": false,
-                              "type": "object"
-                            }
-                          },
-                          "additionalProperties": false,
-                          "type": "object",
-                          "description": "Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present."
-                        },
-                        "http": {
-                          "properties": {
-                            "access": {
-                              "oneOf": [
-                                {
-                                  "type": "string",
-                                  "enum": ["restricted"]
-                                },
-                                {
-                                  "properties": {
-                                    "mode": {
-                                      "type": "string",
-                                      "enum": ["restricted"]
                                     },
                                     "ip": {
                                       "items": {
@@ -2852,7 +1784,7 @@
                               },
                               "type": "object",
                               "maxProperties": 32,
-                              "description": "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts."
+                              "description": "Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts."
                             }
                           },
                           "additionalProperties": false,
@@ -2890,7 +1822,7 @@
               "service": {
                 "type": "string",
                 "minLength": 1,
-                "description": "Configured local HTTP service with an explicit public_url block. App, address, Compose and Docker targets are supported."
+                "description": "Configured local HTTP service. App, address, Compose and Docker targets are supported."
               },
               "path": {
                 "type": "string",
@@ -2961,12 +1893,12 @@
             "allOf": [
               {
                 "not": {
-                  "required": ["name", "public_url"]
+                  "required": ["name", "hostname"]
                 }
               },
               {
                 "not": {
-                  "required": ["domain", "public_url"]
+                  "required": ["domain", "hostname"]
                 }
               }
             ],
@@ -2974,7 +1906,7 @@
               "service": {
                 "type": "string",
                 "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
-                "description": "configured local HTTP entry service with an explicit public_url block."
+                "description": "configured local HTTP entry service."
               },
               "name": {
                 "type": "string",
@@ -2987,9 +1919,11 @@
                 "type": "string",
                 "description": "Ready team domain; otherwise inherit the entry service's domain."
               },
-              "public_url": {
+              "hostname": {
                 "type": "string",
-                "description": "Exact authorized public URL hostname or HTTPS origin; mutually exclusive with name and domain."
+                "maxLength": 253,
+                "minLength": 1,
+                "description": "Exact canonical DNS hostname; mutually exclusive with name and domain."
               },
               "access": {
                 "oneOf": [

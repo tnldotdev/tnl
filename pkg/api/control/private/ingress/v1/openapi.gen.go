@@ -398,6 +398,9 @@ type PublicServiceVisitorAdmission struct {
 type PublicServiceVisitorClaim struct {
 	DestinationPort int `json:"destination_port"`
 
+	// ExcludedRuns Exact runs rejected by this ingress's local quotas before forwarding visitor bytes. All entries must name the resolved service, with distinct run IDs and run numbers. Each new run attempt uses a new visitor connection ID; retrying an existing ID never moves its reservation.
+	ExcludedRuns []ServiceRunReference `json:"excluded_runs,omitempty"`
+
 	// Hostname Required exact inspected TLS hostname for shared HTTPS port 443. Must be absent on allocated non-HTTP service ports.
 	Hostname             *string             `json:"hostname,omitempty"`
 	IngressLeaseRevision int64               `json:"ingress_lease_revision"`

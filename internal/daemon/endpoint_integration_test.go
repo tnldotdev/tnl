@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,11 +17,9 @@ import (
 
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/ingress"
-	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -34,13 +31,13 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 	for _, standalone := range []bool{false, true} {
 		t.Run(map[bool]string{false: "split", true: "standalone"}[standalone], func(t *testing.T) {
 			f := newServiceRuntimeFixtureTiming(t, standalone, nil, false)
-			var publicServiceIngress *ingress.PublicServices
+			var publicServiceIngress *ingress.Server
 			if !standalone {
 				process := startSeparatedPrivateIngress(t, f, 0, "quic", nil)
-				publicServiceIngress = process.ingresses[0].publicServices
+				publicServiceIngress = process.ingresses[0].server
 				startSeparatedPrivateIngress(t, f, 1, "quic", nil)
 			} else {
-				publicServiceIngress = f.composed.ingresses[0].publicServices
+				publicServiceIngress = f.composed.ingresses[0].server
 			}
 			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/once" {
@@ -105,7 +102,7 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			publisherCtx, stopPublisher := context.WithCancel(t.Context())
 			publisherReady, publisherDone := make(chan struct{}), make(chan error, 1)
 			go func() {
-				publisherDone <- publisherservice.Publish(publisherCtx, publisherservice.RunConfig{Control: native, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: targetAddress, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(publisherReady); return nil }, RelayQUIC: quic, RelayTCP: tcp})
+				publisherDone <- publisherservice.Publish(publisherCtx, publisherservice.RunConfig{Control: native, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: targetAddress, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(publisherReady); return nil }, RelayQUIC: quic, RelayTCP: tcp})
 			}()
 			t.Cleanup(func() {
 				stopPublisher()
@@ -217,48 +214,11 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 	}
 }
 
-func checkManagedPublicEndpointTLS(t *testing.T, f *privateSeparatedFixture, connector *ingress.PublicServices, applied controlv1.AppliedProjectConfiguration, service controlv1.Service, device string) {
+func checkManagedPublicEndpointTLS(t *testing.T, f *privateSeparatedFixture, server *ingress.Server, applied controlv1.AppliedProjectConfiguration, service controlv1.Service, device string) {
 	t.Helper()
 	ctx := t.Context()
 	material := issueServiceClientCertificate(t, f, service.Id, device)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var ranges []tcpport.Range
-	if service.Endpoint.Port != 443 {
-		ranges = []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}
-	}
-	server, err := ingress.New(listener, ingress.Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, PublicServices: connector, ServicePortRanges: ranges, MaxConnections: 64})
-	if err != nil {
-		_ = listener.Close()
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- server.Serve() }()
-	t.Cleanup(func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		_ = server.Drain(cleanup)
-		if err := <-done; err != nil {
-			t.Error(err)
-		}
-	})
-	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: f.visitorRoots.RootCAs, ServerName: service.Endpoint.Hostname, MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{material}}, DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-		connection, err := (&net.Dialer{}).DialContext(ctx, network, listener.Addr().String())
-		if err != nil {
-			return nil, err
-		}
-		header, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.44:4242"), Destination: netip.AddrPortFrom(netip.MustParseAddr("203.0.113.10"), uint16(service.Endpoint.Port))})
-		if err == nil {
-			_, err = connection.Write(header)
-		}
-		if err != nil {
-			_ = connection.Close()
-			return nil, err
-		}
-		return connection, nil
-	}}
+	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: f.visitorRoots.RootCAs, ServerName: service.Endpoint.Hostname, MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{material}}, DialContext: workloadPublicEndpointDialer(t, server, service.Endpoint.Port)}
 	t.Cleanup(transport.CloseIdleConnections)
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
 	endpoint := "https://" + net.JoinHostPort(service.Endpoint.Hostname, strconv.Itoa(service.Endpoint.Port)) + "/once"

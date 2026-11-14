@@ -51,7 +51,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 		t.Fatal(err)
 	}
 	identity, member := owner.Identity.Identity.ID, owner.Identity.Memberships[0]
-	service, err := d.CreateServiceAt(ctx, member.TeamID, identity, "peer-claim", "peer-claim", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(ctx, member.TeamID, identity, "peer-claim", "peer-claim", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -26,6 +26,7 @@ type ServiceRunPreparation struct {
 	CertificatePlan                                                                                 CertificatePlan
 	Hostname, DomainID                                                                              string
 	Traffic                                                                                         trafficlimits.Limits
+	RequirePostQuantum                                                                              bool
 }
 
 // ServiceRunRequest separates run-local selections from saved target trust.
@@ -69,24 +70,18 @@ func serviceRunPreparation(r controlstatedb.ControlServiceRun) (ServiceRunPrepar
 		PublisherKeyID: r.PublisherKeyID, IdempotencyKey: r.IdempotencyKey,
 		RunNumber: r.RunNumber, ExpiresAt: r.PreparationExpiresAt.Time,
 		Hostname: r.CertificateHostname, DomainID: r.CertificateDomainID.String,
-		Traffic:         traffic,
-		CertificatePlan: CertificatePlan{CacheKey: r.CertificateCacheKey, Scope: r.CertificateScope, Identifiers: slices.Clone(r.CertificateIdentifiers), ChallengeMethod: certificateidentity.ChallengeDNS01}}, nil
-}
-
-func servicePublisherMatches(p PublisherIdentity, serviceID string) bool {
-	return opaqueid.Valid(serviceID, opaqueid.ServicePrefix) && p.Kind != "guest" &&
-		p.Scope.Kind == "service" && p.Scope.ServiceID == serviceID &&
-		opaqueid.Valid(p.ID, opaqueid.PublisherIdentityPrefix) &&
-		opaqueid.Valid(p.KeyID, opaqueid.PublisherIdentityKeyPrefix) &&
-		opaqueid.Valid(p.GrantID, opaqueid.PublisherGrantPrefix)
+		Traffic:            traffic,
+		RequirePostQuantum: r.RequirePostQuantum,
+		CertificatePlan:    CertificatePlan{CacheKey: r.CertificateCacheKey, Scope: r.CertificateScope, Identifiers: slices.Clone(r.CertificateIdentifiers), ChallengeMethod: certificateidentity.ChallengeDNS01}}, nil
 }
 
 func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p PublisherIdentity, key string, now time.Time, request ServiceRunRequest) (result ServiceRunPreparation, retErr error) {
+	clock := newAuthorizationClock(now)
 	preferred, retErr := region.Preferences(request.PreferredRegions)
 	if retErr != nil {
 		return result, retErr
 	}
-	if !servicePublisherMatches(p, serviceID) || len(key) == 0 || len(key) > 128 {
+	if !servicePublisherSelectionMatches(p, serviceID) || len(key) == 0 || len(key) > 128 {
 		return result, ErrServiceAccess
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -99,7 +94,7 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 	}
 	q := controlstatedb.New(tx)
 	service, err := q.SelectServiceForPublisher(ctx, controlstatedb.SelectServiceForPublisherParams{
-		ServiceID: serviceID, PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, Now: timestamptz(now),
+		ServiceID: serviceID, PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, Now: timestamptz(clock.current()),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
@@ -124,10 +119,32 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 	if keyRecord.RetiredAt.Valid || len(keyRecord.PublicKey) != ed25519.PublicKeySize {
 		return result, ErrServiceAccess
 	}
+	permission, err := publisherServicePermission(ctx, tx, p.ID, p.GrantID, p.KeyID, serviceID, clock.current())
+	if err != nil {
+		return result, err
+	}
 	digest := sha256.Sum256([]byte(serviceID + "\x00" + p.ID + "\x00" + p.GrantID + "\x00" + p.KeyID))
+	declaration, err := d.serviceConfiguration(ctx, q, serviceID)
+	if err != nil {
+		return result, err
+	}
+	workerSelection := request.TrafficSelection
+	if declaration != nil && declaration.Traffic != nil {
+		request.TrafficSelection = declaration.Traffic
+	}
+	base := digest
 	digest, err = runTrafficDigest(digest, request.TrafficSelection)
 	if err != nil {
 		return result, err
+	}
+	if declaration != nil && declaration.Traffic != nil && workerSelection != nil {
+		workerDigest, err := runTrafficDigest(base, workerSelection)
+		if err != nil {
+			return result, err
+		}
+		if workerDigest != digest {
+			return result, ErrServiceConflict
+		}
 	}
 	digest = regionRequestDigest(digest, preferred)
 	var existingID string
@@ -140,12 +157,18 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		if err != nil {
 			return result, err
 		}
-		if serviceRunLifecycleState(run.State) != serviceRunPrepared || run.ClosedAt.Valid || !run.PreparationExpiresAt.Time.After(now) || !bytes.Equal(run.RequestDigest, digest[:]) || run.PublisherIdentityID != p.ID || run.PublisherGrantID != p.GrantID || run.PublisherKeyID != p.KeyID {
+		if serviceRunLifecycleState(run.State) != serviceRunPrepared || run.ClosedAt.Valid || !run.PreparationExpiresAt.Time.After(clock.current()) || !bytes.Equal(run.RequestDigest, digest[:]) || run.PublisherIdentityID != p.ID || run.PublisherGrantID != p.GrantID || run.PublisherKeyID != p.KeyID {
 			return result, ErrServiceConflict
 		}
 		result, err = serviceRunPreparation(run)
 		if err != nil {
 			return result, err
+		}
+		if _, err = serviceRunPublisherPermission(ctx, tx, run, clock.current()); err != nil {
+			return ServiceRunPreparation{}, err
+		}
+		if !result.ExpiresAt.After(clock.current()) {
+			return ServiceRunPreparation{}, ErrServiceAccess
 		}
 		if err = tx.Commit(ctx); err != nil {
 			return result, err
@@ -171,7 +194,7 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		if !serviceRunLifecycleState(active.State).valid() {
 			return result, ErrServiceAccess
 		}
-		if active.PublisherExpiresAt.Time.After(now) && (serviceRunLifecycleState(active.State) != serviceRunPrepared || active.PreparationExpiresAt.Time.After(now)) {
+		if active.PublisherExpiresAt.Time.After(clock.current()) && (serviceRunLifecycleState(active.State) != serviceRunPrepared || active.PreparationExpiresAt.Time.After(clock.current())) {
 			return result, ErrServiceConflict
 		}
 		if _, err = q.CloseServiceRun(ctx, controlstatedb.CloseServiceRunParams{
@@ -199,19 +222,27 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 	if err != nil {
 		return result, err
 	}
-	plan, err := serviceCertificatePlan(ctx, tx, service, p.ID, now)
+	plan, err := serviceCertificatePlan(ctx, tx, service, p.ID, p.GrantID, clock.current())
 	if err != nil {
 		return result, err
+	}
+	until := now.Add(2 * time.Minute)
+	if permission.Valid {
+		until = minTime(until, permission.Time)
+	}
+	if !until.After(clock.current()) {
+		return result, ErrServiceAccess
 	}
 	run, err := q.PrepareServiceRun(ctx, controlstatedb.PrepareServiceRunParams{
 		PreferredRegions: preferred,
 		TrafficLimits:    traffic,
 		ID:               id, ServiceID: serviceID, TeamID: service.TeamID, RunNumber: int64(number),
 		PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, PublisherKeyID: p.KeyID, IdempotencyKey: key,
-		RequestDigest: digest[:], PreparationExpiresAt: timestamptz(now.Add(2 * time.Minute)),
+		RequestDigest: digest[:], PreparationExpiresAt: timestamptz(until),
 		AssignmentSeedCiphertext: ciphertext, AssignmentSeedStorageKeyID: d.storageKey.CurrentID(),
 		CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers, CertificateDomainID: service.DomainID, CertificateHostname: service.CertificateHostname,
-		Now: timestamptz(now), PublisherExpiresAt: timestamptz(now.Add(2 * time.Minute)),
+		RequirePostQuantum: service.RequirePostQuantum,
+		Now:                timestamptz(now), PublisherExpiresAt: timestamptz(until),
 	})
 	if err != nil {
 		return result, err
@@ -219,6 +250,15 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 	result, err = serviceRunPreparation(run)
 	if err != nil {
 		return result, err
+	}
+	if _, err = tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
+		return ServiceRunPreparation{}, err
+	}
+	if _, err = serviceRunPublisherPermission(ctx, tx, run, clock.current()); err != nil {
+		return ServiceRunPreparation{}, err
+	}
+	if !until.After(clock.current()) {
+		return ServiceRunPreparation{}, ErrServiceAccess
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return result, err
@@ -270,6 +310,7 @@ func privateAssignments(ctx context.Context, q *controlstatedb.Queries, seed cre
 }
 
 func serviceRunAuthorization(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, serviceID, runID, token string, now time.Time) (controlstatedb.ControlServiceRun, error) {
+	clock := newAuthorizationClock(now)
 	if !opaqueid.Valid(runID, opaqueid.ServiceRunPrefix) {
 		return controlstatedb.ControlServiceRun{}, ErrServiceAccess
 	}
@@ -288,21 +329,11 @@ func serviceRunAuthorization(ctx context.Context, tx pgx.Tx, q *controlstatedb.Q
 	if err != nil || !binding.matches(run) {
 		return run, ErrServiceAccess
 	}
-	if !activeServiceRun(run, now) || !bytes.Equal(digest[:], run.RunTokenDigest) {
+	if !activeServiceRun(run, clock.current()) || !bytes.Equal(digest[:], run.RunTokenDigest) {
 		return run, ErrServiceAccess
 	}
-	var current bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.publisher_grants grant_record
-		JOIN control.publisher_identities publisher ON publisher.id=grant_record.publisher_identity_id
-		JOIN control.publisher_identity_keys key ON key.id=$3 AND key.publisher_identity_id=publisher.id
-		WHERE grant_record.id=$1 AND publisher.id=$2 AND grant_record.kind='service'
-		AND grant_record.service_id=$4 AND grant_record.revoked_at IS NULL
-		AND (grant_record.expires_at IS NULL OR grant_record.expires_at > $5)
-		AND publisher.revoked_at IS NULL)`, run.PublisherGrantID, run.PublisherIdentityID, run.PublisherKeyID, serviceID, now).Scan(&current); err != nil {
+	if _, err = serviceRunPublisherPermission(ctx, tx, run, clock.current()); err != nil {
 		return run, err
-	}
-	if !current {
-		return run, ErrServiceAccess
 	}
 	observability.AuthenticatedServerScope(ctx, observability.Identity{TeamID: run.TeamID, PublisherIdentityID: run.PublisherIdentityID, ServiceID: run.ServiceID}, observability.Fields{Component: "control"})
 	return run, nil
@@ -459,6 +490,7 @@ func replenishServiceConnections(ctx context.Context, q *controlstatedb.Queries,
 }
 
 func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, token string, now time.Time, report ServiceRunHealth) (result ServiceRunState, retErr error) {
+	clock := newAuthorizationClock(now)
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
@@ -468,10 +500,11 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	run, err := serviceRunAuthorization(ctx, tx, q, serviceID, runID, token, now)
+	run, err := serviceRunAuthorization(ctx, tx, q, serviceID, runID, token, clock.current())
 	if err != nil {
 		return result, err
 	}
+	previousExpiration := run.PublisherExpiresAt.Time
 	if report.StreamCapacity < 1 || report.StreamCapacity > 1<<20 || report.ActiveStreams < 0 {
 		return result, ErrServiceAccess
 	}
@@ -481,7 +514,7 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	run.Healthy, run.StreamCapacity, run.ReportedStreams = report.Healthy, report.StreamCapacity, report.ActiveStreams
 	run, err = q.RenewServiceRun(ctx, controlstatedb.RenewServiceRunParams{
 		ID: runID, ServiceID: serviceID, RunNumber: run.RunNumber,
-		RunTokenDigest: run.RunTokenDigest, PublisherExpiresAt: timestamptz(now.Add(45 * time.Second)), Now: timestamptz(now),
+		RunTokenDigest: run.RunTokenDigest, PublisherExpiresAt: timestamptz(now.Add(45 * time.Second)), Now: timestamptz(clock.current()),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
@@ -489,11 +522,11 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	if err != nil {
 		return result, err
 	}
-	ready, err := countReadyServiceConnections(ctx, tx, runID, now)
+	ready, err := countReadyServiceConnections(ctx, tx, runID, clock.current())
 	if err != nil {
 		return result, err
 	}
-	certificateReady := run.CertificateExpiresAt.Valid && run.CertificateExpiresAt.Time.After(now)
+	certificateReady := run.CertificateExpiresAt.Valid && run.CertificateExpiresAt.Time.After(clock.current())
 	demoted := (ready == 0 || !run.Healthy || !certificateReady) && serviceRunLifecycleState(run.State) == serviceRunReady
 	if demoted {
 		if _, err = q.DemoteServiceRun(ctx, controlstatedb.DemoteServiceRunParams{
@@ -508,14 +541,14 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 		return result, err
 	}
 	if ready < 2 {
-		if err = replenishServiceConnections(ctx, q, seed, run, now); err != nil {
+		if err = replenishServiceConnections(ctx, q, seed, run, clock.current()); err != nil {
 			return result, err
 		}
 	}
 	if run.Healthy && certificateReady && ready > 0 && (ready == 2 || run.ReadyAt.Valid) {
 		if serviceRunLifecycleState(run.State) == serviceRunStarting {
 			run, err = q.ReadyServiceRun(ctx, controlstatedb.ReadyServiceRunParams{
-				ID: runID, ServiceID: serviceID, RunNumber: run.RunNumber, Now: timestamptz(now),
+				ID: runID, ServiceID: serviceID, RunNumber: run.RunNumber, Now: timestamptz(clock.current()),
 			})
 			if errors.Is(err, pgx.ErrNoRows) {
 				return result, ErrServiceAccess
@@ -528,6 +561,15 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	connections, err := privateAssignments(ctx, q, seed, run)
 	if err != nil {
 		return result, err
+	}
+	if _, err = tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
+		return result, err
+	}
+	if _, err = serviceRunPublisherPermission(ctx, tx, run, clock.current()); err != nil {
+		return result, err
+	}
+	if !previousExpiration.After(clock.current()) || !run.PublisherExpiresAt.Time.After(clock.current()) {
+		return result, ErrServiceAccess
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return result, err

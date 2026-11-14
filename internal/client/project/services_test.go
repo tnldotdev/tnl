@@ -29,7 +29,7 @@ func TestTypeScriptServiceDiscoveryAndPlacementValidation(t *testing.T) {
 		{"no duplicated public URL name", typeScriptServiceCase("web", "http", `{name:"site",publicURL:{name:"other",access:"anonymous"}}`), false},
 		{"removed directory", typeScriptServiceCase("web", "http", `{directory:"apps/web"}`), false},
 		{"removed publisher placement", `{publisher:{type:"compose",service:"publisher"},services:{web:{target:{type:"app"}}}}`, false},
-		{"mixed public defaults", `{publicURL:{access:"anonymous"},services:{web:{},db:{protocol:"tcp"}},deployments:{local:{targets:{web:{},db:{address:5432}}}}}`, true},
+		{"removed public defaults", `{publicURL:{access:"anonymous"},services:{web:{},db:{protocol:"tcp"}},deployments:{local:{targets:{web:{},db:{address:5432}}}}}`, false},
 		{"private TLS", typeScriptServiceCase("db", "mysql", `{address:"db.internal:3306",tls:{hostname:"db.internal",ca:"system"}}`), true},
 		{"Postgres pass-through", typeScriptServiceCase("db", "postgres", `{address:"db.internal:5432"}`), true},
 		{"bad CA URL", typeScriptServiceCase("db", "postgres", `{address:5432,tls:{ca:"http://certs.example.com/ca.pem"}}`), false},
@@ -39,7 +39,7 @@ func TestTypeScriptServiceDiscoveryAndPlacementValidation(t *testing.T) {
 		{"conflicting private names", `{services:{orders:{protocol:"tcp"},database:{protocol:"tcp"}},deployments:{local:{targets:{orders:{address:5432},database:{name:"orders",address:3306}}}}}`, false},
 		{"service public URL", typeScriptServiceCase("db", "tcp", `{publicURL:{hostname:"db.example"},address:5432}`), false},
 		{"inspection", `{inspection:{mode:"summary",retention:"24h",maxBytes:"64MiB"}}`, true},
-		{"traffic", `{publicURL:{limits:{traffic:{connections:8,rate:5,ratePer:"1s",burst:10,uploadBytes:1048576,downloadBytes:2097152,totalUploadBytes:4194304}}}}`, true},
+		{"traffic", typeScriptServiceCase("web", "http", `{traffic:{connections:8,rate:5,ratePer:"1s",burst:10,uploadBytes:1048576,downloadBytes:2097152,totalUploadBytes:4194304}}`), true},
 		{"old root", `{publish:{target:3000}}`, false},
 		{"old readiness", `{readiness:{path:"/"}}`, false},
 		{"old service", typeScriptServiceCase("web", "http", `{publish:{target:3000}}`), false},
@@ -50,7 +50,7 @@ func TestTypeScriptServiceDiscoveryAndPlacementValidation(t *testing.T) {
 		{"Compose path", typeScriptServiceCase("web", "http", `{type:"compose",project:"shop",file:"../compose.yml",service:"web",port:3000}`), false},
 		{"retention bound", `{inspection:{retention:"721h"}}`, false},
 		{"storage bound", `{inspection:{maxBytes:"2GiB"}}`, false},
-		{"integer bound", `{publicURL:{limits:{tcp:{total:9007199254740992}}}}`, false},
+		{"integer bound", typeScriptServiceCase("web", "http", `{http:{limits:{total:9007199254740992}}}`), false},
 		{"removed publisher port", `{publisher:{type:"compose",service:"publisher",port:8765}}`, false},
 		{"removed publisher root", `{publisher:{type:"compose",service:"publisher",projectRoot:"/project"}}`, false},
 		{"removed publisher descriptors", `{publisher:{type:"compose",service:"publisher",appEndpoints:{web:"/run/web.json"}}}`, false},
@@ -223,7 +223,7 @@ func TestResolvePublishNormalizesDiscoveryAndPreservesPortableTrust(t *testing.T
 	root := t.TempDir()
 	project, service, file, port, ca := "shop", "web", "compose.yml", 3000, "system"
 	p := Project{Root: root, Config: config.TNL{Services: config.Services{
-		"web": {Tunnel: &config.Tunnel{}, Target: &config.ServiceTarget{Type: "compose", Project: &project, Service: &service, File: &file, Port: &port, TLS: &config.TargetTLS{CA: &ca}}},
+		"web": {Target: &config.ServiceTarget{Type: "compose", Project: &project, Service: &service, File: &file, Port: &port, TLS: &config.TargetTLS{CA: &ca}}},
 	}}}
 	resolved, err := p.ResolvePublish("web", "127.0.0.1:49152")
 	if err != nil {
@@ -242,8 +242,8 @@ func TestResolvePublishNormalizesDiscoveryAndPreservesPortableTrust(t *testing.T
 
 func TestPublicHTTPSUpstreamTLSNameSurvivesConfigurationResolution(t *testing.T) {
 	for _, source := range []string{
-		`{services:{web:{protocol:"http"}},deployments:{local:{targets:{web:{publicURL:{},address:"https://127.0.0.1:3000",tls:{hostname:"web.internal",ca:"system"}}}}}}`,
-		`{services:{web:{}},deployments:{local:{targets:{web:{publicURL:{},type:"compose",project:"shop",file:"compose.yml",service:"web",port:3000,tls:{hostname:"web.internal",ca:"system"}}}}}}`,
+		`{services:{web:{protocol:"http"}},deployments:{local:{targets:{web:{public:true,address:"https://127.0.0.1:3000",tls:{hostname:"web.internal",ca:"system"}}}}}}`,
+		`{services:{web:{}},deployments:{local:{targets:{web:{public:true,type:"compose",project:"shop",file:"compose.yml",service:"web",port:3000,tls:{hostname:"web.internal",ca:"system"}}}}}}`,
 	} {
 		root := t.TempDir()
 		file := filepath.Join(root, "tnl.config.ts")

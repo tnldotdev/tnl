@@ -317,7 +317,7 @@ func TestExplicitFalseTunnelFlagsOverrideProjectConfiguration(t *testing.T) {
 	}
 	applyTunnelCLIUnits(parsed, &flags)
 	configured := true
-	applyTunnelConfiguration(&flags.Publish.tunnelFlags, &config.Tunnel{
+	applyServiceConfiguration(&flags.Publish.tunnelFlags, config.Service{
 		Ephemeral: &configured,
 	})
 	if flags.Publish.Ephemeral {

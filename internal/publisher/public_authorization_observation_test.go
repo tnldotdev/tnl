@@ -25,9 +25,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
-	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"go.opentelemetry.io/otel/trace"
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
@@ -308,7 +308,7 @@ func TestPublicHTTPAuthorizationObservationSkipsReadinessAndSeparatesCapacity(t 
 		r.Host, r.TLS.ServerName, r.URL.Path = run.Hostname, run.Hostname, path
 		r.RequestURI = path
 		if secret != "" {
-			r.Header.Set(publisherproxy.ReadinessProbeHeader, secret)
+			r.Header.Set(httpstream.ReadinessProbeHeader, secret)
 		}
 		w := httptest.NewRecorder()
 		serveTestPublicRequest(t, route, w, r)

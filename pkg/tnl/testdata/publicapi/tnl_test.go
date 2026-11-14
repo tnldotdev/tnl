@@ -22,3 +22,13 @@ func publish(ctx context.Context, handler http.Handler, options tnl.Options) (*t
 		HTTPClient:        options.HTTPClient,
 	})
 }
+
+// the address is derived from an ordinary service endpoint. neither snapshot
+// exposes the publisher's key or internal control client.
+func snapshots(tunnel *tnl.Tunnel) string {
+	service, endpoint := tunnel.Service(), tunnel.Endpoint()
+	if service.Endpoint == nil || service.Endpoint.Hostname != endpoint.Hostname {
+		return ""
+	}
+	return tunnel.URL()
+}

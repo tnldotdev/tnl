@@ -107,27 +107,6 @@ schemas:
       updated_at:
         type: string
         format: date-time
-  AllocateEphemeralPublicURLRequest:
-    type: object
-    additionalProperties: false
-    required: [invocation_id, target]
-    properties:
-      require_post_quantum: { type: boolean, default: false }
-      invocation_id:
-        $ref: "../openapi.yaml#/components/schemas/ResourceID"
-      target:
-        type: string
-        description: Local service address, such as http://app.internal:3000.
-      ip:
-        type: array
-        maxItems: 32
-        uniqueItems: true
-        items:
-          type: string
-      access_mode:
-        $ref: "../openapi.yaml#/components/schemas/VisitorAccessMode"
-      limits:
-        $ref: "../openapi.yaml#/components/schemas/PublisherApplicationLimits"
   PublicURLPage:
     type: object
     additionalProperties: false

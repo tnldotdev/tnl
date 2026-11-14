@@ -132,11 +132,16 @@ func (o Observation) Validate() error {
 	}
 	serviceDenial := o.RunID == "" && o.RunNumber == 0 && o.EventType == "connection.open" &&
 		(o.Outcome == "denied" || o.ServiceKind == "public_url" && o.Outcome == "failed")
+	if serviceDenial && o.ServiceKind == "service" && o.Reason != "capacity" && o.Reason != "unavailable" && o.Reason != "invalid_request" {
+		return ErrInvalid
+	}
 	if !serviceDenial && (o.RunNumber < 1 || o.ServiceKind == "public_url" && !opaqueid.Valid(o.RunID, opaqueid.PublishRunPrefix) ||
 		o.ServiceKind == "service" && !opaqueid.Valid(o.RunID, opaqueid.ServiceRunPrefix)) {
 		return ErrInvalid
 	}
-	if o.ServiceKind == "service" && (o.RunID == "" || o.SourceIP == "") {
+	// only the denied open above may omit a selected service run. control
+	// still checks its exact pending admission receipt and mandatory source.
+	if o.ServiceKind == "service" && o.SourceIP == "" {
 		return ErrInvalid
 	}
 	if o.SourceIP != "" {

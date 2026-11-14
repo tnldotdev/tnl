@@ -23,11 +23,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -38,7 +38,7 @@ type RunControl interface {
 	ManagedControl
 	connectorPolicyControl
 	ConnectorPeerControl
-	GetPublisherService(context.Context, string) (controlv1.Service, error)
+	GetPublisherService(context.Context, string, string) (controlv1.Service, error)
 	PrepareServiceRun(context.Context, string, string, string, controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error)
 	HeartbeatServiceRun(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error)
 	CloseServiceRun(context.Context, string, string, credentials.ServiceRunToken) error
@@ -48,22 +48,26 @@ type RunControl interface {
 type SlotSession = tunnel.SlotSession
 
 type RunConfig struct {
-	Telemetry         *clienttelemetry.Collector
-	PreferredRegions  []string
-	Control           RunControl
-	State             *clientstate.Store
-	Access            func(context.Context) (string, error)
-	Identity          authorityv1.PublisherEnrollmentResult
-	ServiceID         string
-	Target            string
-	Handler           http.Handler
-	InspectionMode    inspection.Mode
-	ObserveSummary    inspection.Observer
-	AdmitRequest      func(*http.Request) error
-	ReadinessProof    func(httpaccess.ReadinessRun) *httpaccess.ReadinessProof
+	Telemetry                                             *clienttelemetry.Collector
+	PreferredRegions                                      []string
+	Control                                               RunControl
+	State                                                 *clientstate.Store
+	Access                                                func(context.Context) (string, error)
+	PublisherIdentityID, PublisherGrantID, PublisherKeyID string
+	ServiceID                                             string
+	Target                                                string
+	Handler                                               http.Handler
+	InspectionMode                                        inspection.Mode
+	ObserveSummary                                        inspection.Observer
+	AdmitRequest                                          func(*http.Request) error
+	ReadinessProof                                        func(httpaccess.ReadinessRun) *httpaccess.ReadinessProof
+	// http response hooks are built once from validated run facts, not per visitor.
+	// inline applications do not use upstream response hooks.
+	HTTPResponseHooks func(HTTPRun) httpstream.ResponseHooks
 	TargetResolver    TargetResolver
 	resolvedTargetTLS *tls.Config
 	HeartbeatInterval time.Duration
+	DrainTime         time.Duration
 	Connect           func(context.Context, *Bound, uint8, ConnectOptions) (SlotSession, error)
 	// prepared observes validated control facts once, before starting that run.
 	Prepared     func(controlv1.ServiceRunPreparation) error
@@ -101,10 +105,17 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	telemetry := config.Telemetry.BeginScope("publisher")
 	defer telemetry.Close()
-	if config.Control == nil || config.Access == nil || !config.Metadata.Protocol.Valid() || !config.InspectionMode.Valid() || config.Identity.ServiceId == nil ||
-		config.Identity.Kind != authorityv1.Service || *config.Identity.ServiceId != config.ServiceID ||
-		config.ReadinessProof != nil && config.Metadata.Protocol != controlv1.ServiceProtocolHTTP {
+	if config.Control == nil || config.Access == nil || !config.Metadata.Protocol.Valid() || !config.InspectionMode.Valid() || config.DrainTime < 0 ||
+		!opaqueid.Valid(config.ServiceID, opaqueid.ServicePrefix) ||
+		!opaqueid.Valid(config.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) ||
+		!opaqueid.Valid(config.PublisherGrantID, opaqueid.PublisherGrantPrefix) ||
+		!opaqueid.Valid(config.PublisherKeyID, opaqueid.PublisherIdentityKeyPrefix) ||
+		config.ReadinessProof != nil && config.Metadata.Protocol != controlv1.ServiceProtocolHTTP ||
+		config.HTTPResponseHooks != nil && (config.Metadata.Protocol != controlv1.ServiceProtocolHTTP || config.Handler != nil) {
 		return ErrPrivateStream
+	}
+	if config.DrainTime == 0 {
+		config.DrainTime = 10 * time.Second
 	}
 	var dialer muxsession.QUICDialer
 	var udpErr error
@@ -155,7 +166,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if err != nil || access == "" {
 		return errors.Join(ErrPrivateStream, err)
 	}
-	approved, err := config.Control.GetPublisherService(ctx, access)
+	approved, err := config.Control.GetPublisherService(ctx, config.ServiceID, access)
 	if err != nil {
 		return err
 	}
@@ -165,7 +176,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		return ErrPrivateStream
 	}
 	config.Metadata.TrustRevision = approved.TrustRevision
-	ctx = observability.NarrowIdentity(ctx, observability.Identity{TeamID: approved.TeamId, PublisherIdentityID: config.Identity.ClientId, ServiceID: approved.Id})
+	ctx = observability.NarrowIdentity(ctx, observability.Identity{TeamID: approved.TeamId, PublisherIdentityID: config.PublisherIdentityID, ServiceID: approved.Id})
 	exposure := "private"
 	if approved.Endpoint.Public {
 		exposure = "public"
@@ -281,6 +292,10 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if err != nil {
 		return err
 	}
+	// caller cancellation requests bounded drain, not authority revocation.
+	// the run owner cancels these workers only after visitors have joined.
+	runCtx, stopRun := context.WithCancel(context.WithoutCancel(ctx))
+	defer stopRun()
 	bound.telemetry = telemetry
 	bound.connectivityOptions = telemetry.Connectivity(config.Connectivity)
 	if !config.Connectivity.DisableDirect {
@@ -317,12 +332,12 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		bound.Invalidate()
 		flush, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		_ = audit.Close(flush)
+		result = errors.Join(result, audit.Close(flush))
 	}()
 	bound.streamCapacity = int(config.StreamCapacity)
 	var certificateDone <-chan error
 	{
-		maintain, cancel, err := configureServiceRun(ctx, config, prepared, setup, managedControl, config.State, audit)
+		maintain, cancel, err := configureServiceRun(runCtx, config, prepared, setup, managedControl, config.State, audit)
 		if err != nil {
 			return err
 		}
@@ -332,7 +347,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		defer func() {
 			cancel()
 			if certificateDone != nil {
-				<-certificateDone
+				result = errors.Join(result, serviceWorkerError(<-certificateDone, context.Canceled))
 			}
 		}()
 	}
@@ -374,16 +389,16 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if err != nil {
 		return errors.Join(ErrPrivateStream, err)
 	}
-	if err := bound.PrepareConnectorPolicy(ctx, config.Control, runToken); err != nil {
+	if err := bound.PrepareConnectorPolicy(runCtx, config.Control, runToken); err != nil {
 		return err
 	}
-	peers, stopPeers := context.WithCancel(ctx)
+	peers, stopPeers := context.WithCancel(runCtx)
 	peersDone := make(chan error, 1)
 	go func() { peersDone <- bound.ServeConnectorPeers(peers, config.Control, runToken) }()
 	defer func() {
 		stopPeers()
 		if peersDone != nil {
-			result = errors.Join(result, <-peersDone)
+			result = errors.Join(result, serviceWorkerError(<-peersDone, context.Canceled))
 		}
 	}()
 	paths, err := tunnel.NewSlots(context.WithoutCancel(ctx), tunnel.SlotsConfig{SingleUse: true, Connect: func(ctx context.Context, slot uint8, preferTCP bool) (tunnel.SlotSession, error) {
@@ -397,14 +412,49 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if err != nil {
 		return err
 	}
+	completed := false
+	publisherExpires := state.PublisherExpiresAt
 	defer func() {
-		if result == nil && ctx.Err() != nil {
-			finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		if result == nil && (completed || ctx.Err() != nil) {
+			until := time.Now().Add(config.DrainTime)
+			if publisherExpires.Before(until) {
+				until = publisherExpires
+			}
+			finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), until)
 			defer cancel()
-			result = errors.Join(result, paths.Drain(finish))
+			bound.startHTTPDrain(until)
+			drained := make(chan error, 1)
+			go func() {
+				// relay acknowledgment must not close transports before the HTTP
+				// workers, including connector responses, have joined.
+				stopped := paths.StopAdmissions(finish)
+				drained <- errors.Join(stopped, bound.joinHTTPDrain())
+			}()
+		drain:
+			for {
+				select {
+				case err := <-drained:
+					result = errors.Join(result, err)
+					break drain
+				case err := <-certificateDone:
+					certificateDone = nil
+					result = errors.Join(result, serviceWorkerError(err, context.Canceled))
+					cancel()
+					stopRun()
+					bound.Invalidate()
+				case err := <-peersDone:
+					peersDone = nil
+					result = errors.Join(result, serviceWorkerError(err, context.Canceled))
+					cancel()
+					stopRun()
+					bound.Invalidate()
+				}
+			}
 		} else {
-			result = errors.Join(result, paths.Close())
+			stopRun()
+			bound.Invalidate()
 		}
+		result = errors.Join(result, paths.Close())
 	}()
 	for slot := range uint8(2) {
 		if err := paths.Set(slot, bound.assignmentKey(slot)); err != nil {
@@ -439,19 +489,17 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		}
 		expires := time.NewTimer(time.Until(state.PublisherExpiresAt))
 		select {
+		case <-prepared.serviceHTTPRequests.Completed():
+			expires.Stop()
+			completed = true
+			return nil
 		case err := <-peersDone:
 			expires.Stop()
 			peersDone = nil
-			if ctx.Err() != nil {
-				return nil
-			}
 			return errors.Join(ErrPrivateStream, err)
 		case err := <-certificateDone:
 			expires.Stop()
 			certificateDone = nil
-			if ctx.Err() != nil {
-				return nil
-			}
 			return err
 		case <-ctx.Done():
 			expires.Stop()
@@ -474,7 +522,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 				status.LastCheck = time.Now()
 				report()
 				if ctx.Err() != nil {
-					return nil
+					return serviceWorkerError(err, ctx.Err())
 				}
 				reason, _ := failure.ReasonOf(err)
 				if reason != failure.ServerUnavailable && reason != failure.ServerRateLimited {
@@ -485,6 +533,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 				continue
 			}
 			state = next
+			publisherExpires = state.PublisherExpiresAt
 			heartbeatOK = true
 			for slot := range uint8(2) {
 				if err := paths.Set(slot, bound.assignmentKey(slot)); err != nil {
@@ -493,6 +542,27 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			}
 		}
 	}
+}
+
+// an expected stop alone is not failure. inspect the actual causes rather than
+// errors.Is, which also matches a join containing an independent failure.
+func serviceWorkerError(err, stopped error) error {
+	if err == nil || err == stopped {
+		return nil
+	}
+	switch wrapped := err.(type) {
+	case interface{ Unwrap() []error }:
+		var failures []error
+		for _, cause := range wrapped.Unwrap() {
+			failures = append(failures, serviceWorkerError(cause, stopped))
+		}
+		return errors.Join(failures...)
+	case interface{ Unwrap() error }:
+		if serviceWorkerError(wrapped.Unwrap(), stopped) == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 // compose relay trust once for the run, independently of target and visitor TLS.

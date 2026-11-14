@@ -51,7 +51,7 @@ func decodeWebhook(name string, encoded []byte) (config.Webhook, error) {
 	}
 	services := config.Services{}
 	if definition.Service != "" {
-		services[definition.Service] = config.Service{Tunnel: &config.Tunnel{}}
+		services[definition.Service] = config.Service{Public: new(true)}
 	}
 	if err := config.ValidateTNL(config.TNL{Services: services, Webhooks: map[string]config.Webhook{name: definition}}); err != nil {
 		return definition, err

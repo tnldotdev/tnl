@@ -9,7 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
-func TestPublisherLimitsMergeAndFlagPrecedence(t *testing.T) {
+func TestPublisherHTTPLimitsAndFlagPrecedence(t *testing.T) {
 	t.Setenv("TNL_CONCURRENCY", "4")
 	var flags cli
 	parser, err := kong.New(&flags)
@@ -23,8 +23,7 @@ func TestPublisherLimitsMergeAndFlagPrecedence(t *testing.T) {
 	period := config.Duration(time.Minute)
 	target := config.Target("3000")
 	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{
-		Tunnel:   &config.Tunnel{Limits: &config.Limits{HTTP: &config.WorkLimits{Total: &requests, Rate: &config.Rate{Count: &rateRequests, Per: &period}}}},
-		Services: config.Services{"web": {Tunnel: &config.Tunnel{Limits: &config.Limits{HTTP: &config.WorkLimits{Concurrency: &concurrency}}}, Target: &config.ServiceTarget{Type: "address", Address: &target}}},
+		Services: config.Services{"web": {Public: new(true), HTTP: &config.HTTPService{Limits: &config.WorkLimits{Total: &requests, Rate: &config.Rate{Count: &rateRequests, Per: &period}, Concurrency: &concurrency}}, Target: &config.ServiceTarget{Type: "address", Address: &target}}},
 	}}}
 	if err := project.applyPublish(&flags.Publish); err != nil {
 		t.Fatal(err)
@@ -68,13 +67,12 @@ func TestRetiredRequestLimitFlagIsNotAccepted(t *testing.T) {
 	}
 }
 
-func TestEnrolledPublishNeverInheritsRootPublicURLLimits(t *testing.T) {
-	httpTotal, tcpTotal, burst := 80, 5, 3
+func TestEnrolledPublishNeverInheritsAnotherServiceLimits(t *testing.T) {
+	httpTotal, burst := 80, 3
 	count, period := 2, config.Duration(time.Second)
-	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Tunnel: &config.Tunnel{Limits: &config.Limits{
-		HTTP: &config.WorkLimits{Total: &httpTotal},
-		TCP:  &config.WorkLimits{Total: &tcpTotal, Rate: &config.Rate{Count: &count, Per: &period, Burst: &burst}},
-	}}}}}
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{
+		"web": {HTTP: &config.HTTPService{Limits: &config.WorkLimits{Total: &httpTotal, Rate: &config.Rate{Count: &count, Per: &period, Burst: &burst}}}},
+	}}}}
 	flags := publishCommand{PublisherIdentityID: "pub_example"}
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
@@ -87,6 +85,6 @@ func TestEnrolledPublishNeverInheritsRootPublicURLLimits(t *testing.T) {
 	}
 	limits := flags.limits()
 	if limits.Requests != 0 || limits.RateRequests != 0 || limits.RatePer != 0 || limits.RateBurst != 0 {
-		t.Fatalf("raw enrolled publication inherited root public URL limits: %+v", limits)
+		t.Fatalf("raw enrolled publication inherited another service's HTTP limits: %+v", limits)
 	}
 }

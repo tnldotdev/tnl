@@ -64,9 +64,11 @@ func TestIntegrationAppliedProjectRootIntegrationsAndRemoteDeployments(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	var publicURLs, implicitIntegrations int
-	if err = d.pool.QueryRow(t.Context(), `SELECT count(*),count(*) FILTER(WHERE purpose IN('oauth','webhooks')) FROM control.public_urls WHERE team_id=$1`, r.TeamID).Scan(&publicURLs, &implicitIntegrations); err != nil || publicURLs != 0 || implicitIntegrations != 0 {
-		t.Fatalf("apply implicitly published local integrations: URLs=%d integrations=%d %v", publicURLs, implicitIntegrations, err)
+	var services, localRealizations int
+	if err = d.pool.QueryRow(t.Context(), `SELECT
+	    (SELECT count(*) FROM control.services WHERE team_id=$1),
+	    (SELECT count(*) FROM control.local_project_services WHERE team_id=$1)`, r.TeamID).Scan(&services, &localRealizations); err != nil || services != 1 || localRealizations != 0 {
+		t.Fatalf("apply allocated more than the declared remote service: services=%d local=%d %v", services, localRealizations, err)
 	}
 	var encrypted []byte
 	if err = d.pool.QueryRow(t.Context(), `SELECT configuration_ciphertext FROM control.applied_projects WHERE team_id=$1 AND project_key=$2`, r.TeamID, r.ProjectKey).Scan(&encrypted); err != nil || bytes.Contains(encrypted, []byte("/hooks/payments")) {
