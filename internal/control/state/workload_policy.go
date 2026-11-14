@@ -283,7 +283,8 @@ func (d *Database) WorkloadPolicy(ctx context.Context, team, project, name, sour
 		return ProjectWorkload{}, err
 	}
 	defer rollback(ctx, tx, "read workload policy", &retErr)()
-	row, err := controlstatedb.New(tx).LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: team, ProjectKey: project})
+	q := controlstatedb.New(tx)
+	row, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: team, ProjectKey: project})
 	if err != nil {
 		return ProjectWorkload{}, publisherLookupError(err, ErrWorkloadDenied)
 	}
@@ -294,7 +295,7 @@ func (d *Database) WorkloadPolicy(ctx context.Context, team, project, name, sour
 	if err != nil {
 		return ProjectWorkload{}, err
 	}
-	policies, err := record.workloads()
+	policies, err := record.workloads(ctx, q, row)
 	if err != nil {
 		return ProjectWorkload{}, err
 	}

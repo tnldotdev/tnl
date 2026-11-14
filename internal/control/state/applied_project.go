@@ -345,16 +345,6 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		return result, err
 	}
 	old := record.Deployments[r.Deployment]
-	for deployment, saved := range record.Deployments {
-		if deployment == r.Deployment || r.retire {
-			continue
-		}
-		for name := range c.Workloads {
-			if _, exists := saved.Workloads[name]; exists {
-				return result, ErrProjectConfigurationInvalid
-			}
-		}
-	}
 	groups, err := q.ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
 	if err != nil {
 		return result, err
@@ -615,7 +605,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		record.Deployments[r.Deployment] = c
 	}
 	record.ServiceDeclarations = r.ServiceDeclarations
-	policies, err := record.workloads()
+	policies, err := record.workloads(ctx, q, row)
 	if err != nil {
 		return result, err
 	}

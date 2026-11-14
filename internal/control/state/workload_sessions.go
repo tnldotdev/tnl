@@ -95,7 +95,7 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 	if err != nil {
 		return result, err
 	}
-	policies, err := record.workloads()
+	policies, err := record.workloads(ctx, q, project)
 	if err != nil {
 		return result, err
 	}

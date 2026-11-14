@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -36,11 +37,19 @@ func (d *Database) openAppliedProjectRecord(row controlstatedb.ControlAppliedPro
 	return record, nil
 }
 
-func (record appliedProjectRecord) workloads() (map[string]ProjectWorkload, error) {
+// desired history does not reserve workload names or authorize executions after
+// its deployment is deleted. callers hold the project row while reading this
+// active registry, including during apply's transactional reconciliation.
+func (record appliedProjectRecord) workloads(ctx context.Context, q *controlstatedb.Queries, project controlstatedb.ControlAppliedProject) (map[string]ProjectWorkload, error) {
+	deployments, err := q.ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: project.TeamID, ProjectKey: project.ProjectKey})
+	if err != nil {
+		return nil, err
+	}
 	policies := map[string]ProjectWorkload{}
-	for deployment, selected := range record.Deployments {
+	for _, deployment := range deployments {
+		selected := record.Deployments[deployment.Name]
 		for name, policy := range selected.Workloads {
-			if _, exists := policies[name]; exists || policy.Deployment != deployment {
+			if _, exists := policies[name]; exists || policy.Deployment != deployment.Name {
 				return nil, ErrProjectConfigurationInvalid
 			}
 			policies[name] = policy

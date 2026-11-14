@@ -92,7 +92,7 @@ func (d *Database) AttachWorkloadAssertion(ctx context.Context, id, credential s
 	if err != nil {
 		return result, err
 	}
-	policies, err := record.workloads()
+	policies, err := record.workloads(ctx, controlstatedb.New(tx), project)
 	if err != nil {
 		return result, err
 	}
