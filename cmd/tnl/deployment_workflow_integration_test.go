@@ -138,7 +138,7 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	if serviceID == "" {
 		t.Fatal("apply did not create the private HTTP service")
 	}
-	cliCall(t, t.Context(), []string{"--config", configuration, "generate", "--state-dir", person})
+	cliCall(t, t.Context(), []string{"--config", configuration, "generate"})
 	runtimeCtx, stopRuntime := context.WithCancel(t.Context())
 	runtimeDone := make(chan error, 1)
 	go func() { runtimeDone <- runRuntimeServe(runtimeCtx, runtimeOptions{Directory: root, StateDir: person}) }()
@@ -219,7 +219,15 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 		}
 		return false
 	})
-	cliCall(t, t.Context(), []string{"--config", configuration, "generate", "--state-dir", person})
+	// static generation is offline. re-preparation by the same live owner
+	// refreshes runtime metadata from the saved allocated endpoint.
+	var refreshed publisherprotocol.Assignment
+	if err := publisherprotocol.Call(t.Context(), appEndpoint, "POST", "/v1/prepare", publisherprotocol.Prepare{Version: 1, Service: web, Directory: root, Framework: "node", Owner: owner, PID: os.Getpid()}, &refreshed); err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.RegistrationID != assignment.RegistrationID || refreshed.PublicURL != publicURL {
+		t.Fatal("metadata refresh replaced the live app registration or allocated origin")
+	}
 	metadata, err = os.ReadFile(filepath.Join(root, ".tnl", "local", "project.json"))
 	if err != nil {
 		t.Fatal(err)
