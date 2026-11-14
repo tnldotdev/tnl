@@ -18,7 +18,7 @@ import (
 // mutation. app-owned listeners are excluded before assignments reach workers.
 func (p AssignmentPublisher) publishPublicURL(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
 	s := assignment.Configuration
-	if s.PublicUrl == nil || s.Protocol == nil || *s.Protocol != controlv1.ServiceProtocol("http") || s.Target == "app" || assignment.Hostname == nil || *assignment.Hostname == "" || assignment.TrustRevision < 1 || p.Member.DeploymentId == "" || p.Member.DeploymentName == "" || p.Member.DeploymentName == "local" {
+	if s.PublicUrl == nil || s.Protocol == nil || *s.Protocol != controlv1.ServiceProtocol("http") || s.Target == "app" || assignment.Hostname == nil || *assignment.Hostname == "" || assignment.TrustRevision != 0 || p.Member.DeploymentId == "" || p.Member.DeploymentName == "" || p.Member.DeploymentName == "local" {
 		return ErrAssignment
 	}
 	identity := authorityv1.PublisherEnrollmentResult{ClientId: p.Member.PublisherIdentityId, KeyId: p.Member.KeyId, TeamId: p.Member.TeamId, GrantId: assignment.GrantId, Kind: authorityv1.SavedPublicUrl, PublicUrlId: &assignment.ServiceId}
@@ -30,7 +30,9 @@ func (p AssignmentPublisher) publishPublicURL(ctx context.Context, assignment co
 	if err != nil {
 		return err
 	}
-	if u.Id != assignment.ServiceId || u.CanonicalHostname != *assignment.Hostname || u.MutationRevision != assignment.TrustRevision || u.Ephemeral || u.Target != s.Target {
+	// the authenticated exact grant fences replaced configuration. URL mutation
+	// revision also counts run starts and is not a service trust revision.
+	if u.Id != assignment.ServiceId || u.CanonicalHostname != *assignment.Hostname || u.Ephemeral || u.Target != s.Target {
 		return ErrAssignment
 	}
 	var limits *config.Limits
