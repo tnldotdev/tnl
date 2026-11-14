@@ -21,6 +21,9 @@ var (
 	ErrDeploymentStale    = errors.New("deployment changed")
 )
 
+// local desired input and deleted history do not consume saved deployment slots.
+const maxProjectDeployments = 32
+
 type DeploymentService struct {
 	ID            string           `json:"id"`
 	Protocol      string           `json:"protocol"`
@@ -132,6 +135,13 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 		return result, err
 	}
 	q := controlstatedb.New(tx)
+	deployments, err := q.ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
+	if err != nil {
+		return result, err
+	}
+	if len(deployments) >= maxProjectDeployments {
+		return result, ErrProjectConfigurationInvalid
+	}
 	snapshot, err := deploymentTargets(ctx, q, r.DeploymentScope, r.Targets)
 	if err != nil {
 		return result, err

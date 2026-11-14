@@ -389,6 +389,9 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if row.Revision != r.ExpectedRevision {
 		return result, ErrProjectConfigurationStale
 	}
+	if c.Settings != nil && !present && len(groups) >= maxProjectDeployments {
+		return result, ErrProjectConfigurationInvalid
+	}
 	next := row.Revision + 1
 	if err = lockAppliedProjectPublications(ctx, tx, r.TeamID, r.ProjectKey); err != nil {
 		return result, err
@@ -616,7 +619,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if err != nil {
 		return result, err
 	}
-	if len(record.Deployments) > 33 || len(policies) > 32 || len(data) > 16<<20 {
+	if len(policies) > 32 || len(data) > 16<<20 {
 		return result, ErrProjectConfigurationInvalid
 	}
 	digest := sha256.Sum256(data)
