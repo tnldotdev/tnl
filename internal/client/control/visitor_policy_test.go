@@ -18,7 +18,7 @@ import (
 
 func TestPublisherVisitorPolicyHTTPClientMaximum(t *testing.T) {
 	body, _ := policyfixture.Maximum(t, time.Date(2026, 10, 28, 12, 0, 0, 123456789, time.UTC))
-	if len(body.Policy.VerificationKeys) != 64 || len(body.Policy.WorkloadLeases) != 4096 || len(body.Policy.Ip.Prefixes) != 2048 {
+	if len(body.Policy.VerificationKeys) != 64 || len(body.Policy.WorkloadLeases) != 4096 || len(body.Policy.RegisteredKeyLeases) != 4096 || len(body.Policy.Ip.Prefixes) != 2048 {
 		t.Fatal("maximum fixture lost a contracted collection limit")
 	}
 	body.AfterRevision = math.MaxInt64 - 256

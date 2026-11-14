@@ -1,0 +1,93 @@
+paths:
+  /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments:
+    parameters:
+      - { name: project_key, in: path, required: true, schema: { type: string } }
+      - {
+          name: deployment,
+          in: path,
+          required: true,
+          schema: { type: string },
+          description: Deployment name or ID within the selected project.,
+        }
+      - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+    post:
+      operationId: createDeploymentPublisherEnrollment
+      tags: [deployments]
+      summary: Approve scoped publisher enrollment
+      security: [{ bearerAuth: [] }]
+      description: Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+      parameters:
+        - {
+            name: Idempotency-Key,
+            in: header,
+            required: true,
+            schema: { type: string, minLength: 1, maxLength: 128 },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              {
+                $ref: "../openapi.yaml#/components/schemas/CreateDeploymentPublisherEnrollmentRequest",
+              }
+      responses:
+        "201":
+          description: New or recovered bounded enrollment
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherEnrollment" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/deployments/{deployment}/publishers:
+    parameters:
+      - { name: project_key, in: path, required: true, schema: { type: string } }
+      - { name: deployment, in: path, required: true, schema: { type: string } }
+      - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+    get:
+      operationId: listDeploymentPublishers
+      tags: [deployments]
+      summary: List a deployment's publishers
+      security: [{ bearerAuth: [] }]
+      description: List authorized publishers in this deployment, including revoked identities and retained observations. A management credential sees only scoped publishers whose entire captured service/protocol approval it covers; filtering precedes pagination. Legacy whole-group publishers require a current manager. No enrollment secrets or targets are returned.
+      parameters:
+        - { name: after, in: query, schema: { type: string } }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 50 },
+          }
+      responses:
+        "200":
+          description: Deployment publisher page in bytewise publisher ID order
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherPage" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher}:
+    parameters:
+      - { name: project_key, in: path, required: true, schema: { type: string } }
+      - { name: deployment, in: path, required: true, schema: { type: string } }
+      - { name: publisher, in: path, required: true, schema: { type: string } }
+      - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+    get:
+      operationId: getDeploymentPublisher
+      tags: [deployments]
+      summary: Read one deployment publisher
+      security: [{ bearerAuth: [] }]
+      description: Read one publisher's captured scope and observation with exact deployment ownership. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager.
+      responses:
+        "200":
+          description: Publisher observation without credentials or targets
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/DeploymentPublisher" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    delete:
+      operationId: revokeDeploymentPublisher
+      tags: [deployments]
+      summary: Revoke one deployment publisher
+      security: [{ bearerAuth: [] }]
+      description: Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager. Repetition is safe; the last observation is retained. Siblings and shared enrollment capacity are unchanged. Apply and enrollment replay cannot restore the revoked identity.
+      responses:
+        "204": { description: Publisher revoked }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

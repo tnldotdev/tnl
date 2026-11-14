@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -73,6 +71,7 @@ type PublisherGroupAssignments struct {
 }
 
 func (d *Database) IssuePublisherGroupEnrollment(ctx context.Context, team, project, group, actor string, maxMembers int, lifetime time.Duration, now time.Time) (result PublisherGroupEnrollment, retErr error) {
+	clock := newAuthorizationClock(now)
 	if maxMembers < 1 || maxMembers > 256 || lifetime < time.Minute || lifetime > 24*time.Hour {
 		return result, ErrProjectConfigurationInvalid
 	}
@@ -95,28 +94,21 @@ func (d *Database) IssuePublisherGroupEnrollment(ctx context.Context, team, proj
 	if err = tx.QueryRow(ctx, `SELECT g.id FROM control.project_publisher_groups g JOIN control.publisher_group_names alias ON alias.group_id=g.id WHERE alias.team_id=$1 AND alias.project_key=$2 AND alias.name=$3 AND g.deleted_at IS NULL FOR UPDATE OF g`, team, project, group).Scan(&gid); err != nil {
 		return result, publisherLookupError(err, ErrPublisherGroup)
 	}
-	id, err := opaqueid.New(opaqueid.PublisherEnrollmentPrefix)
+	issued, err := d.issuePublisherGroupEnrollment(ctx, tx, gid, actor, "", maxMembers, now.Add(lifetime), "", nil, nil, clock.current())
 	if err != nil {
 		return result, err
 	}
-	var secret [32]byte
-	if _, err = rand.Read(secret[:]); err != nil {
+	if !issued.ExpiresAt.After(clock.current()) {
+		return result, ErrPublisherEnrollment
+	}
+	if err = serviceManager(ctx, tx, team, actor); err != nil {
 		return result, err
 	}
-	key := id + "." + base64.RawURLEncoding.EncodeToString(secret[:])
-	digest := sha256.Sum256([]byte(key))
-	until := now.Add(lifetime)
-	_, err = tx.Exec(ctx, `INSERT INTO control.publisher_group_enrollments(id,group_id,secret_digest,max_members,created_by_identity_id,expires_at) VALUES($1,$2,$3,$4,$5,$6)`, id, gid, digest[:], maxMembers, actor, until)
-	if err != nil {
-		return result, err
-	}
-	if err = recordPublisherGroupUpdate(ctx, tx, gid, actor, "", "enrollment/"+id, now); err != nil {
-		return result, err
-	}
-	return PublisherGroupEnrollment{Key: key, GroupID: gid, ExpiresAt: until, MaxMembers: maxMembers}, tx.Commit(ctx)
+	return issued.PublisherGroupEnrollment, tx.Commit(ctx)
 }
 
 func (d *Database) RedeemPublisherGroupEnrollment(ctx context.Context, secret string, public ed25519.PublicKey, now time.Time) (result PublisherGroupMember, retErr error) {
+	clock := newAuthorizationClock(now)
 	parts := strings.Split(secret, ".")
 	if len(secret) > 256 || len(parts) != 2 || !opaqueid.Valid(parts[0], opaqueid.PublisherEnrollmentPrefix) || len(public) != ed25519.PublicKeySize {
 		return result, ErrPublisherGroup
@@ -135,25 +127,33 @@ func (d *Database) RedeemPublisherGroupEnrollment(ctx context.Context, secret st
 	if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
 		return result, publisherLookupError(err, ErrPublisherGroup)
 	}
-	var name, actor string
-	var digest []byte
-	var until time.Time
-	var maxMembers int
-	var live bool
-	err = tx.QueryRow(ctx, `SELECT g.name,e.created_by_identity_id,e.secret_digest,e.expires_at,e.max_members,g.deleted_at IS NULL AND e.revoked_at IS NULL FROM control.publisher_group_enrollments e JOIN control.project_publisher_groups g ON g.id=e.group_id WHERE e.id=$1 FOR UPDATE OF e,g`, parts[0]).Scan(&name, &actor, &digest, &until, &maxMembers, &live)
+	deployment, err := q.LockProjectPublisherGroup(ctx, gid)
 	if err != nil {
 		return result, publisherLookupError(err, ErrPublisherGroup)
 	}
+	enrollment, err := q.LockPublisherGroupEnrollment(ctx, parts[0])
+	if err != nil {
+		return result, publisherLookupError(err, ErrPublisherGroup)
+	}
+	name, actor, until, maxMembers := deployment.Name, enrollment.CreatedByIdentityID, enrollment.ExpiresAt.Time, int(enrollment.MaxMembers)
 	actual := sha256.Sum256([]byte(secret))
-	if !live || !until.After(now) || subtle.ConstantTimeCompare(actual[:], digest) != 1 {
+	if enrollment.GroupID != gid || enrollment.RevokedAt.Valid || !until.After(clock.current()) || subtle.ConstantTimeCompare(actual[:], enrollment.SecretDigest) != 1 {
 		return result, ErrPublisherGroup
 	}
+	if enrollment.Scoped {
+		if _, err = d.currentPublisherEnrollmentServices(ctx, q, enrollment, deployment); err != nil {
+			if errors.Is(err, ErrPublisherEnrollment) {
+				return result, ErrPublisherGroup
+			}
+			return result, err
+		}
+	}
 	result = PublisherGroupMember{TeamID: team, ProjectKey: project, GroupID: gid, GroupName: name}
-	var existingGroup string
+	var existingGroup, existingEnrollment string
 	var revoked bool
-	err = tx.QueryRow(ctx, `SELECT m.publisher_identity_id,m.key_id,m.group_id,p.revoked_at IS NOT NULL FROM control.publisher_group_members m JOIN control.publisher_identities p ON p.id=m.publisher_identity_id WHERE m.public_key=$1`, []byte(public)).Scan(&result.PublisherIdentityID, &result.KeyID, &existingGroup, &revoked)
+	err = tx.QueryRow(ctx, `SELECT m.publisher_identity_id,m.key_id,m.group_id,m.enrollment_id,p.revoked_at IS NOT NULL FROM control.publisher_group_members m JOIN control.publisher_identities p ON p.id=m.publisher_identity_id WHERE m.public_key=$1`, []byte(public)).Scan(&result.PublisherIdentityID, &result.KeyID, &existingGroup, &existingEnrollment, &revoked)
 	if err == nil {
-		if revoked || existingGroup != gid {
+		if revoked || existingGroup != gid || existingEnrollment != parts[0] || !until.After(clock.current()) {
 			return PublisherGroupMember{}, ErrPublisherGroup
 		}
 		return result, tx.Commit(ctx)
@@ -206,6 +206,9 @@ func (d *Database) RedeemPublisherGroupEnrollment(ctx context.Context, secret st
 	if err = recordPublisherGroupUpdate(ctx, tx, gid, "", id, "enroll-member/"+id, now); err != nil {
 		return result, err
 	}
+	if !until.After(clock.current()) {
+		return PublisherGroupMember{}, ErrPublisherGroup
+	}
 	return result, tx.Commit(ctx)
 }
 
@@ -230,30 +233,13 @@ func (d *Database) RevokePublisherGroupMember(ctx context.Context, team, project
 	if err != nil {
 		return err
 	}
-	services, err := q.ListPublisherGroupServices(ctx, gid)
-	if err != nil {
+	if err = lockPublisherPublications(ctx, tx, team, publisher, ""); err != nil {
 		return err
 	}
-	for _, s := range services {
-		if s.ServiceID.Valid {
-			if err = closeRevokedPrivatePublication(ctx, tx, q, s.ServiceID.String, publisher, "", now); err != nil {
-				return err
-			}
-		}
-	}
-	if err = closeRevokedPublicPublications(ctx, tx, q, publisher, "", now); err != nil {
+	if err = revokePublisherIdentity(ctx, tx, q, team, publisher, actor, now); err != nil {
 		return err
 	}
-	if _, err = q.RevokePublisherIdentity(ctx, controlstatedb.RevokePublisherIdentityParams{ID: publisher, TeamID: team, Now: timestamptz(now)}); err != nil {
-		return err
-	}
-	if _, err = tx.Exec(ctx, `UPDATE control.publisher_grants SET revoked_at=COALESCE(revoked_at,$2) WHERE publisher_identity_id=$1`, publisher, now); err != nil {
-		return err
-	}
-	if _, err = tx.Exec(ctx, `DELETE FROM control.publisher_group_leases WHERE publisher_identity_id=$1`, publisher); err != nil {
-		return err
-	}
-	if err = recordPublisherGroupMemberRevocation(ctx, tx, publisher, actor, now); err != nil {
+	if err = serviceManager(ctx, tx, team, actor); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -409,6 +395,13 @@ func (d *Database) GetPublisherGroupAssignments(ctx context.Context, token strin
 		return result, err
 	}
 	for _, s := range services {
+		allowed, err := q.PublisherGroupServiceAllowed(ctx, controlstatedb.PublisherGroupServiceAllowedParams{PublisherID: m.PublisherIdentityID, GroupID: m.GroupID, Service: s.Service, ServiceID: s.ServiceID, PublicURLID: s.PublicURLID})
+		if err != nil {
+			return result, err
+		}
+		if !allowed {
+			continue
+		}
 		var grant string
 		if err = tx.QueryRow(ctx, `SELECT assignment.grant_id FROM control.publisher_group_service_grants assignment JOIN control.publisher_grants g ON g.id=assignment.grant_id WHERE assignment.publisher_identity_id=$1 AND assignment.team_id=$2 AND assignment.project_key=$3 AND assignment.service=$4 AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$5)`, m.PublisherIdentityID, m.TeamID, m.ProjectKey, s.Service, now).Scan(&grant); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
