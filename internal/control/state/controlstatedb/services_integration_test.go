@@ -140,7 +140,35 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	otherIngress := directIngressLease(t, ctx, d, "ingress-b", port, now)
 	device, certificate := publicServiceVisitorCertificate(t, ctx, d, service.ID, person, now)
 	source := netip.MustParseAddr("192.0.2.10")
+	// a lagging ready heartbeat must not let a disconnected older run hide its
+	// connected sibling. connector and public admission use the same selection.
+	exec(`UPDATE control.service_connection_slots SET state='connected' WHERE service_run_id=$1`, runs[0].RunID)
 	selected, err := d.SelectServiceRun(ctx, service.ID, person, device, now)
+	if err != nil || selected.ServiceRunID != runs[1].RunID {
+		t.Fatalf("disconnected run hid the connector's healthy sibling: %+v %v", selected, err)
+	}
+	poolVisitor := id(opaqueid.VisitorConnectionPrefix)
+	poolAdmission, err := d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, poolVisitor, "", port, source, now)
+	if err != nil || poolAdmission.RunID != runs[1].RunID {
+		t.Fatalf("disconnected run hid the public visitor's healthy sibling: %+v %v", poolAdmission, err)
+	}
+	exec(`UPDATE control.service_connection_slots SET state='ready' WHERE service_run_id=$1`, runs[0].RunID)
+	retried, err := d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, poolVisitor, "", port, source, now)
+	if err != nil || retried.RunID != poolAdmission.RunID || retried.RunNumber != poolAdmission.RunNumber || !retried.ExpiresAt.Equal(poolAdmission.ExpiresAt) {
+		t.Fatal("reconnected sibling moved an already selected visitor to another run", retried, err)
+	}
+	if err := d.ClosePublicServiceVisitor(ctx, ingress, poolVisitor, now); err != nil {
+		t.Fatal(err)
+	}
+	exec(`UPDATE control.relay_leases SET reported_streams=stream_capacity`)
+	if _, err := d.SelectServiceRun(ctx, service.ID, person, device, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+		t.Fatal("connector selected a pool with no relay stream capacity", err)
+	}
+	if _, err := d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, id(opaqueid.VisitorConnectionPrefix), "", port, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+		t.Fatal("public visitor selected a pool with no relay stream capacity", err)
+	}
+	exec(`UPDATE control.relay_leases SET reported_streams=0`)
+	selected, err = d.SelectServiceRun(ctx, service.ID, person, device, now)
 	if err != nil || selected.TLS == nil || selected.TLS.Digest != metadata.TLS.Digest {
 		t.Fatalf("authorized trust snapshot: %+v %v", selected, err)
 	}
