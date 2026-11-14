@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"sync"
+	"syscall"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -303,16 +307,51 @@ func (c *publicPublisherSlot) Drain(ctx context.Context) error {
 	if err == nil {
 		err = c.session.RequestPublisherDrain(ctx, requestID)
 	}
-	var protocol *tunnel.ProtocolError
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &protocol) {
-		return err
+	// a closed transport has no admissions or visitor streams left to drain.
+	// TCP closure can surface as a reset when the relay closes with unread data,
+	// but it must be confirmed by the session, not inferred from a stream reset.
+	closed := false
+	select {
+	case <-c.session.Done():
+		closed = true
+	default:
 	}
-	// a normal transport close already stopped admission and visitor streams.
-	// stream i/o can report that close before the session notification arrives.
-	if err != nil && context.Cause(ctx) == nil && (errors.Is(err, muxsession.ErrClosed) || errors.Is(c.session.Err(), muxsession.ErrClosed)) {
+	if err != nil && context.Cause(ctx) == nil && publisherDrainClosure(err, closed) {
 		return nil
 	}
 	return err
+}
+
+// every joined cause must be closure-related. a simultaneous protocol, timeout,
+// or cleanup failure remains an error even after the transport has disappeared.
+func publisherDrainClosure(err error, closed bool) bool {
+	if failure, ok := err.(net.Error); ok && failure.Timeout() {
+		return false
+	}
+	switch err {
+	case muxsession.ErrClosed, net.ErrClosed:
+		return true
+	case io.EOF, io.ErrClosedPipe, syscall.ECONNRESET, syscall.EPIPE:
+		return closed
+	}
+	switch err := err.(type) {
+	case *quic.ApplicationError:
+		return err.ErrorCode == 0
+	case interface{ Unwrap() []error }:
+		causes := err.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !publisherDrainClosure(cause, closed) {
+				return false
+			}
+		}
+		return true
+	case interface{ Unwrap() error }:
+		return publisherDrainClosure(err.Unwrap(), closed)
+	}
+	return false
 }
 
 func validateConnectionAssignments(

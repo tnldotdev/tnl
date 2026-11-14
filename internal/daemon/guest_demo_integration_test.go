@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -699,16 +698,25 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 		if err := inspect.QueryRow(`SELECT ready_deadline,serving_until FROM control.guest_trials WHERE id=$1`, issued.GuestId).Scan(&deadline, &servingUntil); err != nil {
 			t.Fatal(err)
 		}
-		held, err := tls.DialWithDialer(&net.Dialer{Timeout: 2 * time.Second}, "tcp", publicAddress, &tls.Config{RootCAs: pebble.roots, ServerName: hostname, MinVersion: tls.VersionTLS13})
+		origin, err := url.Parse(ready.PublicURL)
 		if err != nil {
+			t.Fatal(err)
+		}
+		dialCtx, cancelDial := context.WithTimeout(t.Context(), 2*time.Second)
+		raw, err := visitor.transport.DialContext(dialCtx, "tcp", origin.Host)
+		if err != nil {
+			cancelDial()
+			t.Fatal(err)
+		}
+		held := tls.Client(raw, &tls.Config{RootCAs: pebble.roots, ServerName: hostname, MinVersion: tls.VersionTLS13})
+		err = held.HandshakeContext(dialCtx)
+		cancelDial()
+		if err != nil {
+			_ = held.Close()
 			t.Fatal(err)
 		}
 		defer held.Close()
 		if err := held.SetDeadline(deadline.Add(time.Second)); err != nil {
-			t.Fatal(err)
-		}
-		origin, err := url.Parse(ready.PublicURL)
-		if err != nil {
 			t.Fatal(err)
 		}
 		request, err := http.NewRequest(http.MethodGet, ready.PublicURL+"/state", nil)

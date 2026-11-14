@@ -3,8 +3,10 @@ package publisher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"syscall"
 	"testing"
 	"time"
 
@@ -18,12 +20,16 @@ func TestPublisherDrainObservesClosedConnectionBeforeSessionNotification(t *test
 	for _, test := range []struct {
 		name        string
 		failure     error
+		closed      bool
 		cancel      bool
 		wantFailure bool
 	}{
 		{name: "acknowledged"},
 		{name: "closed socket", failure: errors.Join(muxsession.ErrClosed, net.ErrClosed)},
 		{name: "remote QUIC close", failure: errors.Join(muxsession.ErrClosed, &quic.ApplicationError{Remote: true})},
+		{name: "closed TCP reset", failure: fmt.Errorf("stream reset: connection closed: %w", &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}), closed: true},
+		{name: "unconfirmed reset", failure: syscall.ECONNRESET, wantFailure: true},
+		{name: "closed TCP EOF", failure: io.EOF, closed: true},
 		{name: "short write", failure: io.ErrShortWrite, wantFailure: true},
 		{name: "rejection", failure: &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}, wantFailure: true},
 		{name: "canceled", failure: net.ErrClosed, cancel: true, wantFailure: true},
@@ -42,6 +48,10 @@ func TestPublisherDrainObservesClosedConnectionBeforeSessionNotification(t *test
 			// a connection-level write failure can arrive before Done and Err
 			// publish the peer's shutdown. do not depend on that notification race.
 			transport.failure = test.failure
+			if test.closed {
+				transport.done = make(chan struct{})
+				close(transport.done)
+			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if test.cancel {
@@ -61,7 +71,7 @@ func TestPublisherDrainObservesClosedConnectionBeforeSessionNotification(t *test
 					t.Fatal("drain lost its failure", err)
 				}
 			}
-			if session.Err() != nil {
+			if !test.closed && session.Err() != nil {
 				t.Fatal("fixture published session closure before the drain result")
 			}
 		})
@@ -117,6 +127,14 @@ func TestPublisherSlotDrainObservesQUICCloseBeforeSessionNotification(t *testing
 type drainWriteFailureTransport struct {
 	muxsession.Session
 	failure error
+	done    chan struct{}
+}
+
+func (s *drainWriteFailureTransport) Done() <-chan struct{} {
+	if s.done != nil {
+		return s.done
+	}
+	return s.Session.Done()
 }
 
 func (s *drainWriteFailureTransport) OpenStream(ctx context.Context) (muxsession.Stream, error) {
@@ -153,13 +171,16 @@ func TestPublisherSlotDrainPreservesNonClosureFailures(t *testing.T) {
 			}
 		})
 	}
-	for _, cause := range []error{context.Canceled, context.DeadlineExceeded, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}} {
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated},
+		io.ErrUnexpectedEOF, io.ErrShortWrite, errors.New("independent cleanup failure")} {
 		t.Run("joined close/"+cause.Error(), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
 			transport := &drainWriteFailureTransport{Session: &certificateTestTransport{done: make(chan struct{})}}
 			slot := drainSlotFixture(t, ctx, transport)
 			transport.failure = errors.Join(muxsession.ErrClosed, cause)
+			transport.done = make(chan struct{})
+			close(transport.done)
 			if err := slot.Drain(ctx); !errors.Is(err, cause) {
 				t.Fatal("transport close hid the drain rejection or cancellation", err)
 			}
