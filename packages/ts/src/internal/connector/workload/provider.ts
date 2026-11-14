@@ -31,6 +31,18 @@ const workloadOptionsSchema = z
 
 export type WorkloadConfiguration = z.output<typeof workloadOptionsSchema>;
 
+export interface WorkloadSource {
+  readonly configuration: WorkloadConfiguration | undefined;
+  readonly environment: Readonly<NodeJS.ProcessEnv>;
+}
+
+export function captureWorkload(key = contextKey()): WorkloadSource {
+  return Object.freeze({
+    configuration: context.workloads.get(key),
+    environment: Object.freeze({ ...process.env }),
+  });
+}
+
 /** register a fixed request-scoped source, never a mutable current token. */
 export function configureWorkload(options: WorkloadOptions): void {
   const selected = parseValue(workloadOptionsSchema, options, "sdk.workload_required");
@@ -48,17 +60,18 @@ export function configureWorkload(options: WorkloadOptions): void {
   context.workloads.set(key, selected);
 }
 
-export function usesWorkload(key = contextKey()): boolean {
+export function usesWorkload(key = contextKey(), source = captureWorkload(key)): boolean {
+  const environment = source.environment;
   return (
-    process.env.TNL_CONNECTION_HANDLE === undefined &&
-    (process.env.TNL_WORKLOAD !== undefined ||
-      context.workloads.has(key) ||
-      process.env.VERCEL === "1" ||
-      Boolean(process.env.FLY_APP_NAME) ||
-      Boolean(process.env.K_SERVICE) ||
-      Boolean(process.env.KUBERNETES_SERVICE_HOST) ||
-      process.env.GITLAB_CI === "true" ||
-      process.env.GITHUB_ACTIONS === "true")
+    environment.TNL_CONNECTION_HANDLE === undefined &&
+    (environment.TNL_WORKLOAD !== undefined ||
+      source.configuration !== undefined ||
+      environment.VERCEL === "1" ||
+      Boolean(environment.FLY_APP_NAME) ||
+      Boolean(environment.K_SERVICE) ||
+      Boolean(environment.KUBERNETES_SERVICE_HOST) ||
+      environment.GITLAB_CI === "true" ||
+      environment.GITHUB_ACTIONS === "true")
   );
 }
 
@@ -67,9 +80,12 @@ export function usesWorkload(key = contextKey()): boolean {
 export async function selectWorkload(
   select: (request: WorkloadRequest) => Promise<unknown>,
   key = contextKey(),
+  source = captureWorkload(key),
+  expected?: WorkloadRequest["selection"],
 ): Promise<SelectionOptions> {
-  const configuration = context.workloads.get(key);
+  const { configuration, environment } = source;
   const request: WorkloadRequest = {
+    ...(expected === undefined ? {} : { selection: expected }),
     ...(configuration === undefined
       ? {}
       : {
@@ -78,13 +94,13 @@ export async function selectWorkload(
           ...(configuration.tokenFile === undefined ? {} : { token_file: configuration.tokenFile }),
         }),
     runtime: {
-      ...(process.env.TNL_WORKLOAD === undefined ? {} : { workload: process.env.TNL_WORKLOAD }),
-      vercel: process.env.VERCEL ?? "",
-      fly_app_name: process.env.FLY_APP_NAME ?? "",
-      github_actions: process.env.GITHUB_ACTIONS ?? "",
-      cloud_run_service: process.env.K_SERVICE ?? "",
-      kubernetes_service_host: process.env.KUBERNETES_SERVICE_HOST ?? "",
-      gitlab_ci: process.env.GITLAB_CI ?? "",
+      ...(environment.TNL_WORKLOAD === undefined ? {} : { workload: environment.TNL_WORKLOAD }),
+      vercel: environment.VERCEL ?? "",
+      fly_app_name: environment.FLY_APP_NAME ?? "",
+      github_actions: environment.GITHUB_ACTIONS ?? "",
+      cloud_run_service: environment.K_SERVICE ?? "",
+      kubernetes_service_host: environment.KUBERNETES_SERVICE_HOST ?? "",
+      gitlab_ci: environment.GITLAB_CI ?? "",
     },
   };
   const selection = parseValue(
@@ -92,15 +108,15 @@ export async function selectWorkload(
     await select(request),
     "sdk.response_invalid",
   );
-  const assertion = await acquireAssertion(selection, AbortSignal.timeout(10_000), key);
+  const assertion = await acquireAssertion(selection, AbortSignal.timeout(10_000), key, source);
   return {
     sdk_workload: request,
     sdk_workload_policy: selection.policy,
     sdk_environment: {
-      github_actions: process.env.GITHUB_ACTIONS ?? "",
-      github_request_url: process.env.ACTIONS_ID_TOKEN_REQUEST_URL ?? "",
+      github_actions: environment.GITHUB_ACTIONS ?? "",
+      github_request_url: environment.ACTIONS_ID_TOKEN_REQUEST_URL ?? "",
       github_request_token: process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN ?? "",
-      vercel_token_file: process.env.VERCEL_OIDC_TOKEN_FILE ?? "",
+      vercel_token_file: environment.VERCEL_OIDC_TOKEN_FILE ?? "",
       vercel_token: process.env.VERCEL_OIDC_TOKEN ?? "",
       ...(selection.token_env === undefined
         ? {}
@@ -122,8 +138,9 @@ export async function acquireAssertion(
   selection: Pick<WorkloadSelection, "name" | "source">,
   signal: AbortSignal,
   key = contextKey(),
+  source?: WorkloadSource,
 ): Promise<string | undefined> {
-  const configuration = context.workloads.get(key);
+  const configuration = source === undefined ? context.workloads.get(key) : source.configuration;
   const lifetime = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
   try {
     return await cancellable(lifetime, async () => {

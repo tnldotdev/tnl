@@ -1,5 +1,4 @@
 import { realpathSync } from "node:fs";
-import type { TnlFetch } from "../../project.js";
 import type { WorkloadConfiguration } from "./workload/provider.js";
 import { TnlError } from "../../errors.js";
 import type { OwnerIPC } from "./connection_ipc.js";
@@ -13,7 +12,6 @@ export interface NativeScope {
     NodeJS.ProcessEnv,
     "TNL_STATE_DIR" | "TNL_SERVER" | "TNL_CONNECTION_HANDLE"
   >;
-  readonly requests: Map<string, Promise<unknown>>;
   open(file: string): Promise<OwnerIPC>;
   select(
     args: string[],
@@ -25,22 +23,9 @@ export interface NativeScope {
   workload(name: string, request: WorkloadRequest): Promise<unknown>;
   close?(): Promise<void>;
   entry?: { readonly file: string; readonly ipc: Promise<OwnerIPC> };
-  selected?: { readonly file: string; readonly expiresAt: number };
-}
-
-export interface CachedIPC {
-  readonly loading: Promise<OwnerIPC>;
-  active: number;
-  failed?: boolean;
-  expiresAt?: number;
-  timer?: ReturnType<typeof setTimeout>;
 }
 
 interface ConnectorContext {
-  readonly scopes: Map<string, Promise<NativeScope>>;
-  readonly selectedScopes: Map<string, Map<string, NativeScope>>;
-  readonly fetches: Map<string, TnlFetch>;
-  readonly external: Map<string, CachedIPC>;
   readonly workloads: Map<string, WorkloadConfiguration>;
 }
 
@@ -48,14 +33,8 @@ declare global {
   var __tnlConnectorContextV2: ConnectorContext | undefined;
 }
 
-// this version describes the shared in-memory shape, not the native wire schema.
-// independently loaded compatible SDK copies share waits, IPC, and cleanup.
-// v2 scopes add directory and workload; do not reuse older copies' v1 scopes.
+// copies share only workload setup. each deployment owns its IPC and cleanup.
 export const context: ConnectorContext = (globalThis.__tnlConnectorContextV2 ??= {
-  scopes: new Map(),
-  selectedScopes: new Map(),
-  fetches: new Map(),
-  external: new Map(),
   workloads: new Map(),
 });
 

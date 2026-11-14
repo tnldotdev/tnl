@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { inspect } from "node:util";
 import { test, expect, vi } from "vitest";
-import { ownerIPC, prepareExternal } from "../../src/internal/connector/connection_ipc.js";
+import { ownerIPC } from "../../src/internal/connector/connection_ipc.js";
 
 test("direct async IPC reuses one authenticated socket and rejects unsafe handles before requests", async () => {
   const directory = await realpath(await mkdtemp(path.join(tmpdir(), "tnl-private-ipc-")));
@@ -83,7 +83,7 @@ test("direct async IPC reuses one authenticated socket and rejects unsafe handle
   }
 });
 
-test("more than 32 sequential external handles retire idle agents and preserve active requests", async () => {
+test("closing sequential IPC clients preserves another client's active request", async () => {
   const directory = await realpath(await mkdtemp(path.join(tmpdir(), "tnl-ipc-retire-")));
   let release: (() => void) | undefined;
   const sockets = new Set<object>();
@@ -117,16 +117,20 @@ test("more than 32 sequential external handles retire idle agents and preserve a
     await writeFile(activeFile, JSON.stringify({ ...handle, key: "b".repeat(64) }), {
       mode: 0o600,
     });
-    const active = prepareExternal(activeFile, "db");
+    const activeClient = await ownerIPC(activeFile);
+    const active = activeClient.prepare("db");
     for (let i = 0; i < 40; i++) {
       const file = path.join(directory, `${i}.json`);
       await writeFile(file, JSON.stringify(handle), { mode: 0o600 });
-      await expect(prepareExternal(file, "db")).resolves.toEqual({ schema: 1 });
+      const client = await ownerIPC(file);
+      await expect(client.prepare("db")).resolves.toEqual({ schema: 1 });
+      client.close();
     }
     expect(release).toBeTypeOf("function");
-    await expect.poll(() => sockets.size).toBeLessThanOrEqual(32);
+    await expect.poll(() => sockets.size).toBe(1);
     release?.();
     await expect(active).resolves.toEqual({ schema: 1 });
+    activeClient.close();
     release = undefined;
   } finally {
     release?.();

@@ -1,4 +1,4 @@
-import { loadConnection } from "./internal/connector/connection_bridge.js";
+import { configureWorkload as configureProviderWorkload } from "./internal/connector/workload/provider.js";
 
 /** install once in server setup; the callback reads the current request. */
 export type WorkloadOptions = Readonly<
@@ -9,6 +9,5 @@ export type WorkloadOptions = Readonly<
 >;
 
 export function configureWorkload(options: WorkloadOptions): void {
-  const { configureWorkload: configure } = loadConnection();
-  configure(options);
+  configureProviderWorkload(options);
 }

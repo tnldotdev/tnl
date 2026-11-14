@@ -17,7 +17,7 @@ async def main() -> None:
     closed: list[AsyncConnectionPool] = []
     with tempfile.TemporaryDirectory(prefix="tnl-psycopg-ca-") as directory:
 
-        async def create(connection: tnl.Connection) -> AsyncConnectionPool:
+        async def create(connection: tnl.Connection | tnl.LocalConnection) -> AsyncConnectionPool:
             assert isinstance(connection, tnl.PostgresConnection)
             assert connection.ca is not None
             ca = Path(directory) / "ca.pem"
@@ -59,7 +59,10 @@ async def main() -> None:
                 assert isinstance(row[0], int)
                 return row[0]
 
-        get = tnl.client("database", create=create, close=close)
+        deployment = tnl.create_client(
+            project="fixture/driver-fixture", services={"database": {"protocol": "postgres"}}
+        ).deployment("production")
+        get = deployment.client("database", create=create, close=close)
         try:
             first = await get()
             original = await pid(first)
@@ -87,6 +90,7 @@ async def main() -> None:
             print("closed", flush=True)
         finally:
             await get.aclose()
+            await deployment.aclose()
 
 
 asyncio.run(main())

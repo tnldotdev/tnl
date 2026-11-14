@@ -1,9 +1,8 @@
-"""ordinary client caching, caller cancellation, and joined retryable cleanup."""
+"""ordinary clients belong to factories; native cleanup belongs to deployments."""
 
 import asyncio
 import contextvars
 import os
-import threading
 from collections.abc import Hashable
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,8 +11,7 @@ import pytest
 from test_workload_connections import NativeFixture
 
 import tnl
-from tnl import _connections
-from tnl._client import _Factory, connection_client
+from tnl._client import _Factory
 
 
 @dataclass
@@ -21,377 +19,38 @@ class Client:
     binding: str
 
 
-class NativeClientFactory:
-    """observe real connection handles without replacing factory acquisition."""
-
-    def __init__(self, directory: Path) -> None:
-        self.directory = directory
-        self.handles: list[_connections.ConnectionHandle[_connections.Connection]] = []
-        self.created: list[Client] = []
-        self.closed: list[Client] = []
-        self.get = connection_client(self.select, create=self.create, close=self.closed.append)
-
-    def select(self) -> _connections.ConnectionHandle[_connections.Connection]:
-        handle = tnl.connect("db", directory=self.directory)
-        self.handles.append(handle)
-        return handle
-
-    def create(self, connection: _connections.Connection) -> Client:
-        value = Client(connection.protocol)
-        self.created.append(value)
-        return value
-
-
-@pytest.mark.parametrize("retry_close", [False, True])
-def test_connection_client_failed_acquisition_releases_failure_for_a_fresh_factory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retry_close: bool
+@pytest.mark.parametrize("failed", [False, True])
+def test_factory_close_keeps_native_capabilities_until_deployment_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed: bool
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
-    current = "other"
-    tnl.configure_workload("job", token=lambda: current)
-    failed, fresh = NativeClientFactory(tmp_path), NativeClientFactory(tmp_path)
-    attempts: list[tuple[str, ...]] = []
-    close_errors: list[tnl.TnlError] = []
-
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
-        if args[0] == "sdk-close":
-            attempts.append(args)
-        try:
-            return native.command(binary, *args, input_value=input_value)
-        except tnl.TnlError as error:
-            close_errors.append(error)
-            raise
-
-    monkeypatch.setattr(_connections, "_command", command)
-
-    async def scenario() -> None:
-        nonlocal current
-        peer = tnl.connect("db", directory=tmp_path)
-        await peer
-        scope = peer._session.scope
-        current = "first"
+    monkeypatch.chdir(tmp_path)
+    tnl.configure_workload("job", token=lambda: "first")
+    deployment = tnl.create_client(
+        project="team/project", services={"db": {"protocol": "postgres"}}
+    ).deployment("production")
+    if failed:
         native.fail_start.add("first")
-        try:
-            with pytest.raises(tnl.TnlError) as first:
-                await failed.get()
-            error = first.value
-            assert isinstance(error, _connections._RetainedStartFailure)
-            observation = scope.failure_handles[error.handle].session
-            assert not observation.joined
-            with pytest.raises(tnl.TnlError) as repeated:
-                await failed.get()
-            assert repeated.value is error
-            assert failed.created == [] and failed.closed == []
-            native.fail_start.clear()
-            if retry_close:
-                native.fail_close = True
-                with pytest.raises(tnl.TnlError) as cleanup:
-                    await failed.get.aclose()
-                assert cleanup.value is close_errors[0]
-                assert observation.closed and not observation.joined
-                assert scope.failure_handles[error.handle].session is observation
-                assert not observation.joined and native.retained == {"first": error.handle}
-                current = "other"
-                await peer
-                native.fail_close = False
-            await failed.get.aclose()
-            current = "first"
-            value = await fresh.get()
-            assert fresh.created == [value]
-            expected = (
-                "sdk-close",
-                "--registry",
-                scope.registry,
-                "--parent-pid",
-                str(os.getpid()),
-                "--failure-handle",
-                error.handle,
-            )
-            assert attempts == [expected] * (2 if retry_close else 1)
-            assert observation.joined
-            assert not native.retained and not scope.failure_handles
-            assert native.closed == [] and "sdk-stop" not in native.calls
-            before = list(attempts)
-            await failed.get.aclose()
-            assert attempts == before
-            await fresh.get.aclose()
-            assert fresh.closed == [value] and native.closed == []
-            assert not fresh.handles[0]._session.closed
-            current = "other"
-            await peer
-        finally:
-            native.fail_close = False
-            await failed.get.aclose()
-            await fresh.get.aclose()
-            for handle in [*failed.handles, *fresh.handles, peer]:
-                await handle.aclose()
-
-    asyncio.run(scenario())
-
-
-@pytest.mark.parametrize("fail_start", [False, True])
-def test_connection_client_canceled_getter_joins_pending_native_acquisition(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_start: bool
-) -> None:
-    native = NativeFixture(tmp_path, monkeypatch)
-    tnl.configure_workload("job", token=lambda: "first")
-    if fail_start:
-        native.fail_start.add("first")
-    native.pause = True
-    factory = NativeClientFactory(tmp_path)
+    closed: list[Client] = []
+    get = deployment.client("db", create=lambda _: Client("a"), close=closed.append)
 
     async def scenario() -> None:
-        pending = asyncio.create_task(factory.get())
-        closing: asyncio.Task[None] | None = None
-        try:
-            assert await asyncio.to_thread(native.identifying.wait, 5)
-            pending.cancel("only this getter")
-            with pytest.raises(asyncio.CancelledError) as caught:
-                await pending
-            assert caught.value.args == ("only this getter",)
-            closing = asyncio.create_task(factory.get.aclose())
-            await asyncio.sleep(0)
-            assert not closing.done()
-            native.release.set()
-            await closing
-            scope = factory.handles[0]._session.scope
-            assert scope.pending == 0 and not scope.requests
-            assert factory.created == [] and factory.closed == []
-            assert not native.retained and not scope.failure_handles
-            assert native.closed == [] and "sdk-stop" not in native.calls
-            if fail_start:
-                assert native.calls.count("sdk-close") == 1
-            else:
-                assert native.calls.count("sdk-close") == 0
-                assert not factory.handles[0]._session.closed
-        finally:
-            native.release.set()
-            await asyncio.gather(pending, return_exceptions=True)
-            if closing is not None:
-                await asyncio.gather(closing, return_exceptions=True)
-            await factory.get.aclose()
-            for handle in factory.handles:
-                await handle.aclose()
-
-    asyncio.run(scenario())
-
-
-def test_connection_client_success_closes_only_drivers_not_shared_native_owners(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    native = NativeFixture(tmp_path, monkeypatch)
-    tnl.configure_workload("job", token=lambda: "first")
-    first, sibling = NativeClientFactory(tmp_path), NativeClientFactory(tmp_path)
-
-    async def scenario() -> None:
-        try:
-            a, b = await first.get(), await sibling.get()
-            owner = first.handles[0]._session
-            assert owner is sibling.handles[0]._session
-            await first.get.aclose()
-            assert first.closed == [a] and sibling.closed == []
-            assert not owner.closed and native.closed == []
-            assert await sibling.get() is b
-            await sibling.get.aclose()
-            assert sibling.closed == [b]
-            assert not owner.closed and native.closed == []
-            assert "sdk-close" not in native.calls and "sdk-stop" not in native.calls
-            assert len(native.owners) == 1
-            assert (await sibling.handles[0]).protocol == "postgres"
-        finally:
-            await first.get.aclose()
-            await sibling.get.aclose()
-            for handle in [*first.handles, *sibling.handles]:
-                await handle.aclose()
-
-    asyncio.run(scenario())
-
-
-def test_connection_client_failed_human_acquisition_does_not_close_its_current_owner_alias(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    native = NativeFixture(tmp_path, monkeypatch)
-    monkeypatch.delenv("TNL_WORKLOAD")
-    factory = NativeClientFactory(tmp_path)
-    native.fail_start.add("first")
-
-    class IPC:
-        def __init__(self, file: str) -> None:
-            self.file = file
-
-        def prepare(
-            self,
-            name: str,
-            assertion: str | None = None,
-            *,
-            sdk: bool = False,
-            requested_at: str | None = None,
-            selection: dict[str, object] | None = None,
-            preview: bool = False,
-            request_handle: str | None = None,
-        ) -> object:
-            assert sdk and not preview and selection is None and assertion is None
-            assert requested_at is not None
-            return native.select(name, "first")
-
-        def close(self) -> None:
-            pass
-
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
-        if args[0] == "sdk-prepare":
-            assert isinstance(input_value, dict) and "assertion" not in input_value
-            input_value = {**input_value, "assertion": "other"}
-        return native.command(binary, *args, input_value=input_value)
-
-    monkeypatch.setattr(_connections, "OwnerIPC", IPC)
-    monkeypatch.setattr(_connections, "_command", command)
-
-    async def scenario() -> None:
-        peer = tnl.connect("db", directory=tmp_path)
-        await peer
-        owner = peer._session
-        try:
-            with pytest.raises(tnl.TnlError) as caught:
-                await factory.get()
-            assert isinstance(caught.value, _connections._RetainedStartFailure)
-            assert factory.handles[0]._session is owner
-            await factory.get.aclose()
-            assert not native.retained and not owner.scope.failure_handles
-            assert factory.created == [] and factory.closed == []
-            assert not owner.closed and native.closed == []
-            assert native.calls.count("sdk-close") == 1 and "sdk-stop" not in native.calls
-            assert peer.snapshot().protocol == "postgres"
-        finally:
-            await factory.get.aclose()
-            for handle in [*factory.handles, peer]:
-                await handle.aclose()
-
-    asyncio.run(scenario())
-
-
-@pytest.mark.parametrize("distinct", [False, True])
-def test_connection_client_failure_cleanup_bookkeeping_is_bounded(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, distinct: bool
-) -> None:
-    native = NativeFixture(tmp_path, monkeypatch)
-    current = "0"
-    tnl.configure_workload("job", token=lambda: current)
-    factory, fresh = NativeClientFactory(tmp_path), NativeClientFactory(tmp_path)
-    select = native.select
-
-    def failed(name: str, assertion: str | None) -> object:
-        assert assertion is not None
-        native.retained.setdefault(assertion, f"{len(native.retained):064x}.{'1' * 16}")
-        return select(name, assertion)
-
-    monkeypatch.setattr(native, "select", failed)
-
-    async def scenario() -> None:
-        nonlocal current
-        try:
-            for index in range(64 if distinct else 80):
-                current = str(index) if distinct else "0"
-                with pytest.raises(_connections._RetainedStartFailure):
-                    await factory.get()
-            if distinct:
-                current = "overflow"
-                with pytest.raises(tnl.TnlError) as caught:
-                    await factory.get()
-                assert caught.value.code == "sdk.client_capacity"
-                assert len(factory.handles) == 64 and "overflow" not in native.retained
-            await factory.get.aclose()
-            assert native.calls.count("sdk-close") == (64 if distinct else 1)
-            assert not native.retained
-            assert not factory.handles[0]._session.scope.failure_handles
-            assert native.closed == [] and "sdk-stop" not in native.calls
-            before = list(native.calls)
-            await factory.get.aclose()
-            assert native.calls == before
-            monkeypatch.setattr(native, "select", select)
-            await fresh.get()
-        finally:
-            await factory.get.aclose()
-            await fresh.get.aclose()
-            for handle in [*factory.handles, *fresh.handles]:
-                await handle.aclose()
-
-    asyncio.run(scenario())
-
-
-def test_connection_client_canceled_close_waiter_does_not_cancel_native_cleanup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    native = NativeFixture(tmp_path, monkeypatch)
-    tnl.configure_workload("job", token=lambda: "first")
-    native.fail_start.add("first")
-    factory = NativeClientFactory(tmp_path)
-    entered, release = threading.Event(), threading.Event()
-
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
-        if args[0] == "sdk-close":
-            entered.set()
-            assert release.wait(5)
-        return native.command(binary, *args, input_value=input_value)
-
-    monkeypatch.setattr(_connections, "_command", command)
-
-    async def scenario() -> None:
-        with pytest.raises(_connections._RetainedStartFailure):
-            await factory.get()
-        first = asyncio.create_task(factory.get.aclose())
-        second: asyncio.Task[None] | None = None
-        try:
-            assert await asyncio.to_thread(entered.wait, 5)
-            first.cancel("stop waiting, not cleanup")
-            with pytest.raises(asyncio.CancelledError) as caught:
-                await first
-            assert caught.value.args == ("stop waiting, not cleanup",)
-            second = asyncio.create_task(factory.get.aclose())
-            await asyncio.sleep(0)
-            assert not second.done()
-            release.set()
-            await second
-            assert not native.retained and native.calls.count("sdk-close") == 1
-        finally:
-            release.set()
-            await asyncio.gather(first, return_exceptions=True)
-            if second is not None:
-                await asyncio.gather(second, return_exceptions=True)
-            await factory.get.aclose()
-            for handle in factory.handles:
-                await handle.aclose()
-
-    asyncio.run(scenario())
-
-
-def test_connection_client_driver_creation_failure_does_not_own_the_native_owner(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    native = NativeFixture(tmp_path, monkeypatch)
-    tnl.configure_workload("job", token=lambda: "first")
-    fixture = NativeClientFactory(tmp_path)
-    failure = RuntimeError("ordinary driver setup failed")
-
-    def create(connection: _connections.Connection) -> Client:
-        raise failure
-
-    get = connection_client(fixture.select, create=create, close=fixture.closed.append)
-
-    async def scenario() -> None:
-        try:
-            with pytest.raises(RuntimeError) as caught:
+        if failed:
+            with pytest.raises(tnl.TnlError):
                 await get()
-            assert caught.value is failure
-            owner = fixture.handles[0]._session
-            await get.aclose()
-            assert not owner.closed and native.closed == []
-            assert "sdk-close" not in native.calls and "sdk-stop" not in native.calls
-            assert fixture.closed == []
-            assert (await fixture.handles[0]).protocol == "postgres"
-        finally:
-            await get.aclose()
-            for handle in fixture.handles:
-                await handle.aclose()
+            assert deployment._scope.failure_handles
+        else:
+            value = await get()
+            assert await get() is value
+        await get.aclose()
+        assert "sdk-close" not in native.calls and "sdk-stop" not in native.calls
+        if failed:
+            assert not closed and native.retained
+        else:
+            assert closed == [value]
+            assert not deployment._acquisitions["db"]._session.closed
+        await deployment.aclose()
+        assert not native.retained
 
     asyncio.run(scenario())
 
@@ -417,8 +76,7 @@ def test_lazy_factory_coalesces_creation_but_selects_each_getter() -> None:
         assert acquisitions == 0
         values = await asyncio.gather(*(get() for _ in range(10)))
         assert acquisitions == 10 and creations == 1
-        assert all(value is values[0] for value in values)
-        assert closed == []
+        assert all(value is values[0] for value in values) and closed == []
         await get.aclose()
         assert closed == [values[0]]
 
@@ -442,8 +100,7 @@ def test_request_context_a_b_a_and_denial_never_borrow_another_client() -> None:
         a = await get()
         identity.set("b")
         b = await get()
-        assert b is not a and b.binding == "b"
-        assert closed == []
+        assert b is not a and b.binding == "b" and closed == []
         identity.set("a")
         assert await get() is a
         identity.set("denied")
@@ -636,8 +293,7 @@ def test_cleanup_retry_retains_only_the_exact_failed_clients() -> None:
         key = "b"
         b = await get()
         results = await asyncio.gather(get.aclose(), get.aclose(), return_exceptions=True)
-        assert all(result is failure for result in results)
-        assert closed == [a, b]
+        assert all(result is failure for result in results) and closed == [a, b]
         fail = False
         await get.aclose()
         assert closed == [a, b, b]
@@ -658,8 +314,7 @@ def test_factory_does_not_reuse_clients_across_event_loops() -> None:
         value = first.run(get())
         with pytest.raises(tnl.TnlError) as caught:
             second.run(get())
-        assert caught.value.code == "sdk.client_context_invalid"
-        assert closed == []
+        assert caught.value.code == "sdk.client_context_invalid" and closed == []
         assert first.run(get()) is value
         first.run(get.aclose())
     asyncio.run(get.aclose())

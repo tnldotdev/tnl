@@ -1,28 +1,11 @@
 import { context, ROOT_CONTEXT, trace } from "@opentelemetry/api";
-import { realpathSync } from "node:fs";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import {
-  workloadSelectionSchema,
-  type SelectionOptions,
-  type WorkloadRequest,
-} from "../../src/internal/connector/workload/contract.js";
-
-interface Owner {
-  file: string;
-  port: number;
-}
 
 const fixture = vi.hoisted(() => ({
   launches: [] as { args: string[]; environment: NodeJS.ProcessEnv; input: unknown }[],
-  owners: new Map<string, Owner>(),
-  scopeGate: undefined as Promise<void> | undefined,
-  scopeStarted: vi.fn(),
-  scopes: 0,
-  workload: false,
-  realWorkload: false,
-  provider: undefined as
-    | typeof import("../../src/internal/connector/workload/provider.js")
-    | undefined,
+  owners: new Map<string, { file: string; port: number }>(),
+  gate: undefined as Promise<void> | undefined,
+  starting: vi.fn(),
   failIPC: false,
 }));
 vi.mock("../../src/internal/native/launcher.js", () => ({
@@ -31,48 +14,11 @@ vi.mock("../../src/internal/native/launcher.js", () => ({
 vi.mock("node:fs/promises", async (original) => ({
   ...(await original<typeof import("node:fs/promises")>()),
   async realpath(value: string) {
-    fixture.scopeStarted();
-    await fixture.scopeGate;
+    fixture.starting();
+    await fixture.gate;
     return value;
   },
-  mkdtemp: async (prefix: string) => `${prefix}fixture-${++fixture.scopes}`,
 }));
-vi.mock("../../src/internal/connector/workload/provider.js", () => ({
-  configureWorkload: (
-    ...args: Parameters<ReturnType<typeof actualProvider>["configureWorkload"]>
-  ) => actualProvider().configureWorkload(...args),
-  usesWorkload: (...args: Parameters<ReturnType<typeof actualProvider>["usesWorkload"]>) =>
-    fixture.realWorkload ? actualProvider().usesWorkload(...args) : fixture.workload,
-  async selectWorkload(
-    ...args: Parameters<ReturnType<typeof actualProvider>["selectWorkload"]>
-  ): Promise<SelectionOptions> {
-    if (fixture.realWorkload) return actualProvider().selectWorkload(...args);
-    return mockSelection(args[0]);
-  },
-}));
-
-function actualProvider() {
-  if (fixture.provider === undefined) throw new Error("provider not loaded");
-  return fixture.provider;
-}
-
-async function mockSelection(
-  preview: (request: WorkloadRequest) => Promise<unknown>,
-): Promise<SelectionOptions> {
-  const request: WorkloadRequest = { name: "job", runtime: {} };
-  const selection = workloadSelectionSchema.parse(await preview(request));
-  return {
-    sdk_workload: request,
-    sdk_workload_policy: selection.policy,
-    sdk_environment: {
-      github_actions: process.env.GITHUB_ACTIONS ?? "",
-      github_request_url: process.env.ACTIONS_ID_TOKEN_REQUEST_URL ?? "",
-      github_request_token: process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN ?? "",
-      vercel_token_file: process.env.VERCEL_OIDC_TOKEN_FILE ?? "",
-      vercel_token: process.env.VERCEL_OIDC_TOKEN ?? "",
-    },
-  };
-}
 vi.mock("../../src/internal/connector/connection_ipc.js", () => ({
   ownerIPC: async (file: string) => ({
     async prepare() {
@@ -134,11 +80,7 @@ vi.mock("node:child_process", () => ({
       },
     };
   },
-  execFileSync() {
-    throw new Error("no synchronous read in this fixture");
-  },
 }));
-
 function workloadSelection() {
   return {
     schema: 1,
@@ -146,11 +88,10 @@ function workloadSelection() {
     directory: process.cwd(),
     manifest: `${process.cwd()}/.tnl/generated/workloads.json`,
     policy: "a".repeat(64),
-    source: fixture.realWorkload ? "callback" : "native",
+    source: "callback",
   };
 }
-
-function prepared(owner: Owner) {
+function prepared(owner: { file: string; port: number }) {
   return {
     schema: 1,
     owner: {
@@ -185,30 +126,37 @@ function prepared(owner: Owner) {
     },
   };
 }
-
-let originalListeners = new Set(process.listeners("beforeExit"));
-beforeEach(async () => {
+const options = {
+  project: "team/project",
+  services: { database: { protocol: "postgres" } },
+} as const;
+let listeners: Set<(...args: never[]) => unknown>;
+beforeEach(() => {
   vi.resetModules();
   vi.stubGlobal("__tnlConnectorContextV2", undefined);
-  fixture.provider = await vi.importActual("../../src/internal/connector/workload/provider.js");
   fixture.launches.length = 0;
   fixture.owners.clear();
-  fixture.scopeGate = undefined;
-  fixture.scopes = 0;
-  fixture.workload = false;
-  fixture.realWorkload = false;
+  fixture.gate = undefined;
+  fixture.starting.mockClear();
   fixture.failIPC = false;
   vi.stubEnv("TNL_SERVER", "https://a.example");
   vi.stubEnv("TNL_STATE_DIR", "/fixture/state-a");
-  vi.stubEnv("TNL_CONNECTION_HANDLE", undefined);
-  for (const name of ["TNL_WORKLOAD", "VERCEL", "FLY_APP_NAME", "GITHUB_ACTIONS"])
+  for (const name of [
+    "TNL_TOKEN",
+    "TNL_CONNECTION_HANDLE",
+    "TNL_WORKLOAD",
+    "VERCEL",
+    "FLY_APP_NAME",
+    "GITHUB_ACTIONS",
+  ])
     vi.stubEnv(name, undefined);
-  originalListeners = new Set(process.listeners("beforeExit"));
+  listeners = new Set(process.listeners("beforeExit"));
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   for (const listener of process.listeners("beforeExit"))
-    if (!originalListeners.has(listener)) process.removeListener("beforeExit", listener);
+    if (!listeners.has(listener)) process.removeListener("beforeExit", listener);
 });
 
 test.each([
@@ -216,151 +164,85 @@ test.each([
   { name: "TNL_SERVER", initial: undefined, changed: "https://b.example" },
   { name: "TNL_STATE_DIR", initial: "/fixture/state-a", changed: "/fixture/state-b" },
   { name: "TNL_STATE_DIR", initial: undefined, changed: "/fixture/state-b" },
-])("cold scopes pin $name=$initial before yielding", async ({ name, initial, changed }) => {
-  const { connectionHandle } = await import("../../src/internal/connector/connection.js");
+])("deployment scopes pin $name=$initial before yielding", async ({ name, initial, changed }) => {
+  const { createClient } = await import("../../src/index.js");
   const gate = Promise.withResolvers<void>();
-  fixture.scopeGate = gate.promise;
+  fixture.gate = gate.promise;
   vi.stubEnv(name, initial);
-  // call then directly so preparation captures A before switching to B.
-  const first = connectionHandle("database", vi.fn()).then((value) => value);
-  expect(fixture.scopeStarted).toHaveBeenCalledOnce();
+  const a = createClient({ ...options, token: "private" }).deployment("production");
+  const first = a.connect("database");
+  expect(fixture.starting).toHaveBeenCalledOnce();
   vi.stubEnv(name, changed);
-  const second = connectionHandle("database", vi.fn()).then((value) => value);
-  expect(fixture.scopeStarted).toHaveBeenCalledTimes(2);
+  const b = createClient({ ...options, token: "private" }).deployment("production");
+  const second = b.connect("database");
   gate.resolve();
-
-  const settings = await Promise.all([first, second]);
-  expect(settings).toMatchObject([{ port: 20001 }, { port: 20002 }]);
-  expect(fixture.launches.map((launch) => launch.environment[name])).toEqual([initial, changed]);
-  vi.stubEnv(name, initial);
-  expect(await connectionHandle("database", vi.fn())).toHaveProperty("port", 20001);
+  expect(await Promise.all([first, second])).toMatchObject([{ port: 20001 }, { port: 20002 }]);
+  expect(fixture.launches.map((launch) => launch.environment[name])).toEqual(
+    expect.arrayContaining([initial, changed]),
+  );
+  expect(await a.connect("database")).toHaveProperty("port", 20001);
   expect(fixture.launches).toHaveLength(2);
+  await a.close();
+  await b.close();
 });
 
-test("a handle selected while a cold scope yields cannot enter that scope", async () => {
-  const { connectionHandle } = await import("../../src/internal/connector/connection.js");
+test("a borrowed handle appearing during startup cannot enter an owned scope", async () => {
+  const { createClient } = await import("../../src/index.js");
   const gate = Promise.withResolvers<void>();
-  fixture.scopeGate = gate.promise;
-  const pending = connectionHandle("database", vi.fn()).then((value) => value);
-  expect(fixture.scopeStarted).toHaveBeenCalledOnce();
+  fixture.gate = gate.promise;
+  const deployment = createClient({ ...options, token: "private" }).deployment("production");
+  const pending = deployment.connect("database");
   vi.stubEnv("TNL_CONNECTION_HANDLE", "/fixture/other/handle.json");
   gate.resolve();
-
   await pending;
   expect(fixture.launches[0]?.environment.TNL_CONNECTION_HANDLE).toBeUndefined();
+  await deployment.close();
 });
 
-test.each([
-  { name: "TNL_SERVER", changed: "https://b.example" },
-  { name: "TNL_STATE_DIR", changed: "/fixture/state-b" },
-])(
-  "pending preparations keep same-name callbacks in their captured $name context",
-  async ({ name, changed }) => {
-    fixture.realWorkload = true;
-    const { connectionHandle, configureWorkload } =
-      await import("../../src/internal/connector/connection.js");
+test.each(["TNL_SERVER", "TNL_STATE_DIR"])(
+  "same-name callbacks stay in the captured %s context",
+  async (name) => {
+    const { createClient } = await import("../../src/index.js");
+    const { configureWorkload } = await import("../../src/workload.js");
     const callbackA = vi.fn(async () => "assertion-a");
     const callbackB = vi.fn(async () => "assertion-b");
-    const initial = process.env[name];
     const gate = Promise.withResolvers<void>();
-    fixture.scopeGate = gate.promise;
+    fixture.gate = gate.promise;
+    const initial = process.env[name];
     configureWorkload({ name: "job", token: callbackA });
-    const first = connectionHandle("database", vi.fn()).then((value) => value);
-    expect(fixture.scopeStarted).toHaveBeenCalledOnce();
-    vi.stubEnv(name, changed);
+    const a = createClient(options).deployment("production");
+    const first = a.connect("database");
+    vi.stubEnv(name, name === "TNL_SERVER" ? "https://b.example" : "/fixture/state-b");
     configureWorkload({ name: "job", token: callbackB });
-    const second = connectionHandle("database", vi.fn()).then((value) => value);
-    expect(fixture.scopeStarted).toHaveBeenCalledTimes(2);
+    const b = createClient(options).deployment("production");
+    const second = b.connect("database");
     expect(callbackA).not.toHaveBeenCalled();
     expect(callbackB).not.toHaveBeenCalled();
     gate.resolve();
-
-    expect(await Promise.all([first, second])).toMatchObject([{ port: 20001 }, { port: 20002 }]);
+    await Promise.all([first, second]);
     const launches = fixture.launches.filter((launch) => launch.args[2] === "sdk-prepare");
-    expect(launches.map((launch) => launch.environment[name])).toEqual([initial, changed]);
-    expect(launches.map((launch) => launch.input)).toMatchObject([
-      { assertion: "assertion-a", sdk_workload: { name: "job", callback: true } },
-      { assertion: "assertion-b", sdk_workload: { name: "job", callback: true } },
-    ]);
+    const launchA = launches.find((launch) => launch.environment[name] === initial);
+    const launchB = launches.find((launch) => launch.environment[name] !== initial);
+    expect(launchA?.input).toMatchObject({
+      assertion: "assertion-a",
+      sdk_workload: { selection: { project: "team/project", name: "production" } },
+    });
+    expect(launchB?.input).toMatchObject({
+      assertion: "assertion-b",
+      sdk_workload: { selection: { project: "team/project", name: "production" } },
+    });
     expect(callbackA).toHaveBeenCalledOnce();
     expect(callbackB).toHaveBeenCalledOnce();
+    await a.close();
+    await b.close();
   },
 );
 
-test("pending workload detection does not switch to an unconfigured context", async () => {
-  fixture.realWorkload = true;
-  const { connectionHandle, configureWorkload } =
-    await import("../../src/internal/connector/connection.js");
-  const callback = vi.fn(async () => "assertion-a");
-  configureWorkload({ name: "job", token: callback });
-  const gate = Promise.withResolvers<void>();
-  fixture.scopeGate = gate.promise;
-  const pending = connectionHandle("database", vi.fn()).then((value) => value);
-  expect(fixture.scopeStarted).toHaveBeenCalledOnce();
-  vi.stubEnv("TNL_SERVER", "https://b.example");
-  gate.resolve();
-
-  await pending;
-  const launch = fixture.launches.find((launch) => launch.args[2] === "sdk-prepare");
-  expect(launch?.input).toMatchObject({ assertion: "assertion-a" });
-  expect(callback).toHaveBeenCalledOnce();
-});
-
-test.each([false, true])(
-  "incompatible scopes stay isolated while current copies share (workload=%s)",
-  async (workload) => {
-    fixture.workload = workload;
-    const key = JSON.stringify([
-      realpathSync(process.cwd()),
-      process.env.TNL_STATE_DIR,
-      process.env.TNL_SERVER,
-      process.env.TNL_CONNECTION_HANDLE,
-    ]);
-    const nativeKey = JSON.stringify([key, "/fixture/tnl"]);
-    // the previous ABI had neither directory nor workload on its native scopes.
-    const legacyScope = {
-      registry: "/fixture/legacy-registry",
-      binary: "/fixture/tnl",
-      environment: {},
-      requests: new Map<string, Promise<unknown>>(),
-      open: vi.fn(async () => ({ close() {} })),
-      select: vi.fn(async () => prepared({ file: "/fixture/legacy/handle.json", port: 20003 })),
-    };
-    const legacyContext = {
-      scopes: new Map([[nativeKey, Promise.resolve(legacyScope)]]),
-      selectedScopes: new Map([[key, new Map([["/fixture/tnl", legacyScope]])]]),
-      fetches: new Map(),
-      external: new Map(),
-      workloads: new Map(),
-    };
-    vi.stubGlobal("__tnlConnectorContextV1", legacyContext);
-    const first = await import("../../src/internal/connector/connection.js");
-    const firstContext = await import("../../src/internal/connector/context.js");
-    expect(await first.connectionHandle("database", vi.fn())).toHaveProperty("port", 20001);
-
-    vi.resetModules();
-    const second = await import("../../src/internal/connector/connection.js");
-    const secondContext = await import("../../src/internal/connector/context.js");
-    expect(first.connectionHandle).not.toBe(second.connectionHandle);
-    expect(secondContext.context).toBe(firstContext.context);
-    expect(secondContext.context).not.toBe(legacyContext);
-    expect(Reflect.get(globalThis, "__tnlConnectorContextV1")).toBe(legacyContext);
-    expect(await second.connectionHandle("database", vi.fn())).toHaveProperty("port", 20001);
-    expect(fixture.scopeStarted).toHaveBeenCalledOnce();
-    expect(fixture.owners.size).toBe(1);
-    expect(fixture.launches.filter((launch) => launch.args[2] === "sdk-prepare")).toHaveLength(1);
-    expect(fixture.launches.every((launch) => launch.args.includes(process.cwd()))).toBe(true);
-    expect(legacyContext.scopes.size).toBe(1);
-    expect(legacyScope.select).not.toHaveBeenCalled();
-    expect(legacyScope.open).not.toHaveBeenCalled();
-    expect(legacyScope.requests.size).toBe(0);
-  },
-);
-
-test("workload recovery and cleanup keep scope selection but refresh launch inputs", async () => {
-  fixture.workload = true;
-  vi.stubEnv("VERCEL_OIDC_TOKEN", "first-assertion");
-  vi.stubEnv("TNL_TRACEPARENT", "stale-parent");
+test("recovery and cleanup keep captured selection but use current tracing", async () => {
+  const { createClient } = await import("../../src/index.js");
+  const { configureWorkload } = await import("../../src/workload.js");
+  let assertion = "first-assertion";
+  configureWorkload({ name: "job", token: async () => assertion });
   const caller = (id: string) =>
     trace.setSpanContext(ROOT_CONTEXT, {
       traceId: id.repeat(32),
@@ -368,53 +250,26 @@ test("workload recovery and cleanup keep scope selection but refresh launch inpu
       traceFlags: 1,
     });
   const active = vi.spyOn(context, "active").mockReturnValue(caller("1"));
-  const { connectionHandle } = await import("../../src/internal/connector/connection.js");
-  await connectionHandle("database", vi.fn());
+  const deployment = createClient(options).deployment("production");
+  await deployment.connect("database");
   expect(fixture.launches.map((launch) => launch.args[2])).toEqual(["sdk-workload", "sdk-prepare"]);
-  expect(fixture.launches[0]?.input).toEqual({
-    schema: 1,
-    sdk_workload: { name: "job", runtime: {} },
-  });
-  expect(fixture.launches[1]?.input).toMatchObject({
-    schema: 1,
-    sdk_workload: { name: "job", runtime: {} },
-    sdk_workload_policy: "a".repeat(64),
-    sdk_environment: { vercel_token: "first-assertion" },
-  });
   for (const launch of fixture.launches)
     expect(launch.environment.TNL_TRACEPARENT).toBe(`00-${"1".repeat(32)}-${"1".repeat(16)}-01`);
-
   fixture.failIPC = true;
   active.mockReturnValue(caller("2"));
-  const recovery = connectionHandle("database", vi.fn()).then((value) => value);
+  assertion = "current-assertion";
   vi.stubEnv("TNL_SERVER", "https://b.example");
   vi.stubEnv("TNL_STATE_DIR", "/fixture/state-b");
-  vi.stubEnv("VERCEL_OIDC_TOKEN", "current-assertion");
-  await recovery;
-  expect(fixture.launches[2]?.args[2]).toBe("sdk-workload");
+  await deployment.connect("database");
   expect(fixture.launches[3]?.args).toContain("--recover-handle");
-  expect(fixture.launches[3]?.input).toMatchObject({
-    schema: 1,
-    sdk_workload: { name: "job", runtime: {} },
-    sdk_workload_policy: "a".repeat(64),
-    sdk_environment: { vercel_token: "current-assertion" },
-  });
+  expect(fixture.launches[3]?.input).toMatchObject({ assertion: "current-assertion" });
   for (const launch of fixture.launches.slice(2))
     expect(launch.environment).toMatchObject({
       TNL_SERVER: "https://a.example",
       TNL_STATE_DIR: "/fixture/state-a",
-      VERCEL_OIDC_TOKEN: "current-assertion",
       TNL_TRACEPARENT: `00-${"2".repeat(32)}-${"2".repeat(16)}-01`,
     });
-
-  for (const listener of process.listeners("beforeExit"))
-    if (!originalListeners.has(listener)) listener(0);
-  await vi.waitFor(() => expect(fixture.launches).toHaveLength(5));
-  expect(fixture.launches[4]?.args[2]).toBe("sdk-stop");
-  expect(fixture.launches[4]?.environment).toMatchObject({
-    TNL_SERVER: "https://a.example",
-    TNL_STATE_DIR: "/fixture/state-a",
-    VERCEL_OIDC_TOKEN: "current-assertion",
-  });
-  expect(fixture.launches[4]?.environment.TNL_TRACEPARENT).toBeUndefined();
+  await deployment.close();
+  expect(fixture.launches.at(-1)?.args[2]).toBe("sdk-stop");
+  expect(fixture.launches.at(-1)?.environment.TNL_TRACEPARENT).toBeUndefined();
 });

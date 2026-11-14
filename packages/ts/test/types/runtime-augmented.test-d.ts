@@ -1,4 +1,9 @@
-import { tnl, type TnlProjectFromConfig, type TnlConnectionRegistry } from "@tnldotdev/tnl";
+import {
+  createClient,
+  tnl,
+  type TnlProjectFromConfig,
+  type TnlConnectionRegistry,
+} from "@tnldotdev/tnl";
 import { defineConfig } from "@tnldotdev/tnl/config";
 import { assert, assertType, expectTypeOf, test } from "vitest";
 import { Pool } from "pg";
@@ -35,6 +40,17 @@ declare module "@tnldotdev/tnl" {
   }
 }
 
+const deployment = createClient({
+  project: "team/project",
+  token: "private",
+  services: {
+    api: { protocol: "http" },
+    db: { protocol: "postgres" },
+    mysql: { protocol: "mysql" },
+    cluster: { protocol: "kubernetes" },
+  },
+}).deployment("production");
+
 test("augmentation preserves exact service names and optional factory entries", () => {
   defineConfig(({ worktree }) => {
     expectTypeOf(worktree.label.project).toEqualTypeOf<string>();
@@ -59,10 +75,10 @@ test("augmentation preserves exact service names and optional factory entries", 
   // @ts-expect-error service metadata is exposed directly, without a wrapper.
   void tnl.services.db.metadata;
   // @ts-expect-error unknown connection name.
-  tnl.connect("missing");
+  deployment.connect("missing");
 });
-test("prepared connections expose protocol-owned readonly driver settings", async () => {
-  const db = await tnl.connect("db");
+test("deployment connections expose protocol-owned readonly driver settings", async () => {
+  const db = await deployment.connect("db");
   expectTypeOf(db.host).toEqualTypeOf<"127.0.0.1">();
   expectTypeOf(db.port).toEqualTypeOf<number>();
   expectTypeOf(db.ssl.rejectUnauthorized).toEqualTypeOf<true>();
@@ -76,7 +92,7 @@ test("prepared connections expose protocol-owned readonly driver settings", asyn
   db.port = 5432;
   // @ts-expect-error TLS verification is read-only.
   db.ssl.servername = "other.example";
-  const mysql = await tnl.connect("mysql");
+  const mysql = await deployment.connect("mysql");
   assertType<string>(mysql.host);
   expectTypeOf(mysql.ssl.servername).toEqualTypeOf<string>();
   expectTypeOf(mysql.ssl.rejectUnauthorized).toEqualTypeOf<true>();
@@ -87,16 +103,15 @@ test("prepared connections expose protocol-owned readonly driver settings", asyn
     password: "application-owned",
     database: "app",
   }) satisfies import("mysql2").ConnectionOptions;
-  const cluster = await tnl.connect("cluster");
+  const cluster = await deployment.connect("cluster");
   expectTypeOf(cluster.server).toEqualTypeOf<`https://${string}`>();
   expectTypeOf(cluster.kubeconfig).toEqualTypeOf<string>();
   expectTypeOf(cluster.context).toEqualTypeOf<string>();
-  const api = await tnl.connect("api");
+  const api = await deployment.connect("api");
   assertType<typeof fetch>(api.fetch);
-  const immediateAPI = tnl.connect("api");
-  expectTypeOf(immediateAPI.fetch("/stock")).toEqualTypeOf<Promise<Response>>();
-  // @ts-expect-error HTTP options are read-only before and after preparation.
-  immediateAPI.url = "https://other.example";
+  expectTypeOf(api.fetch("/stock")).toEqualTypeOf<Promise<Response>>();
+  // @ts-expect-error HTTP options are read-only.
+  api.url = "https://other.example";
   // @ts-expect-error HTTP options never expose a local driver port.
   void api.port;
   // @ts-expect-error HTTP clients do not expose TLS keys as metadata.
@@ -114,7 +129,7 @@ test("prepared connections expose protocol-owned readonly driver settings", asyn
 });
 
 test("client factories infer ordinary clients and exact protocol callback settings", async () => {
-  const getDb = tnl.client("db", {
+  const getDb = deployment.client("db", {
     create(connection) {
       expectTypeOf(connection).toEqualTypeOf<TnlConnectionRegistry["postgres"]>();
       return new Pool({
@@ -132,7 +147,7 @@ test("client factories infer ordinary clients and exact protocol callback settin
   expectTypeOf(getDb()).toEqualTypeOf<Promise<Pool>>();
   expectTypeOf(await getDb()).toEqualTypeOf<Pool>();
   expectTypeOf(getDb.close()).toEqualTypeOf<Promise<void>>();
-  const getAsync = tnl.client("db", {
+  const getAsync = deployment.client("db", {
     async create(connection) {
       return new Pool({ ...connection, user: "app", database: "app" });
     },
@@ -143,7 +158,7 @@ test("client factories infer ordinary clients and exact protocol callback settin
   });
   expectTypeOf(getAsync()).toEqualTypeOf<Promise<Pool>>();
   // @ts-expect-error factory service names come from the generated project.
-  tnl.client("missing", { create: () => ({}), close: () => {} });
+  deployment.client("missing", { create: () => ({}), close: () => {} });
 });
 
 type Union = TnlProjectFromConfig<{
@@ -154,17 +169,16 @@ test("a service protocol union remains a union", () => {
   expectTypeOf(union.services.choice.protocol).toEqualTypeOf<"postgres" | "mysql">();
 });
 
-test("immediate settings are awaitable but spreading keeps only driver settings", async () => {
-  const immediate = tnl.connect("db");
-  expectTypeOf(immediate.host).toEqualTypeOf<"127.0.0.1">();
-  assertType<PromiseLike<TnlConnectionRegistry["postgres"]>>(immediate);
-  ({ ...immediate, user: "app", database: "app" }) satisfies import("pg").PoolConfig;
-  const plain = { ...immediate };
-  // @ts-expect-error the non-enumerable preparation method is not copied by spread.
+test("connection settings compose with ordinary driver options", async () => {
+  const settings = await deployment.connect("db");
+  expectTypeOf(settings.host).toEqualTypeOf<"127.0.0.1">();
+  ({ ...settings, user: "app", database: "app" }) satisfies import("pg").PoolConfig;
+  const plain = { ...settings };
+  // @ts-expect-error resolved driver settings are not preparation handles.
   void plain.then;
   const plainAwaited = await plain;
   expectTypeOf(plainAwaited.port).toEqualTypeOf<number>();
-  // @ts-expect-error awaiting a settings spread does not turn it back into a handle.
+  // @ts-expect-error awaiting settings does not turn them into a handle.
   void plainAwaited.then;
   // @ts-expect-error metadata is read-only.
   tnl.services.db.port = 5432;

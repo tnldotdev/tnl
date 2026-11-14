@@ -325,10 +325,9 @@ export default defineConfig({
       deployment: "production",
       services: ["orders"],
       github: {
-        // your GitHub repo details
-        repository: "acme/demo",
         workflow: ".github/workflows/deploy.yml",
-        ref: "refs/heads/main",
+        branch: "main",
+        events: ["push"],
       },
     },
   },
@@ -357,12 +356,18 @@ The action uses GitHub's OIDC with secure, short-lived tokens to connect to the 
 ```ts
 // drizzle.config.ts
 import { defineConfig } from "drizzle-kit";
-import { tnl } from "@tnldotdev/tnl";
+import { createClient } from "@tnldotdev/tnl";
+
+const production = createClient({
+  project: "acme/demo",
+  services: { orders: { protocol: "postgres" } },
+}).deployment("production");
+const database = await production.connect("orders");
 
 export default defineConfig({
   dialect: "postgresql",
   dbCredentials: {
-    ...tnl.connect("orders"),
+    ...database,
     user: "postgres",
     database: "orders",
     password: process.env.DB_PASSWORD!,
@@ -370,7 +375,9 @@ export default defineConfig({
 });
 ```
 
-`tnl.connect("orders")` reads the local host, port, and TLS settings prepared by the action. The db password comes from GitHub secrets.
+The deployment handle reads the job's prepared connection settings without stopping
+the job-owned connector. The db password comes from GitHub secrets. In an
+application, close the deployment handle after the database client has closed.
 
 See [GitHub Actions setup](https://tnl.dev/docs/workloads#connect-a-github-actions-job).
 

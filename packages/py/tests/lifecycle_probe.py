@@ -212,18 +212,25 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
         return original_command(binary, *args, input_value=input_value)
 
     _connections._command = command
-    handle = tnl.connect("database", directory=root)
+    deployment = tnl.create_client(
+        project="acme/project",
+        services={"database": {"protocol": "postgres"}},
+        token="fixture-private",
+    ).deployment("production")
 
     class Client:
-        def __init__(self, connection: tnl.Connection) -> None:
+        def __init__(self, connection: tnl.Connection | tnl.LocalConnection) -> None:
+            assert isinstance(connection, tnl.PostgresConnection)
             self.port = connection.port
 
     closed_clients: list[Client] = []
-    get_client = tnl.client("database", directory=root, create=Client, close=closed_clients.append)
+    get_client = deployment.client("database", create=Client, close=closed_clients.append)
     client_runner = asyncio.Runner()
 
     async def prepare() -> tnl.Connection:
-        return await handle
+        connection = await deployment.connect("database")
+        assert isinstance(connection, tnl.PostgresConnection)
+        return connection
 
     try:
         db = asyncio.run(prepare())
@@ -231,8 +238,8 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
         assert client.port == db.port
         assert isinstance(db, tnl.PostgresConnection)
         held, release = threading.Event(), threading.Event()
-        assert handle._session.scope.entry is not None
-        ipc = handle._session.scope.entry[1]
+        assert deployment._scope.entry is not None
+        ipc = deployment._scope.entry[1]
         assert ipc is not None
         port = ipc.port
         workers: list[threading.Thread] = []
@@ -277,7 +284,7 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
 
             def prepare_busy() -> None:
                 try:
-                    handle._session.scope.prepare("database", None)
+                    deployment._scope.prepare("database", None)
                 except BaseException as error:
                     failures.append(error)
 
@@ -293,7 +300,7 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
             if not locked:
                 held.set()
                 return
-            with _connections._sessions_lock, handle._session.lock:
+            with deployment._scope.lock, deployment._acquisitions["database"]._session.lock:
                 held.set()
                 assert release.wait(10)
 
@@ -333,21 +340,19 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
                 raise AssertionError("child reused inherited IPC")
             # run inherited exit hooks even if the child never uses a handle.
             atexit._run_exitfuncs()
-            handle.close()
+            asyncio.run(deployment.aclose())
             try:
-                handle.snapshot()
+                asyncio.run(deployment.connect("database"))
             except tnl.TnlError as error:
                 assert error.code == "sdk.connection_closed"
             else:
                 raise AssertionError("inherited handle remained usable")
-            fresh = tnl.connect("database", directory=root)
-            assert fresh._session is not handle._session
-            try:
-                fresh.snapshot()
-            except tnl.TnlError as error:
-                assert error.code == "sdk.connection_not_prepared"
-            else:
-                raise AssertionError("child reused parent capability")
+            fresh = tnl.create_client(
+                project="acme/project",
+                services={"database": {"protocol": "postgres"}},
+                token="fixture-private",
+            ).deployment("production")
+            assert fresh._scope is not deployment._scope and fresh._scope.registry is None
             os._exit(0)
         release.set()
         thread.join(5)
@@ -372,7 +377,7 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
             with db.ssl.wrap_socket(raw, server_hostname=db.server_hostname) as stream:
                 stream.sendall(b"ping")
                 assert stream.recv(4) == b"ping"
-        handle.close()
+        client_runner.run(deployment.aclose())
         process.wait(timeout=5)
     finally:
         client_runner.close()

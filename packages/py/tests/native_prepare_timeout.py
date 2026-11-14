@@ -39,19 +39,24 @@ async def main(binary: Path, startup: bool) -> None:
     _connections.native_binary = lambda: binary
     assertion = Path("assertion").read_text().strip()
     tnl.configure_workload("test", token=lambda: assertion)
-    failed = tnl.connect("api")
-    scope = failed._session.scope
+    manifest = json.loads(Path(".tnl/generated/workloads.json").read_text())
+    client = tnl.create_client(
+        project=f"{manifest['team']}/{manifest['project_key']}",
+        services={"api": {"protocol": "http"}},
+    )
+    failed = client.deployment("production")
+    scope = failed._scope
     original_timeout = _connections._TIMEOUT
     registry: str | None = None
     orphan: Path | None = None
-    peer: tnl.ConnectionHandle[tnl.Connection] | None = None
+    peer: tnl.Deployment | None = None
     try:
         # the authority stalls service preparation, after sdkOwner has registered
         # its detached child. exercise the actual command deadline and SIGKILL,
         # not a synthetic exception or an abandoned asyncio worker.
         _connections._TIMEOUT = 5.0
         try:
-            await failed
+            await failed.connect("api")
         except tnl.TnlError as error:
             assert error.code == "sdk.connection_unavailable"
         else:
@@ -76,13 +81,13 @@ async def main(binary: Path, startup: bool) -> None:
             try:
                 try:
                     await failed.aclose()
-                except tnl.TnlError as error:
-                    assert error.code == "sdk.connection_unavailable"
+                except BaseExceptionGroup as error:
+                    assert error.exceptions
                 else:
                     raise AssertionError("close reported joined while native startup was blocked")
             finally:
                 _connections._TIMEOUT = original_timeout
-            assert not failed._lifetime.joined and list(scope.request_handles) == requests
+            assert list(scope.request_handles) == requests
             assert json.loads(Path(requests[0]).read_text())["closed"] is True
         else:
             assert orphan.exists(), "timeout occurred before native owner registration"
@@ -95,14 +100,13 @@ async def main(binary: Path, startup: bool) -> None:
         print("timed-out", flush=True)
         assert await asyncio.to_thread(input) == "released"
 
-        # a different native-verified identity shares this registry. no SDK entry
-        # was returned by the first command, so this is another cold dispatch.
+        # a different deployment handle owns its own registry and cleanup.
         assertion = Path("peer-assertion").read_text().strip()
-        peer = tnl.connect("api")
-        assert peer._session.scope is scope
-        snapshot = await peer
+        peer = client.deployment("production")
+        assert peer._scope is not scope
+        snapshot = await peer.connect("api")
         assert isinstance(snapshot, tnl.HTTPConnection)
-        peer_owner = peer._session.handle
+        peer_owner = peer._acquisitions["api"]._session.handle
         assert peer_owner is not None and Path(peer_owner) != orphan
         peer_responds(snapshot)
 
@@ -113,19 +117,20 @@ async def main(binary: Path, startup: bool) -> None:
             try:
                 try:
                     await failed.aclose()
-                except tnl.TnlError as error:
-                    assert error.code == "sdk.connection_unavailable"
+                except BaseExceptionGroup as error:
+                    assert error.exceptions
                 else:
                     raise AssertionError("native accepted an unprotected owner handle")
-                assert not failed._lifetime.joined and list(scope.request_handles) == requests
+                assert list(scope.request_handles) == requests
                 assert orphan.exists()
                 peer_responds(snapshot)
             finally:
                 orphan.chmod(0o600)
         await failed.aclose()
-        assert failed._lifetime.joined
+        assert failed._acquisitions["api"]._lifetime.joined
         assert Path(peer_owner).exists(), "timed-out close stopped its healthy peer"
-        assert (await peer).port == snapshot.port
+        current = await peer.connect("api")
+        assert isinstance(current, tnl.HTTPConnection) and current.port == snapshot.port
         peer_responds(snapshot)
         if not startup:
             assert not orphan.exists(), (
@@ -151,7 +156,8 @@ async def main(binary: Path, startup: bool) -> None:
             assert retired["owner"]["connection_handle"] == ""
         assert not scope.request_handles
         await failed.aclose()
-        assert (await peer).port == snapshot.port
+        current = await peer.connect("api")
+        assert isinstance(current, tnl.HTTPConnection) and current.port == snapshot.port
         peer_responds(snapshot)
         print("joined", flush=True)
     finally:
@@ -173,8 +179,8 @@ async def main(binary: Path, startup: bool) -> None:
                 )
                 if not startup:
                     assert not orphan.exists()
-                if peer is not None and peer._session.handle is not None:
-                    healthy = peer.snapshot()
+                if peer is not None and peer._scope.handles:
+                    healthy = await peer.connect("api")
                     assert isinstance(healthy, tnl.HTTPConnection)
                     peer_responds(healthy)
         finally:

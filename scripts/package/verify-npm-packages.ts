@@ -66,7 +66,7 @@ for (const manager of ["npm", "pnpm"]) {
         `
       import assert from 'node:assert/strict';
       import {createRequire} from 'node:module';
-      import {tnl, TnlError} from '@tnldotdev/tnl';
+       import {tnl, TnlError, createClient} from '@tnldotdev/tnl';
       import {defineConfig} from '@tnldotdev/tnl/config';
       import {withTnl} from '@tnldotdev/tnl/next';
       import vite from '@tnldotdev/tnl/vite';
@@ -75,17 +75,20 @@ for (const manager of ["npm", "pnpm"]) {
       const cjs = createRequire(import.meta.url)('@tnldotdev/tnl');
       assert.equal(cjs.tnl, tnl);
       assert.equal(typeof TnlError, 'function');
-       for (const value of [tnl.prepare, tnl.open, tnl.connect, tnl.client, defineConfig, withTnl, vite, configureWorkload]) assert.equal(typeof value, 'function');
+       for (const value of [tnl.prepare, tnl.open, createClient, defineConfig, withTnl, vite, configureWorkload]) assert.equal(typeof value, 'function');
+       assert.equal('connect' in tnl || 'client' in tnl, false);
        assert.equal(typeof createHttpClient, 'function');
        for (const value of [deployments.create, deployments.list, deployments.get, deployments.update, deployments.delete, publishers.createEnrollment, publishers.list, publishers.get, publishers.revoke]) assert.equal(typeof value, 'function');
-      for (const root of [{tnl, TnlError}, cjs]) {
-        const getClient = root.tnl.client('database', {
+       for (const root of [{tnl, TnlError, createClient}, cjs]) {
+         const deployment = root.createClient({project:'team/project', services:{database:{protocol:'postgres'}}}).deployment('local');
+         const getClient = deployment.client('database', {
           create() { throw new Error('factory creation must remain lazy'); },
           close() { throw new Error('unstarted factory has no driver to close'); },
         });
-        assert.equal(typeof getClient, 'function');
-        await getClient.close();
-        await assert.rejects(getClient(), error => error instanceof root.TnlError && error.code === 'sdk.client_closed');
+         assert.equal(typeof getClient, 'function');
+         await getClient.close();
+         await assert.rejects(getClient(), error => error instanceof root.TnlError && error.code === 'sdk.client_closed');
+         await deployment.close();
       }
     `,
       ],
@@ -103,10 +106,8 @@ for (const manager of ["npm", "pnpm"]) {
       const esm = await import('@tnldotdev/tnl');
       const cjs = createRequire(import.meta.url)('@tnldotdev/tnl');
       for (const root of [esm, cjs]) {
-        assert.throws(() => root.tnl.client('database', {
-          create() { throw new Error('browser must not invoke driver callbacks'); },
-          close() { throw new Error('browser must not invoke driver callbacks'); },
-        }), error => error instanceof root.TnlError && error.code === 'sdk.connection_server_only');
+        assert.equal('connect' in root.tnl || 'client' in root.tnl, false);
+        assert.throws(() => root.createClient({project:'team/project'}), error => error instanceof root.TnlError && error.code === 'sdk.connection_server_only');
       }
     `,
       ],

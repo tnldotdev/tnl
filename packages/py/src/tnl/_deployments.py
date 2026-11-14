@@ -10,12 +10,25 @@ import ssl
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import ClassVar, Literal
+from urllib.parse import urlsplit
 
 from ._client import ClientFactory, _Factory
-from ._connections import Connection, _command, _error, _object, _Scope, _text, _TLSConnection
+from ._connections import (
+    Connection,
+    ConnectionAcquisition,
+    HTTPConnection,
+    KubernetesConnection,
+    _command,
+    _error,
+    _object,
+    _Scope,
+    _text,
+    _TLSConnection,
+)
 from ._management_client import Deployments, Management, Publishers
 from ._protocol import TnlError, hostname, service_name
+from ._workload import capture_workload, uses_workload
 
 type Protocol = Literal["http", "postgres", "mysql", "tcp", "kubernetes"]
 
@@ -31,7 +44,62 @@ class LocalPostgresConnection:
         return "<tnl local PostgreSQL connection>"
 
 
-type DeploymentConnection = Connection | LocalPostgresConnection
+@dataclass(frozen=True, slots=True, repr=False)
+class LocalMySQLConnection:
+    host: str
+    port: int
+    ssl: ssl.SSLContext | Literal[False]
+    server_hostname: str | None = None
+    protocol: ClassVar[Literal["mysql"]] = "mysql"
+
+    def __repr__(self) -> str:
+        return "<tnl local MySQL connection>"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class LocalTCPConnection:
+    host: str
+    port: int
+    ssl: ssl.SSLContext | Literal[False]
+    server_hostname: str | None = None
+    protocol: ClassVar[Literal["tcp"]] = "tcp"
+
+    def __repr__(self) -> str:
+        return "<tnl local TCP connection>"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class LocalHTTPConnection:
+    host: str
+    port: int
+    url: str
+    ssl: ssl.SSLContext | Literal[False]
+    server_hostname: str | None = None
+    protocol: ClassVar[Literal["http"]] = "http"
+
+    def __repr__(self) -> str:
+        return "<tnl local HTTP connection>"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class LocalKubernetesConnection:
+    server: str
+    kubeconfig: str
+    context: str
+    protocol: ClassVar[Literal["kubernetes"]] = "kubernetes"
+
+    def __repr__(self) -> str:
+        return "<tnl local Kubernetes connection>"
+
+
+type LocalConnection = (
+    LocalPostgresConnection
+    | LocalMySQLConnection
+    | LocalTCPConnection
+    | LocalHTTPConnection
+    | LocalKubernetesConnection
+)
+type DeploymentConnection = Connection | LocalConnection
 
 
 class Deployment:
@@ -41,20 +109,37 @@ class Deployment:
         if re.fullmatch(r"dpl_[A-Za-z0-9]{22}", name) is None:
             service_name(name)
         self._local = name == "local"
-        if not self._local and token is None:
+        self._project, self._name, self._token = project, name, token
+        self._environment = dict(os.environ)
+        mounted = (
+            self._environment.get("TNL_CONNECTION_HANDLE")
+            if token is None and not self._local
+            else None
+        )
+        source = capture_workload()
+        self._workload = (
+            source
+            if not self._local and token is None and mounted is None and uses_workload(source)
+            else None
+        )
+        if not self._local and token is None and mounted is None and self._workload is None:
             raise TnlError("sdk.configuration_invalid", "supply an approved deployment credential")
         self._services = dict(services)
         self._scope = _Scope(
             str(Path.cwd().resolve()),
-            None,
-            deployment={
+            mounted,
+            deployment=None
+            if token is None
+            else {
                 "project": project,
                 "name": name,
                 "token": token,
                 "services": list(services),
             },
+            selection={"project": project, "name": name},
         )
         self._pid = os.getpid()
+        self._acquisitions: dict[str, ConnectionAcquisition] = {}
         self._closed = False
         self._pending: set[asyncio.Task[tuple[object, DeploymentConnection]]] = set()
         self._factories: set[ClientFactory[object]] = set()
@@ -80,7 +165,12 @@ class Deployment:
                 if self._closed:
                     raise _error("closed")
                 return value
-            connection, owner = await asyncio.to_thread(self._scope.prepare, name, None)
+            acquisition = self._acquisitions.get(name)
+            if acquisition is None:
+                acquisition = ConnectionAcquisition(self._scope, name, self._workload)
+                self._acquisitions[name] = acquisition
+            connection = await acquisition.prepare()
+            owner = acquisition._session
             if self._closed:
                 raise _error("closed")
             if connection.protocol != self._services[name]:
@@ -94,6 +184,10 @@ class Deployment:
             )
             if isinstance(connection, _TLSConnection):
                 binding += (connection.server_hostname, connection.ca)
+            if isinstance(connection, (HTTPConnection, KubernetesConnection)):
+                binding += (connection.url,)
+            if isinstance(connection, KubernetesConnection):
+                binding += (connection.kubeconfig, connection.context)
             return binding, connection
 
         work = asyncio.create_task(prepare())
@@ -102,11 +196,8 @@ class Deployment:
         # cancellation releases this waiter, not the thread or its cleanup owner.
         return await asyncio.shield(work)
 
-    def _local_connection(self, name: str) -> tuple[object, LocalPostgresConnection]:
-        if self._services[name] != "postgres":
-            raise TnlError(
-                "sdk.configuration_invalid", "local access requires a PostgreSQL service"
-            )
+    def _local_connection(self, name: str) -> tuple[object, LocalConnection]:
+        protocol = self._services[name]
         raw = _command(
             self._scope.binary(),
             "local",
@@ -115,13 +206,27 @@ class Deployment:
             "--service",
             name,
             "--protocol",
-            "postgres",
+            protocol,
         )
-        value = _object(raw, {"schema", "protocol", "host", "port", "ssl", "binding"})
+        value = _object(
+            raw,
+            {
+                "schema",
+                "protocol",
+                "host",
+                "port",
+                "ssl",
+                "binding",
+                "url",
+                "server",
+                "kubeconfig",
+                "context",
+            },
+        )
         host, port, binding = value.get("host"), value.get("port"), value.get("binding")
         if (
             value.get("schema") != 1
-            or value.get("protocol") != "postgres"
+            or value.get("protocol") != protocol
             or not isinstance(host, str)
             or type(port) is not int
             or not 1 <= port <= 65535
@@ -135,7 +240,7 @@ class Deployment:
         except ValueError:
             raise _error("invalid") from None
         trust: ssl.SSLContext | Literal[False] = False
-        name_tls = None
+        name_tls: str | None = None
         if "ssl" in value:
             tls = _object(value["ssl"], {"servername", "rejectUnauthorized", "ca"})
             if tls.get("rejectUnauthorized") is not True:
@@ -145,7 +250,46 @@ class Deployment:
                 trust = ssl.create_default_context(cadata=_text(tls["ca"]) if "ca" in tls else None)
             except (ValueError, ssl.SSLError):
                 raise _error("invalid") from None
-        return binding, LocalPostgresConnection(host, port, trust, name_tls)
+        connection: LocalConnection
+        if protocol in {"postgres", "mysql", "tcp"}:
+            if any(key in value for key in ("url", "server", "kubeconfig", "context")):
+                raise _error("invalid")
+            if protocol == "postgres":
+                connection = LocalPostgresConnection(host, port, trust, name_tls)
+            elif protocol == "mysql":
+                connection = LocalMySQLConnection(host, port, trust, name_tls)
+            else:
+                connection = LocalTCPConnection(host, port, trust, name_tls)
+        elif protocol == "http":
+            if any(key in value for key in ("server", "kubeconfig", "context")):
+                raise _error("invalid")
+            url = _text(value.get("url"))
+            try:
+                parsed = urlsplit(url)
+                if (
+                    parsed.scheme != ("https" if name_tls else "http")
+                    or parsed.hostname != (name_tls or host)
+                    or parsed.port != port
+                    or parsed.path
+                    or parsed.query
+                    or parsed.fragment
+                    or parsed.username
+                    or parsed.password
+                ):
+                    raise _error("invalid")
+            except ValueError:
+                raise _error("invalid") from None
+            connection = LocalHTTPConnection(host, port, url, trust, name_tls)
+        else:
+            if trust is False or any(key in value for key in ("url",)):
+                raise _error("invalid")
+            server = _text(value.get("server"))
+            kubeconfig, context = _text(value.get("kubeconfig")), _text(value.get("context"))
+            server_host = f"[{host}]" if ":" in host else host
+            if server != f"https://{server_host}:{port}":
+                raise _error("invalid")
+            connection = LocalKubernetesConnection(server, kubeconfig, context)
+        return binding, connection
 
     async def connect(self, name: str) -> DeploymentConnection:
         return (await self._acquire(name))[1]
@@ -192,6 +336,11 @@ class Deployment:
                     failures.append(error)
                 else:
                     self._factories.discard(factory)
+            for acquisition in self._acquisitions.values():
+                try:
+                    await acquisition.aclose()
+                except BaseException as error:
+                    failures.append(error)
             try:
                 await asyncio.to_thread(self._scope.stop)
             except BaseException as error:
@@ -201,10 +350,11 @@ class Deployment:
 
         if self._closing is None:
             self._closing = asyncio.create_task(cleanup())
+        closing = self._closing
         try:
-            await asyncio.shield(self._closing)
+            await asyncio.shield(closing)
         finally:
-            if self._closing.done():
+            if closing.done() and self._closing is closing:
                 self._closing = None
 
     async def __aenter__(self) -> Deployment:

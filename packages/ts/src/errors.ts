@@ -9,7 +9,6 @@ export type TnlErrorCode =
   | "sdk.service_unprepared"
   | "sdk.connection_unavailable"
   | "sdk.local_connection_unavailable"
-  | "sdk.connection_unprepared"
   | "sdk.connection_server_only"
   | "sdk.client_closed"
   | "sdk.client_capacity"
@@ -92,16 +91,11 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
     message:
       "could not resolve the local PostgreSQL listener; check the project target and Docker, then try again",
   },
-  "sdk.connection_unprepared": {
-    class: "unavailable",
-    retry: "after_change",
-    message:
-      "connection settings are not prepared; await tnl.connect first or set TNL_CONNECTION_HANDLE to a prepared native handle",
-  },
   "sdk.connection_server_only": {
     class: "unavailable",
     retry: "after_change",
-    message: "connector connections require Node.js or Bun; call tnl.connect from server code",
+    message:
+      "connector connections require Node.js or Bun; create a deployment client in server code",
   },
   "sdk.client_closed": {
     class: "invalid",
@@ -116,8 +110,7 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
   "sdk.workload_required": {
     class: "invalid",
     retry: "after_change",
-    message:
-      "select one saved workload with TNL_WORKLOAD or configureWorkload before calling tnl.connect",
+    message: "select one saved workload with TNL_WORKLOAD or configureWorkload before connecting",
   },
   "sdk.workload_manifest_invalid": {
     class: "invalid",
