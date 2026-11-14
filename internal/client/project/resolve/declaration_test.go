@@ -38,6 +38,24 @@ func TestRemoteHTTPSettingsInheritDefaultsWithoutCreatingPublicURL(t *testing.T)
 	}
 }
 
+func TestRemoteDeclarationKeepsExposureOnEachService(t *testing.T) {
+	project := clientproject.Project{Config: config.TNL{
+		Deployment: "production",
+		Services: config.Services{
+			"api": {Public: new(true), Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://app.internal:3000"))}},
+			"db":  {Public: new(false), Protocol: new("postgres"), Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("db.internal:5432"))}},
+		},
+	}}
+	declaration, err := Declaration(t.Context(), project, appliedTestContext(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, db := declaration.Services["api"], declaration.Services["db"]
+	if api.Public == nil || !*api.Public || db.Public == nil || *db.Public || api.PublicUrl != nil || db.PublicUrl != nil || declaration.Settings == nil || *declaration.Settings.Public {
+		t.Fatal("declaration broadened placement, HTTP resource kind, or another service")
+	}
+}
+
 func TestProjectDeclarationUsesPublicURLPresenceAndPreservesPolicyLimitsAndGrantIntent(t *testing.T) {
 	deployment := "cloud"
 	remote := config.Target("http://api.internal:8080")

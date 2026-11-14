@@ -64,6 +64,7 @@ type ServiceAccess struct {
 type Service struct {
 	Name       *string        `json:"name,omitempty" yaml:"name,omitempty" jsonschema_description:"Saved name; defaults to the configuration key."`
 	Access     *ServiceAccess `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"Declare team access for this service or public URL."`
+	Public     *bool          `json:"public,omitempty" yaml:"public,omitempty"`
 	Inspection *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Override local inspection capture and retention for this service."`
 	Tunnel     *Tunnel        `json:"public_url,omitempty" yaml:"public_url,omitempty" jsonschema_description:"Enable an HTTP public URL. Local URLs belong to the developer preview; remote saved URLs belong to the selected deployment."`
 	Protocol   *string        `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=tcp,enum=mysql,enum=postgres,enum=kubernetes" jsonschema_description:"Defaults to http. Protocol selects native client guidance, never public exposure or target TLS."`

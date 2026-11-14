@@ -54,6 +54,9 @@ func appliedLocalTargetDescriptor(target, protocol string) (bool, error) {
 }
 
 func normalizeAppliedProjectService(s *ProjectServiceConfiguration, local bool) error {
+	if local && s.Public != nil {
+		return ErrProjectConfigurationInvalid
+	}
 	if s.HTTP != nil {
 		// remote publishers do not run local readiness checks or path mounts.
 		if s.Protocol != "http" {

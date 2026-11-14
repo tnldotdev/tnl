@@ -90,7 +90,9 @@ func TestIntegrationPrivateServiceFirstPublicBindingFencesOldRun(t *testing.T) {
 		t.Fatal("private preparation reserved public capacity", old.ServicePort, err)
 	}
 	r.ExpectedRevision = private.Revision
-	r.Configuration.Settings.Public = true
+	serviceConfiguration := r.Configuration.Services["api"]
+	serviceConfiguration.Public = new(true)
+	r.Configuration.Services["api"] = serviceConfiguration
 	public, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +113,8 @@ func TestIntegrationPrivateServiceFirstPublicBindingFencesOldRun(t *testing.T) {
 	revision := public.Revision
 	for _, enabled := range []bool{false, true} {
 		r.ExpectedRevision = revision
-		r.Configuration.Settings.Public = enabled
+		serviceConfiguration.Public = new(enabled)
+		r.Configuration.Services["api"] = serviceConfiguration
 		changed, err := d.ApplyProjectConfiguration(ctx, r)
 		if err != nil || changed.Services[0].Port != service.Port || changed.Services[0].TrustRevision != service.TrustRevision {
 			t.Fatal("temporary disablement changed the binding", changed, err)
