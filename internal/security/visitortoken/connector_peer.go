@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -24,7 +23,7 @@ func ConnectorSubject(subject Subject) (tunnelv1.VisitorSubject, error) {
 
 // VerifyConnectorPeerSession follows independently checked control delivery and
 // relay receipts. the stream cannot attest its own source, pair or run. this
-// verifies evidence only; the service still binds current policy, owner and C.
+// verifies evidence only; the run owner still binds current policy, owner and C.
 func VerifyConnectorPeerSession(entry tunnelv1.ConnectorPeerVisitorEntry, initial []byte, expected tunnelv1.ConnectorPeerSession, view View, now time.Time) (VerifiedPermission, error) {
 	permission, err := VerifyConnectorPeerRenewalProof(entry, initial, expected, view, now)
 	if err == nil {
@@ -41,7 +40,7 @@ func VerifyConnectorPeerRenewalProof(entry tunnelv1.ConnectorPeerVisitorEntry, i
 	wire := expected
 	wire.ExpiresAt = time.Time{}
 	if entry.Validate() != nil || expected.Validate() != nil || !expected.ExpiresAt.After(now) || entry.Session() != wire ||
-		view.Scope.Kind != visitorscope.Service || view.Scope.ID != expected.ServiceID || view.MetadataRevision < 1 || uint64(view.MetadataRevision) != entry.MetadataRevision {
+		view.Scope != expected.Scope() || view.MetadataRevision < 1 || uint64(view.MetadataRevision) != entry.MetadataRevision {
 		return VerifiedPermission{}, ErrBinding
 	}
 	permission, err := verifySignature(Token(entry.Permission.Token), view, now)

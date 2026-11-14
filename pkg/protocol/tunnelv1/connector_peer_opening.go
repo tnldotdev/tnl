@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 )
 
 var ErrConnectorPeerVisitorOpening = errors.New("tunnelv1: invalid connector peer visitor opening")
@@ -54,17 +55,28 @@ type ConnectorPeerSession struct {
 	ServiceID          string
 	ServiceRunID       string
 	RunNumber          uint64
+	PublicURLID        string
+	PublishRunID       string
+	PublishRunNumber   uint64
 	Subject            VisitorSubject
 	SourceIP           string
 	// ExpiresAt comes from trusted publisher state, not the visitor opening.
 	ExpiresAt time.Time
 }
 
+func (s ConnectorPeerSession) publication() connectorPublication {
+	return connectorPublication{serviceID: s.ServiceID, serviceRunID: s.ServiceRunID, runNumber: s.RunNumber,
+		publicURLID: s.PublicURLID, publishRunID: s.PublishRunID, publishRunNumber: s.PublishRunNumber}
+}
+
+// Scope retains the resource kind supplied by checked control delivery.
+// Validate must succeed before callers use this scope as authority.
+func (s ConnectorPeerSession) Scope() visitorscope.Scope { return s.publication().scope() }
+
 func (s ConnectorPeerSession) Validate() error {
 	address, err := netip.ParseAddr(s.SourceIP)
 	if !opaqueid.Valid(s.PairID, "cpp_") || s.DeliveryGeneration < 1 ||
-		!opaqueid.Valid(s.ServiceID, opaqueid.ServicePrefix) || !opaqueid.Valid(s.ServiceRunID, opaqueid.ServiceRunPrefix) ||
-		s.RunNumber == 0 || s.RunNumber > math.MaxInt64 || s.Subject.Validate() != nil ||
+		!s.publication().valid() || s.Subject.Validate() != nil ||
 		err != nil || !address.IsValid() || address.IsUnspecified() || address.Zone() != "" || address.Unmap().String() != s.SourceIP {
 		return ErrConnectorPeerVisitorOpening
 	}
@@ -85,9 +97,12 @@ type ConnectorPeerVisitorEntry struct {
 	PairID              string                     `json:"pair_id"`
 	DeliveryID          string                     `json:"delivery_id"`
 	DeliveryGeneration  int64                      `json:"delivery_generation"`
-	ServiceID           string                     `json:"service_id"`
-	ServiceRunID        string                     `json:"service_run_id"`
-	RunNumber           uint64                     `json:"run_number"`
+	ServiceID           string                     `json:"service_id,omitempty"`
+	ServiceRunID        string                     `json:"service_run_id,omitempty"`
+	RunNumber           uint64                     `json:"run_number,omitempty"`
+	PublicURLID         string                     `json:"public_url_id,omitempty"`
+	PublishRunID        string                     `json:"publish_run_id,omitempty"`
+	PublishRunNumber    uint64                     `json:"publish_run_number,omitempty"`
 	Subject             VisitorSubject             `json:"subject"`
 	SourceIP            string                     `json:"source_ip"`
 	VisitorConnectionID string                     `json:"visitor_connection_id"`
@@ -97,7 +112,9 @@ type ConnectorPeerVisitorEntry struct {
 
 func (e ConnectorPeerVisitorEntry) Session() ConnectorPeerSession {
 	return ConnectorPeerSession{PairID: e.PairID, DeliveryID: e.DeliveryID, DeliveryGeneration: e.DeliveryGeneration,
-		ServiceID: e.ServiceID, ServiceRunID: e.ServiceRunID, RunNumber: e.RunNumber, Subject: e.Subject, SourceIP: e.SourceIP}
+		ServiceID: e.ServiceID, ServiceRunID: e.ServiceRunID, RunNumber: e.RunNumber,
+		PublicURLID: e.PublicURLID, PublishRunID: e.PublishRunID, PublishRunNumber: e.PublishRunNumber,
+		Subject: e.Subject, SourceIP: e.SourceIP}
 }
 
 func (e ConnectorPeerVisitorEntry) Validate() error {
@@ -121,12 +138,18 @@ func ConnectorPeerProofMessage(e ConnectorPeerVisitorEntry, initial []byte) ([]b
 		return nil, ErrConnectorPeerVisitorOpening
 	}
 	tokenHash, initialHash := sha256.Sum256([]byte(e.Permission.Token)), sha256.Sum256(initial)
-	body, err := json.Marshal([]any{e.PairID, e.DeliveryID, e.DeliveryGeneration, e.ServiceID, e.ServiceRunID,
-		e.RunNumber, e.Subject, e.VisitorConnectionID, e.MetadataRevision, tokenHash, e.SourceIP, initialHash})
+	id, runID, number := e.ServiceID, e.ServiceRunID, e.RunNumber
+	domain := "tnl connector peer visitor opening v1\x00"
+	if e.Session().Scope().Kind == visitorscope.PublicURL {
+		id, runID, number = e.PublicURLID, e.PublishRunID, e.PublishRunNumber
+		domain = "tnl public URL connector peer visitor opening v1\x00"
+	}
+	body, err := json.Marshal([]any{e.PairID, e.DeliveryID, e.DeliveryGeneration, id, runID,
+		number, e.Subject, e.VisitorConnectionID, e.MetadataRevision, tokenHash, e.SourceIP, initialHash})
 	if err != nil {
 		return nil, ErrConnectorPeerVisitorOpening
 	}
-	return append([]byte("tnl connector peer visitor opening v1\x00"), body...), nil
+	return append([]byte(domain), body...), nil
 }
 
 func WriteConnectorPeerVisitorEntry(w io.Writer, e ConnectorPeerVisitorEntry) error {

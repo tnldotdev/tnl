@@ -208,6 +208,8 @@ func TestPeerConnectorProofMessageBindsEveryField(t *testing.T) {
 func FuzzPeerConnectorVisitorOpening(f *testing.F) {
 	valid := goldenWire(f, "connector-peer-visitor-entry")
 	f.Add(append(append(bytes.Clone(valid), binary.BigEndian.AppendUint32(nil, 5)...), "hello"...))
+	publicURL := goldenWire(f, "public-url-connector-peer-visitor-entry")
+	f.Add(append(append(bytes.Clone(publicURL), binary.BigEndian.AppendUint32(nil, 5)...), "hello"...))
 	f.Add([]byte{0, 0, 0, 0})
 	f.Fuzz(func(t *testing.T, input []byte) {
 		r := &limitedReader{Reader: bytes.NewReader(input), Size: 7}

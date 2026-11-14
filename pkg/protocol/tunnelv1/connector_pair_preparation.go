@@ -35,6 +35,8 @@ type ConnectorPeerPairRelay struct {
 type ConnectorPeerPairProof struct {
 	ServiceID, ServiceRunID, PublisherIdentityID, IdempotencyKey string
 	RunNumber                                                    int64
+	PublicURLID, PublishRunID                                    string
+	PublishRunNumber                                             int64
 	Subject                                                      VisitorSubject
 	Action                                                       string
 	RequestedAt                                                  time.Time
@@ -47,8 +49,10 @@ type ConnectorPeerPairProof struct {
 // renew. the ordered array, outer snake_case and inner Go field names are
 // intentional; neither the HTTP source nor the signature itself is signed.
 func (p ConnectorPeerPairProof) Message() ([]byte, error) {
-	if !opaqueid.Valid(p.ServiceID, opaqueid.ServicePrefix) || !opaqueid.Valid(p.ServiceRunID, opaqueid.ServiceRunPrefix) ||
-		!opaqueid.Valid(p.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) || p.RunNumber < 1 ||
+	publication := connectorPublication{serviceID: p.ServiceID, serviceRunID: p.ServiceRunID, runNumber: uint64(p.RunNumber),
+		publicURLID: p.PublicURLID, publishRunID: p.PublishRunID, publishRunNumber: uint64(p.PublishRunNumber)}
+	if !publication.valid() ||
+		!opaqueid.Valid(p.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) ||
 		p.IdempotencyKey == "" || len(p.IdempotencyKey) > 128 || strings.TrimSpace(p.IdempotencyKey) != p.IdempotencyKey || strings.ContainsRune(p.IdempotencyKey, '\x00') ||
 		p.Subject.Validate() != nil || p.RequestedAt.IsZero() ||
 		(p.Action != "create" && p.Action != "replace" && p.Action != "renew") ||
@@ -58,10 +62,16 @@ func (p ConnectorPeerPairProof) Message() ([]byte, error) {
 		p.ExpectedRelays[0].RelayLease.RelayServiceID == p.ExpectedRelays[1].RelayLease.RelayServiceID {
 		return nil, ErrConnectorPeerPairProof
 	}
-	body, err := json.Marshal([]any{p.Action, p.ServiceID, p.ServiceRunID, p.RunNumber, p.PublisherIdentityID,
+	id, runID, number := p.ServiceID, p.ServiceRunID, p.RunNumber
+	domain := "tnl connector peer pair v1\x00"
+	if p.PublicURLID != "" {
+		id, runID, number = p.PublicURLID, p.PublishRunID, p.PublishRunNumber
+		domain = "tnl public URL connector peer pair v1\x00"
+	}
+	body, err := json.Marshal([]any{p.Action, id, runID, number, p.PublisherIdentityID,
 		p.Subject, p.IdempotencyKey, p.RequestedAt.UTC().Truncate(time.Microsecond), p.PreviousPairID, p.PreviousGeneration, p.ExpectedRelays})
 	if err != nil {
 		return nil, err
 	}
-	return append([]byte("tnl connector peer pair v1\x00"), body...), nil
+	return append([]byte(domain), body...), nil
 }
