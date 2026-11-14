@@ -40,6 +40,9 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
   const requests: BootstrapRequest[] = [];
   let failure: unknown;
   let appOwner: string | undefined;
+  let registeredTarget = "";
+  let publicURL = "";
+  let preparedService = "";
   const server = http.createServer((request, response) => {
     const chunks: Buffer[] = [];
     request.on("error", (error) => {
@@ -77,6 +80,8 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
           response.setHeader("Content-Type", "application/json");
           response.end(options.responseBody ?? "registration failed");
         } else if (["/v1/register", "/v1/renew", "/v1/unregister"].includes(request.url ?? "")) {
+          if (request.url === "/v1/register")
+            registeredTarget = z.object({ target: z.string() }).parse(JSON.parse(body)).target;
           if (request.url === "/v1/unregister") appOwner = undefined;
           response.writeHead(204).end();
         } else if (request.url === "/v1/prepare") {
@@ -101,6 +106,8 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
                   service: "api",
                 }
               : JSON.parse(options.responseBody);
+          publicURL = assignment.publicURL;
+          preparedService = assignment.service;
           response.setHeader("Content-Type", "application/json");
           response.end(
             JSON.stringify({
@@ -110,6 +117,30 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
               hostname: assignment.hostname,
               public_url: assignment.publicURL,
               project: assignment.project,
+            }),
+          );
+        } else if (request.url === "/v1/status") {
+          response.setHeader("Content-Type", "application/json");
+          response.end(
+            JSON.stringify({
+              schema_version: 1,
+              project: "/project",
+              cursor: "cursor",
+              observed_at: new Date().toISOString(),
+              services: [
+                {
+                  service: preparedService,
+                  directory: ".",
+                  registration_id: options.registrationID ?? `reg_${"b".repeat(32)}`,
+                  target: registeredTarget,
+                  registered: true,
+                  routable: true,
+                  ready: false,
+                  readiness: { path: "/" },
+                  public_url: publicURL,
+                  run_number: 1,
+                },
+              ],
             }),
           );
         } else {

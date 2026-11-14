@@ -12,6 +12,75 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 )
 
+func TestWorkerCancellationRetainsIndependentFailures(t *testing.T) {
+	operation, cleanup := errors.New("publication failed"), errors.New("deletion failed")
+	err := independentWorkerFailure(errors.Join(context.Canceled, ErrRegistrationStale, operation, cleanup), true)
+	if !errors.Is(err, operation) || !errors.Is(err, cleanup) || errors.Is(err, context.Canceled) || errors.Is(err, ErrRegistrationStale) {
+		t.Fatal("cancellation erased an independent failure or retained an expected fence", err)
+	}
+	if err := independentWorkerFailure(ErrRegistrationStale, false); !errors.Is(err, ErrRegistrationStale) {
+		t.Fatal("live worker failure was discarded", err)
+	}
+}
+
+func TestUnregisterJoinsWorkerBeforeRetryableExactCleanup(t *testing.T) {
+	operation, cleanup := errors.New("worker failed"), errors.New("cleanup failed")
+	canceled, release, joined := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
+		defer close(joined)
+		<-ctx.Done()
+		close(canceled)
+		<-release
+		return errors.Join(ctx.Err(), operation)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	var attempts atomic.Int32
+	manager.Cleanup = func(Service) error {
+		select {
+		case <-joined:
+		default:
+			t.Error("cleanup ran before the worker joined")
+		}
+		if attempts.Add(1) == 1 {
+			return cleanup
+		}
+		return nil
+	}
+	id, err := manager.Reserve("web", "owner", 1, "https://web.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const target = "http://127.0.0.1:3000"
+	if err := manager.Register(id, "owner", target, "node"); err != nil {
+		t.Fatal(err)
+	}
+	unregistered := make(chan error, 1)
+	go func() { unregistered <- manager.UnregisterTarget(id, "owner", target) }()
+	<-canceled
+	if attempts.Load() != 0 {
+		t.Error("cleanup crossed the worker join")
+	}
+	close(release)
+	if err := <-unregistered; !errors.Is(err, operation) || !errors.Is(err, cleanup) || errors.Is(err, context.Canceled) {
+		t.Fatal("unregister lost an independent failure", err)
+	}
+	if _, found := manager.ServiceForRegistration(id); !found {
+		t.Fatal("failed cleanup lost its registration")
+	}
+	if err := manager.UnregisterTarget(id, "owner", "http://127.0.0.1:4000"); !errors.Is(err, ErrRegistrationStale) || attempts.Load() != 1 {
+		t.Fatal("wrong target retried retained cleanup", err)
+	}
+	if err := manager.UnregisterTarget(id, "owner", target); err != nil || attempts.Load() != 2 {
+		t.Fatal("exact cleanup could not retry", err)
+	}
+	if _, found := manager.ServiceForRegistration(id); found {
+		t.Fatal("successful cleanup retained its registration")
+	}
+}
+
 func newTestManager(t *testing.T, project, root string, services []Service, run Run) (*Manager, error) {
 	t.Helper()
 	project, err := filepath.EvalSymlinks(project)

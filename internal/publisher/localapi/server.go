@@ -120,7 +120,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		publisherprotocol.Write(w, 200, registration)
 	})
-	mux.HandleFunc("POST /v1/ad-hoc/register", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/publications/register", func(w http.ResponseWriter, r *http.Request) {
 		grant := publisherprotocol.Grant(r)
 		if grant.Scope != "invocation" || s.Invocation == nil {
 			Problem(w, publisherprotocol.ErrForbidden)

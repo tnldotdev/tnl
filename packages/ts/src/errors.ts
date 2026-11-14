@@ -39,8 +39,7 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
   "sdk.publication_failed": {
     class: "unavailable",
     retry: "later",
-    message:
-      "the ad-hoc public URL did not become available; check tnl status and the local listener",
+    message: "the public URL did not become available; check tnl status and the local listener",
   },
   "sdk.owner_conflict": {
     class: "conflict",

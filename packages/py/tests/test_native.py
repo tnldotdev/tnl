@@ -117,7 +117,7 @@ def test_publisher_selection_failure_is_authored_without_private_details(
         )
         try:
             with pytest.raises(TnlError, match=hint) as caught:
-                await NativeRuntime().request(endpoint, "ad-hoc/register", {})
+                await NativeRuntime().request(endpoint, "publications/register", {})
             assert caught.value.code == code.replace("runtime.", "sdk.")
             assert "secret provider detail" not in str(caught.value)
         finally:

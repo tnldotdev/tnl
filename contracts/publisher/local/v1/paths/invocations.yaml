@@ -15,10 +15,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/Registration" }
-  /v1/ad-hoc/register:
+  /v1/publications/register:
     post:
       operationId: registerInvocation
-      description: Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+      description: Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Registration acknowledges the target before asynchronous provisioning. Renewal and unregister share the app registration lifetime. Credentials remain private and never enter snapshots, metadata, or logs.
       requestBody:
         required: true
         content:

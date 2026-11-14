@@ -18,7 +18,12 @@ import {
   type RuntimeEndpoint,
   type EndpointSelection,
 } from "./local.js";
-import { listeningTarget, isBunServer, type LocalHTTPServer } from "./register.js";
+import {
+  listeningTarget,
+  isBunServer,
+  observeListenerClose,
+  type LocalHTTPServer,
+} from "./register.js";
 import { projectRuntimeSchema, type ProjectRuntime } from "../project/runtime.js";
 export { startRuntime, runtimeRequest } from "./local.js";
 
@@ -207,6 +212,7 @@ async function createPreparedServiceUntraced(
   };
   let target: CanonicalTarget | undefined;
   let server: LocalHTTPServer | undefined;
+  let detachListener: (() => void) | undefined;
   let revision = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending = Promise.resolve();
@@ -250,6 +256,8 @@ async function createPreparedServiceUntraced(
         };
     });
   const release = async (signal?: AbortSignal) => {
+    detachListener?.();
+    detachListener = undefined;
     clearTimeout(timer);
     const current = state.registration;
     try {
@@ -301,6 +309,7 @@ async function createPreparedServiceUntraced(
     if (state.phase === "released") await reconnect(signal);
     if (target !== bound || server !== listener) observeBound();
     target = bound;
+    detachListener?.();
     server = listener;
     const current = ++revision;
     if (listener !== undefined) {
@@ -311,19 +320,7 @@ async function createPreparedServiceUntraced(
           });
         return Promise.resolve();
       });
-      if (isBunServer(listener)) {
-        const original = listener.stop.bind(listener);
-        listener.stop = async (force) => {
-          try {
-            await original(force);
-          } finally {
-            await stopped();
-          }
-        };
-      } else
-        listener.once("close", () => {
-          void stopped().catch(() => {});
-        });
+      detachListener = observeListenerClose(listener, stopped);
     }
     try {
       await dependencies.request(state.registration.endpoint, "register", registration(), signal);
@@ -406,6 +403,6 @@ function recoverable(error: unknown): boolean {
 function validateOptions(options: PrepareOptions): void {
   parseValue(prepareOptionsSchema, options, "sdk.configuration_invalid");
 }
-function parseAssignment(value: unknown): Assignment {
+export function parseAssignment(value: unknown): Assignment {
   return parseValue(assignmentSchema, value, "sdk.response_invalid");
 }

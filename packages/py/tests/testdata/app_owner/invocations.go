@@ -113,7 +113,7 @@ func serveInvocations() error {
 	}}).Handler()
 	var first sync.Once
 	server := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/ad-hoc/register" {
+		if r.URL.Path != "/v1/publications/register" {
 			boundary.ServeHTTP(w, r)
 			return
 		}

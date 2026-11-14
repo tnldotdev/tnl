@@ -6,13 +6,13 @@ import asyncio
 import json
 import selectors
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 import httpx
 import pytest
 from starlette.types import Receive, Scope, Send
 
-import tnl
 from tnl import _asgi
 from tnl._native import NativeRuntime
 from tnl._protocol import Endpoint, NativeUnavailable, parse_endpoint
@@ -45,6 +45,8 @@ def test_initial_registration_reply_loss_reconciles_and_joins_before_asgi_shutdo
                 service: str | None = None,
                 invocation_id: str | None = None,
                 state_dir: str | None = None,
+                publications: bool = False,
+                environment: Mapping[str, str] | None = None,
             ) -> Endpoint:
                 # only discovery is supplied by the fixture; registration uses
                 # the actual scoped native HTTP handler and SQLite manager.
@@ -77,7 +79,7 @@ def test_initial_registration_reply_loss_reconciles_and_joins_before_asgi_shutdo
                     await send({"type": "http.response.body", "body": b"still serving"})
 
             async def publish() -> None:
-                async with tnl.open(app, directory=tmp_path):
+                async with await _asgi.start_publication(app, directory=tmp_path):
                     pytest.fail("lost initial reply was accepted")
 
             async def marker(name: str) -> None:

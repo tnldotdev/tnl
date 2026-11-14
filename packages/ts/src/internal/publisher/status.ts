@@ -1,7 +1,12 @@
 import * as z from "zod";
 import { TnlError } from "../../errors.js";
 import { parseValue } from "../validation.js";
-import { hostnameSchema, httpsOriginSchema, timestampSchema } from "../values.js";
+import {
+  hostnameSchema,
+  httpsOriginSchema,
+  invocationIDSchema,
+  timestampSchema,
+} from "../values.js";
 
 const textSchema = z.string().max(4096);
 const runNumberSchema = z.int().positive();
@@ -12,7 +17,7 @@ const publicationSchema = z.strictObject({
   process_id: runNumberSchema,
   server: textSchema,
   project: textSchema,
-  service: textSchema,
+  service: textSchema.exactOptional(),
   service_protocol: textSchema.exactOptional(),
   public_url_id: textSchema.exactOptional(),
   publish_run_number: runNumberSchema.exactOptional(),
@@ -29,7 +34,7 @@ const publicationSchema = z.strictObject({
 });
 const observationSchema = z.strictObject({
   registration_id: z.string(),
-  publish_run_number: runNumberSchema,
+  run_number: runNumberSchema,
   checked_at: timestampSchema,
   status: z.int().min(100).max(599).optional(),
   ready: z.boolean(),
@@ -54,7 +59,7 @@ const serviceStatusSchema = z.strictObject({
   registered: z.boolean(),
   routable: z.boolean(),
   ready: z.boolean(),
-  publish_run_number: runNumberSchema.optional(),
+  run_number: runNumberSchema.optional(),
   provisioning_stage: textSchema.optional(),
   readiness: z.strictObject({ path: z.string().startsWith("/").max(4096) }),
   observation: observationSchema.optional(),
@@ -75,7 +80,7 @@ function publicationStatus(item: z.output<typeof serviceStatusSchema>) {
     routable: item.routable,
     ready: item.ready,
     ...(item.public_url === undefined ? {} : { publicURL: item.public_url }),
-    ...(item.publish_run_number === undefined ? {} : { publishRunNumber: item.publish_run_number }),
+    ...(item.run_number === undefined ? {} : { publishRunNumber: item.run_number }),
     ...(item.failure === undefined ? {} : { failure: item.failure }),
   };
 }
@@ -88,21 +93,31 @@ export function parseStatus(
   target: string,
 ): PublicationStatus | undefined {
   const snapshot = parseValue(statusSchema, value, "sdk.response_invalid");
-  if (snapshot.publications?.some((publication) => publication.service !== service))
-    throw new TnlError("sdk.response_invalid");
   const item = snapshot.services[0];
+  if (
+    snapshot.publications?.some(
+      (publication) =>
+        publication.service !== service &&
+        !(
+          invocationIDSchema.safeParse(service).success &&
+          publication.service === undefined &&
+          item?.tunnel_id === publication.tunnel_id
+        ),
+    )
+  )
+    throw new TnlError("sdk.response_invalid");
   if (item === undefined) return undefined;
   if (
     item.service !== service ||
     (item.ready &&
       (item.observation === undefined ||
         item.observation.registration_id !== registrationID ||
-        item.observation.publish_run_number !== item.publish_run_number ||
+        item.observation.run_number !== item.run_number ||
         !item.observation.ready))
   )
     throw new TnlError("sdk.response_invalid");
   if (item.registration_id !== registrationID || item.target !== target) return undefined;
-  if (item.routable && (!item.registered || item.publish_run_number === undefined))
+  if (item.routable && (!item.registered || item.run_number === undefined))
     throw new TnlError("sdk.response_invalid");
   return publicationStatus(item);
 }
