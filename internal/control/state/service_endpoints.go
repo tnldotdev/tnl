@@ -39,8 +39,8 @@ func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service
 	return projectConstraintError(err)
 }
 
-// first allocation changes an exact signed binding for both local and remote
-// services. retained disable/re-enable does not change private run authority.
+// allocation or explicit release changes an exact signed binding for both local
+// and remote services. retained disable/re-enable keeps private run authority.
 // callers hold the service row lock before entering this operation.
 func bindServicePort(ctx context.Context, tx pgx.Tx, service string, port int, public bool, now time.Time) error {
 	if _, err := tx.Exec(ctx, `UPDATE control.service_runs run SET state='closed',closed_at=$3

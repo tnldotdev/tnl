@@ -28,7 +28,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service controlv1.Service, target string, overrides ...publisherservice.RunControl) {
+func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service controlv1.Service, target string, overrides ...publisherservice.RunControl) func() {
 	t.Helper()
 	enrollment, err := f.identity.routes.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: service.TeamId, ServiceId: &service.Id, Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled, Name: "private-http"})
 	if err != nil {
@@ -85,6 +85,12 @@ func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service
 		t.Fatalf("private HTTP publisher failed: %v", err)
 	case <-time.After(12 * time.Second):
 		t.Fatal("private HTTP publisher did not become ready")
+	}
+	return func() {
+		cancel()
+		if err := join(); err != nil {
+			t.Error("stop private HTTP publisher", err)
+		}
 	}
 }
 
