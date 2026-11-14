@@ -54,6 +54,7 @@ class Deployment:
                 "services": list(services),
             },
         )
+        self._pid = os.getpid()
         self._closed = False
         self._pending: set[asyncio.Task[tuple[object, DeploymentConnection]]] = set()
         self._factories: set[ClientFactory[object]] = set()
@@ -63,7 +64,7 @@ class Deployment:
         return "<tnl deployment (private)>"
 
     def _validate(self, name: str) -> None:
-        if self._closed:
+        if self._pid != os.getpid() or self._closed:
             raise _error("closed")
         if name not in self._services:
             raise TnlError("sdk.configuration_invalid", "select a declared service")
@@ -171,6 +172,8 @@ class Deployment:
         return factory
 
     async def aclose(self) -> None:
+        if self._pid != os.getpid():
+            return
         self._closed = True
 
         async def cleanup() -> None:
@@ -205,7 +208,7 @@ class Deployment:
                 self._closing = None
 
     async def __aenter__(self) -> Deployment:
-        if self._closed:
+        if self._pid != os.getpid() or self._closed:
             raise _error("closed")
         return self
 
