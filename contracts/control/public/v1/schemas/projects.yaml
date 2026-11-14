@@ -306,7 +306,7 @@ schemas:
   ProjectServiceHTTP:
     type: object
     additionalProperties: false
-    description: Local readiness and path mounts, or restricted HTTP access and request limits for a saved deployment. The deployment owns its endpoint and reachability.
+    description: Restricted HTTP access and request limits for local and remote services, independent of public endpoint access. Only local bindings support readiness, path mounts, and browser opening. Public URL records retain their access and limits in public_url.
     properties:
       access: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicAccess" }
       limits: { $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits" }

@@ -169,3 +169,97 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 		t.Fatal("release replayed application work", posts.Load())
 	}
 }
+
+func TestIntegrationLocalHTTPServiceRequestLimitsAcrossPublicAndConnectorAccess(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	f := newServiceRuntimeFixture(t, false, nil)
+	process := startSeparatedPrivateIngress(t, f, 0, "quic", nil)
+	startSeparatedPrivateIngress(t, f, 1, "quic", nil)
+	var requests atomic.Int64
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = io.WriteString(w, "limited local HTTP")
+	}))
+	t.Cleanup(target.Close)
+	protocol := controlv1.ServiceProtocolHTTP
+	realized, err := f.identity.routes.RealizeLocalProjectService(t.Context(), "local-http-limits", "api", controlv1.RealizeLocalProjectServiceRequest{
+		TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), WorktreeKey: "checkout",
+		Configuration: controlv1.ProjectServiceConfiguration{
+			Protocol: &protocol, Target: "app", Public: new(true),
+			Http: &controlv1.ProjectServiceHTTP{Limits: &controlv1.ProjectHTTPApplicationLimits{Total: new(2)}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := f.identity.routes.GetService(t.Context(), realized.ServiceId)
+	if err != nil || service.Endpoint == nil || !service.Endpoint.Public {
+		t.Fatal("local HTTP endpoint was not realized", service, err)
+	}
+	person, err := f.identity.authority.IdentityContext(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := connectorstream.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quic, tcp := f.connectors()
+	for round := range 2 {
+		t.Run([]string{"first run", "publisher restart"}[round], func(t *testing.T) {
+			stopPublisher := startPrivateHTTPPublisher(t, f, service, target.Listener.Addr().String())
+			defer stopPublisher()
+			verification := f.visitorRoots.Clone()
+			verification.ServerName = service.Endpoint.Hostname
+			publicTransport := &http.Transport{TLSClientConfig: verification, DialContext: workloadPublicEndpointDialer(t, process.ingresses[0].publicServices, service.Endpoint.Port)}
+			defer publicTransport.CloseIdleConnections()
+			publicClient := &http.Client{Transport: publicTransport, Timeout: 5 * time.Second}
+			publicBase := "https://" + net.JoinHostPort(service.Endpoint.Hostname, strconv.Itoa(service.Endpoint.Port))
+			// unauthorized readiness probes must not consume application budget.
+			awaitServiceHTTPStatus(t, publicClient, publicBase, "", "", http.StatusForbidden)
+			token, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			listener, err := f.identity.state.ListenService(t.Context(), person.Identity.Id, service.Id, "tcp")
+			if err != nil {
+				t.Fatal(err)
+			}
+			local, stop := startRuntimeConnectorOn(t, f, service, listener, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp})
+			defer stop()
+			localTransport := &http.Transport{TLSClientConfig: verification.Clone()}
+			defer localTransport.CloseIdleConnections()
+			localClient := &http.Client{Transport: localTransport, Timeout: 5 * time.Second}
+			request := func(client *http.Client, base, credential string, want int) {
+				t.Helper()
+				r, err := http.NewRequestWithContext(t.Context(), http.MethodGet, base, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if credential != "" {
+					r.Header.Set("Tnl-Visitor-Token", credential)
+				}
+				response, err := client.Do(r)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, readErr := io.ReadAll(response.Body)
+				_ = response.Body.Close()
+				if readErr != nil || response.StatusCode != want {
+					t.Fatal("local HTTP request budget not enforced", response.StatusCode, want, readErr)
+				}
+				if want == http.StatusServiceUnavailable && (string(body) != "HTTP request limit reached\n" || response.Header.Get("Retry-After") != "") {
+					t.Fatal("HTTP request failed outside its configured total budget", string(body), response.Header.Get("Retry-After"))
+				}
+			}
+			localBase := "https://" + local.Addr().String()
+			request(publicClient, publicBase, token.Permission.VisitorToken, http.StatusOK)
+			request(localClient, localBase, "", http.StatusOK)
+			request(publicClient, publicBase, token.Permission.VisitorToken, http.StatusServiceUnavailable)
+			request(localClient, localBase, "", http.StatusServiceUnavailable)
+		})
+	}
+	if requests.Load() != 4 {
+		t.Fatal("denied requests reached the target or restart lost its per-run budget", requests.Load())
+	}
+}

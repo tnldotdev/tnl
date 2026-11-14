@@ -3332,7 +3332,7 @@ type ProjectServiceAccessTeam bool
 type ProjectServiceConfiguration struct {
 	Access *ProjectServiceAccess `json:"access,omitempty"`
 
-	// Http Local readiness and path mounts, or restricted HTTP access and request limits for a saved deployment. The deployment owns its endpoint and reachability.
+	// Http Restricted HTTP access and request limits for local and remote services, independent of public endpoint access. Only local bindings support readiness, path mounts, and browser opening. Public URL records retain their access and limits in public_url.
 	Http     *ProjectServiceHTTP `json:"http,omitempty"`
 	Name     *string             `json:"name,omitempty"`
 	Protocol *ServiceProtocol    `json:"protocol,omitempty"`
@@ -3356,7 +3356,7 @@ type ProjectServiceConfiguration struct {
 // ProjectServiceDeclarations defines model for ProjectServiceDeclarations.
 type ProjectServiceDeclarations map[string]ServiceProtocol
 
-// ProjectServiceHTTP Local readiness and path mounts, or restricted HTTP access and request limits for a saved deployment. The deployment owns its endpoint and reachability.
+// ProjectServiceHTTP Restricted HTTP access and request limits for local and remote services, independent of public endpoint access. Only local bindings support readiness, path mounts, and browser opening. Public URL records retain their access and limits in public_url.
 type ProjectServiceHTTP struct {
 	Access *ProjectPublicAccess          `json:"access,omitempty"`
 	Limits *ProjectHTTPApplicationLimits `json:"limits,omitempty"`
