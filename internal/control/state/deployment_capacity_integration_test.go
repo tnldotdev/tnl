@@ -132,7 +132,7 @@ func TestIntegrationDeploymentCapacityExcludesDeletedHistory(t *testing.T) {
 	}
 	assertLiveCount(31)
 	var owner string
-	if err := d.pool.QueryRow(ctx, `SELECT group_id FROM control.publisher_group_names
+	if err := d.pool.QueryRow(ctx, `SELECT deployment_id FROM control.deployment_names
 		WHERE team_id=$1 AND project_key=$2 AND name=$3`, r.TeamID, r.ProjectKey, saved[0].Name).Scan(&owner); err != nil || owner != saved[0].ID {
 		t.Fatal("deleted deployment name lost its immutable identity fence", owner, err)
 	}

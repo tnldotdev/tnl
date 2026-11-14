@@ -149,7 +149,7 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	deployments, err := q.ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
+	deployments, err := q.ListProjectDeployments(ctx, controlstatedb.ListProjectDeploymentsParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
 	if err != nil {
 		return result, err
 	}

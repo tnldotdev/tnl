@@ -389,7 +389,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if row.Revision != r.ExpectedRevision {
 		return result, ErrProjectConfigurationStale
 	}
-	if c.Settings != nil && !present && len(groups) >= maxProjectDeployments {
+	if c.Settings != nil && !present && len(deployments) >= maxProjectDeployments {
 		return result, ErrProjectConfigurationInvalid
 	}
 	next := row.Revision + 1
