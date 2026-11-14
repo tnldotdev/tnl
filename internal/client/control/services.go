@@ -133,6 +133,12 @@ func (c *Client) DeleteService(ctx context.Context, id string) error {
 	return err
 }
 
+func (c *Client) ReleaseServiceEndpoint(ctx context.Context, id string, body controlv1.ReleaseServiceEndpointRequest) (controlv1.Service, error) {
+	return requestWithAccess[controlv1.Service](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ReleaseServiceEndpoint(ctx, id, body, editors...)
+	})
+}
+
 func (c *Client) GetService(ctx context.Context, id string) (controlv1.Service, error) {
 	return requestWithAccess[controlv1.Service](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.GetService(ctx, id, editors...)

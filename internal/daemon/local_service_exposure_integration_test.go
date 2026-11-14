@@ -55,7 +55,7 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 	if err != nil || service.Endpoint == nil || !service.Endpoint.Public || service.Endpoint.Port < 1024 {
 		t.Fatal("local HTTP has no allocated public endpoint", service, err)
 	}
-	startPrivateHTTPPublisher(t, f, service, target.Listener.Addr().String())
+	stopPublisher := startPrivateHTTPPublisher(t, f, service, target.Listener.Addr().String())
 	verification := f.visitorRoots.Clone()
 	verification.ServerName = service.Endpoint.Hostname
 	publicTransport := &http.Transport{TLSClientConfig: verification, ForceAttemptHTTP2: true, DialContext: workloadPublicEndpointDialer(t, process.ingresses[0].publicServices, service.Endpoint.Port)}
@@ -141,5 +141,31 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 	var publicURLs int
 	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.public_urls`).Scan(&publicURLs); err != nil || publicURLs != 0 || posts.Load() != 4 {
 		t.Fatal("local service created another publication or replayed a request", publicURLs, posts.Load(), err)
+	}
+	setPublic(false)
+	stop()
+	stopPublisher()
+	released, err := f.identity.routes.ReleaseServiceEndpoint(t.Context(), service.Id, controlv1.ReleaseServiceEndpointRequest{
+		ExpectedTrustRevision: service.TrustRevision, ExpectedPort: service.Endpoint.Port,
+	})
+	if err != nil || released.Endpoint == nil || released.Endpoint.Port != 0 || released.Endpoint.Hostname != service.Endpoint.Hostname {
+		t.Fatal("release replaced the local TLS identity", released, err)
+	}
+	startPrivateHTTPPublisher(t, f, released, target.Listener.Addr().String())
+	restarted, err := f.identity.state.ListenService(t.Context(), person.Identity.Id, service.Id, "tcp")
+	if err != nil || restarted.Addr().String() != local.Addr().String() {
+		t.Fatal("release changed the saved connector listener", restarted, err)
+	}
+	_, stopRestarted := startRuntimeConnectorOn(t, f, released, restarted, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp})
+	defer stopRestarted()
+	localTransport.CloseIdleConnections()
+	checkPost(localClient, localBase, "", "private after reservation release")
+	publicTransport.CloseIdleConnections()
+	if response, err := publicClient.Get(base + "/"); err == nil {
+		_ = response.Body.Close()
+		t.Fatal("released public binding still admitted a visitor")
+	}
+	if posts.Load() != 5 {
+		t.Fatal("release replayed application work", posts.Load())
 	}
 }

@@ -1669,20 +1669,26 @@ CREATE UNIQUE INDEX services_scoped_name ON control.services(team_id, name_scope
 CREATE UNIQUE INDEX services_certificate_hostname ON control.services(certificate_hostname) WHERE deleted_at IS NULL AND certificate_hostname<>'';
 CREATE TABLE control.service_port_claims (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    service_id text NOT NULL UNIQUE REFERENCES control.services(id) ON DELETE RESTRICT,
+    service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
     ingress_pool_id text NOT NULL REFERENCES control.ingress_pools(id) ON DELETE RESTRICT,
     port integer NOT NULL CHECK (port BETWEEN 1024 AND 65535),
     state text NOT NULL DEFAULT 'held' CHECK (state IN ('held','quarantined','released')),
     claimed_at timestamptz NOT NULL,
     reusable_after timestamptz,
+    retired_run_number bigint,
+    dns_cleared_at timestamptz,
+    CONSTRAINT service_port_retired_runs CHECK (
+        (state='held' AND retired_run_number IS NULL AND dns_cleared_at IS NULL)
+        OR (state<>'held' AND retired_run_number IS NOT NULL AND retired_run_number>=0)),
     CHECK ((state='held') = (reusable_after IS NULL))
 );
 CREATE UNIQUE INDEX service_ports_held ON control.service_port_claims(ingress_pool_id,port) WHERE state<>'released';
+CREATE UNIQUE INDEX service_port_current ON control.service_port_claims(service_id) WHERE state='held';
 -- +goose StatementBegin
 CREATE FUNCTION control.retire_service_port() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL THEN
-        UPDATE control.service_port_claims SET state='quarantined',
+        UPDATE control.service_port_claims SET state='quarantined',retired_run_number=NEW.next_run_number-1,
             reusable_after=GREATEST(NEW.deleted_at+interval '7 days',COALESCE((SELECT max(not_after) FROM control.acme_orders WHERE certificate_scope=NEW.certificate_scope),NEW.deleted_at))
             WHERE service_id=NEW.id AND state='held';
         PERFORM control.retire_service_endpoints(NEW.id,'',NEW.deleted_at);
