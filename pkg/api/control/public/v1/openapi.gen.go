@@ -3877,6 +3877,12 @@ type RelayID = ResourceID
 // RelayServiceID defines model for RelayServiceID.
 type RelayServiceID = ResourceID
 
+// ReleaseServiceEndpointRequest defines model for ReleaseServiceEndpointRequest.
+type ReleaseServiceEndpointRequest struct {
+	ExpectedPort          int   `json:"expected_port"`
+	ExpectedTrustRevision int64 `json:"expected_trust_revision,string"`
+}
+
 // RenameDeploymentNamespaceRequest defines model for RenameDeploymentNamespaceRequest.
 type RenameDeploymentNamespaceRequest struct {
 	ExpectedRevision int64  `json:"expected_revision,string"`
@@ -5338,6 +5344,9 @@ type RebindConnectorPeerPairJSONRequestBody = ConnectorPeerPairRebindRequest
 
 // RenewConnectorPeerPairJSONRequestBody defines body for RenewConnectorPeerPair for application/json ContentType.
 type RenewConnectorPeerPairJSONRequestBody = ConnectorPeerPairRequest
+
+// ReleaseServiceEndpointJSONRequestBody defines body for ReleaseServiceEndpoint for application/json ContentType.
+type ReleaseServiceEndpointJSONRequestBody = ReleaseServiceEndpointRequest
 
 // CreateServiceGrantJSONRequestBody defines body for CreateServiceGrant for application/json ContentType.
 type CreateServiceGrantJSONRequestBody = CreateServiceGrantRequest
@@ -7154,6 +7163,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 	RenewConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReleaseServiceEndpointWithBody Retire a disabled service's public port reservation
+	//
+	// Requires current service management permission, public access already disabled, and completed managed DNS cleanup. Send the current trust revision and exact positive reserved port. Closes old runs and advances trust revision while preserving the service, hostname, grants, and machine-local connector assignments. Capacity stays quarantined for at least seven days and until old certificate, issuance, and authorization work is settled. Later private runs do not extend this retired reservation. A stale request conflicts; later public enablement allocates another reservation.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/endpoint/release (the `ReleaseServiceEndpoint` operationId).
+	ReleaseServiceEndpointWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReleaseServiceEndpoint Retire a disabled service's public port reservation
+	//
+	// Requires current service management permission, public access already disabled, and completed managed DNS cleanup. Send the current trust revision and exact positive reserved port. Closes old runs and advances trust revision while preserving the service, hostname, grants, and machine-local connector assignments. Capacity stays quarantined for at least seven days and until old certificate, issuance, and authorization work is settled. Later private runs do not extend this retired reservation. A stale request conflicts; later public enablement allocates another reservation.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/endpoint/release (the `ReleaseServiceEndpoint` operationId).
+	ReleaseServiceEndpoint(ctx context.Context, serviceId ServiceID, body ReleaseServiceEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListServiceGrants List a service's visitor grants and retained history
 	//
@@ -10877,6 +10904,44 @@ func (c *Client) RenewConnectorPeerPairWithBody(ctx context.Context, serviceId S
 // Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 func (c *Client) RenewConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenewConnectorPeerPairRequest(c.Server, serviceId, pairId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReleaseServiceEndpointWithBody Retire a disabled service's public port reservation
+//
+// Requires current service management permission, public access already disabled, and completed managed DNS cleanup. Send the current trust revision and exact positive reserved port. Closes old runs and advances trust revision while preserving the service, hostname, grants, and machine-local connector assignments. Capacity stays quarantined for at least seven days and until old certificate, issuance, and authorization work is settled. Later private runs do not extend this retired reservation. A stale request conflicts; later public enablement allocates another reservation.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/endpoint/release (the `ReleaseServiceEndpoint` operationId).
+func (c *Client) ReleaseServiceEndpointWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReleaseServiceEndpointRequestWithBody(c.Server, serviceId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReleaseServiceEndpoint Retire a disabled service's public port reservation
+//
+// Requires current service management permission, public access already disabled, and completed managed DNS cleanup. Send the current trust revision and exact positive reserved port. Closes old runs and advances trust revision while preserving the service, hostname, grants, and machine-local connector assignments. Capacity stays quarantined for at least seven days and until old certificate, issuance, and authorization work is settled. Later private runs do not extend this retired reservation. A stale request conflicts; later public enablement allocates another reservation.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/endpoint/release (the `ReleaseServiceEndpoint` operationId).
+func (c *Client) ReleaseServiceEndpoint(ctx context.Context, serviceId ServiceID, body ReleaseServiceEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReleaseServiceEndpointRequest(c.Server, serviceId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -17886,6 +17951,53 @@ func NewRenewConnectorPeerPairRequestWithBody(server string, serviceId ServiceID
 	return req, nil
 }
 
+// NewReleaseServiceEndpointRequest calls the generic ReleaseServiceEndpoint builder with application/json body
+func NewReleaseServiceEndpointRequest(server string, serviceId ServiceID, body ReleaseServiceEndpointJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReleaseServiceEndpointRequestWithBody(server, serviceId, "application/json", bodyReader)
+}
+
+// NewReleaseServiceEndpointRequestWithBody constructs an http.Request for the ReleaseServiceEndpoint method, with any body, and a specified content type
+func NewReleaseServiceEndpointRequestWithBody(server string, serviceId ServiceID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/endpoint/release", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListServiceGrantsRequest constructs an http.Request for the ListServiceGrants method
 func NewListServiceGrantsRequest(server string, serviceId ServiceID, params *ListServiceGrantsParams) (*http.Request, error) {
 	var err error
@@ -21599,6 +21711,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 	RenewConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error)
+
+	// ReleaseServiceEndpointWithBodyWithResponse Retire a disabled service's public port reservation
+	//
+	// Requires current service management permission, public access already disabled, and completed managed DNS cleanup. Send the current trust revision and exact positive reserved port. Closes old runs and advances trust revision while preserving the service, hostname, grants, and machine-local connector assignments. Capacity stays quarantined for at least seven days and until old certificate, issuance, and authorization work is settled. Later private runs do not extend this retired reservation. A stale request conflicts; later public enablement allocates another reservation.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/endpoint/release (the `ReleaseServiceEndpoint` operationId).
+	ReleaseServiceEndpointWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReleaseServiceEndpointResponse, error)
+
+	// ReleaseServiceEndpointWithResponse Retire a disabled service's public port reservation
+	//
+	// Requires current service management permission, public access already disabled, and completed managed DNS cleanup. Send the current trust revision and exact positive reserved port. Closes old runs and advances trust revision while preserving the service, hostname, grants, and machine-local connector assignments. Capacity stays quarantined for at least seven days and until old certificate, issuance, and authorization work is settled. Later private runs do not extend this retired reservation. A stale request conflicts; later public enablement allocates another reservation.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/endpoint/release (the `ReleaseServiceEndpoint` operationId).
+	ReleaseServiceEndpointWithResponse(ctx context.Context, serviceId ServiceID, body ReleaseServiceEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*ReleaseServiceEndpointResponse, error)
 
 	// ListServiceGrantsWithResponse List a service's visitor grants and retained history
 	//
@@ -27493,6 +27623,54 @@ func (r RenewConnectorPeerPairResponse) ContentType() string {
 	return ""
 }
 
+type ReleaseServiceEndpointResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Service
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReleaseServiceEndpointResponse) GetJSON200() *Service {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReleaseServiceEndpointResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReleaseServiceEndpointResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReleaseServiceEndpointResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReleaseServiceEndpointResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReleaseServiceEndpointResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListServiceGrantsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -32068,6 +32246,36 @@ func (c *ClientWithResponses) RenewConnectorPeerPairWithResponse(ctx context.Con
 		return nil, err
 	}
 	return ParseRenewConnectorPeerPairResponse(rsp)
+}
+
+// ReleaseServiceEndpointWithBodyWithResponse Retire a disabled service's public port reservation
+//
+// Requires current service management permission, public access already disabled, and completed managed DNS cleanup. Send the current trust revision and exact positive reserved port. Closes old runs and advances trust revision while preserving the service, hostname, grants, and machine-local connector assignments. Capacity stays quarantined for at least seven days and until old certificate, issuance, and authorization work is settled. Later private runs do not extend this retired reservation. A stale request conflicts; later public enablement allocates another reservation.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/endpoint/release (the `ReleaseServiceEndpoint` operationId).
+func (c *ClientWithResponses) ReleaseServiceEndpointWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReleaseServiceEndpointResponse, error) {
+	rsp, err := c.ReleaseServiceEndpointWithBody(ctx, serviceId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReleaseServiceEndpointResponse(rsp)
+}
+
+// ReleaseServiceEndpointWithResponse Retire a disabled service's public port reservation
+//
+// Requires current service management permission, public access already disabled, and completed managed DNS cleanup. Send the current trust revision and exact positive reserved port. Closes old runs and advances trust revision while preserving the service, hostname, grants, and machine-local connector assignments. Capacity stays quarantined for at least seven days and until old certificate, issuance, and authorization work is settled. Later private runs do not extend this retired reservation. A stale request conflicts; later public enablement allocates another reservation.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/endpoint/release (the `ReleaseServiceEndpoint` operationId).
+func (c *ClientWithResponses) ReleaseServiceEndpointWithResponse(ctx context.Context, serviceId ServiceID, body ReleaseServiceEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*ReleaseServiceEndpointResponse, error) {
+	rsp, err := c.ReleaseServiceEndpoint(ctx, serviceId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReleaseServiceEndpointResponse(rsp)
 }
 
 // ListServiceGrantsWithResponse List a service's visitor grants and retained history
@@ -36732,6 +36940,39 @@ func ParseRenewConnectorPeerPairResponse(rsp *http.Response) (*RenewConnectorPee
 	return response, nil
 }
 
+// ParseReleaseServiceEndpointResponse parses an HTTP response from a ReleaseServiceEndpointWithResponse call
+func ParseReleaseServiceEndpointResponse(rsp *http.Response) (*ReleaseServiceEndpointResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReleaseServiceEndpointResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Service
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListServiceGrantsResponse parses an HTTP response from a ListServiceGrantsWithResponse call
 func ParseListServiceGrantsResponse(rsp *http.Response) (*ListServiceGrantsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -38461,6 +38702,9 @@ type ServerInterface interface {
 	// RenewConnectorPeerPair Renew an exact signed connector pair and visitor permission
 	// (POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew)
 	RenewConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID, pairId string)
+	// ReleaseServiceEndpoint Retire a disabled service's public port reservation
+	// (POST /v1/services/{service_id}/endpoint/release)
+	ReleaseServiceEndpoint(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
 	// ListServiceGrants List a service's visitor grants and retained history
 	// (GET /v1/services/{service_id}/grants)
 	ListServiceGrants(w http.ResponseWriter, r *http.Request, serviceId ServiceID, params ListServiceGrantsParams)
@@ -42703,6 +42947,32 @@ func (siw *ServerInterfaceWrapper) RenewConnectorPeerPair(w http.ResponseWriter,
 	handler.ServeHTTP(w, r)
 }
 
+// ReleaseServiceEndpoint operation middleware
+func (siw *ServerInterfaceWrapper) ReleaseServiceEndpoint(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReleaseServiceEndpoint(w, r, serviceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListServiceGrants operation middleware
 func (siw *ServerInterfaceWrapper) ListServiceGrants(w http.ResponseWriter, r *http.Request) {
 
@@ -44398,6 +44668,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/services/{service_id}", wrapper.ConfigureService)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/grants", wrapper.ListServiceGrants)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/grants", wrapper.CreateServiceGrant)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/endpoint/release", wrapper.ReleaseServiceEndpoint)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/services/{service_id}/grants/{grant_id}", wrapper.RevokeServiceGrant)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/invitations", wrapper.ListServiceInvitations)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/invitations", wrapper.InviteServiceVisitor)

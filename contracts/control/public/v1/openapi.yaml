@@ -171,6 +171,8 @@ paths:
     $ref: "./paths/services.yaml#/paths/~1v1~1services~1{service_id}"
   /v1/services/{service_id}/grants:
     $ref: "./paths/services.yaml#/paths/~1v1~1services~1{service_id}~1grants"
+  /v1/services/{service_id}/endpoint/release:
+    $ref: "./paths/services.yaml#/paths/~1v1~1services~1{service_id}~1endpoint~1release"
   /v1/services/{service_id}/grants/{grant_id}:
     $ref: "./paths/services.yaml#/paths/~1v1~1services~1{service_id}~1grants~1{grant_id}"
   /v1/services/{service_id}/invitations:
@@ -886,6 +888,8 @@ components:
       $ref: "./schemas/feedback.yaml#/schemas/ReviewerFeedbackReadRequest"
     UpdateServiceRequest:
       $ref: "./schemas/services.yaml#/schemas/UpdateServiceRequest"
+    ReleaseServiceEndpointRequest:
+      $ref: "./schemas/services.yaml#/schemas/ReleaseServiceEndpointRequest"
     ServiceSummary:
       $ref: "./schemas/services.yaml#/schemas/ServiceSummary"
     UpdatePublicURLRequest:

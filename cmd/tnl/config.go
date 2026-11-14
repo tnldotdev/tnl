@@ -368,6 +368,7 @@ func runCheck(loaded projectConfiguration, stdout io.Writer) error {
 func projectSensitiveCommand(command string) bool {
 	return command == "apply" || command == "audit list" || strings.HasPrefix(command, "deployment ") || strings.HasPrefix(command, "auth ") || strings.HasPrefix(command, "admin ") ||
 		command == "connect available" ||
+		strings.HasPrefix(command, "endpoint ") ||
 		strings.HasPrefix(command, "publisher ") ||
 		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ") || command == "share" || strings.HasPrefix(command, "share ") || strings.HasPrefix(command, "feedback ") || strings.HasPrefix(command, "webhook ") || strings.HasPrefix(command, "alias ")
 }
@@ -467,6 +468,8 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.URL.Update.remoteFlags, true)
 	case "url delete <public-url-id>":
 		apply(&flags.URL.Delete.remoteFlags, true)
+	case "endpoint release <service-id>":
+		apply(&flags.Endpoint.Release.remoteFlags, true)
 	case "url inventory":
 		apply(&flags.URL.Inventory.remoteFlags, true)
 	case "url available":
