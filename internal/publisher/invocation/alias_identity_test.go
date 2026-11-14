@@ -51,7 +51,7 @@ func TestProjectAliasPreparesAnExactNativePublisherOnlyForTheSelectedReadyReceiv
 		t.Fatal(err)
 	}
 	defer tunnel.Finish(t.Context(), nil)
-	if err := tunnel.SetPublicURL(t.Context(), parentID, "web.member.example"); err != nil {
+	if err := tunnel.SetPublicURL(t.Context(), parentID, "https://web.member.example"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {

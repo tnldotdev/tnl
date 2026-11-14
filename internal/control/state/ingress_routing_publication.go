@@ -17,6 +17,7 @@ import (
 
 // IngressRoutingTableProjection is the stored public URL view used by ingress.
 type IngressRoutingTableProjection struct {
+	Port                 int                                      `json:"port"`
 	PublishRunReadyAt    *time.Time                               `json:"publish_run_ready_at,omitempty"`
 	PublishRunID         string                                   `json:"publish_run_id"`
 	PublishRunClosed     bool                                     `json:"publish_run_closed,omitempty"`
@@ -152,7 +153,7 @@ func (pending *pendingIngressRoutingTableEvents) addEvent(
 	projection := IngressRoutingTableProjection{
 		PublishRunClosed: session.ClosedAt.Valid,
 		PublishRunID:     session.ID, PublicURLID: route.ID, PublishRunNumber: uint64(session.PublishRunNumber),
-		CanonicalHostname: route.CanonicalHostname, PolicyRevision: uint64(route.PolicyRevision),
+		CanonicalHostname: route.CanonicalHostname, Port: int(route.Port), PolicyRevision: uint64(route.PolicyRevision),
 		IngressPoolID: route.IngressPoolID, ServiceProtocol: PublicURLServiceProtocol(route.ServiceProtocol),
 		AccessMode:           VisitorAccessMode(route.AccessMode),
 		IPPolicy:             policy,

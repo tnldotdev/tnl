@@ -112,6 +112,13 @@ type InstallationSetting struct {
 	TelemetryEpoch       int64
 }
 
+type IntegrationUrlEndpoint struct {
+	ServerOrigin string
+	Hostname     string
+	PublicURLID  string
+	PublicURL    string
+}
+
 type IntegrationUrlHostname struct {
 	ServerOrigin       string
 	PrimaryProjectRoot string
@@ -138,6 +145,7 @@ type LocalTunnel struct {
 	PrimaryProjectRoot   sql.NullString
 	IntegrationNamespace sql.NullString
 	Hostname             sql.NullString
+	PublicURL            string
 	Target               sql.NullString
 	Framework            sql.NullString
 	PublicURLID          sql.NullString

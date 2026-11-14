@@ -6,10 +6,15 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 )
 
 func TestIntegrationAuthorizedRouteHostnameLookup(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "hostname_lookup")
+	if err := database.ConfigureIngressServicePorts(t.Context(), PrimaryIngressPoolID, []tcpport.Range{{First: 20000, Last: 20000 + publicURLPageSize + 5}}); err != nil {
+		t.Fatal(err)
+	}
 	request := oidcRouteRequest(t, database, now)
 	_, suffix, _ := strings.Cut(request.CanonicalHostname, ".")
 	var target PublicURL

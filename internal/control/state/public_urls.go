@@ -39,6 +39,7 @@ type PublicURL struct {
 	DomainID                      string
 	MembershipID                  string
 	CanonicalHostname             string
+	Port                          int
 	Namespace                     string
 	Target                        string
 	ServiceProtocol               PublicURLServiceProtocol
@@ -59,6 +60,10 @@ type PublicURL struct {
 	OpenPublishRunID              string
 	CreatedAt                     time.Time
 	UpdatedAt                     time.Time
+}
+
+func (u PublicURL) Origin() string {
+	return naming.HTTPSOrigin(u.CanonicalHostname, u.Port)
 }
 
 type CreatePublicURLRequest struct {
@@ -327,7 +332,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	if managed {
 		return result, ErrPublicURLConflict
 	}
-	row, err := d.insertPublicURL(ctx, queries, request, namespace, ingressPoolID, policyRevision, prefixes, now)
+	row, err := d.insertPublicURL(ctx, tx, queries, request, namespace, ingressPoolID, policyRevision, prefixes, now)
 	if err != nil {
 		var postgresError *pgconn.PgError
 		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
@@ -374,7 +379,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 
 // callers authorize the owner, hostname, maintenance gate, and selected namespace
 // in their transaction before inserting through this shared persistence boundary.
-func (d *Database) insertPublicURL(ctx context.Context, q *controlstatedb.Queries, request CreatePublicURLRequest, namespace, ingressPool string, revision int64, prefixes []netip.Prefix, now time.Time) (controlstatedb.ControlPublicUrl, error) {
+func (d *Database) insertPublicURL(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, request CreatePublicURLRequest, namespace, ingressPool string, revision int64, prefixes []netip.Prefix, now time.Time) (controlstatedb.ControlPublicUrl, error) {
 	var zero controlstatedb.ControlPublicUrl
 	id, err := opaqueid.New(opaqueid.PublicURLPrefix)
 	if err != nil {
@@ -392,7 +397,7 @@ func (d *Database) insertPublicURL(ctx context.Context, q *controlstatedb.Querie
 	if len(policy) != 0 {
 		policyKey = d.storageKey.CurrentID()
 	}
-	return q.InsertPublicURL(ctx, controlstatedb.InsertPublicURLParams{
+	row, err := q.InsertPublicURL(ctx, controlstatedb.InsertPublicURLParams{
 		ID: id, TeamID: request.TeamID, DomainID: request.DomainID, MembershipID: nullableText(request.MembershipID),
 		CreatedByIdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey,
 		RequestDigestCiphertext: digest, RequestDigestStorageKeyID: text(d.storageKey.CurrentID()),
@@ -405,4 +410,16 @@ func (d *Database) insertPublicURL(ctx context.Context, q *controlstatedb.Querie
 		DnsAuthorityReference: nullableText(request.DNSAuthorityReference), DnsState: string(request.DNSState), Ephemeral: request.Ephemeral,
 		ExpiresAt: ephemeralRouteExpiry(request.Ephemeral, now), CreatedAt: timestamptz(now),
 	})
+	if err != nil {
+		return zero, err
+	}
+	port, err := allocateEndpointPort(ctx, tx, "", id, ingressPool, true, now)
+	if err != nil {
+		return zero, err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE control.public_urls SET port=$2 WHERE id=$1`, id, port); err != nil {
+		return zero, err
+	}
+	row.Port = int32(port)
+	return row, nil
 }

@@ -102,7 +102,7 @@ func newCertificateTestControl(t *testing.T, hostname string, plan controlv1.Cer
 	return &certificateTestControl{
 		publisherControlStub: publisherControlStub{allowed: []string{"lookup"}}, signer: signer,
 		setup: controlv1.PublishRunSetup{
-			PublicUrl:       controlv1.PublicURL{Id: certificateTestPublicURLID, CanonicalHostname: hostname, TeamId: "team_1", DomainId: "domain_1", MembershipId: pointer("membership_1"), PublicUrlScope: controlv1.Member, Purpose: controlv1.App, ServiceProtocol: controlv1.Http, LifecycleState: controlv1.Enabled},
+			PublicUrl:       controlv1.PublicURL{Id: certificateTestPublicURLID, CanonicalHostname: hostname, Port: 443, TeamId: "team_1", DomainId: "domain_1", MembershipId: pointer("membership_1"), PublicUrlScope: controlv1.Member, Purpose: controlv1.App, ServiceProtocol: controlv1.Http, LifecycleState: controlv1.Enabled},
 			PublishRun:      controlv1.PublishRun{Id: "pr_0123456789abcdefghijkl", PublicUrlId: certificateTestPublicURLID, TeamId: "team_1", PublishRunNumber: 1, ExpiresAt: time.Now().Add(time.Hour)},
 			PublishRunToken: token.String(), CertificatePlan: plan,
 		},
@@ -117,7 +117,7 @@ func (c *certificateTestControl) ReadPublisherVisitorPolicy(_ context.Context, b
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("v", 32)))
 	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: []int64{}, SnapshotRequired: body.AfterRevision == 0,
 		VisitorSourceKey: testVisitorSourceKeyBytes(),
-		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: c.setup.PublicUrl.CanonicalHostname, Port: 443, Issuer: "https://control.example.test",
+		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: c.setup.PublicUrl.CanonicalHostname, Port: c.setup.PublicUrl.Port, Issuer: "https://control.example.test",
 			VisitorPolicyRevision: 1, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true,
 			Anonymous:        c.setup.PublicUrl.AccessMode == "" || c.setup.PublicUrl.AccessMode == "anonymous",
 			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "certificate-fixture", PublicKey: key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}, nil

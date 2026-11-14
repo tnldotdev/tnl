@@ -46,6 +46,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/local"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
@@ -665,11 +666,24 @@ func newCLIWorkflow(t *testing.T, additionalRoots ...[]byte) *cliWorkflow {
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, _ := net.SplitHostPort(address)
 		if strings.HasSuffix(host, ".apps.integration.test") && f.publicAddress != "" {
-			if port == "443" {
-				address = f.publicAddress
-			} else {
-				address = net.JoinHostPort("127.0.0.1", port)
+			destination, err := netip.ParseAddrPort(net.JoinHostPort("127.0.0.1", port))
+			if err != nil {
+				return nil, err
 			}
+			connection, err := (&net.Dialer{}).DialContext(ctx, network, f.publicAddress)
+			if err != nil {
+				return nil, err
+			}
+			source := connection.LocalAddr().(*net.TCPAddr).AddrPort()
+			metadata, err := proxyproto.Encode(proxyproto.Header{Source: netip.AddrPortFrom(source.Addr().Unmap(), source.Port()), Destination: destination})
+			if err == nil {
+				_, err = connection.Write(metadata)
+			}
+			if err != nil {
+				_ = connection.Close()
+				return nil, err
+			}
+			return connection, nil
 		}
 		return (&net.Dialer{}).DialContext(ctx, network, address)
 	}
@@ -1030,47 +1044,13 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 		f.publicServices = direct
 	}
 	t.Cleanup(func() { _ = direct.Close() })
-	publicListener := workflowListen(t)
 	ingressListener := workflowListen(t)
 	if f.publicAddress == "" {
-		f.publicAddress = publicListener.Addr().String()
+		f.publicAddress = ingressListener.Addr().String()
 	}
-	// preserve the advertised HTTPS destination through a trusted disposable
-	// front instead of substituting the backend's ephemeral listener port.
-	f.serve(t, publicListener, func(visitor net.Conn) error {
-		dialCtx, cancel := context.WithTimeout(f.ctx, 5*time.Second)
-		upstream, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", ingressListener.Addr().String())
-		cancel()
-		if err != nil {
-			return err
-		}
-		defer upstream.Close()
-		stop := context.AfterFunc(f.ctx, func() { _ = visitor.Close(); _ = upstream.Close() })
-		defer stop()
-		source := visitor.RemoteAddr().(*net.TCPAddr).AddrPort()
-		header, err := proxyproto.Encode(proxyproto.Header{
-			Source:      netip.AddrPortFrom(source.Addr().Unmap(), source.Port()),
-			Destination: netip.MustParseAddrPort("127.0.0.1:443"),
-		})
-		if err != nil {
-			return err
-		}
-		if _, err := upstream.Write(header); err != nil {
-			return err
-		}
-		done := make(chan struct{})
-		go func() {
-			_, _ = io.Copy(visitor, upstream)
-			_ = visitor.(*net.TCPConn).CloseWrite()
-			close(done)
-		}()
-		_, _ = io.Copy(upstream, visitor)
-		_ = upstream.(*net.TCPConn).CloseWrite()
-		<-done
-		return nil
-	})
 	publicServer, err := ingress.New(ingressListener, ingress.Config{MaxConnections: 128,
 		RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
+		PublicServices: direct, ServicePortRanges: []tcpport.Range{{First: ports[0], Last: ports[len(ports)-1]}}, HasPublicURLPort: routing.HasPublicURLPort,
 		Lookup: func(host string) ([]ingress.PublicURL, ingress.LookupReason) {
 			entries, reason := controller.Lookup(host, time.Now())
 			if reason != ingress.LookupCurrent {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
@@ -37,6 +38,7 @@ type RoutingTable struct {
 	initialized bool
 	revision    int64
 	routes      map[string]map[routingRunKey]routingTableEntry
+	ports       map[int]int
 }
 
 func (t *RoutingTable) ApplySnapshot(snapshot ingressv1.IngressRoutingTableSnapshot) error {
@@ -45,6 +47,7 @@ func (t *RoutingTable) ApplySnapshot(snapshot ingressv1.IngressRoutingTableSnaps
 		return fmt.Errorf("%w: snapshot bounds", ErrRoutingTableRevision)
 	}
 	routes := make(map[string]map[routingRunKey]routingTableEntry)
+	ports := make(map[int]int)
 	for _, event := range snapshot.Entries {
 		if event.Kind != ingressv1.PublicUrlUpsert ||
 			event.RoutingTableRevision > snapshot.ThroughRevision {
@@ -63,6 +66,7 @@ func (t *RoutingTable) ApplySnapshot(snapshot ingressv1.IngressRoutingTableSnaps
 			return fmt.Errorf("%w: snapshot contains duplicate hostname %q", ErrRoutingTableEvent, event.CanonicalHostname)
 		}
 		target[key] = routingEntryForEvent(event)
+		ports[event.Entry.Port]++
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -70,6 +74,7 @@ func (t *RoutingTable) ApplySnapshot(snapshot ingressv1.IngressRoutingTableSnaps
 		return ErrRoutingTableRevision
 	}
 	t.routes = routes
+	t.ports = ports
 	t.revision = snapshot.ThroughRevision
 	t.initialized = true
 	return nil
@@ -132,8 +137,22 @@ func (t *RoutingTable) ApplyPage(after int64, page ingressv1.IngressRoutingTable
 		previousRevision = event.RoutingTableRevision
 	}
 	routes := maps.Clone(t.routes)
+	ports := maps.Clone(t.ports)
+	for hostname, bucket := range updates {
+		for _, old := range t.routes[hostname] {
+			if !old.tombstone {
+				ports[old.entry.Port]--
+			}
+		}
+		for _, current := range bucket {
+			if !current.tombstone {
+				ports[current.entry.Port]++
+			}
+		}
+	}
 	maps.Copy(routes, updates)
 	t.routes = routes
+	t.ports = ports
 	t.revision = page.NextRevision
 	return nil
 }
@@ -142,6 +161,14 @@ func (t *RoutingTable) Revision() (int64, bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.revision, t.initialized
+}
+
+// port selection chooses the forwarding owner, never visitor authorization.
+// the later hostname lookup, live policy and exact destination still apply.
+func (t *RoutingTable) HasPublicURLPort(port int) bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.initialized && t.ports[port] > 0
 }
 
 // TerminalTrafficRuns proves that control closed these exact runs. absence,
@@ -195,6 +222,9 @@ func validateRoutingTableEvent(event ingressv1.IngressRoutingTableEvent) error {
 		return ErrRoutingTableEvent
 	}
 	entry := event.Entry
+	if !tcpport.ValidNetwork(entry.Port) {
+		return ErrRoutingTableEvent
+	}
 	if entry.Traffic != nil {
 		if _, err := routingTraffic(*entry.Traffic); err != nil {
 			return ErrRoutingTableEvent

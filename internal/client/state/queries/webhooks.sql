@@ -24,7 +24,7 @@ WHERE t.server_origin = sqlc.arg(server_origin) AND t.primary_project_root = sql
 ORDER BY e.name, e.tunnel_id;
 
 -- name: ReadyWebhookReceivers :many
-SELECT t.id, t.server_origin, t.primary_project_root, t.integration_namespace, t.hostname, t.target, t.public_url_id, t.publish_run_number, e.fingerprint
+SELECT t.id, t.server_origin, t.primary_project_root, t.integration_namespace, t.hostname, t.public_url, t.target, t.public_url_id, t.publish_run_number, e.fingerprint
 FROM webhook_declarations e JOIN local_tunnels t ON t.id = e.tunnel_id
 WHERE e.name = sqlc.arg(name) AND t.server_origin = sqlc.arg(server_origin)
   AND t.primary_project_root = sqlc.arg(primary_project_root) AND t.integration_namespace = sqlc.arg(integration_namespace)

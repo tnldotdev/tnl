@@ -93,6 +93,9 @@ func startIntegrationBinaryStandaloneWithBind(t *testing.T, containerReachable b
 		// original destination for public and private ingress.
 		publicListen = unusedTCPAddress(t)
 		startBinaryPublicProxy(t, 443, publicListen)
+		for port := 20000; port < 20016; port++ {
+			startBinaryPublicProxy(t, port, publicListen)
+		}
 		relayUDPListen = unusedTCPAddress(t)
 	}
 	serveSettings := map[string]string{
@@ -130,6 +133,7 @@ func startIntegrationBinaryStandaloneWithBind(t *testing.T, containerReachable b
 		"TNLD_RELAY_UDP_LISTEN":           relayUDPListen,
 		"TNLD_ROUTING_TABLE_WAIT":         "1s",
 		"TNLD_SERVER_DOMAIN":              "127.0.0.1.nip.io",
+		"TNLD_SERVICE_PORT_RANGES":        "20000-20015",
 		"TNLD_STORAGE_KEY":                testStorageKey,
 	}
 	if containerReachable {

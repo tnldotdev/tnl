@@ -84,7 +84,7 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	defer tunnel.Finish(context.Background(), nil)
 
 	assertTunnelSnapshot(t, database, TunnelStateStarting, TunnelSummary{Total: 1, Starting: 1})
-	if err := tunnel.SetPublicURL(t.Context(), testPublicURLID, "route.example"); err != nil {
+	if err := tunnel.SetPublicURL(t.Context(), testPublicURLID, "https://route.example"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tunnel.SetProvisioning(t.Context(), 3); err != nil {
@@ -168,11 +168,41 @@ func TestPrivateDatabaseLabelsCannotAcquirePublicTunnelPorts(t *testing.T) {
 	}
 }
 
-func TestPublicTunnelAddressRejectsOpaquePorts(t *testing.T) {
-	for _, address := range []string{"shell.example:10022", "tcp://db.example:5432", "https://db.example:5432", "https://db.example:"} {
+func TestPublicTunnelAddressRejectsInvalidAuthority(t *testing.T) {
+	for _, address := range []string{"shell.example:10022", "tcp://db.example:5432", "https://db.example:0", "https://db.example:65536", "https://db.example:025443", "https://db.example:"} {
 		if _, err := parsePublicTunnelAddress(address); err == nil {
 			t.Fatalf("public HTTP tunnel accepted %q", address)
 		}
+	}
+}
+
+func TestPublicTunnelAddressRetainsExactPortAcrossReopen(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	database, err := OpenWithOptions(t.Context(), root, OpenOptions{Protection: ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{Command: TunnelCommandPublish, Server: "https://server.example", Target: "3000", Project: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tunnel.Finish(context.Background(), nil) }()
+	const origin = "https://app.example:25443"
+	if err := tunnel.SetPublicURL(t.Context(), testPublicURLID, origin); err != nil {
+		t.Fatal(err)
+	}
+	if err := tunnel.SetReady(t.Context(), origin, 1); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := OpenWithOptions(t.Context(), root, OpenOptions{Protection: ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	snapshot, err := reader.Snapshot(t.Context())
+	if err != nil || len(snapshot.Tunnels) != 1 || snapshot.Tunnels[0].Hostname != "app.example" || snapshot.Tunnels[0].PublicURL != origin {
+		t.Fatal("reopen lost or reconstructed the exact public origin", snapshot, err)
 	}
 }
 

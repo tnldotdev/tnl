@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/observability"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -217,7 +218,7 @@ type ReadinessProof struct {
 }
 
 func NewReadinessProof(run PublishRunIdentity, path string) (*ReadinessProof, error) {
-	if run.PublicURLID == "" || run.Number == 0 || run.Hostname == "" || !strings.HasPrefix(path, "/") ||
+	if run.PublicURLID == "" || run.Number == 0 || run.Hostname == "" || !tcpport.ValidNetwork(run.Port) || !strings.HasPrefix(path, "/") ||
 		strings.ContainsAny(path, "?#\r\n") || strings.HasPrefix(path, "/__tnl/") {
 		return nil, errors.New("publisher: readiness proof requires an exact run and absolute path")
 	}

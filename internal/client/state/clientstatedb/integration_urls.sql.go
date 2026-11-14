@@ -25,6 +25,23 @@ func (q *Queries) ClearIntegrationURLReady(ctx context.Context, arg ClearIntegra
 	return err
 }
 
+const integrationURLEndpoint = `-- name: IntegrationURLEndpoint :one
+SELECT public_url FROM integration_url_endpoints
+WHERE server_origin=?1 AND hostname=?2
+`
+
+type IntegrationURLEndpointParams struct {
+	ServerOrigin string
+	Hostname     string
+}
+
+func (q *Queries) IntegrationURLEndpoint(ctx context.Context, arg IntegrationURLEndpointParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, integrationURLEndpoint, arg.ServerOrigin, arg.Hostname)
+	var public_url string
+	err := row.Scan(&public_url)
+	return public_url, err
+}
+
 const integrationURLReady = `-- name: IntegrationURLReady :one
 SELECT count(*) FROM integration_url_leases
 WHERE server_origin = ?1 AND hostname = ?2 AND expires_at > ?3
@@ -62,6 +79,29 @@ func (q *Queries) MarkIntegrationURLReady(ctx context.Context, arg MarkIntegrati
 		arg.Hostname,
 		arg.PublisherInstanceID,
 		arg.ExpiresAt,
+	)
+	return err
+}
+
+const saveIntegrationURLEndpoint = `-- name: SaveIntegrationURLEndpoint :exec
+INSERT INTO integration_url_endpoints (server_origin, hostname, public_url_id, public_url)
+VALUES (?1, ?2, ?3, ?4)
+ON CONFLICT(server_origin, hostname) DO UPDATE SET public_url_id=excluded.public_url_id, public_url=excluded.public_url
+`
+
+type SaveIntegrationURLEndpointParams struct {
+	ServerOrigin string
+	Hostname     string
+	PublicURLID  string
+	PublicURL    string
+}
+
+func (q *Queries) SaveIntegrationURLEndpoint(ctx context.Context, arg SaveIntegrationURLEndpointParams) error {
+	_, err := q.db.ExecContext(ctx, saveIntegrationURLEndpoint,
+		arg.ServerOrigin,
+		arg.Hostname,
+		arg.PublicURLID,
+		arg.PublicURL,
 	)
 	return err
 }

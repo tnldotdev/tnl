@@ -56,8 +56,18 @@ func bindServicePort(ctx context.Context, tx pgx.Tx, service string, port int, p
 }
 
 func allocateServicePort(ctx context.Context, tx pgx.Tx, service, pool string, public bool, now time.Time) (int, error) {
+	return allocateEndpointPort(ctx, tx, service, "", pool, public, now)
+}
+
+// both saved services and public urls reserve from the same address inventory.
+// the caller holds its exact resource row; neither names nor local ports select it.
+func allocateEndpointPort(ctx context.Context, tx pgx.Tx, service, publicURL, pool string, public bool, now time.Time) (int, error) {
+	if (service == "") == (publicURL == "") {
+		return 0, ErrServiceMetadata
+	}
 	var port int
-	err := tx.QueryRow(ctx, `SELECT port FROM control.service_port_claims WHERE service_id=$1 AND state='held'`, service).Scan(&port)
+	err := tx.QueryRow(ctx, `SELECT port FROM control.service_port_claims
+	    WHERE (service_id=NULLIF($1,'') OR public_url_id=NULLIF($2,'')) AND state='held'`, service, publicURL).Scan(&port)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// zero means no public binding. private service identity, certificates,
 		// relay placement and connector authority do not consume ingress ports.
@@ -70,11 +80,11 @@ func allocateServicePort(ctx context.Context, tx pgx.Tx, service, pool string, p
 		if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('managed-ports/'||$1,0))`, pool); err != nil {
 			return 0, err
 		}
-		err = tx.QueryRow(ctx, `INSERT INTO control.service_port_claims(service_id,ingress_pool_id,port,claimed_at)
-		    SELECT $1,$2,candidate,$3 FROM control.ingress_service_port_ranges inventory CROSS JOIN LATERAL generate_series(inventory.first_port,inventory.last_port) candidate
-		    WHERE inventory.ingress_pool_id=$2
-		    AND NOT EXISTS(SELECT 1 FROM control.service_port_claims held WHERE held.ingress_pool_id=$2 AND held.port=candidate AND held.state<>'released')
-		    ORDER BY md5($1||'/'||candidate::text) LIMIT 1 RETURNING port`, service, pool, now).Scan(&port)
+		err = tx.QueryRow(ctx, `INSERT INTO control.service_port_claims(service_id,public_url_id,ingress_pool_id,port,claimed_at)
+		    SELECT NULLIF($1,''),NULLIF($2,''),$3,candidate,$4 FROM control.ingress_service_port_ranges inventory CROSS JOIN LATERAL generate_series(inventory.first_port,inventory.last_port) candidate
+		    WHERE inventory.ingress_pool_id=$3
+		    AND NOT EXISTS(SELECT 1 FROM control.service_port_claims held WHERE held.ingress_pool_id=$3 AND held.port=candidate AND held.state<>'released')
+		    ORDER BY md5(COALESCE(NULLIF($1,''),$2)||'/'||candidate::text) LIMIT 1 RETURNING port`, service, publicURL, pool, now).Scan(&port)
 	}
 	if err != nil {
 		return 0, publisherLookupError(err, ErrServicePortsExhausted)

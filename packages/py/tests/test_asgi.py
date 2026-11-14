@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import socket
 from collections.abc import Mapping
+from typing import cast
 
 import httpx
 import pytest
@@ -128,6 +129,22 @@ def test_status_is_filtered_and_fenced_by_registration_and_bound_target() -> Non
         )
     with pytest.raises(InvalidResponse):
         parse_status(ready, "another", str(native.registration["registration_id"]), native.target)
+
+
+@pytest.mark.parametrize("port", [25443, 65535])
+def test_status_retains_exact_public_http_port(port: int) -> None:
+    native = FakeNative([])
+    native.invocation_id = "ivk_" + "A" * 22
+    native.registration = {"registration_id": "reg_" + "a" * 32}
+    native.target = "http://127.0.0.1:1234"
+    native.starts = 1
+    value = native.snapshot()
+    services = cast(list[dict[str, object]], value["services"])
+    services[0]["public_url"] = f"{_public_url}:{port}"
+    status = parse_status(
+        value, native.invocation_id, str(native.registration["registration_id"]), native.target
+    )
+    assert status is not None and status.public_url == f"{_public_url}:{port}"
 
 
 def test_single_request_handler_requires_an_explicit_asgi_adapter() -> None:

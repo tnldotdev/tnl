@@ -93,7 +93,7 @@ func (d *Database) snapshotIntegrationURLs(ctx context.Context, tx *sql.Tx, tunn
 			kind = "oauth"
 		}
 		url := IntegrationURLInfo{Kind: kind, Server: row.ServerOrigin, Hostname: row.Hostname,
-			PublicURL: "https://" + row.Hostname, State: "ready"}
+			PublicURL: row.PublicURL, State: "ready"}
 		switch {
 		case row.PublisherExpiresAt == 0:
 			url.State = "unavailable"
@@ -143,7 +143,7 @@ func (d *Database) snapshotIntegrationURLs(ctx context.Context, tx *sql.Tx, tunn
 		if row.Service == row.TunnelService.String && row.State == string(TunnelStateReady) && row.AppHostname.Valid && row.PublicURLID.Valid && row.PublishRunNumber.Valid {
 			url.Endpoints[endpointIndex].ReadyReceivers = append(url.Endpoints[endpointIndex].ReadyReceivers, WebhookReceiverInfo{
 				TunnelID: row.TunnelID, Project: row.ProjectRoot, Service: row.TunnelService.String,
-				PublicURL: "https://" + row.AppHostname.String, State: row.State,
+				PublicURL: row.PublicURL, State: row.State,
 			})
 		}
 	}
@@ -162,9 +162,7 @@ func (d *Database) snapshotIntegrationURLs(ctx context.Context, tx *sql.Tx, tunn
 			continue
 		}
 		owner := &WebhookReceiverInfo{TunnelID: row.TunnelID, Project: row.ProjectRoot, Service: row.Service.String, State: row.State}
-		if row.AppHostname.Valid {
-			owner.PublicURL = "https://" + row.AppHostname.String
-		}
+		owner.PublicURL = row.PublicURL
 		result[index].Endpoints[endpointIndex].Owner = owner
 	}
 	for key, endpointIndex := range endpointIndices {

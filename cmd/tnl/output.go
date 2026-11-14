@@ -398,7 +398,7 @@ func boundedOutputError(err error) string {
 func handlePublisherEvent(ctx context.Context, tunnel *clientstate.Tunnel, output *publishOutput, event publisher.Event) error {
 	switch event.Type {
 	case publisher.EventPublicURLAssigned:
-		return tunnel.SetPublicURL(ctx, event.PublicURLID, event.Hostname)
+		return tunnel.SetPublicURL(ctx, event.PublicURLID, event.PublicURL)
 	case publisher.EventProvisioning:
 		if err := tunnel.SetProvisioning(ctx, event.PublishRunNumber); err != nil {
 			return err

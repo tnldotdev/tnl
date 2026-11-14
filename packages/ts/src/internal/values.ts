@@ -38,7 +38,13 @@ export const hostnameSchema = z
 
 export const httpsOriginSchema = z.templateLiteral(["https://", z.string()]).refine((value) => {
   const url = URL.parse(value);
-  return url !== null && url.origin === value && url.username === "" && url.password === "";
+  return (
+    url !== null &&
+    url.origin === value &&
+    url.port !== "0" &&
+    url.username === "" &&
+    url.password === ""
+  );
 });
 
 export const serviceIDSchema = z

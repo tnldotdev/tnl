@@ -129,6 +129,7 @@ type Config struct {
 // PublishRunIdentity binds a response observer to the run that served it.
 type PublishRunIdentity struct {
 	Hostname     string
+	Port         int
 	PublicURLID  string
 	PublishRunID string
 	Number       uint64

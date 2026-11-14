@@ -62,7 +62,7 @@ func (q *Queries) ActiveWebhookEndpoints(ctx context.Context, arg ActiveWebhookE
 }
 
 const readyWebhookReceivers = `-- name: ReadyWebhookReceivers :many
-SELECT t.id, t.server_origin, t.primary_project_root, t.integration_namespace, t.hostname, t.target, t.public_url_id, t.publish_run_number, e.fingerprint
+SELECT t.id, t.server_origin, t.primary_project_root, t.integration_namespace, t.hostname, t.public_url, t.target, t.public_url_id, t.publish_run_number, e.fingerprint
 FROM webhook_declarations e JOIN local_tunnels t ON t.id = e.tunnel_id
 WHERE e.name = ?1 AND t.server_origin = ?2
   AND t.primary_project_root = ?3 AND t.integration_namespace = ?4
@@ -86,6 +86,7 @@ type ReadyWebhookReceiversRow struct {
 	PrimaryProjectRoot   sql.NullString
 	IntegrationNamespace sql.NullString
 	Hostname             sql.NullString
+	PublicURL            string
 	Target               sql.NullString
 	PublicURLID          sql.NullString
 	PublishRunNumber     sql.NullInt64
@@ -113,6 +114,7 @@ func (q *Queries) ReadyWebhookReceivers(ctx context.Context, arg ReadyWebhookRec
 			&i.PrimaryProjectRoot,
 			&i.IntegrationNamespace,
 			&i.Hostname,
+			&i.PublicURL,
 			&i.Target,
 			&i.PublicURLID,
 			&i.PublishRunNumber,

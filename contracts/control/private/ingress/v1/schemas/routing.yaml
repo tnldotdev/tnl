@@ -54,6 +54,7 @@ schemas:
       - publish_run_id
       - publish_run_number
       - canonical_hostname
+      - port
       - policy_revision
       - access_mode
       - ip_policy
@@ -61,6 +62,11 @@ schemas:
       - public_url_expires_at
       - publisher_connections
     properties:
+      port:
+        type: integer
+        minimum: 1
+        maximum: 65535
+        description: Exact public destination port for this URL and all its publish runs.
       public_url_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
       publish_run_id:

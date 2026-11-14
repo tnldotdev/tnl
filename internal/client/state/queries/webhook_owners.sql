@@ -24,7 +24,7 @@ DELETE FROM webhook_owners WHERE server_origin = sqlc.arg(server_origin)
   AND name = sqlc.arg(name) AND tunnel_id = sqlc.arg(tunnel_id);
 
 -- name: ExclusiveWebhookReceiver :one
-SELECT t.id, t.server_origin, t.primary_project_root, t.integration_namespace, t.hostname, t.target, t.public_url_id, t.publish_run_number
+SELECT t.id, t.server_origin, t.primary_project_root, t.integration_namespace, t.hostname, t.public_url, t.target, t.public_url_id, t.publish_run_number
 FROM webhook_owners owner JOIN local_tunnels t ON t.id = owner.tunnel_id
 JOIN webhook_declarations e ON e.tunnel_id = t.id AND e.name = owner.name AND e.service = t.service
 WHERE owner.server_origin = sqlc.arg(server_origin) AND owner.primary_project_root = sqlc.arg(primary_project_root)

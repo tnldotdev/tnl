@@ -13,6 +13,7 @@ import (
 	"time"
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
@@ -198,7 +199,7 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	}
 	f.identity = newIntegrationPublishingIdentity(t, "https://"+controlHostname, controlHTTP, hostnameLabel, owner)
 	f.controlHTTP = controlHTTP
-	f.visitor = newIntegrationVisitor(t, pebble.roots, publicIngressAddress, owner)
+	f.visitor = newProxiedIntegrationVisitor(t, pebble.roots, ingressAddress, owner)
 	return f
 }
 
@@ -352,7 +353,7 @@ func (f *splitPublishFixture) startPublisher(t *testing.T, target string, quicCo
 func (f *splitPublishFixture) waitReady(t *testing.T, handle *integrationPublisher) publisher.Event {
 	t.Helper()
 	ready := waitForPublisherReady(t, handle)
-	if ready.Hostname != f.identity.hostname || ready.PublicURL != "https://"+f.identity.hostname {
+	if ready.Hostname != f.identity.hostname || ready.PublicURL == "" || ready.PublicURL != naming.HTTPSOrigin(ready.Hostname, integrationPublicURLPort(t, f.inspect, ready.PublicURLID)) {
 		t.Fatalf("publisher ready event = %#v", ready)
 	}
 	waitForReadyPublisherConnections(t, f.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)

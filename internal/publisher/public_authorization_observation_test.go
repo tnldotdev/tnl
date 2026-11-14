@@ -291,7 +291,7 @@ func TestPublicHTTPAuthorizationObservationSkipsReadinessAndSeparatesCapacity(t 
 	m := observability.New("publisher")
 	t.Cleanup(func() { _ = m.Shutdown(context.Background()) })
 	ctx := observability.WithMetrics(t.Context(), m)
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
+	run := PublishRunIdentity{Hostname: "route.example", Port: 443, PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
 	proof, err := NewReadinessProof(run, "/health")
 	if err != nil {
 		t.Fatal(err)

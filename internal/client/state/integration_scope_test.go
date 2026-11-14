@@ -117,7 +117,7 @@ func TestIntegrationScopeMatchesBothComponentsAndServer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := tunnel.SetPublicURL(t.Context(), id, "api."+fixture.scope.Namespace); err != nil {
+		if err := tunnel.SetPublicURL(t.Context(), id, "https://api."+fixture.scope.Namespace); err != nil {
 			t.Fatal(err)
 		}
 		if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {

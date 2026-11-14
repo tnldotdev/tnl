@@ -30,6 +30,9 @@ func callbackState(t *testing.T) (*clientstate.Database, string) {
 	if _, err := state.Server(t.Context(), testServer); err != nil {
 		t.Fatal(err)
 	}
+	if err := state.SaveIntegrationURLEndpoint(t.Context(), testServer, "url_0123456789abcdefghijkl", "https://"+testOAuthHost); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = state.Close() })
 	return state, root
 }
@@ -48,7 +51,7 @@ func readyTunnel(t *testing.T, state *clientstate.Database, target, hostname str
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tunnel.SetPublicURL(t.Context(), id, hostname); err != nil {
+	if err := tunnel.SetPublicURL(t.Context(), id, "https://"+hostname); err != nil {
 		t.Fatal(err)
 	}
 	if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {

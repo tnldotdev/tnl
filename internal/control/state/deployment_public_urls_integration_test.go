@@ -45,7 +45,11 @@ func TestIntegrationDeploymentExactHostnameIsNotAnAllocationNamespace(t *testing
 		t.Fatal(err)
 	}
 	_, namespace, _ := strings.Cut(u.CanonicalHostname, ".")
-	if namespace != applied.Deployments[0].Namespace || strings.HasSuffix(u.CanonicalHostname, ".www.custom.example.test") || production.Services["web"].PublicURL != "https://www.custom.example.test" {
+	saved, err := d.GetPublicURL(t.Context(), r.ActorID, production.Services["web"].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if namespace != applied.Deployments[0].Namespace || strings.HasSuffix(u.CanonicalHostname, ".www.custom.example.test") || production.Services["web"].PublicURL != saved.Origin() {
 		t.Fatal("exact saved hostname became the allocation namespace")
 	}
 }
@@ -78,7 +82,11 @@ func TestIntegrationDeploymentSavedPublicURLsBelongToTeamAcrossPublisherReplacem
 		t.Fatal(err)
 	}
 	for name, metadata := range deployment.Services {
-		if metadata.PublicURL != "https://"+name+"."+namespace || !strings.HasPrefix(metadata.ID, "url_") || metadata.Endpoint != nil {
+		saved, err := d.GetPublicURL(ctx, r.ActorID, metadata.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if saved.CanonicalHostname != name+"."+namespace || metadata.PublicURL != saved.Origin() || saved.Port < 1024 || !strings.HasPrefix(metadata.ID, "url_") || metadata.Endpoint != nil {
 			t.Fatal("deployment URL borrowed a developer namespace or private endpoint", metadata)
 		}
 	}
@@ -179,7 +187,11 @@ func TestIntegrationDeploymentPublicURLChangesDoNotMutateSiblingOrAdoptNamespace
 	}
 	r.ExpectedRevision, r.Deployment, r.Configuration = current.Revision, "staging", current.Configuration
 	web := r.Configuration.Services["web"]
-	web.PublicURL.Hostname = strings.TrimPrefix(f.production.Services["web"].PublicURL, "https://")
+	productionURL, err := f.d.GetPublicURL(t.Context(), r.ActorID, f.production.Services["web"].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	web.PublicURL.Hostname = productionURL.CanonicalHostname
 	r.Configuration.Services["web"] = web
 	if _, err := f.d.ApplyProjectConfiguration(t.Context(), r); !errors.Is(err, ErrPublicURLConflict) {
 		t.Fatal("staging adopted production's namespace", err)

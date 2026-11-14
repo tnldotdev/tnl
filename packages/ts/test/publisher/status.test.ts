@@ -33,6 +33,18 @@ const snapshot = {
 };
 
 describe("publisher status replies", () => {
+  test("retains the exact public HTTP port", () => {
+    const publicURL = "https://web.example:25443";
+    expect(
+      parseStatus(
+        { ...snapshot, services: [{ ...service, public_url: publicURL }] },
+        "web",
+        registrationID,
+        target,
+      )?.publicURL,
+    ).toBe(publicURL);
+  });
+
   test("reports readiness only for the registered target and observed publish run", () => {
     expect(parseStatus(snapshot, "web", registrationID, target)).toEqual({
       registered: true,
@@ -57,6 +69,9 @@ describe("publisher status replies", () => {
     },
     { ...service, registered: false },
     { ...service, public_url: "https://web.example/path" },
+    { ...service, public_url: "https://web.example:0" },
+    { ...service, public_url: "https://web.example:65536" },
+    { ...service, public_url: "https://user@web.example:25443" },
     { ...service, service_protocol: "tcp" },
   ])("rejects stale readiness and malformed service facts %#", (item) => {
     expect(() =>

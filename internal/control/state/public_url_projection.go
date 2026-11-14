@@ -7,7 +7,8 @@ import (
 
 func publicURLFromModel(row controlstatedb.ControlPublicUrl, openPublishRunID string) PublicURL {
 	return publicURLFromProjection(publicURLProjection{
-		ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
+		Port: row.Port,
+		ID:   row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
 		CanonicalHostname: row.CanonicalHostname, Target: row.Target, Namespace: row.Namespace, RequirePostQuantum: row.RequirePostQuantum,
 		PublicURLScope: row.PublicURLScope, Purpose: row.Purpose, AccessMode: row.AccessMode,
 		PolicyRevision: row.PolicyRevision, LifecycleState: row.LifecycleState,
@@ -20,7 +21,8 @@ func publicURLFromModel(row controlstatedb.ControlPublicUrl, openPublishRunID st
 
 func publicURLFromIdempotencyRow(row controlstatedb.GetPublicURLByCreatorIdempotencyRow) PublicURL {
 	return publicURLFromProjection(publicURLProjection{
-		ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
+		Port: row.Port,
+		ID:   row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
 		CanonicalHostname: row.CanonicalHostname, Target: row.Target, Namespace: row.Namespace, RequirePostQuantum: row.RequirePostQuantum,
 		PublicURLScope: row.PublicURLScope, Purpose: row.Purpose, AccessMode: row.AccessMode,
 		PolicyRevision: row.PolicyRevision, LifecycleState: row.LifecycleState,
@@ -33,7 +35,8 @@ func publicURLFromIdempotencyRow(row controlstatedb.GetPublicURLByCreatorIdempot
 
 func publicURLFromIdentityRow(row controlstatedb.GetIdentityPublicURLRow) PublicURL {
 	return publicURLFromProjection(publicURLProjection{
-		ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
+		Port: row.Port,
+		ID:   row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
 		CanonicalHostname: row.CanonicalHostname, Target: row.Target, Namespace: row.Namespace, RequirePostQuantum: row.RequirePostQuantum,
 		PublicURLScope: row.PublicURLScope, Purpose: row.Purpose, AccessMode: row.AccessMode,
 		PolicyRevision: row.PolicyRevision, LifecycleState: row.LifecycleState,
@@ -46,7 +49,8 @@ func publicURLFromIdentityRow(row controlstatedb.GetIdentityPublicURLRow) Public
 
 func publicURLFromListRow(row controlstatedb.ListIdentityPublicURLsRow) PublicURL {
 	return publicURLFromProjection(publicURLProjection{
-		ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
+		Port: row.Port,
+		ID:   row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
 		CanonicalHostname: row.CanonicalHostname, Target: row.Target, Namespace: row.Namespace, RequirePostQuantum: row.RequirePostQuantum,
 		PublicURLScope: row.PublicURLScope, Purpose: row.Purpose, AccessMode: row.AccessMode,
 		PolicyRevision: row.PolicyRevision, LifecycleState: row.LifecycleState,
@@ -59,7 +63,8 @@ func publicURLFromListRow(row controlstatedb.ListIdentityPublicURLsRow) PublicUR
 
 func publicURLFromAuthorizedListRow(row controlstatedb.ListAuthorizedPublicURLsDataRow) PublicURL {
 	return publicURLFromProjection(publicURLProjection{
-		ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
+		Port: row.Port,
+		ID:   row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
 		CanonicalHostname: row.CanonicalHostname, Target: row.Target, Namespace: row.Namespace, RequirePostQuantum: row.RequirePostQuantum,
 		PublicURLScope: row.PublicURLScope, Purpose: row.Purpose, AccessMode: row.AccessMode,
 		PolicyRevision: row.PolicyRevision, LifecycleState: row.LifecycleState,
@@ -71,6 +76,7 @@ func publicURLFromAuthorizedListRow(row controlstatedb.ListAuthorizedPublicURLsD
 }
 
 type publicURLProjection struct {
+	Port                                                       int32
 	ID, TeamID, DomainID, CanonicalHostname, Target, Namespace string
 	MembershipID                                               pgtype.Text
 	PublicURLScope, Purpose, AccessMode, LifecycleState        string
@@ -88,7 +94,8 @@ func publicURLFromProjection(p publicURLProjection) PublicURL {
 		authorizationNumber = *p.AuthorizationPublishRunNumber
 	}
 	result := PublicURL{
-		ID: p.ID, TeamID: p.TeamID, DomainID: p.DomainID, MembershipID: p.MembershipID.String,
+		Port: int(p.Port),
+		ID:   p.ID, TeamID: p.TeamID, DomainID: p.DomainID, MembershipID: p.MembershipID.String,
 		CanonicalHostname: p.CanonicalHostname, Namespace: p.Namespace, Target: p.Target, PublicURLScope: PublicURLScope(p.PublicURLScope), Purpose: PublicURLPurpose(p.Purpose),
 		ServiceProtocol:    PublicURLServiceProtocol(p.ServiceProtocol),
 		PublisherPool:      p.PublisherPool,
@@ -109,7 +116,8 @@ func publicURLFromProjection(p publicURLProjection) PublicURL {
 
 func publicURLModelFromDeleteRow(row controlstatedb.LockIdentityPublicURLForDeleteRow) controlstatedb.ControlPublicUrl {
 	return controlstatedb.ControlPublicUrl{
-		ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
+		Port: row.Port,
+		ID:   row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
 		CreatedByIdentityID: row.CreatedByIdentityID, IdempotencyKey: row.IdempotencyKey,
 		RequestDigestCiphertext:   row.RequestDigestCiphertext,
 		RequestDigestStorageKeyID: row.RequestDigestStorageKeyID,

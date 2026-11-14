@@ -78,7 +78,7 @@ func (q *Queries) DeleteExpiredWebhookOwner(ctx context.Context, arg DeleteExpir
 }
 
 const exclusiveWebhookReceiver = `-- name: ExclusiveWebhookReceiver :one
-SELECT t.id, t.server_origin, t.primary_project_root, t.integration_namespace, t.hostname, t.target, t.public_url_id, t.publish_run_number
+SELECT t.id, t.server_origin, t.primary_project_root, t.integration_namespace, t.hostname, t.public_url, t.target, t.public_url_id, t.publish_run_number
 FROM webhook_owners owner JOIN local_tunnels t ON t.id = owner.tunnel_id
 JOIN webhook_declarations e ON e.tunnel_id = t.id AND e.name = owner.name AND e.service = t.service
 WHERE owner.server_origin = ?1 AND owner.primary_project_root = ?2
@@ -102,6 +102,7 @@ type ExclusiveWebhookReceiverRow struct {
 	PrimaryProjectRoot   sql.NullString
 	IntegrationNamespace sql.NullString
 	Hostname             sql.NullString
+	PublicURL            string
 	Target               sql.NullString
 	PublicURLID          sql.NullString
 	PublishRunNumber     sql.NullInt64
@@ -123,6 +124,7 @@ func (q *Queries) ExclusiveWebhookReceiver(ctx context.Context, arg ExclusiveWeb
 		&i.PrimaryProjectRoot,
 		&i.IntegrationNamespace,
 		&i.Hostname,
+		&i.PublicURL,
 		&i.Target,
 		&i.PublicURLID,
 		&i.PublishRunNumber,

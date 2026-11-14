@@ -843,6 +843,7 @@ type ControlPublicUrl struct {
 	RequestDigestCiphertext     []byte
 	RequestDigestStorageKeyID   pgtype.Text
 	CanonicalHostname           string
+	Port                        int32
 	Target                      string
 	Namespace                   string
 	Purpose                     string
@@ -1403,7 +1404,8 @@ type ControlServiceNamespaceClaim struct {
 
 type ControlServicePortClaim struct {
 	ID               int64
-	ServiceID        string
+	ServiceID        pgtype.Text
+	PublicURLID      pgtype.Text
 	IngressPoolID    string
 	Port             int32
 	State            string

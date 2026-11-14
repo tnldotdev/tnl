@@ -125,7 +125,7 @@ func shareServiceURLs(project projectConfiguration, routes []controlv1.PublicURL
 			continue
 		}
 		if publicURL, found := byHostname[hostnames[name]]; found {
-			services[name] = shareServiceResult{PublicURLID: publicURL.Id, PublicURL: "https://" + publicURL.CanonicalHostname}
+			services[name] = shareServiceResult{PublicURLID: publicURL.Id, PublicURL: naming.HTTPSOrigin(publicURL.CanonicalHostname, publicURL.Port)}
 		}
 	}
 	return services
@@ -156,12 +156,20 @@ func selectSharePublicURL(selector string, routes []controlv1.PublicURL) (contro
 		return controlv1.PublicURL{}, failure.Wrap("select share public URL", failure.ShareInputInvalid, errors.New("select the public URL to open, for example tnl share link create web.example.com"))
 	}
 	hostname := selector
+	origin := ""
 	if strings.HasPrefix(selector, "https://") {
 		parsed, err := url.Parse(selector)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Host != parsed.Hostname() || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil {
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil {
 			return controlv1.PublicURL{}, failure.Wrap("validate share public URL", failure.ShareInputInvalid, errors.Join(err, errors.New("share URL must be a public URL ID, bare hostname, or HTTPS origin")))
 		}
 		hostname = parsed.Hostname()
+		if parsed.Host != hostname {
+			port, err := strconv.Atoi(parsed.Port())
+			if err != nil || selector != naming.HTTPSOrigin(hostname, port) {
+				return controlv1.PublicURL{}, failure.Wrap("validate share public URL", failure.ShareInputInvalid, errors.New("share URL must contain a canonical positive port"))
+			}
+			origin = selector
+		}
 	}
 	if !opaqueid.Valid(selector, opaqueid.PublicURLPrefix) {
 		canonical, err := naming.CanonicalizeHostname(hostname)
@@ -170,7 +178,7 @@ func selectSharePublicURL(selector string, routes []controlv1.PublicURL) (contro
 		}
 	}
 	for _, publicURL := range routes {
-		if publicURL.Id == selector || publicURL.CanonicalHostname == hostname {
+		if publicURL.Id == selector || publicURL.CanonicalHostname == hostname && (origin == "" || origin == naming.HTTPSOrigin(publicURL.CanonicalHostname, publicURL.Port)) {
 			return publicURL, nil
 		}
 	}
@@ -376,9 +384,10 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 	}
 	share := creation.Share
 	entryURL, entryErr := url.Parse(creation.Link)
+	origin := naming.HTTPSOrigin(selected.CanonicalHostname, selected.Port)
 	if share.Id == "" || !slices.Equal(share.PublicUrlIds, ids) || flags.Preview && (share.PreviewId == nil || *share.PreviewId != preview.Id) || !flags.Preview && share.PreviewId != nil ||
 		creation.TokenSource.Kind != controlv1.VisitorTokenShare || creation.TokenSource.ShareId != share.Id || len(creation.TokenSource.Secret) != 43 ||
-		entryErr != nil || entryURL.Scheme != "https" || entryURL.Host != selected.CanonicalHostname || entryURL.User != nil {
+		entryErr != nil || origin == "" || entryURL.Scheme+"://"+entryURL.Host != origin || entryURL.User != nil {
 		return failure.Wrap("create share", failure.ServerResponseInvalid, errors.New("server returned a share with different public URLs"))
 	}
 	if token {
@@ -391,7 +400,7 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 		if err != nil {
 			return err
 		}
-		if permission.Resource != scope || permission.Hostname != selected.CanonicalHostname || permission.Port != 443 || permission.VisitorPolicyRevision < 1 || permission.ExpiresAt.After(share.ExpiresAt) || !permission.ExpiresAt.After(time.Now()) || len(permission.VisitorToken) > 2048 || strings.Count(permission.VisitorToken, ".") != 2 {
+		if permission.Resource != scope || permission.Hostname != selected.CanonicalHostname || permission.Port != selected.Port || permission.VisitorPolicyRevision < 1 || permission.ExpiresAt.After(share.ExpiresAt) || !permission.ExpiresAt.After(time.Now()) || len(permission.VisitorToken) > 2048 || strings.Count(permission.VisitorToken, ".") != 2 {
 			return failure.Wrap("prepare share token", failure.ServerResponseInvalid, errors.New("server returned a different public URL scope or invalid permission"))
 		}
 		if flags.Output == statusOutputJSON {
@@ -620,10 +629,10 @@ func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, proje
 			PublicURL     string                        `json:"public_url"`
 			Services      map[string]shareServiceResult `json:"services"`
 			Enabled       bool                          `json:"enabled"`
-		}{1, preview.Id, "https://" + selected.CanonicalHostname + "/", services, true}))
+		}{1, preview.Id, naming.HTTPSOrigin(selected.CanonicalHostname, selected.Port) + "/", services, true}))
 	}
 	return writeHumanFrame(output, "tnl share team create", "shared", "", clioutput.Fields(
-		clioutput.Field{Label: "public URL", Value: "https://" + selected.CanonicalHostname + "/"},
+		clioutput.Field{Label: "public URL", Value: naming.HTTPSOrigin(selected.CanonicalHostname, selected.Port) + "/"},
 	))
 }
 

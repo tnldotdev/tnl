@@ -156,7 +156,7 @@ func TestIntegrationServiceAuditBatchAPI(t *testing.T) {
 	claimedScope["team_id"] = "emitter-chosen-team"
 	post(ingressServer.Client(), endpoint, secret, map[string]any{"events": []any{claimedScope}}, 400)
 	post(ingressServer.Client(), endpoint+"0", secret, batch, 409)
-	exerciseServiceAuditQueueComposition(t, d, pool, lease, actor, m.TeamID, m.ID, u.ID, runs[0], u.CanonicalHostname,
+	exerciseServiceAuditQueueComposition(t, d, pool, lease, actor, m.TeamID, m.ID, u.ID, runs[0], u.CanonicalHostname, u.Port,
 		serviceaudit.HTTPReporter(ingressServer.Client(), func(context.Context) (serviceaudit.Destination, error) {
 			return serviceaudit.Destination{URL: endpoint, Bearer: secret}, nil
 		}))

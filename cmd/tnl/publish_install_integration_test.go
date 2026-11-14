@@ -12,10 +12,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -29,11 +31,13 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
+	"github.com/tnldotdev/tnl/internal/naming"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/setup"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -105,34 +109,40 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	if err := hosts.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// preserve visitor DNS/443/TLS while the existing small topology selects an
-	// ephemeral ingress port. this listener is in the fixture's network namespace.
-	public, err := net.Listen("tcp", "127.0.0.1:443")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = public.Close() })
-	go func() {
-		for {
-			visitor, err := public.Accept()
-			if err != nil {
-				return
-			}
-			go func() {
-				defer visitor.Close()
-				ingress, err := net.Dial("tcp", f.publicAddress)
-				if err != nil {
-					return
-				}
-				defer ingress.Close()
-				done := make(chan struct{})
-				go func() { _, _ = io.Copy(ingress, visitor); close(done) }()
-				_, _ = io.Copy(visitor, ingress)
-				_ = visitor.Close()
-				<-done
-			}()
+	// systemd and Compose children dial the allocated ports without the in-process
+	// HTTP override. preserve their exact destinations through the fixture front.
+	for port := 20000; port < 20016; port++ {
+		public, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err != nil {
+			t.Fatal(err)
 		}
-	}()
+		f.serve(t, public, func(visitor net.Conn) error {
+			dial, cancel := context.WithTimeout(f.ctx, 5*time.Second)
+			upstream, err := (&net.Dialer{}).DialContext(dial, "tcp", f.publicAddress)
+			cancel()
+			if err != nil {
+				return err
+			}
+			defer upstream.Close()
+			stop := context.AfterFunc(f.ctx, func() { _ = visitor.Close(); _ = upstream.Close() })
+			defer stop()
+			header, err := proxyproto.Encode(proxyproto.Header{
+				Source: visitor.RemoteAddr().(*net.TCPAddr).AddrPort(), Destination: visitor.LocalAddr().(*net.TCPAddr).AddrPort(),
+			})
+			if err != nil {
+				return err
+			}
+			if _, err := upstream.Write(header); err != nil {
+				return err
+			}
+			done := make(chan struct{})
+			go func() { _, _ = io.Copy(upstream, visitor); _ = upstream.(*net.TCPConn).CloseWrite(); close(done) }()
+			_, _ = io.Copy(visitor, upstream)
+			_ = visitor.Close()
+			<-done
+			return nil
+		})
+	}
 	var probes atomic.Int64
 	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Tnl-Readiness-Probe") != "" || r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" {
@@ -182,7 +192,8 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.Status.PublicURL != "https://"+hostname {
+	savedURL, err := session.Authenticated().Control.GetPublicURL(t.Context(), job.PublicURLID)
+	if err != nil || savedURL.CanonicalHostname != hostname || savedURL.Port < 1024 || job.Status.PublicURL != naming.HTTPSOrigin(hostname, savedURL.Port) {
 		t.Fatal("installation printed a different public URL")
 	}
 	firstRun, publisherIdentityID, urlID := job.Status.RunNumber, job.PublisherIdentityID, job.PublicURLID
@@ -448,7 +459,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	// an anonymous application GET remains denied while proof-bound readiness
 	// succeeds, and the state volume contains no control session.
 	visitor := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := visitor.Get("https://" + hostname + "/")
+	response, err := visitor.Get(naming.HTTPSOrigin(after.CanonicalHostname, after.Port) + "/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -531,8 +542,13 @@ func installConfiguredHealthTarget(t *testing.T, registry *installedjobs.Registr
 		t.Fatal(err)
 	}
 	address := config.Target(target.URL)
+	public, err := url.Parse(old.Status.PublicURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostname := public.Hostname()
 	document := config.Document{Version: new(1), TNL: &config.Project{Server: &old.Server, Team: new("studio"), Services: map[string]config.ServiceDeclaration{"opencode": {}}, Deployments: map[string]config.Deployment{"local": {Targets: map[string]config.DeploymentBinding{
-		"opencode": {Tunnel: &config.Tunnel{PublicURL: &old.Status.PublicURL}, ServiceTarget: config.ServiceTarget{Address: &address, TLS: &config.TargetTLS{CA: new(string(ca)), Hostname: new("example.com")}}, HTTP: &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}}},
+		"opencode": {Tunnel: &config.Tunnel{PublicURL: &hostname}, ServiceTarget: config.ServiceTarget{Address: &address, TLS: &config.TargetTLS{CA: new(string(ca)), Hostname: new("example.com")}}, HTTP: &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}}},
 	}}}}}
 	data, err := json.Marshal(document)
 	if err != nil {

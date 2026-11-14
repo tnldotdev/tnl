@@ -40,7 +40,7 @@ WHERE cookie.public_url_id = sqlc.arg(public_url_id)
   AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(now)));
 
 -- name: ListReadyShareHostnames :many
-SELECT url.id AS public_url_id, url.canonical_hostname
+SELECT url.id AS public_url_id, url.canonical_hostname, url.port
 FROM control.share_public_urls AS included
 JOIN control.public_urls AS url ON url.id = included.public_url_id
 JOIN control.publish_runs AS run ON run.public_url_id = url.id

@@ -17,7 +17,7 @@ func publicURLResponse(publicURL controlstate.PublicURL) controlv1.PublicURL {
 		RequirePostQuantum: publicURL.RequirePostQuantum,
 		PublisherPool:      &publicURL.PublisherPool,
 		Id:                 publicURL.ID, TeamId: publicURL.TeamID, DomainId: publicURL.DomainID,
-		CanonicalHostname: publicURL.CanonicalHostname, Target: publicURL.Target,
+		CanonicalHostname: publicURL.CanonicalHostname, Port: publicURL.Port, Target: publicURL.Target,
 		ServiceProtocol:  protocol,
 		AccessMode:       controlv1.VisitorAccessMode(publicURL.AccessMode),
 		MutationRevision: int64(publicURL.MutationRevision),

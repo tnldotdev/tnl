@@ -12,6 +12,7 @@ import (
 
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	publisherdeployment "github.com/tnldotdev/tnl/internal/publisher/deployment"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/publishingtest"
@@ -86,7 +87,7 @@ func TestPublicURLAssignmentUsesExistingSignedRunAndRetainsSavedURL(t *testing.T
 	}()
 	select {
 	case <-ready:
-		status, body, err := f.Visit(t.Context(), "https://"+u.CanonicalHostname)
+		status, body, err := f.Visit(t.Context(), naming.HTTPSOrigin(u.CanonicalHostname, u.Port))
 		if err != nil || status != 200 || string(body) != "deployment application" {
 			t.Fatal("signed public assignment did not carry visitor traffic", status, err)
 		}

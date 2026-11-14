@@ -13,7 +13,7 @@ SELECT * FROM control.control_sessions WHERE access_token_id = $1 FOR SHARE;
 SELECT * FROM control.control_sessions WHERE id = $1 FOR SHARE;
 
 -- name: ListVisitorInventory :many
-SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.service_protocol,
+SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.port, u.service_protocol,
     permission.reason::text AS visitor_access
 FROM control.public_urls u JOIN control.teams t ON t.id = u.team_id
 CROSS JOIN LATERAL control.visitor_identity_permission('public_url',u.id,sqlc.arg(identity_id)::text,sqlc.arg(control_session_id)::text,
@@ -73,7 +73,7 @@ UPDATE control.teams SET feedback_authors = $2 WHERE id = $1;
 SELECT id FROM control.team_memberships WHERE team_id = $1 AND identity_id = $2 AND control.active_membership(id,CURRENT_TIMESTAMP);
 
 -- name: ReadyBrowserHosts :many
-SELECT DISTINCT ON(u.id) u.id AS public_url_id, u.canonical_hostname, r.id AS publish_run_id
+SELECT DISTINCT ON(u.id) u.id AS public_url_id, u.canonical_hostname, u.port, r.id AS publish_run_id
 FROM control.public_urls u JOIN control.publish_runs r ON r.public_url_id = u.id
 WHERE u.lifecycle_state = 'enabled' AND u.purpose IN ('app', 'alias') AND u.service_protocol = 'http'
   AND r.state = 'ready' AND r.publisher_expires_at > sqlc.arg(now) AND r.closed_at IS NULL

@@ -85,7 +85,7 @@ func (s *browserFlowStore) ConsumeBrowserLogin(_ context.Context, state string, 
 
 func (s *browserFlowStore) IssueBrowserHandoff(_ context.Context, _ controlstate.BrowserLoginAttempt, session controlstate.BrowserAccessSession, _ time.Time) (controlstate.BrowserHandoff, error) {
 	s.issued = session
-	return controlstate.BrowserHandoff{Token: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"}, nil
+	return controlstate.BrowserHandoff{Token: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", Origin: "https://web.example.test:25443"}, nil
 }
 
 func TestBrowserOIDCLoginBindsCodeNonceAndPreviewReturn(t *testing.T) {
@@ -185,7 +185,7 @@ func TestBrowserOIDCLoginBindsCodeNonceAndPreviewReturn(t *testing.T) {
 	completeRequest := httptest.NewRequest(http.MethodGet, "/v1/browser/callback", nil)
 	completeRequest.AddCookie(bindingCookie)
 	h.CompletePreviewBrowserLogin(complete, completeRequest, controlv1.CompletePreviewBrowserLoginParams{State: authorize.Query().Get("state"), Code: "one-use-code"})
-	if complete.Code != http.StatusSeeOther || complete.Header().Get("Location") != "https://web.example.test/__tnl/team/handoff/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" ||
+	if complete.Code != http.StatusSeeOther || complete.Header().Get("Location") != "https://web.example.test:25443/__tnl/team/handoff/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" ||
 		store.issued.IdentityID != "identity_1" || store.issued.DisplayName != "Sam" || store.issued.AccessToken != access.String() {
 		t.Fatalf("browser callback = %d %q identity=%q", complete.Code, complete.Header().Get("Location"), store.issued.IdentityID)
 	}

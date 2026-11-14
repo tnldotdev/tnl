@@ -52,7 +52,7 @@ func TestIntegrationURLPublisherHandoffWaitsForOldRunCleanup(t *testing.T) {
 			return Snapshot{Config: publisher.Config{Hostname: testPublisherHost}}, nil
 		},
 		run: func(ctx context.Context, config publisher.Config) error {
-			if err := config.Observe(publisher.Event{Type: publisher.EventReady}); err != nil {
+			if err := config.Observe(publisher.Event{Type: publisher.EventReady, PublicURLID: "url_0123456789abcdefghijkl", PublicURL: "https://" + testPublisherHost + ":25443"}); err != nil {
 				return err
 			}
 			started <- struct{}{}
@@ -114,7 +114,7 @@ func TestIntegrationURLPublisherReprovisioningClearsReadiness(t *testing.T) {
 			return Snapshot{Config: publisher.Config{Hostname: testPublisherHost}}, nil
 		},
 		run: func(ctx context.Context, config publisher.Config) error {
-			if err := config.Observe(publisher.Event{Type: publisher.EventReady}); err != nil {
+			if err := config.Observe(publisher.Event{Type: publisher.EventReady, PublicURLID: "url_0123456789abcdefghijkl", PublicURL: "https://" + testPublisherHost + ":25443"}); err != nil {
 				return err
 			}
 			if err := config.Observe(publisher.Event{Type: publisher.EventProvisioning}); err != nil {
@@ -152,7 +152,7 @@ func TestIntegrationURLPublisherFailureRetriesWithoutRetainingReadiness(t *testi
 		},
 		run: func(ctx context.Context, config publisher.Config) error {
 			if runs.Add(1) == 1 {
-				if err := config.Observe(publisher.Event{Type: publisher.EventReady}); err != nil {
+				if err := config.Observe(publisher.Event{Type: publisher.EventReady, PublicURLID: "url_0123456789abcdefghijkl", PublicURL: "https://" + testPublisherHost + ":25443"}); err != nil {
 					return err
 				}
 				return errors.New("publisher stopped unexpectedly")

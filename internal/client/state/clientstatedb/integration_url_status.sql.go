@@ -12,9 +12,10 @@ import (
 
 const statusIntegrationURLs = `-- name: StatusIntegrationURLs :many
 SELECT h.server_origin, h.primary_project_root, h.namespace, h.purpose, h.hostname,
-  COALESCE(p.expires_at, 0) AS publisher_expires_at
+  COALESCE(p.expires_at, 0) AS publisher_expires_at, COALESCE(e.public_url,'') AS public_url
 FROM integration_url_hostnames h LEFT JOIN integration_url_leases p
   ON p.server_origin = h.server_origin AND p.hostname = h.hostname
+LEFT JOIN integration_url_endpoints e ON e.server_origin=h.server_origin AND e.hostname=h.hostname
 WHERE h.purpose IN ('oauth', 'hooks')
 ORDER BY h.server_origin, h.primary_project_root, h.namespace, h.purpose
 `
@@ -26,6 +27,7 @@ type StatusIntegrationURLsRow struct {
 	Purpose            string
 	Hostname           string
 	PublisherExpiresAt int64
+	PublicURL          string
 }
 
 func (q *Queries) StatusIntegrationURLs(ctx context.Context) ([]StatusIntegrationURLsRow, error) {
@@ -44,6 +46,7 @@ func (q *Queries) StatusIntegrationURLs(ctx context.Context) ([]StatusIntegratio
 			&i.Purpose,
 			&i.Hostname,
 			&i.PublisherExpiresAt,
+			&i.PublicURL,
 		); err != nil {
 			return nil, err
 		}
@@ -61,7 +64,7 @@ func (q *Queries) StatusIntegrationURLs(ctx context.Context) ([]StatusIntegratio
 const statusWebhookDeclarations = `-- name: StatusWebhookDeclarations :many
 SELECT t.server_origin, t.primary_project_root, t.integration_namespace, e.name, e.service, e.path, e.definition, e.fingerprint,
   t.id AS tunnel_id, t.project_root, t.service AS tunnel_service, t.hostname AS app_hostname, t.state,
-  t.public_url_id, t.publish_run_number
+  t.public_url, t.public_url_id, t.publish_run_number
 FROM webhook_declarations e JOIN local_tunnels t ON t.id = e.tunnel_id
 WHERE t.stopped_at IS NULL AND t.lease_expires_at > ?1
   AND t.state IN ('starting', 'provisioning', 'ready')
@@ -82,6 +85,7 @@ type StatusWebhookDeclarationsRow struct {
 	TunnelService        sql.NullString
 	AppHostname          sql.NullString
 	State                string
+	PublicURL            string
 	PublicURLID          sql.NullString
 	PublishRunNumber     sql.NullInt64
 }
@@ -109,6 +113,7 @@ func (q *Queries) StatusWebhookDeclarations(ctx context.Context, now int64) ([]S
 			&i.TunnelService,
 			&i.AppHostname,
 			&i.State,
+			&i.PublicURL,
 			&i.PublicURLID,
 			&i.PublishRunNumber,
 		); err != nil {
@@ -127,7 +132,7 @@ func (q *Queries) StatusWebhookDeclarations(ctx context.Context, now int64) ([]S
 
 const statusWebhookOwners = `-- name: StatusWebhookOwners :many
 SELECT owner.server_origin, owner.primary_project_root, owner.integration_namespace, owner.name, t.id AS tunnel_id,
-  t.project_root, t.service, t.hostname AS app_hostname, t.state, t.public_url_id, t.publish_run_number
+  t.project_root, t.service, t.hostname AS app_hostname, t.state, t.public_url, t.public_url_id, t.publish_run_number
 FROM webhook_owners owner JOIN local_tunnels t ON t.id = owner.tunnel_id
 WHERE t.stopped_at IS NULL AND t.lease_expires_at > ?1
 ORDER BY owner.server_origin, owner.primary_project_root, owner.integration_namespace, owner.name
@@ -143,6 +148,7 @@ type StatusWebhookOwnersRow struct {
 	Service              sql.NullString
 	AppHostname          sql.NullString
 	State                string
+	PublicURL            string
 	PublicURLID          sql.NullString
 	PublishRunNumber     sql.NullInt64
 }
@@ -166,6 +172,7 @@ func (q *Queries) StatusWebhookOwners(ctx context.Context, now int64) ([]StatusW
 			&i.Service,
 			&i.AppHostname,
 			&i.State,
+			&i.PublicURL,
 			&i.PublicURLID,
 			&i.PublishRunNumber,
 		); err != nil {

@@ -46,7 +46,7 @@ func TestPrivatePublishTargetAndPublicBoundary(t *testing.T) {
 			t.Fatalf("unsupported protocol %q accepted", value)
 		}
 	}
-	if address, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: controlv1.Http, CanonicalHostname: "web.example"}); err != nil || address != "https://web.example" {
+	if address, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: controlv1.Http, CanonicalHostname: "web.example", Port: 25443}); err != nil || address != "https://web.example:25443" {
 		t.Fatalf("HTTP public address = %q, %v", address, err)
 	}
 }

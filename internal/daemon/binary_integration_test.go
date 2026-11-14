@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func TestBinaryIntegrationStandalonePublish(t *testing.T) {
@@ -21,7 +23,13 @@ func TestBinaryIntegrationStandalonePublish(t *testing.T) {
 		"--no-config", "publish", target.URL, "--public-url", "https://binary.developer.routes.127.0.0.1.nip.io",
 		"--anonymous", "--ip", "127.0.0.1/32", "--output", "ndjson")
 	ready := waitForIntegrationBinaryPublishEvent(t, publish, "ready", 45*time.Second)
-	if ready.SchemaVersion != 1 || ready.URL != "https://binary.developer.routes.127.0.0.1.nip.io" || ready.PublishRunNumber != 1 {
+	const hostname = "binary.developer.routes.127.0.0.1.nip.io"
+	database := inspectStandaloneTestDatabase(t, fixture.databaseURL)
+	var port int
+	if err := database.QueryRowContext(t.Context(), `SELECT port FROM control.public_urls WHERE canonical_hostname=$1`, hostname).Scan(&port); err != nil {
+		t.Fatal(err)
+	}
+	if ready.SchemaVersion != 1 || port < 1024 || ready.URL != naming.HTTPSOrigin(hostname, port) || ready.PublishRunNumber != 1 {
 		t.Fatalf("binary ready event = %#v", ready)
 	}
 	visitor := newIntegrationVisitor(t, fixture.pebble.roots, "", fixture.dependencies)

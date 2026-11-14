@@ -529,7 +529,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 			}
 		}
 	}
-	visitor := newIntegrationVisitor(t, pebble.roots, publicAddress, owner)
+	visitor := newProxiedIntegrationVisitor(t, pebble.roots, cfg.IngressListen, owner)
 	visitor.transport.ExpectContinueTimeout = 5 * time.Second
 	handle := startOwnedIntegrationPublisher(t, owner, publisher.Config{
 		Control: controlAdapter, TeamID: issued.TeamId, MembershipID: issued.MembershipId,
@@ -573,7 +573,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 			}
 			for _, path := range []string{"/state", entry.Path} {
 				ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-				request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+hostname+path, nil)
+				request, err := http.NewRequestWithContext(ctx, http.MethodGet, naming.HTTPSOrigin(hostname, publicURL.Port)+path, nil)
 				if err != nil {
 					cancel()
 					t.Fatal("construct preparation visitor request")

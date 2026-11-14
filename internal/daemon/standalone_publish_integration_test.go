@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -46,6 +48,10 @@ func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
 	// the ready event itself must cover installation; do not wait for a later
 	// routing cursor or retry the visitor's first request.
 	ready := waitForPublisherReady(t, handle)
+	public, err := url.Parse(ready.PublicURL)
+	if err != nil || public.Hostname() != fixture.identity.hostname || public.Port() != strconv.Itoa(integrationPublicURLPort(t, fixture.inspect, ready.PublicURLID)) || public.Port() == "443" {
+		t.Fatal("publication did not retain its allocated high port", ready.PublicURL, err)
+	}
 	request, err := http.NewRequest(http.MethodGet, ready.PublicURL+"/through-tnl?source=integration", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -72,11 +78,11 @@ func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
 
 	select {
 	case observed := <-targetRequests:
-		if observed.host != fixture.identity.hostname || observed.path != "/through-tnl?source=integration" {
+		if observed.host != public.Host || observed.path != "/through-tnl?source=integration" {
 			t.Fatalf("local service request = %#v", observed)
 		}
 		if observed.headers.Get("X-Forwarded-For") != "127.0.0.1" ||
-			observed.headers.Get("X-Forwarded-Host") != fixture.identity.hostname ||
+			observed.headers.Get("X-Forwarded-Host") != public.Host ||
 			observed.headers.Get("X-Forwarded-Proto") != "https" ||
 			observed.headers.Get("Forwarded") != "" || observed.headers.Get("X-Real-IP") != "" {
 			t.Fatalf("local service forwarding headers = %#v", observed.headers)
@@ -453,7 +459,7 @@ func TestIntegrationLongLivedHTTPStreams(t *testing.T) {
 			handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
 			ready := fixture.waitReady(t, handle)
 
-			assertIntegrationWebSocketPushes(t, fixture, releaseWebSocket)
+			assertIntegrationWebSocketPushes(t, fixture, ready.PublicURL, releaseWebSocket)
 			assertIntegrationSSEPushes(t, fixture, ready.PublicURL, releaseSSE)
 			assertIntegrationStreamingResponse(t, fixture, ready.PublicURL, releaseStream)
 			stopIntegrationPublisher(t, handle)

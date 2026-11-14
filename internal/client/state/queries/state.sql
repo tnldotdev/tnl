@@ -146,6 +146,7 @@ INSERT INTO local_tunnels (
 UPDATE local_tunnels
 SET public_url_id = sqlc.arg(public_url_id),
     hostname = sqlc.arg(hostname),
+    public_url = sqlc.arg(public_url),
     state = 'provisioning',
     updated_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND stopped_at IS NULL;
@@ -160,6 +161,7 @@ WHERE id = sqlc.arg(id) AND stopped_at IS NULL;
 -- name: SetTunnelReady :execrows
 UPDATE local_tunnels
 SET hostname = sqlc.arg(hostname),
+    public_url = sqlc.arg(public_url),
     publish_run_number = sqlc.arg(publish_run_number),
     state = 'ready',
     updated_at = sqlc.arg(now)

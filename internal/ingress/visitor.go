@@ -56,6 +56,18 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	{
 		candidates, reason := s.config.Lookup(hello.ServerName)
 		if reason == LookupCurrent {
+			matching := make([]PublicURL, 0, len(candidates))
+			for _, candidate := range candidates {
+				if candidate.Port == int(destination.Port()) {
+					matching = append(matching, candidate)
+				}
+			}
+			candidates = matching
+			if len(candidates) == 0 {
+				reason = LookupMissing
+			}
+		}
+		if reason == LookupCurrent {
 			var release func()
 			route, release, reason = s.selectPoolRun(candidates)
 			if release != nil {

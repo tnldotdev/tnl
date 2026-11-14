@@ -169,7 +169,7 @@ func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicU
 			}
 			return f.signVisitorSource(entry, visitorID, source, destination)
 		},
-		ID: entry.PublicUrlId, PublishRunNumber: uint64(entry.PublishRunNumber),
+		ID: entry.PublicUrlId, Port: entry.Port, PublishRunNumber: uint64(entry.PublishRunNumber),
 		PublishRunID:   entry.PublishRunId,
 		HashedIPPolicy: hashed, AllowAll: entry.IpPolicy == ingressv1.AllowAll, Backends: backends,
 		assignments: assignments,

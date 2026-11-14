@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
@@ -111,7 +112,7 @@ func (d *Database) RedeemShare(ctx context.Context, authentication PublishRunAut
 		if subtle.ConstantTimeCompare(digest[:], share.SecretDigest) != 1 {
 			return ShareRedemption{}, ErrShareNotFound
 		}
-		nextURL = "https://" + route.CanonicalHostname + "/"
+		nextURL = naming.HTTPSOrigin(route.CanonicalHostname, int(route.Port)) + "/"
 		hosts, err := queries.ListReadyShareHostnames(ctx, controlstatedb.ListReadyShareHostnamesParams{
 			ShareID: shareID, Now: timestamptz(now),
 		})
@@ -143,7 +144,7 @@ func (d *Database) RedeemShare(ctx context.Context, authentication PublishRunAut
 			if err != nil {
 				return ShareRedemption{}, fmt.Errorf("controlstate: save share handoff: %w", err)
 			}
-			nextURL = "https://" + host.CanonicalHostname + "/__tnl/share/handoff/" + base64.RawURLEncoding.EncodeToString(token)
+			nextURL = naming.HTTPSOrigin(host.CanonicalHostname, int(host.Port)) + "/__tnl/share/handoff/" + base64.RawURLEncoding.EncodeToString(token)
 		}
 	}
 	cookie := make([]byte, 32)

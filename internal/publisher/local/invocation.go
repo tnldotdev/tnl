@@ -17,6 +17,7 @@ import (
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -161,7 +162,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	if err := a.manager.AddService(publisherapp.Service{Name: request.InvocationId, Directory: ".", ServiceProtocol: "http", Readiness: publisherapp.Readiness{Path: "/"}}); err != nil {
 		return publisherprotocol.Registration{}, err
 	}
-	id, err = a.manager.Reserve(request.InvocationId, request.Owner, request.Pid, "https://"+publicURL.CanonicalHostname)
+	id, err = a.manager.Reserve(request.InvocationId, request.Owner, request.Pid, naming.HTTPSOrigin(publicURL.CanonicalHostname, publicURL.Port))
 	if err != nil {
 		return publisherprotocol.Registration{}, err
 	}

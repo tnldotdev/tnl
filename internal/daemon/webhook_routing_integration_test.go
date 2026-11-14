@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -28,9 +29,11 @@ func TestIntegrationWebhookHandlerReloadsTargetlessPublicURL(t *testing.T) {
 	group := clientstate.IntegrationScope{PrimaryProjectRoot: t.TempDir(), Namespace: "member.example"}
 	const body = "{\"event\":\"paid\"}\n"
 	observed := make(chan string, 2)
+	var authority atomic.Value
+	authority.Store("")
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data, err := io.ReadAll(r.Body)
-		if err != nil || string(data) != body || r.Header.Get("Stripe-Signature") != "signed-body" || r.Host != hostname || r.Header.Get("X-Forwarded-For") != "127.0.0.1" {
+		if err != nil || string(data) != body || r.Header.Get("Stripe-Signature") != "signed-body" || r.Host != authority.Load().(string) || r.Header.Get("X-Forwarded-For") != "127.0.0.1" {
 			t.Errorf("webhook forwarding changed its inputs: %q %q %q %v", data, r.Host, r.Header, err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -48,7 +51,7 @@ func TestIntegrationWebhookHandlerReloadsTargetlessPublicURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tunnel.SetPublicURL(t.Context(), id, "app.example"); err != nil {
+	if err := tunnel.SetPublicURL(t.Context(), id, "https://app.example"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {
@@ -76,7 +79,8 @@ func TestIntegrationWebhookHandlerReloadsTargetlessPublicURL(t *testing.T) {
 		config.Purpose, config.Handler, config.AllowedIPPrefixes = controlv1.Webhooks, handler, prefixes
 		handle := startOwnedIntegrationPublisher(t, fixture.owner, config, fixture.diagnostics)
 		ready := fixture.waitReady(t, handle)
-		if previous.PublicURLID != "" && (ready.PublicURLID != previous.PublicURLID || ready.PublishRunNumber <= previous.PublishRunNumber) {
+		authority.Store(strings.TrimPrefix(ready.PublicURL, "https://"))
+		if previous.PublicURLID != "" && (ready.PublicURLID != previous.PublicURLID || ready.PublicURL != previous.PublicURL || ready.PublishRunNumber <= previous.PublishRunNumber) {
 			t.Fatalf("webhook restart replaced its saved URL or reused run: %+v -> %+v", previous, ready)
 		}
 		saved, err := fixture.identity.routes.GetPublicURLByHostname(t.Context(), fixture.identity.teamID, hostname)

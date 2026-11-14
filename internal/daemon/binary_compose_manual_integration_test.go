@@ -143,7 +143,7 @@ func TestBinaryIntegrationManualComposePublisherPublicHTTPAndPostgres(t *testing
 		publish.acceptDockerInterrupt = true
 		return publish
 	}
-	visitor := newIntegrationVisitor(t, fixture.pebble.roots, "127.0.0.1:443", fixture.dependencies)
+	visitor := newIntegrationVisitor(t, fixture.pebble.roots, "", fixture.dependencies)
 	webPublish := start("web")
 	webReady := waitForIntegrationBinaryPublishEvent(t, webPublish, "ready", 90*time.Second)
 	publicURL := webReady.URL

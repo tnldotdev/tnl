@@ -25,7 +25,7 @@ import (
 )
 
 func TestReadinessHasIndependentBoundedProbeCapacity(t *testing.T) {
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
+	run := PublishRunIdentity{Hostname: "route.example", Port: 443, PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
 	proof, err := NewReadinessProof(run, "/health")
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestReadinessHasIndependentBoundedProbeCapacity(t *testing.T) {
 }
 
 func TestReadinessProofDoesNotAuthorizeBodiesOrUpgrades(t *testing.T) {
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
+	run := PublishRunIdentity{Hostname: "route.example", Port: 443, PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
 	proof, _ := NewReadinessProof(run, "/health")
 	body := httptest.NewRequest("GET", "/health", strings.NewReader("private-body"))
 	body.Header.Set(publisherproxy.ReadinessProbeHeader, proof.HeaderValue())
@@ -148,7 +148,7 @@ func TestReadinessDoesNotPromoteOrSpendApplicationBudgets(t *testing.T) {
 				name += "/denied"
 			}
 			t.Run(name, func(t *testing.T) {
-				run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
+				run := PublishRunIdentity{Hostname: "route.example", Port: 443, PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
 				proof, err := NewReadinessProof(run, "/health")
 				if err != nil {
 					t.Fatal(err)
@@ -234,7 +234,7 @@ func TestReadinessDoesNotPromoteOrSpendApplicationBudgets(t *testing.T) {
 }
 
 func TestReadinessDoesNotCacheRejectedApplicationPromotion(t *testing.T) {
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
+	run := PublishRunIdentity{Hostname: "route.example", Port: 443, PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
 	for _, h2 := range []bool{false, true} {
 		proof, _ := NewReadinessProof(run, "/health")
 		var calls atomic.Int32
@@ -386,7 +386,7 @@ func TestHTTP2CanceledFirstRequestDoesNotPoisonConnection(t *testing.T) {
 }
 
 func TestHTTP2ProofDoesNotWaitForApplicationPromotion(t *testing.T) {
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
+	run := PublishRunIdentity{Hostname: "route.example", Port: 443, PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
 	proof, _ := NewReadinessProof(run, "/health")
 	started, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32

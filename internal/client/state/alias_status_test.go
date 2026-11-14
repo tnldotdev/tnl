@@ -22,11 +22,15 @@ func TestAliasStatusIgnoresStaleReadyRunsAndRetainsStoppedDefault(t *testing.T) 
 	if err := state.MarkIntegrationURLReady(t.Context(), scope.Server, selection.Hostname, "publisher"); err != nil {
 		t.Fatal(err)
 	}
+	origin := "https://" + selection.Hostname + ":25444"
+	if err := state.SaveIntegrationURLEndpoint(t.Context(), scope.Server, id, origin); err != nil {
+		t.Fatal(err)
+	}
 	if err := state.MarkAliasRunReady(t.Context(), AliasPublishRun{Selection: selection, Receiver: receiver, Owner: "run", PublicURLID: id, Number: 1}); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := state.SnapshotProject(t.Context(), scope.ProjectKey)
-	if err != nil || snapshot.SchemaVersion != 1 || len(snapshot.Aliases) != 1 || snapshot.Aliases[0].State != "ready" {
+	if err != nil || snapshot.SchemaVersion != 1 || len(snapshot.Aliases) != 1 || snapshot.Aliases[0].State != "ready" || snapshot.Aliases[0].PublicURL != origin {
 		t.Fatalf("ready alias status = %v, %v", snapshot.Aliases, err)
 	}
 	if err := state.RecordAliasFailure(t.Context(), selection, failure.MemberHostnameDepthExceeded); err != nil {

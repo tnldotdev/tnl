@@ -9,6 +9,7 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
@@ -46,11 +47,12 @@ func runAuthBrowser(ctx context.Context, flags authBrowserCommand, output, diagn
 		return err
 	}
 	parsed, err := url.Parse(handoff)
-	if err != nil || parsed.Scheme != "https" || parsed.Host != item.CanonicalHostname || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+	origin := naming.HTTPSOrigin(item.CanonicalHostname, item.Port)
+	if err != nil || origin == "" || parsed.Scheme+"://"+parsed.Host != origin || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return failure.Wrap("validate browser handoff", failure.ServerResponseInvalid, errors.New("invalid browser handoff response"))
 	}
 	if err = openBrowser(handoff); err != nil {
 		return failure.Wrap("open browser handoff", failure.BrowserOpenFailed, err)
 	}
-	return writeHumanFrame(output, "tnl auth browser", "opened", "", clioutput.Fields(clioutput.Field{Label: "public URL", Value: "https://" + item.CanonicalHostname}, clioutput.Field{Label: "session", Value: "browser session follows this CLI session's revocation"}))
+	return writeHumanFrame(output, "tnl auth browser", "opened", "", clioutput.Fields(clioutput.Field{Label: "public URL", Value: origin}, clioutput.Field{Label: "session", Value: "browser session follows this CLI session's revocation"}))
 }

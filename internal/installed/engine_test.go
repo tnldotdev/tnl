@@ -249,7 +249,7 @@ func (c *jobControl) CreatePublisherRun(_ context.Context, url, retry, access, p
 
 func jobBoundary(job Job, identity authorityv1.PublisherEnrollmentResult, key ed25519.PrivateKey) (*jobControl, *jobAuthority) {
 	domain, _ := opaqueid.New(opaqueid.DomainPrefix)
-	return &jobControl{publicURL: controlv1.PublicURL{Id: job.PublicURLID, TeamId: identity.TeamId, DomainId: domain, PublicUrlScope: controlv1.Shared, Purpose: controlv1.App, ServiceProtocol: controlv1.Http, CanonicalHostname: job.ID + ".example", Target: job.Target, LifecycleState: controlv1.Enabled}, public: key.Public().(ed25519.PublicKey), runs: make(chan string, 32)}, &jobAuthority{identity: identity, public: key.Public().(ed25519.PublicKey)}
+	return &jobControl{publicURL: controlv1.PublicURL{Id: job.PublicURLID, TeamId: identity.TeamId, DomainId: domain, PublicUrlScope: controlv1.Shared, Purpose: controlv1.App, ServiceProtocol: controlv1.Http, CanonicalHostname: job.ID + ".example", Port: 25443, Target: job.Target, LifecycleState: controlv1.Enabled}, public: key.Public().(ed25519.PublicKey), runs: make(chan string, 32)}, &jobAuthority{identity: identity, public: key.Public().(ed25519.PublicKey)}
 }
 
 func startEngine(t *testing.T, engine Engine) (context.CancelFunc, <-chan error) {

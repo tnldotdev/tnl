@@ -19,6 +19,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -175,9 +176,9 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 		t.Fatal(err)
 	}
 	urls := []controlv1.PublicURL{
-		{Id: webID, TeamId: teamID, CanonicalHostname: "web.example.test", ServiceProtocol: controlv1.Http, LifecycleState: controlv1.Enabled},
-		{Id: apiID, TeamId: teamID, CanonicalHostname: "api.example.test", ServiceProtocol: controlv1.Http, LifecycleState: controlv1.Enabled},
-		{Id: otherID, TeamId: teamID, CanonicalHostname: "other.example.test", ServiceProtocol: controlv1.Http, LifecycleState: controlv1.Enabled},
+		{Id: webID, TeamId: teamID, CanonicalHostname: "web.example.test", Port: 25443, ServiceProtocol: controlv1.Http, LifecycleState: controlv1.Enabled},
+		{Id: apiID, TeamId: teamID, CanonicalHostname: "api.example.test", Port: 25444, ServiceProtocol: controlv1.Http, LifecycleState: controlv1.Enabled},
+		{Id: otherID, TeamId: teamID, CanonicalHostname: "other.example.test", Port: 25445, ServiceProtocol: controlv1.Http, LifecycleState: controlv1.Enabled},
 	}
 	type creation struct {
 		path string
@@ -186,6 +187,7 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 	created := make(chan creation, 1)
 	lookups := make(chan string, 8)
 	var widenResponse atomic.Bool
+	var substitutePort atomic.Bool
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		write := func(value any) { t.Helper(); _ = json.NewEncoder(w).Encode(value) }
@@ -237,7 +239,10 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 			entry := ""
 			for _, publicURL := range urls {
 				if publicURL.Id == body.EntryPublicUrlId {
-					entry = "https://" + publicURL.CanonicalHostname + "/__tnl/share/" + shareID + "." + strings.Repeat("A", 43)
+					if substitutePort.Load() {
+						publicURL.Port++
+					}
+					entry = naming.HTTPSOrigin(publicURL.CanonicalHostname, publicURL.Port) + "/__tnl/share/" + shareID + "." + strings.Repeat("A", 43)
 				}
 			}
 			w.WriteHeader(http.StatusCreated)
@@ -287,6 +292,7 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 		{"one service", []string{"share", "--service=web"}, []string{webID}, webID, false, false},
 		{"API service", []string{"share", "--service=api", "--output=json"}, []string{apiID}, apiID, false, true},
 		{"exact URL", []string{"share", "link", "create", "web.example.test"}, []string{webID}, webID, false, false},
+		{"allocated origin", []string{"share", "link", "create", "https://web.example.test:25443"}, []string{webID}, webID, false, false},
 		{"explicit preview", []string{"share", "link", "create", "api.example.test", "--preview"}, []string{webID, apiID}, apiID, true, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -354,14 +360,22 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 			}
 		})
 	}
-	t.Run("reject widened server scope", func(t *testing.T) {
-		widenResponse.Store(true)
-		args := []string{"--no-telemetry", "--config", configPath, "share", "--service=web",
-			"--server", server.URL, "--access-token", access.String(), "--team", teamID, "--state-dir", stateDir}
-		var output, diagnostics bytes.Buffer
-		err := run(t.Context(), args, &output, &diagnostics)
-		if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid || output.Len() != 0 {
-			t.Fatalf("widened share response was printed or misclassified: output=%q, error=%v", output.String(), err)
-		}
-	})
+	for _, mode := range []string{"widened scope", "substituted port"} {
+		t.Run("reject "+mode, func(t *testing.T) {
+			widenResponse.Store(mode == "widened scope")
+			substitutePort.Store(mode == "substituted port")
+			args := []string{"--no-telemetry", "--config", configPath, "share", "--service=web",
+				"--server", server.URL, "--access-token", access.String(), "--team", teamID, "--state-dir", stateDir}
+			var output, diagnostics bytes.Buffer
+			err := run(t.Context(), args, &output, &diagnostics)
+			if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid || output.Len() != 0 {
+				t.Fatalf("substituted share response was printed or misclassified: output=%q, error=%v", output.String(), err)
+			}
+			select {
+			case <-created:
+			default:
+				t.Fatal("share did not reach server response validation")
+			}
+		})
+	}
 }

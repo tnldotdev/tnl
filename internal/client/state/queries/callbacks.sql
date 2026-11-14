@@ -45,8 +45,11 @@ ON CONFLICT DO NOTHING;
 
 -- name: GetCurrentOAuthCallback :one
 SELECT c.callback_path, c.callback_query, c.expires_at, t.id AS tunnel_id, t.hostname, c.origin_hostname,
+    CAST(CASE WHEN c.origin_public_url_id=t.public_url_id THEN t.public_url ELSE COALESCE(endpoint.public_url,'') END AS TEXT) AS public_url,
     c.origin_public_url_id AS public_url_id, c.origin_publish_run_number AS publish_run_number
 FROM oauth_pending_callbacks c JOIN local_tunnels t ON t.id = c.tunnel_id
+LEFT JOIN integration_url_endpoints endpoint ON endpoint.server_origin=c.server_origin AND endpoint.hostname=c.origin_hostname
+    AND endpoint.public_url_id=c.origin_public_url_id
 WHERE c.server_origin = sqlc.arg(server_origin) AND c.hostname = sqlc.arg(hostname)
   AND c.state_digest = sqlc.arg(state_digest) AND c.callback_path = sqlc.arg(callback_path)
   AND c.expires_at > sqlc.arg(now) AND t.lease_expires_at > sqlc.arg(now)
@@ -59,7 +62,7 @@ WHERE c.server_origin = sqlc.arg(server_origin) AND c.hostname = sqlc.arg(hostna
         AND a.selected_project_root = t.project_root AND a.selection_revision = r.selection_revision
         AND r.target_public_url_id = t.public_url_id AND r.target_publish_run_number = t.publish_run_number
         AND r.public_url_id = c.origin_public_url_id AND r.publish_run_number = c.origin_publish_run_number
-        AND p.expires_at > sqlc.arg(now)));
+         AND p.expires_at > sqlc.arg(now) AND endpoint.public_url IS NOT NULL));
 
 -- name: SaveOAuthAliasReturn :execrows
 INSERT INTO oauth_alias_handoffs (server_origin, hostname, state_digest, callback_path, public_url_id, publish_run_number, created_at, expires_at)

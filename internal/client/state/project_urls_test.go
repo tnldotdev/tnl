@@ -26,7 +26,7 @@ func TestKnownProjectURLsSurviveTunnelStopAndStayBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	const first = "url_0123456789abcdefghijkl"
-	if err := tunnel.SetPublicURL(t.Context(), first, "web.member.example.test"); err != nil {
+	if err := tunnel.SetPublicURL(t.Context(), first, "https://web.member.example.test"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tunnel.Finish(context.Background(), nil); err != nil {

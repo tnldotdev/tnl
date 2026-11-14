@@ -113,6 +113,7 @@ CREATE TABLE local_tunnels (
     primary_project_root TEXT,
     integration_namespace TEXT,
     hostname TEXT CHECK (hostname IS NULL OR hostname <> ''),
+    public_url TEXT NOT NULL DEFAULT '',
     target TEXT CHECK (target IS NULL OR target <> ''),
     framework TEXT CHECK (framework IS NULL OR framework <> ''),
     public_url_id TEXT CHECK (public_url_id IS NULL OR public_url_id <> ''),
@@ -221,6 +222,14 @@ CREATE TABLE integration_url_hostnames (
     purpose TEXT NOT NULL,
     hostname TEXT NOT NULL,
     PRIMARY KEY (server_origin, primary_project_root, namespace, purpose)
+) STRICT;
+
+CREATE TABLE integration_url_endpoints (
+    server_origin TEXT NOT NULL REFERENCES server_profiles(origin) ON DELETE CASCADE,
+    hostname TEXT NOT NULL,
+    public_url_id TEXT NOT NULL,
+    public_url TEXT NOT NULL,
+    PRIMARY KEY (server_origin, hostname)
 ) STRICT;
 
 CREATE TABLE oauth_pending_callbacks (
@@ -521,7 +530,7 @@ SELECT id,
         'service_protocol', CASE WHEN service_protocol = 'http' THEN '' ELSE service_protocol END,
         'public_url_id', coalesce(public_url_id, ''), 'publish_run_number', coalesce(publish_run_number, 0),
         'hostname', coalesce(hostname, ''),
-        'public_url', CASE WHEN hostname IS NULL THEN '' ELSE 'https://' || hostname END,
+        'public_url', public_url,
         'target', coalesce(target, ''), 'framework', coalesce(framework, ''), 'failure', coalesce(failure_code, ''),
         'started_at', CASE WHEN started_at = 0 THEN '0001-01-01T00:00:00Z' ELSE
             strftime('%Y-%m-%dT%H:%M:%S', started_at / 1000000000 - (started_at % 1000000000 < 0), 'unixepoch')
@@ -555,7 +564,7 @@ END;
 
 -- +goose StatementBegin
 CREATE TRIGGER project_publication_changed AFTER UPDATE ON local_tunnels
-WHEN NEW.state IS NOT OLD.state OR NEW.hostname IS NOT OLD.hostname
+WHEN NEW.state IS NOT OLD.state OR NEW.hostname IS NOT OLD.hostname OR NEW.public_url IS NOT OLD.public_url
     OR NEW.target IS NOT OLD.target OR NEW.publish_run_number IS NOT OLD.publish_run_number
     OR NEW.public_url_id IS NOT OLD.public_url_id OR NEW.framework IS NOT OLD.framework OR NEW.failure_code IS NOT OLD.failure_code
 BEGIN

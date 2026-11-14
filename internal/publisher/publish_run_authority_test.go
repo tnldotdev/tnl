@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -78,6 +79,7 @@ func TestBoundPublicRunRejectsSetupBeforeUseAndStillCloses(t *testing.T) {
 		{"public URL mismatch", func(s *controlv1.PublishRunSetup) { s.PublishRun.PublicUrlId = "different" }},
 		{"team mismatch", func(s *controlv1.PublishRunSetup) { s.PublishRun.TeamId = "different" }},
 		{"run zero", func(s *controlv1.PublishRunSetup) { s.PublishRun.PublishRunNumber = 0 }},
+		{"unreserved endpoint", func(s *controlv1.PublishRunSetup) { s.PublicUrl.Port = 0 }},
 		{"missing run", func(s *controlv1.PublishRunSetup) { s.PublishRun.Id = "" }},
 		{"managed token", func(s *controlv1.PublishRunSetup) { s.PublishRunToken = strings.Repeat("A", 43) }},
 		{"invalid token", func(s *controlv1.PublishRunSetup) { s.PublishRunToken += "=" }},
@@ -93,6 +95,45 @@ func TestBoundPublicRunRejectsSetupBeforeUseAndStillCloses(t *testing.T) {
 				t.Fatal("invalid setup escaped validation or skipped cleanup", err)
 			}
 		})
+	}
+}
+
+func TestBoundPublicRunRejectsAnotherReservedEndpoint(t *testing.T) {
+	control := newCertificateTestControl(t, "route.example", publicURLCertificateTestPlan())
+	config := testRunConfig(control, control.setup)
+	approved := control.setup.PublicUrl
+	config.AssignedPublicURL = &approved
+	control.setup.PublicUrl.Port = 25443
+	if _, err := bindPublicRun(config, control.setup); err == nil {
+		t.Fatal("run setup substituted another port for the selected public URL")
+	}
+}
+
+type substitutedPublicPolicy struct {
+	*certificateTestControl
+	port int
+}
+
+func (c substitutedPublicPolicy) ReadPublisherVisitorPolicy(ctx context.Context, body controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
+	update, err := c.certificateTestControl.ReadPublisherVisitorPolicy(ctx, body, token)
+	update.Policy.Port = c.port
+	return update, err
+}
+
+func TestRunRejectsVisitorPolicyPortSubstitutionBeforeIssuance(t *testing.T) {
+	control := newCertificateTestControl(t, "route.example", publicURLCertificateTestPlan())
+	control.setup.PublicUrl.Port = 25443
+	control.store = certificateTestStore(t, filepath.Join(t.TempDir(), "state"))
+	config := startCertificateTLSYamuxHarness(t, control)
+	config.VisitorControl = substitutedPublicPolicy{certificateTestControl: control, port: 25444}
+	issued := false
+	control.create = func([]byte, string) (controlv1.CertificateIssuance, error) {
+		issued = true
+		return controlv1.CertificateIssuance{}, errors.New("unexpected issuance")
+	}
+	err := runCertificateSessionTest(t, config)
+	if err == nil || !strings.Contains(err.Error(), "visitor policy has no matching endpoint") || issued {
+		t.Fatal("another policy port reached public certificate issuance", err, issued)
 	}
 }
 

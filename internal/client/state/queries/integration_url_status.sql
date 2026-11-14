@@ -1,15 +1,16 @@
 -- name: StatusIntegrationURLs :many
 SELECT h.server_origin, h.primary_project_root, h.namespace, h.purpose, h.hostname,
-  COALESCE(p.expires_at, 0) AS publisher_expires_at
+  COALESCE(p.expires_at, 0) AS publisher_expires_at, COALESCE(e.public_url,'') AS public_url
 FROM integration_url_hostnames h LEFT JOIN integration_url_leases p
   ON p.server_origin = h.server_origin AND p.hostname = h.hostname
+LEFT JOIN integration_url_endpoints e ON e.server_origin=h.server_origin AND e.hostname=h.hostname
 WHERE h.purpose IN ('oauth', 'hooks')
 ORDER BY h.server_origin, h.primary_project_root, h.namespace, h.purpose;
 
 -- name: StatusWebhookDeclarations :many
 SELECT t.server_origin, t.primary_project_root, t.integration_namespace, e.name, e.service, e.path, e.definition, e.fingerprint,
   t.id AS tunnel_id, t.project_root, t.service AS tunnel_service, t.hostname AS app_hostname, t.state,
-  t.public_url_id, t.publish_run_number
+  t.public_url, t.public_url_id, t.publish_run_number
 FROM webhook_declarations e JOIN local_tunnels t ON t.id = e.tunnel_id
 WHERE t.stopped_at IS NULL AND t.lease_expires_at > sqlc.arg(now)
   AND t.state IN ('starting', 'provisioning', 'ready')
@@ -17,7 +18,7 @@ ORDER BY t.server_origin, t.primary_project_root, t.integration_namespace, e.nam
 
 -- name: StatusWebhookOwners :many
 SELECT owner.server_origin, owner.primary_project_root, owner.integration_namespace, owner.name, t.id AS tunnel_id,
-  t.project_root, t.service, t.hostname AS app_hostname, t.state, t.public_url_id, t.publish_run_number
+  t.project_root, t.service, t.hostname AS app_hostname, t.state, t.public_url, t.public_url_id, t.publish_run_number
 FROM webhook_owners owner JOIN local_tunnels t ON t.id = owner.tunnel_id
 WHERE t.stopped_at IS NULL AND t.lease_expires_at > sqlc.arg(now)
 ORDER BY owner.server_origin, owner.primary_project_root, owner.integration_namespace, owner.name;

@@ -24,7 +24,7 @@ WHERE id = sqlc.arg(alias_id) AND selection_revision = sqlc.arg(selection_revisi
     AND selected_project_root = sqlc.arg(project_root);
 
 -- name: StatusAliases :many
-SELECT a.*, COALESCE(p.expires_at, 0) AS publisher_expires_at,
+SELECT a.*, COALESCE(p.expires_at, 0) AS publisher_expires_at, COALESCE(e.public_url,'') AS public_url,
     COALESCE(r.tunnel_id, '') AS run_tunnel_id,
     COALESCE(r.public_url_id, '') AS public_url_id, COALESCE(r.publish_run_number, 0) AS publish_run_number,
     COALESCE(r.selection_revision, 0) AS run_revision, COALESCE(t.state, '') AS target_state,
@@ -37,6 +37,7 @@ FROM project_aliases a
 LEFT JOIN alias_publish_runs r ON r.alias_id = a.id
 LEFT JOIN local_tunnels t ON t.id = r.tunnel_id
 LEFT JOIN integration_url_leases p ON p.server_origin = a.server_origin AND p.hostname = a.hostname
+LEFT JOIN integration_url_endpoints e ON e.server_origin=a.server_origin AND e.hostname=a.hostname
 WHERE sqlc.arg(project_root) = '' OR a.primary_project_root = sqlc.arg(project_root) OR a.selected_project_root = sqlc.arg(project_root)
     OR EXISTS (SELECT 1 FROM alias_declarations declaration JOIN local_tunnels tunnel ON tunnel.id = declaration.tunnel_id
       WHERE declaration.alias_id = a.id AND tunnel.project_root = sqlc.arg(project_root))

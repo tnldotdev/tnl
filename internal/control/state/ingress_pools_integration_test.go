@@ -3,6 +3,8 @@ package state
 import (
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 )
 
 func TestIntegrationIngressPoolSavedPublicURLsKeepTheirTeamPlacement(t *testing.T) {
@@ -40,6 +42,9 @@ func TestIntegrationPublicURLPinsTeamIngressPoolAtCreation(t *testing.T) {
 	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.ingress_pools
 		(id, ipv4_address, state, created_at, updated_at)
 		VALUES ('ingress-b', '203.0.113.20', 'enabled', $1, $1)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.ConfigureIngressServicePorts(t.Context(), "ingress-b", []tcpport.Range{{First: 25443, Last: 25444}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.teams SET ingress_pool_id = 'ingress-b' WHERE id = $1`, request.TeamID); err != nil {

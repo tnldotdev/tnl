@@ -461,7 +461,7 @@ func (q *Queries) ListVisitorIPGrants(ctx context.Context, publicUrlID string) (
 }
 
 const listVisitorInventory = `-- name: ListVisitorInventory :many
-SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.service_protocol,
+SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.port, u.service_protocol,
     permission.reason::text AS visitor_access
 FROM control.public_urls u JOIN control.teams t ON t.id = u.team_id
 CROSS JOIN LATERAL control.visitor_identity_permission('public_url',u.id,$1::text,$2::text,
@@ -486,6 +486,7 @@ type ListVisitorInventoryRow struct {
 	TeamID            string
 	TeamName          string
 	CanonicalHostname string
+	Port              int32
 	ServiceProtocol   string
 	VisitorAccess     string
 }
@@ -510,6 +511,7 @@ func (q *Queries) ListVisitorInventory(ctx context.Context, arg ListVisitorInven
 			&i.TeamID,
 			&i.TeamName,
 			&i.CanonicalHostname,
+			&i.Port,
 			&i.ServiceProtocol,
 			&i.VisitorAccess,
 		); err != nil {
@@ -646,7 +648,7 @@ func (q *Queries) MarkVisitorIPSet(ctx context.Context, publicUrlID string) erro
 }
 
 const readyBrowserHosts = `-- name: ReadyBrowserHosts :many
-SELECT DISTINCT ON(u.id) u.id AS public_url_id, u.canonical_hostname, r.id AS publish_run_id
+SELECT DISTINCT ON(u.id) u.id AS public_url_id, u.canonical_hostname, u.port, r.id AS publish_run_id
 FROM control.public_urls u JOIN control.publish_runs r ON r.public_url_id = u.id
 WHERE u.lifecycle_state = 'enabled' AND u.purpose IN ('app', 'alias') AND u.service_protocol = 'http'
   AND r.state = 'ready' AND r.publisher_expires_at > $1 AND r.closed_at IS NULL
@@ -664,6 +666,7 @@ type ReadyBrowserHostsParams struct {
 type ReadyBrowserHostsRow struct {
 	PublicURLID       string
 	CanonicalHostname string
+	Port              int32
 	PublishRunID      string
 }
 
@@ -676,7 +679,12 @@ func (q *Queries) ReadyBrowserHosts(ctx context.Context, arg ReadyBrowserHostsPa
 	var items []ReadyBrowserHostsRow
 	for rows.Next() {
 		var i ReadyBrowserHostsRow
-		if err := rows.Scan(&i.PublicURLID, &i.CanonicalHostname, &i.PublishRunID); err != nil {
+		if err := rows.Scan(
+			&i.PublicURLID,
+			&i.CanonicalHostname,
+			&i.Port,
+			&i.PublishRunID,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

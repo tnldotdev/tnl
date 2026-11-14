@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 )
@@ -27,7 +28,8 @@ func VerifyPublicationReadiness(ctx context.Context, cfg *publisher.Config, path
 	observe := cfg.Observe
 	cfg.Observe = func(event publisher.Event) error {
 		if event.Type == publisher.EventReady {
-			if proof == nil || event.PublishRunNumber != run.Number || event.PublicURLID != run.PublicURLID || event.PublicURL != "https://"+run.Hostname {
+			origin := naming.HTTPSOrigin(run.Hostname, run.Port)
+			if proof == nil || origin == "" || event.PublishRunNumber != run.Number || event.PublicURLID != run.PublicURLID || event.PublicURL != origin {
 				return ErrScope
 			}
 			check, cancel := context.WithTimeout(ctx, time.Minute)

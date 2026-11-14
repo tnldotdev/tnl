@@ -13,6 +13,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestProjectMetadataUsesVisitorProjectionWithoutManagerConfiguration(t *testing.T) {
@@ -173,5 +174,55 @@ func TestLocalPublicMetadataUsesExactWorktreeEndpoint(t *testing.T) {
 	status = http.StatusForbidden
 	if _, err := resolver.Generate(t.Context()); err == nil {
 		t.Fatal("metadata ignored a current authorization failure")
+	}
+}
+
+func TestPublicURLMetadataReadsReservedPortWithoutAllocating(t *testing.T) {
+	project := clientproject.Project{Config: config.TNL{Services: config.Services{
+		"web": {Tunnel: &config.Tunnel{Name: new("web")}},
+	}}}
+	effective, err := project.EffectiveService("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := ConfiguredService("web", project.Worktree, effective, appliedTestContext())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, missing := 25443, false
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/public-urls" || r.URL.Query().Get("team_id") != "team_1" || r.URL.Query().Get("canonical_hostname") != selected.Hostname {
+			t.Errorf("metadata mutated or selected another public URL: %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		page := controlv1.PublicURLPage{PublicUrls: []controlv1.PublicURL{}}
+		if !missing {
+			page.PublicUrls = append(page.PublicUrls, controlv1.PublicURL{Id: "url_0123456789abcdefghijkl", TeamId: "team_1", CanonicalHostname: selected.Hostname, Port: port, ServiceProtocol: controlv1.Http, LifecycleState: controlv1.Enabled})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(page)
+	}))
+	defer server.Close()
+	project.Config.Server = &server.URL
+	control, err := clientcontrol.New(server.URL, server.Client(), "visitor-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := NewMetadataResolver(nil, project, nil)
+	resolver.Seed(server.URL, &auth.Client{ServerEndpoint: server.URL, Control: control})
+	resolver.contexts[server.URL+"\x00"] = appliedTestContext()
+	metadata, err := resolver.Generate(t.Context())
+	if err != nil || metadata.Services["web"].Port != port || metadata.Services["web"].URL != "https://"+selected.Hostname+":25443" {
+		t.Fatal("metadata reconstructed an unallocated origin", metadata, err)
+	}
+	port = 0
+	if _, err := resolver.Generate(t.Context()); err == nil {
+		t.Fatal("metadata accepted a public URL without a reserved port")
+	}
+	missing = true
+	metadata, err = resolver.Generate(t.Context())
+	if err != nil || len(metadata.Services) != 0 {
+		t.Fatal("metadata fabricated an endpoint before publication", metadata, err)
 	}
 }

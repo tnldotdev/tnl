@@ -38,7 +38,7 @@ func TestIntegrationPostQuantumPublicURLVisitorPolicy(t *testing.T) {
 				{"tls12", tls.X25519, tls.VersionTLS12, false},
 			} {
 				t.Run(test.name, func(t *testing.T) {
-					visitor := newIntegrationVisitor(t, fixture.pebble.roots, fixture.publicAddress, fixture.owner)
+					visitor := newProxiedIntegrationVisitor(t, fixture.pebble.roots, fixture.ingressAddress, fixture.owner)
 					visitor.transport.TLSClientConfig.CurvePreferences = []tls.CurveID{test.group}
 					visitor.transport.TLSClientConfig.MinVersion = test.version
 					visitor.transport.TLSClientConfig.MaxVersion = test.version

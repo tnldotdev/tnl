@@ -120,6 +120,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	base = observability.WithFields(base, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "public_endpoint", Exposure: "public"})
 	base = observability.WithPublisherRecovery(base)
 	life, cancelLife := context.WithCancel(context.WithoutCancel(base))
+	run := PublishRunIdentity{Hostname: hostname, Port: config.Port, PublicURLID: config.PublicURLID, PublishRunID: config.PublishRunID, Number: config.PublishRunNumber}
 	route := &PublicURLServer{
 		proxy:            proxy,
 		hostname:         hostname,
@@ -128,7 +129,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		visitorSourceKey: config.VisitorSourceKey,
 		streamCapacity:   config.StreamCapacity,
 		admission:        admission,
-		run:              PublishRunIdentity{Hostname: hostname, PublicURLID: config.PublicURLID, PublishRunID: config.PublishRunID, Number: config.PublishRunNumber},
+		run:              run,
 		promote:          config.PromoteVisitor,
 		guard:            config.AdmitVisitor,
 		life:             life, cancel: cancelLife,
@@ -203,7 +204,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					diagnostic.WriteHTTP(response, request, code, "")
 					return
 				}
-				proof := config.ReadinessProof.consume(request, PublishRunIdentity{Hostname: hostname, PublicURLID: config.PublicURLID, PublishRunID: config.PublishRunID, Number: config.PublishRunNumber})
+				proof := config.ReadinessProof.consume(request, run)
 				request.Header.Del(publisherproxy.ReadinessProbeHeader)
 				if proof {
 					auditReport = false

@@ -88,7 +88,7 @@ const serviceMetadataSchema = z
 
 const integrationOriginSchema = z
   .strictObject({ hostname: hostnameSchema, url: httpsOriginSchema })
-  .refine(({ hostname, url }) => url === `https://${hostname}`)
+  .refine(({ hostname, url }) => URL.parse(url)?.hostname === hostname)
   .readonly();
 const webhookMethodSchema = z.enum(["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"]);
 const webhookSchema = z
@@ -104,11 +104,19 @@ const webhookSchema = z
       .refine((methods) => new Set(methods).size === methods.length)
       .readonly(),
   })
-  .refine(({ hostname, path, url }) => url === `https://${hostname}${path}`)
+  .refine(({ hostname, path, url }) => {
+    const parsed = URL.parse(url);
+    return (
+      parsed !== null &&
+      parsed.hostname === hostname &&
+      httpsOriginSchema.safeParse(parsed.origin).success &&
+      url === `${parsed.origin}${path}`
+    );
+  })
   .readonly();
 const aliasSchema = z
   .strictObject({ hostname: hostnameSchema, url: httpsOriginSchema, service: serviceNameSchema })
-  .refine(({ hostname, url }) => url === `https://${hostname}`)
+  .refine(({ hostname, url }) => URL.parse(url)?.hostname === hostname)
   .readonly();
 
 const projectFields = {

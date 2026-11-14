@@ -88,7 +88,7 @@ func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, 
 				}
 			} else if event.Type == publisher.EventReady {
 				telemetry.Integration(telemetryv1.IntegrationOutcome{Kind: "oauth", Outcome: telemetryv1.Ready})
-				reportIntegrationURL(tunnel, output, "oauth ready", "", clioutput.Fields(clioutput.Field{Label: "oauth origin", Value: oauth.URL}))
+				reportIntegrationURL(tunnel, output, "oauth ready", "", clioutput.Fields(clioutput.Field{Label: "oauth origin", Value: event.PublicURL}))
 			}
 		},
 	}
@@ -147,7 +147,8 @@ func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database
 		}
 		reportIntegrationURL(tunnel, output, "webhook configured", "", clioutput.Fields(
 			clioutput.Field{Label: "webhook", Value: name},
-			clioutput.Field{Label: "public URL", Value: hooks.URL + definition.Path},
+			clioutput.Field{Label: "hostname", Value: hooks.Hostname},
+			clioutput.Field{Label: "path", Value: definition.Path},
 			clioutput.Field{Label: "delivery", Value: definition.DeliveryMode()},
 			clioutput.Field{Label: "source policy", Value: policy},
 			clioutput.Field{Label: "guide", Value: "https://tnl.dev/w/" + definition.Provider},
@@ -273,7 +274,7 @@ func webhookURLPublisher(state *clientstate.Database, services publisherServices
 			if err != nil {
 				failure("the stable webhook publisher could not become ready")
 			} else if event.Type == publisher.EventReady {
-				reportIntegrationURL(tunnel, output, "webhooks ready", "", clioutput.Fields(clioutput.Field{Label: "webhook origin", Value: origin.URL}))
+				reportIntegrationURL(tunnel, output, "webhooks ready", "", clioutput.Fields(clioutput.Field{Label: "webhook origin", Value: event.PublicURL}))
 			}
 		},
 	}

@@ -75,7 +75,7 @@ func (h *handler) IssueControlBrowserHandoff(w http.ResponseWriter, r *http.Requ
 		writeBearerProblem(w)
 		return
 	}
-	handoff, host, err := store.IssueControlBrowserHandoff(r.Context(), credentials.AccessToken(access), credentials.RefreshToken(body.RefreshToken), body.PublicUrlId, h.config.AccessTokenLifetime, h.config.RefreshTokenLifetime, time.Now())
+	handoff, _, err := store.IssueControlBrowserHandoff(r.Context(), credentials.AccessToken(access), credentials.RefreshToken(body.RefreshToken), body.PublicUrlId, h.config.AccessTokenLifetime, h.config.RefreshTokenLifetime, time.Now())
 	if err != nil {
 		switch {
 		case errors.Is(err, controlstate.ErrControlAuthentication):
@@ -89,5 +89,5 @@ func (h *handler) IssueControlBrowserHandoff(w http.ResponseWriter, r *http.Requ
 	}
 	writeJSON(w, 201, struct {
 		URL string `json:"url"`
-	}{URL: "https://" + host + "/__tnl/team/handoff/" + handoff.Token})
+	}{URL: handoff.Origin + "/__tnl/team/handoff/" + handoff.Token})
 }

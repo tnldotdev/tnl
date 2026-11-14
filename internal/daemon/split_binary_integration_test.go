@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func TestBinaryIntegrationSplitPublishAndVisit(t *testing.T) {
@@ -17,7 +19,12 @@ func TestBinaryIntegrationSplitPublishAndVisit(t *testing.T) {
 	publish := startIntegrationBinaryPublish(t, f.repositoryRoot, f.environment, f.tnlPath,
 		"--no-config", "publish", target.URL, "--public-url", "https://"+f.publicURLHost, "--anonymous", "--output", "ndjson")
 	ready := waitForIntegrationBinaryPublishEvent(t, publish, "ready", 45*time.Second)
-	if ready.URL != "https://"+f.publicURLHost || ready.PublishRunNumber != 1 {
+	database := inspectStandaloneTestDatabase(t, f.databaseURL)
+	var port int
+	if err := database.QueryRowContext(t.Context(), `SELECT port FROM control.public_urls WHERE canonical_hostname=$1`, f.publicURLHost).Scan(&port); err != nil {
+		t.Fatal(err)
+	}
+	if ready.URL == "" || ready.URL != naming.HTTPSOrigin(f.publicURLHost, port) || ready.PublishRunNumber != 1 {
 		t.Fatalf("split binary ready event = %#v", ready)
 	}
 	waitForIngressRoutingCurrent(t, inspectStandaloneTestDatabase(t, f.databaseURL), 1)

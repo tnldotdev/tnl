@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -37,7 +38,11 @@ func savedPublicAddress(publicURL controlv1.PublicURL) (string, error) {
 		return "", failure.Wrap("read public URL protocol", failure.ServerResponseInvalid,
 			errors.New("control returned a public URL with an unknown service protocol"))
 	}
-	return "https://" + publicURL.CanonicalHostname, nil
+	origin := naming.HTTPSOrigin(publicURL.CanonicalHostname, publicURL.Port)
+	if origin == "" {
+		return "", failure.Wrap("read public URL endpoint", failure.ServerResponseInvalid, errors.New("control returned a public URL without an exact reserved endpoint"))
+	}
+	return origin, nil
 }
 
 func validateTCPPublishOptions[P ~string](flags publishCommand, protocol P) error {

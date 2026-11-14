@@ -111,7 +111,12 @@ func Run(ctx context.Context, config Config) (result error) {
 			}
 		}()
 	}
-	if err := observe(config, Event{Type: EventPublicURLAssigned, PublicURLID: publicURLID, Hostname: publicURL.CanonicalHostname}); err != nil {
+	publicOrigin := naming.HTTPSOrigin(publicURL.CanonicalHostname, publicURL.Port)
+	if publicOrigin == "" {
+		return errors.New("publisher: public URL has no exact reserved endpoint")
+	}
+	config.AssignedPublicURL = &publicURL
+	if err := observe(config, Event{Type: EventPublicURLAssigned, PublicURLID: publicURLID, Hostname: publicURL.CanonicalHostname, PublicURL: publicOrigin}); err != nil {
 		return err
 	}
 	var previousRunErr error
@@ -127,7 +132,7 @@ func Run(ctx context.Context, config Config) (result error) {
 			return err
 		}
 		err = runPublishRun(ctx, config, setup, func() error {
-			publicAddress := "https://" + setup.PublicUrl.CanonicalHostname
+			publicAddress := naming.HTTPSOrigin(setup.PublicUrl.CanonicalHostname, setup.PublicUrl.Port)
 			return observe(config, Event{
 				Type: EventReady, PublicURLID: publicURLID, Hostname: setup.PublicUrl.CanonicalHostname,
 				PublicURL: publicAddress, PublishRunNumber: uint64(setup.PublishRun.PublishRunNumber),

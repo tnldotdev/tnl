@@ -293,7 +293,7 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 		PublishRunReadyAt: projection.PublishRunReadyAt,
 		PublishRunClosed:  &projection.PublishRunClosed,
 		PublishRunId:      projection.PublishRunID, PublicUrlId: projection.PublicURLID,
-		PublishRunNumber: int64(projection.PublishRunNumber), CanonicalHostname: projection.CanonicalHostname,
+		PublishRunNumber: int64(projection.PublishRunNumber), CanonicalHostname: projection.CanonicalHostname, Port: projection.Port,
 		IngressPoolId: poolID, ServiceProtocol: protocol,
 		PolicyRevision:  int64(projection.PolicyRevision),
 		AccessMode:      ingressv1.IngressRoutingTableEntryAccessMode(projection.AccessMode),

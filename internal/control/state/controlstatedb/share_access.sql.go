@@ -286,7 +286,7 @@ func (q *Queries) InsertShareHandoff(ctx context.Context, arg InsertShareHandoff
 }
 
 const listReadyShareHostnames = `-- name: ListReadyShareHostnames :many
-SELECT url.id AS public_url_id, url.canonical_hostname
+SELECT url.id AS public_url_id, url.canonical_hostname, url.port
 FROM control.share_public_urls AS included
 JOIN control.public_urls AS url ON url.id = included.public_url_id
 JOIN control.publish_runs AS run ON run.public_url_id = url.id
@@ -307,6 +307,7 @@ type ListReadyShareHostnamesParams struct {
 type ListReadyShareHostnamesRow struct {
 	PublicURLID       string
 	CanonicalHostname string
+	Port              int32
 }
 
 func (q *Queries) ListReadyShareHostnames(ctx context.Context, arg ListReadyShareHostnamesParams) ([]ListReadyShareHostnamesRow, error) {
@@ -318,7 +319,7 @@ func (q *Queries) ListReadyShareHostnames(ctx context.Context, arg ListReadyShar
 	var items []ListReadyShareHostnamesRow
 	for rows.Next() {
 		var i ListReadyShareHostnamesRow
-		if err := rows.Scan(&i.PublicURLID, &i.CanonicalHostname); err != nil {
+		if err := rows.Scan(&i.PublicURLID, &i.CanonicalHostname, &i.Port); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

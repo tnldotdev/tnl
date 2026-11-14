@@ -36,6 +36,9 @@ func TestExclusiveWebhookCommandClaimsOnlyCurrentReadyWorktree(t *testing.T) {
 	if _, err := state.IntegrationURLHostname(t.Context(), server, projectRoot, "project.example.test", "hooks", hooks); err != nil {
 		t.Fatal(err)
 	}
+	if err := state.SaveIntegrationURLEndpoint(t.Context(), server, "url_abcdefghijklmnopqrstuv", "https://"+hooks+":25443"); err != nil {
+		t.Fatal(err)
+	}
 	tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandPublish, Server: server, Project: projectRoot, Service: "api",
 		Target: "3000", IntegrationScope: group,
@@ -44,7 +47,7 @@ func TestExclusiveWebhookCommandClaimsOnlyCurrentReadyWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = tunnel.Finish(t.Context(), nil) })
-	if err := tunnel.SetPublicURL(t.Context(), "url_0123456789abcdefghijkl", "api.project.example.test"); err != nil {
+	if err := tunnel.SetPublicURL(t.Context(), "url_0123456789abcdefghijkl", "https://api.project.example.test"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {
@@ -67,8 +70,9 @@ func TestExclusiveWebhookCommandClaimsOnlyCurrentReadyWorktree(t *testing.T) {
 	}}
 	command := webhookChoiceCommand{remoteFlags: remoteFlags{ServerURL: server, StateDir: stateRoot}, Endpoint: "stripe"}
 	var output bytes.Buffer
-	if err := runWebhookChoice(t.Context(), command, project, true, false, &output); err != nil ||
-		!strings.Contains(output.String(), "https://"+hooks+"/hooks/stripe") {
+	err = runWebhookChoice(t.Context(), command, project, true, false, &output)
+	compact := strings.Join(strings.Fields(strings.ReplaceAll(output.String(), "|", "")), "")
+	if err != nil || !strings.Contains(compact, "https://"+hooks+":25443/hooks/stripe") {
 		t.Fatalf("claim frame: %s, error %v", output.String(), err)
 	}
 	otherRoot := t.TempDir()
@@ -80,7 +84,7 @@ func TestExclusiveWebhookCommandClaimsOnlyCurrentReadyWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = other.Finish(t.Context(), nil) })
-	if err := other.SetPublicURL(t.Context(), "url_abcdefghijklmnopqrstuv", "api-feature.project.example.test"); err != nil {
+	if err := other.SetPublicURL(t.Context(), "url_abcdefghijklmnopqrstuv", "https://api-feature.project.example.test"); err != nil {
 		t.Fatal(err)
 	}
 	if err := other.SetProvisioning(t.Context(), 1); err != nil {

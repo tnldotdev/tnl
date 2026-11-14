@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -177,7 +178,7 @@ func assertIntegrationPublishedPublicURL(t *testing.T, database *sql.DB, visitor
 	identity *integrationPublishingIdentity, ready publisher.Event,
 ) {
 	t.Helper()
-	if ready.Hostname != identity.hostname || ready.PublicURL != "https://"+identity.hostname {
+	if ready.Hostname != identity.hostname || ready.PublicURL == "" || ready.PublicURL != naming.HTTPSOrigin(identity.hostname, integrationPublicURLPort(t, database, ready.PublicURLID)) {
 		t.Fatalf("publisher ready event = %#v", ready)
 	}
 	var teamID, domainID, membershipID, scope string

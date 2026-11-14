@@ -37,6 +37,7 @@ func (c *HTTPControlClient) ReadIngressVisitorPolicy(ctx context.Context, id str
 // each run owns preparation and renewal, independent of requests and siblings.
 // the controller cancels and joins these owners before replacing a process run.
 type publicRunPolicy struct {
+	port      int
 	request   ingressv1.IngressVisitorPolicyRequest
 	ingressID string
 	hostname  string
@@ -68,7 +69,7 @@ func (r *publicRunPolicy) preparationOnly(entry ingressv1.IngressRoutingTableEnt
 func (r *publicRunPolicy) matches(entry ingressv1.IngressRoutingTableEntry, process ingressv1.IngressLease) bool {
 	return r.ingressID == process.IngressId && r.request.IngressRunId == process.IngressRunId && r.request.IngressLeaseRevision == process.IngressLeaseRevision &&
 		r.request.Resource.Id == entry.PublicUrlId && r.request.PublishRunId == entry.PublishRunId && r.request.PublishRunNumber == entry.PublishRunNumber &&
-		r.hostname == entry.CanonicalHostname && r.request.PolicyRevision == entry.PolicyRevision
+		r.hostname == entry.CanonicalHostname && r.port == entry.Port && r.request.PolicyRevision == entry.PolicyRevision
 }
 
 func (c *Controller) installedPublicPolicy(entry ingressv1.IngressRoutingTableEntry, process ingressv1.IngressLease, now time.Time) (time.Time, bool) {
@@ -79,7 +80,7 @@ func (c *Controller) installedPublicPolicy(entry ingressv1.IngressRoutingTableEn
 		return time.Time{}, false
 	}
 	view, enabled, _ := run.policy.Current()
-	if !enabled || !now.Before(view.ValidUntil) || view.Scope.ID != entry.PublicUrlId || view.Hostname != entry.CanonicalHostname || view.Port != 443 ||
+	if !enabled || !now.Before(view.ValidUntil) || view.Scope.ID != entry.PublicUrlId || view.Hostname != entry.CanonicalHostname || int(view.Port) != entry.Port ||
 		!entry.PublicUrlExpiresAt.After(view.AuthorityTime(now)) || !process.LeaseExpiresAt.After(view.AuthorityTime(now)) {
 		return time.Time{}, false
 	}
@@ -110,7 +111,7 @@ func (c *Controller) preparePublicPolicy(ctx context.Context, entry ingressv1.In
 		c.sourceSequences[entry.PublishRunId] = sequence
 	}
 	c.mu.Unlock()
-	run := &publicRunPolicy{ingressID: owner.IngressId, hostname: entry.CanonicalHostname, policy: policy, cancel: cancel, done: make(chan struct{}),
+	run := &publicRunPolicy{ingressID: owner.IngressId, hostname: entry.CanonicalHostname, port: entry.Port, policy: policy, cancel: cancel, done: make(chan struct{}),
 		sequence: sequence,
 		request: ingressv1.IngressVisitorPolicyRequest{IngressRunId: owner.IngressRunId, IngressLeaseRevision: owner.IngressLeaseRevision,
 			Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: entry.PublicUrlId}, PublishRunId: entry.PublishRunId,
@@ -216,6 +217,9 @@ func (c *Controller) preparePublicPolicy(ctx context.Context, entry ingressv1.In
 }
 
 func (c *Controller) SignVisitorSource(entry ingressv1.IngressRoutingTableEntry, visitorID string, source, destination netip.AddrPort) (string, error) {
+	if int(destination.Port()) != entry.Port {
+		return "", visitortoken.ErrVisitorSource
+	}
 	owner, now := c.Lease(), c.now()
 	if owner.Draining || owner.IngressLeaseRevision <= 0 {
 		return "", visitortoken.ErrVisitorSource

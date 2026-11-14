@@ -90,13 +90,13 @@ func testWorkers(t *testing.T) (*Workers, <-chan publisher.Config) {
 	w.RunPublisher = func(ctx context.Context, cfg publisher.Config) error {
 		run := number.Add(1)
 		id := "url_0123456789abcdefghijkl"
-		if err := cfg.Observe(publisher.Event{Type: publisher.EventPublicURLAssigned, PublicURLID: id, Hostname: "public.example"}); err != nil {
+		if err := cfg.Observe(publisher.Event{Type: publisher.EventPublicURLAssigned, PublicURLID: id, Hostname: "public.example", PublicURL: "https://public.example"}); err != nil {
 			return err
 		}
 		if err := cfg.Observe(publisher.Event{Type: publisher.EventProvisioning, PublishRunNumber: run}); err != nil {
 			return err
 		}
-		if cfg.ReadinessProof(publisher.PublishRunIdentity{Hostname: "public.example", PublicURLID: id, Number: run}) == nil {
+		if cfg.ReadinessProof(publisher.PublishRunIdentity{Hostname: "public.example", Port: 443, PublicURLID: id, Number: run}) == nil {
 			return errors.New("missing readiness proof")
 		}
 		if err := cfg.Observe(publisher.Event{Type: publisher.EventReady, PublicURL: "https://public.example", PublishRunNumber: run}); err != nil {

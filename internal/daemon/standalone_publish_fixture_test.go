@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ type standalonePublishFixture struct {
 	databaseURL                    string
 	inspect                        *sql.DB
 	publicAddress, relayUDPAddress string
+	ingressAddress                 string
 	pebble                         integrationPebble
 	relayTLS                       *tls.Config
 	process                        *integrationProcess
@@ -80,8 +82,8 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart
 	controlHTTP, _ := newIntegrationHTTPSClient(t, ca.roots, publicControl, false, owner)
 	identity := newIntegrationPublishingIdentity(t, "https://"+cfg.ServerHostname(), controlHTTP, hostnameLabel, owner)
 	return &standalonePublishFixture{relayTransport: owner.quicTransport(t), owner: owner, databaseURL: databaseURL, inspect: inspect, publicAddress: publicAddress,
-		relayUDPAddress: relayUDPAddress, pebble: pebble, relayTLS: relayTLS, process: process, identity: identity,
-		visitor: newIntegrationVisitor(t, pebble.roots, publicAddress, owner)}
+		relayUDPAddress: relayUDPAddress, ingressAddress: cfg.IngressListen, pebble: pebble, relayTLS: relayTLS, process: process, identity: identity,
+		visitor: newProxiedIntegrationVisitor(t, pebble.roots, cfg.IngressListen, owner)}
 }
 
 func standalonePublishConfig(t *testing.T, databaseURL string, publicListener net.Listener, relayUDP net.PacketConn, directoryURL string, owner *runtimeTopology) (daemonconfig.Config, runtimeListeners) {
@@ -131,7 +133,7 @@ func (f *standalonePublishFixture) startPublisher(t *testing.T, target string, q
 func (f *standalonePublishFixture) waitReady(t *testing.T, handle *integrationPublisher) publisher.Event {
 	t.Helper()
 	ready := waitForPublisherReady(t, handle)
-	if ready.Hostname != f.identity.hostname || ready.PublicURL != "https://"+f.identity.hostname {
+	if ready.Hostname != f.identity.hostname || ready.PublicURL == "" || ready.PublicURL != naming.HTTPSOrigin(ready.Hostname, integrationPublicURLPort(t, f.inspect, ready.PublicURLID)) {
 		t.Fatalf("publisher ready event = %#v", ready)
 	}
 	waitForReadyPublisherConnections(t, f.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
@@ -178,22 +180,21 @@ func assertIntegrationStreamingResponse(
 func assertIntegrationWebSocketPushes(
 	t *testing.T,
 	fixture *standalonePublishFixture,
+	publicURL string,
 	release func(),
 ) {
 	t.Helper()
-	config, err := websocket.NewConfig("wss://"+fixture.identity.hostname+"/websocket", "https://"+fixture.identity.hostname)
+	config, err := websocket.NewConfig("wss://"+strings.TrimPrefix(publicURL, "https://")+"/websocket", publicURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	dialer := &tls.Dialer{Config: &tls.Config{
-		RootCAs: fixture.pebble.roots, ServerName: fixture.identity.hostname, MinVersion: tls.VersionTLS13,
-	}}
-	secured, err := dialer.DialContext(ctx, "tcp", fixture.publicAddress)
+	raw, err := fixture.visitor.transport.DialContext(ctx, "tcp", strings.TrimPrefix(publicURL, "https://"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	secured := tls.Client(raw, &tls.Config{RootCAs: fixture.pebble.roots, ServerName: fixture.identity.hostname, MinVersion: tls.VersionTLS13})
 	defer secured.Close()
 	// bound the WebSocket upgrade as well as subsequent messages.
 	deadline, _ := ctx.Deadline()

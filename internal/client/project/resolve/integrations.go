@@ -18,5 +18,9 @@ func IntegrationOrigin(ctx context.Context, state *clientstate.Database, project
 	if err != nil {
 		return meta.IntegrationOrigin{}, err
 	}
-	return meta.IntegrationOrigin{Hostname: hostname, URL: "https://" + hostname}, nil
+	origin, err := state.IntegrationURLEndpoint(ctx, server, hostname)
+	if err != nil {
+		return meta.IntegrationOrigin{}, err
+	}
+	return meta.IntegrationOrigin{Hostname: hostname, URL: origin}, nil
 }

@@ -11,6 +11,7 @@ import (
 
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/publishingtest"
@@ -75,7 +76,7 @@ func TestEnsureOwnerPublishesExactCompanionURLsAndReusesIdentity(t *testing.T) {
 		}()
 		select {
 		case event := <-ready:
-			if event.PublicURLID != publicURL.Id || event.PublicURL != "https://"+publicURL.CanonicalHostname {
+			if event.PublicURLID != publicURL.Id || event.PublicURL != naming.HTTPSOrigin(publicURL.CanonicalHostname, publicURL.Port) {
 				cancel()
 				t.Fatalf("%s published a different enrolled URL", purpose)
 			}

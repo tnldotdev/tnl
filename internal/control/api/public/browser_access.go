@@ -242,7 +242,7 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 		writeControlStateProblem(request.Context(), response, "read signed-in browser public URL", err)
 		return
 	}
-	http.Redirect(response, request, "https://"+publicURL.CanonicalHostname+"/__tnl/team/handoff/"+handoff.Token, http.StatusSeeOther)
+	http.Redirect(response, request, publicURL.Origin()+"/__tnl/team/handoff/"+handoff.Token, http.StatusSeeOther)
 }
 
 func (h *handler) RedeemPreviewBrowserHandoff(response http.ResponseWriter, request *http.Request, runID controlv1.PublishRunID) {

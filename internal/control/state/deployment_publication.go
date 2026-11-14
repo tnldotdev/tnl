@@ -247,7 +247,7 @@ func (d *Database) AllocateDeploymentPublication(ctx context.Context, r Allocate
 	if err = tx.QueryRow(ctx, `SELECT ingress_pool_id,policy_revision FROM control.teams WHERE id=$1`, r.TeamID).Scan(&ingress, &revision); err != nil {
 		return result, err
 	}
-	u, err := d.insertPublicURL(ctx, q, request, deployment.Namespace, ingress, revision, prefixes, r.Now)
+	u, err := d.insertPublicURL(ctx, tx, q, request, deployment.Namespace, ingress, revision, prefixes, r.Now)
 	if err != nil {
 		return result, err
 	}

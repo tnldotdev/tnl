@@ -66,9 +66,17 @@ func startIngress(t *testing.T, config Config, configure ...func(*Server)) (*Ser
 		config.Lookup = func(string) ([]PublicURL, LookupReason) { return nil, LookupNotFound }
 	}
 	lookup := config.Lookup
+	port := listener.Addr().(*net.TCPAddr).Port
+	if config.RequireProxyHeader {
+		port = 443
+	}
 	config.Lookup = func(host string) ([]PublicURL, LookupReason) {
 		candidates, reason := lookup(host)
 		for index := range candidates {
+			// bind synthetic runs to this fixture's actual visitor destination.
+			if candidates[index].Port == 0 {
+				candidates[index].Port = port
+			}
 			if reason == LookupCurrent && candidates[index].AccessMode == "" {
 				candidates[index].AccessMode = "anonymous"
 			}

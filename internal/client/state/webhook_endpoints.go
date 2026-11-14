@@ -110,7 +110,7 @@ func (d *Database) WebhookReceivers(ctx context.Context, server string, scope In
 		receivers = append(receivers, TunnelInfo{
 			ID: row.ID, Server: row.ServerOrigin, IntegrationScope: IntegrationScope{PrimaryProjectRoot: row.PrimaryProjectRoot.String, Namespace: row.IntegrationNamespace.String}, Hostname: row.Hostname.String,
 			Target: row.Target.String, PublicURLID: row.PublicURLID.String, PublishRunNumber: uint64(row.PublishRunNumber.Int64),
-			PublicURL: "https://" + row.Hostname.String,
+			PublicURL: row.PublicURL,
 		})
 	}
 	return receivers, nil

@@ -19,6 +19,7 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -93,9 +94,9 @@ func waitInvocation(t *testing.T, a *appRuntime, predicate func(publisherapp.Sna
 func readyInvocation(ctx context.Context, cfg publisher.Config) error {
 	publicURL := cfg.AssignedPublicURL
 	for _, event := range []publisher.Event{
-		{Type: publisher.EventPublicURLAssigned, PublicURLID: publicURL.Id, Hostname: publicURL.CanonicalHostname},
+		{Type: publisher.EventPublicURLAssigned, PublicURLID: publicURL.Id, Hostname: publicURL.CanonicalHostname, PublicURL: naming.HTTPSOrigin(publicURL.CanonicalHostname, publicURL.Port)},
 		{Type: publisher.EventProvisioning, PublishRunNumber: 1},
-		{Type: publisher.EventReady, PublishRunNumber: 1, PublicURL: "https://" + publicURL.CanonicalHostname},
+		{Type: publisher.EventReady, PublishRunNumber: 1, PublicURL: naming.HTTPSOrigin(publicURL.CanonicalHostname, publicURL.Port)},
 	} {
 		if err := cfg.Observe(event); err != nil {
 			return err

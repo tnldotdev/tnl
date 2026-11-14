@@ -104,7 +104,7 @@ func TestAutomaticReadinessStopsAfterSuccessAndOnlyRearmsForNewRun(t *testing.T)
 	if err := cfg.Observe(publisher.Event{Type: publisher.EventProvisioning, PublishRunNumber: 2}); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ReadinessProof(publisher.PublishRunIdentity{Hostname: "public.example", PublicURLID: "url_0123456789abcdefghijkl", Number: 2}) == nil {
+	if cfg.ReadinessProof(publisher.PublishRunIdentity{Hostname: "public.example", Port: 443, PublicURLID: "url_0123456789abcdefghijkl", Number: 2}) == nil {
 		t.Fatal("replacement run omitted its proof")
 	}
 	if err := cfg.Observe(publisher.Event{Type: publisher.EventReady, PublishRunNumber: 2, PublicURL: "https://public.example"}); err != nil {
@@ -272,7 +272,7 @@ func TestAutomaticReadinessReplacementJoinsOldRunBeforeCheckingNewRun(t *testing
 			done <- err
 			return
 		}
-		if cfg.ReadinessProof(publisher.PublishRunIdentity{Hostname: "public.example", PublicURLID: "url_0123456789abcdefghijkl", Number: 2}) == nil {
+		if cfg.ReadinessProof(publisher.PublishRunIdentity{Hostname: "public.example", Port: 443, PublicURLID: "url_0123456789abcdefghijkl", Number: 2}) == nil {
 			done <- io.ErrUnexpectedEOF
 			return
 		}

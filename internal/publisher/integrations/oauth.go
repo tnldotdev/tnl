@@ -10,7 +10,6 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
-	"github.com/tnldotdev/tnl/internal/naming"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
@@ -27,7 +26,7 @@ func Observer(state *clientstate.Database, server, hostname string, group client
 			return nil
 		}
 		callback, err := url.Parse(query.Get("redirect_uri"))
-		if err != nil || callback.Host != hostname {
+		if err != nil || callback.Hostname() != hostname {
 			return nil
 		}
 		if len(query["state"]) != 1 || query.Get("state") == "" || len(query["state"][0]) > 8192 || len(query["redirect_uri"]) != 1 ||
@@ -52,6 +51,10 @@ func Observer(state *clientstate.Database, server, hostname string, group client
 		if !ready {
 			return diagnostic.Wrap(diagnostic.OAuthCallbackUnavailable, errors.New("OAuth callback publisher is not ready"))
 		}
+		endpoint, err := state.IntegrationURLEndpoint(ctx, server, hostname)
+		if err != nil || endpoint == "" || endpoint != "https://"+callback.Host {
+			return diagnostic.Wrap(diagnostic.OAuthCallbackUnavailable, errors.New("OAuth callback does not match its exact saved endpoint"))
+		}
 		if err := state.SaveOAuthCallback(ctx, clientstate.SaveOAuthCallbackInput{
 			Scope:       clientstate.OAuthCallbackScope{Server: server, Hostname: hostname, IntegrationScope: group},
 			Origin:      clientstate.OAuthRedirectOrigin{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number},
@@ -68,8 +71,16 @@ func OAuthHandler(state *clientstate.Database, server, hostname string, onRedire
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Cache-Control", "no-store")
 		response.Header().Set("Referrer-Policy", "no-referrer")
-		authority, err := naming.CanonicalizeAuthority(request.Host)
-		if err != nil || authority != hostname {
+		endpoint, err := state.IntegrationURLEndpoint(request.Context(), server, hostname)
+		if err != nil {
+			diagnostic.WriteHTTP(response, request, diagnostic.OAuthCallbackUnavailable, "")
+			return
+		}
+		if endpoint == "" {
+			diagnostic.WriteHTTP(response, request, diagnostic.OAuthCallbackExpired, "")
+			return
+		}
+		if endpoint != "https://"+request.Host {
 			diagnostic.WriteHTTP(response, request, diagnostic.RequestMisdirected, "")
 			return
 		}
@@ -90,7 +101,7 @@ func OAuthHandler(state *clientstate.Database, server, hostname string, onRedire
 		}
 		// providers already retain static redirect-URI query parameters. preserve
 		// their response exactly instead of appending the static query a second time.
-		http.Redirect(response, request, "https://"+origin.Hostname+callback.Path+"?"+request.URL.RawQuery, http.StatusSeeOther)
+		http.Redirect(response, request, origin.PublicURL+callback.Path+"?"+request.URL.RawQuery, http.StatusSeeOther)
 		if onRedirect != nil {
 			onRedirect()
 		}

@@ -248,9 +248,9 @@ func TestIntegrationBrowserLoginInstallsAccessOnReadyPreviewHostnames(t *testing
 	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.public_urls (
 		id, team_id, domain_id, created_by_identity_id, idempotency_key,
 		request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname,
-		target, public_url_scope, purpose, policy_revision, ip_policy, lifecycle_state, dns_state, created_at, updated_at)
+		port, target, public_url_scope, purpose, policy_revision, ip_policy, lifecycle_state, dns_state, created_at, updated_at)
 		SELECT $1, team_id, domain_id, created_by_identity_id, 'browser-api', $2, $3,
-		'api-session.example.test', target, public_url_scope, purpose, policy_revision, ip_policy, lifecycle_state, dns_state, $4, $4
+		'api-session.example.test', 25444, target, public_url_scope, purpose, policy_revision, ip_policy, lifecycle_state, dns_state, $4, $4
 		FROM control.public_urls WHERE id = $5`, otherID, sealed, database.storageKey.CurrentID(), now, f.setup.PublicURLID); err != nil {
 		t.Fatal(err)
 	}
@@ -281,12 +281,12 @@ func TestIntegrationBrowserLoginInstallsAccessOnReadyPreviewHostnames(t *testing
 		t.Fatal(err)
 	}
 	cookie, path, next, _, _, err := database.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, now)
-	if err != nil || path != "/settings" || !strings.HasPrefix(next, "https://api-session.example.test/__tnl/team/handoff/") {
+	if err != nil || path != "/settings" || !strings.HasPrefix(next, "https://api-session.example.test:25444/__tnl/team/handoff/") {
 		t.Fatalf("first host returned %q, %q, %v", path, next, err)
 	}
-	otherTicket := strings.TrimPrefix(next, "https://api-session.example.test/__tnl/team/handoff/")
+	otherTicket := strings.TrimPrefix(next, "https://api-session.example.test:25444/__tnl/team/handoff/")
 	otherCookie, _, finish, _, _, err := database.RedeemBrowserHandoff(t.Context(), browserTestAuthentication(t, database, otherID, now), otherTicket, now)
-	if err != nil || otherCookie != cookie || finish != "https://route-session.example.test/settings" {
+	if err != nil || otherCookie != cookie || finish != "https://route-session.example.test:25443/settings" {
 		t.Fatalf("other host handoff = %t, %q, %v", otherCookie == cookie, finish, err)
 	}
 	if _, err := database.BrowserSession(t.Context(), otherID, cookie, now); err != nil {

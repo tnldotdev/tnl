@@ -247,8 +247,13 @@ func (m Metadata) Validate() error {
 		if err := canonicalHostname("webhook "+name+" hostname", endpoint.Hostname); err != nil {
 			return err
 		}
-		if endpoint.URL != "https://"+endpoint.Hostname+endpoint.Path {
+		parsed, err := url.Parse(endpoint.URL)
+		if err != nil || parsed.Path != endpoint.Path || parsed.RawPath != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 			return fmt.Errorf("webhook %q URL does not match hostname and path", name)
+		}
+		parsed.Path = ""
+		if err := validateOrigin("webhook "+name, IntegrationOrigin{Hostname: endpoint.Hostname, URL: parsed.String()}); err != nil {
+			return err
 		}
 		if endpoint.Service != "" {
 			if service, found := m.Services[endpoint.Service]; !found || service.Protocol != "http" {
@@ -317,8 +322,11 @@ func (m Metadata) Validate() error {
 		return errors.New("project metadata may contain at most 32 aliases")
 	}
 	for name, alias := range m.Aliases {
-		if !naming.ValidServiceName(name) || alias.URL != "https://"+alias.Hostname {
+		if !naming.ValidServiceName(name) {
 			return fmt.Errorf("invalid alias %q", name)
+		}
+		if err := validateOrigin("alias "+name, IntegrationOrigin{Hostname: alias.Hostname, URL: alias.URL}); err != nil {
+			return err
 		}
 		if service, found := m.Services[alias.Service]; !found || service.Protocol != "http" {
 			return fmt.Errorf("alias %q names an unknown service", name)
@@ -346,7 +354,16 @@ func validateOrigin(name string, origin IntegrationOrigin) error {
 	if err := canonicalHostname(name+" hostname", origin.Hostname); err != nil {
 		return err
 	}
-	if origin.URL != "https://"+origin.Hostname {
+	u, err := url.Parse(origin.URL)
+	if err != nil || u.Scheme != "https" || u.Hostname() != origin.Hostname || u.User != nil || u.Path != "" || u.RawPath != "" || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("%s URL does not match hostname", name)
+	}
+	if u.Port() != "" {
+		port, err := strconv.Atoi(u.Port())
+		if err != nil || origin.URL != naming.HTTPSOrigin(origin.Hostname, port) {
+			return fmt.Errorf("%s URL has an invalid port", name)
+		}
+	} else if origin.URL != "https://"+origin.Hostname {
 		return fmt.Errorf("%s URL does not match hostname", name)
 	}
 	return nil

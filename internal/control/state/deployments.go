@@ -480,7 +480,7 @@ func (d *Database) deploymentStatus(ctx context.Context, tx pgx.Tx, row controls
 			if err != nil {
 				return result, err
 			}
-			result.Services[binding.Service] = DeploymentService{ID: u.ID, Protocol: "http", TrustRevision: u.MutationRevision, PublicURL: "https://" + u.CanonicalHostname}
+			result.Services[binding.Service] = DeploymentService{ID: u.ID, Protocol: "http", TrustRevision: u.MutationRevision, PublicURL: naming.HTTPSOrigin(u.CanonicalHostname, int(u.Port))}
 			continue
 		}
 		saved, err := controlstatedb.New(tx).GetService(ctx, binding.ServiceID.String)

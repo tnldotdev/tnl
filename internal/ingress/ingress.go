@@ -33,6 +33,7 @@ const alternateAttemptTimeout = 250 * time.Millisecond
 const visitorConnectionIDPrefix = opaqueid.VisitorConnectionPrefix
 
 type PublicURL struct {
+	Port              int
 	BindConnection    func(func()) (func(), error)
 	AttestSource      func(string, netip.AddrPort, netip.AddrPort) (string, error)
 	ID                string
@@ -70,6 +71,7 @@ type Metrics interface {
 type Config struct {
 	AuditSink                 serviceaudit.Sink
 	Lookup                    LookupFunc
+	HasPublicURLPort          func(int) bool
 	ServerHostname            string
 	HandleControl             func(net.Conn) bool
 	RelayHostname             string
@@ -284,7 +286,8 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	_ = public.SetReadDeadline(time.Time{})
 	// native database negotiation is not a TLS ClientHello. select a managed
 	// service by its trusted destination before attempting HTTPS inspection.
-	if s.config.PublicServicesOnly || s.servicePorts.Contains(int(destination.Port())) || s.config.RequireProxyHeader && destination.Port() != 443 {
+	publicURLPort := s.config.HasPublicURLPort != nil && s.config.HasPublicURLPort(int(destination.Port()))
+	if s.config.PublicServicesOnly || !publicURLPort && (s.servicePorts.Contains(int(destination.Port())) || s.config.RequireProxyHeader && destination.Port() != 443) {
 		if s.config.PublicServices == nil || !s.servicePorts.Contains(int(destination.Port())) {
 			return nil
 		}

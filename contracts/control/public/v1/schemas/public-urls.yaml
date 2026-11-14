@@ -22,6 +22,7 @@ schemas:
         team_id,
         domain_id,
         canonical_hostname,
+        port,
         target,
         public_url_scope,
         purpose,
@@ -37,6 +38,11 @@ schemas:
         updated_at,
       ]
     properties:
+      port:
+        type: integer
+        minimum: 0
+        maximum: 65535
+        description: The reserved public endpoint port. Zero means no public endpoint reservation and never selects a local listener.
       id:
         $ref: "../openapi.yaml#/components/schemas/PublicURLID"
       team_id:

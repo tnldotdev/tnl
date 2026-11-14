@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -23,6 +25,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -90,10 +93,51 @@ type integrationVisitor struct {
 	transport *http.Transport
 }
 
+func integrationPublicURLPort(t *testing.T, database *sql.DB, id string) int {
+	t.Helper()
+	var port int
+	if err := database.QueryRow(`SELECT port FROM control.public_urls WHERE id=$1`, id).Scan(&port); err != nil {
+		t.Fatal(err)
+	}
+	return port
+}
+
 func newIntegrationVisitor(t *testing.T, roots *x509.CertPool, address string, owner *runtimeTopology) *integrationVisitor {
 	t.Helper()
 	client, transport := newIntegrationHTTPSClient(t, roots, address, true, owner)
 	return &integrationVisitor{client: client, transport: transport}
+}
+
+// the fixture dialer plays the trusted front while retaining the visitor's
+// requested port. the backend socket never becomes endpoint authority.
+func newProxiedIntegrationVisitor(t *testing.T, roots *x509.CertPool, backend string, owner *runtimeTopology) *integrationVisitor {
+	t.Helper()
+	visitor := newIntegrationVisitor(t, roots, backend, owner)
+	visitor.transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		_, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		destination, err := netip.ParseAddrPort(net.JoinHostPort("127.0.0.1", port))
+		if err != nil {
+			return nil, err
+		}
+		connection, err := (&net.Dialer{}).DialContext(ctx, network, backend)
+		if err != nil {
+			return nil, err
+		}
+		source := connection.LocalAddr().(*net.TCPAddr).AddrPort()
+		header, err := proxyproto.Encode(proxyproto.Header{Source: netip.AddrPortFrom(source.Addr().Unmap(), source.Port()), Destination: destination})
+		if err == nil {
+			_, err = connection.Write(header)
+		}
+		if err != nil {
+			_ = connection.Close()
+			return nil, err
+		}
+		return connection, nil
+	}
+	return visitor
 }
 
 func (v *integrationVisitor) request(request *http.Request) (*http.Response, []byte, error) {

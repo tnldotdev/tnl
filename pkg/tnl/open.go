@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -100,7 +101,7 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 			Target: "http://" + listener.Addr().String(), AccessMode: options.AccessMode, IP: slices.Clone(options.IP), Limits: limits,
 			OnAllocated: func(publicURL controlv1.PublicURL) error {
 				tunnel.mu.Lock()
-				tunnel.id, tunnel.url = publicURL.Id, "https://"+publicURL.CanonicalHostname
+				tunnel.id, tunnel.url = publicURL.Id, naming.HTTPSOrigin(publicURL.CanonicalHostname, publicURL.Port)
 				tunnel.mu.Unlock()
 				return nil
 			},

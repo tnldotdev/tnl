@@ -74,8 +74,13 @@ func runWebhookChoice(ctx context.Context, flags webhookChoiceCommand, project p
 			return failure.Wrap("update webhook receiver", failure.ClientStateUnavailable, err)
 		}
 	}
-	return writeHumanFrame(stdout, command, status, "", clioutput.Fields(
-		clioutput.Field{Label: "webhook", Value: "https://" + hostname + definition.Path},
-		clioutput.Field{Label: "receiver", Value: selected.PublicURL},
-	))
+	origin, err := state.IntegrationURLEndpoint(ctx, server, hostname)
+	if err != nil {
+		return err
+	}
+	fields := []clioutput.Field{{Label: "hostname", Value: hostname}, {Label: "path", Value: definition.Path}, {Label: "receiver", Value: selected.PublicURL}}
+	if origin != "" {
+		fields = append(fields, clioutput.Field{Label: "webhook", Value: origin + definition.Path})
+	}
+	return writeHumanFrame(stdout, command, status, "", clioutput.Fields(fields...))
 }

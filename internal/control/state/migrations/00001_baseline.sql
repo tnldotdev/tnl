@@ -507,6 +507,7 @@ CREATE TABLE control.public_urls (
     request_digest_ciphertext bytea,
     request_digest_storage_key_id text,
     canonical_hostname text NOT NULL CHECK (canonical_hostname <> ''),
+    port integer NOT NULL DEFAULT 0 CHECK (port=0 OR port BETWEEN 1024 AND 65535),
     target text NOT NULL,
     namespace text NOT NULL DEFAULT '',
     purpose text NOT NULL CHECK (purpose IN ('app', 'alias', 'demo', 'oauth', 'webhooks')),
@@ -1669,7 +1670,9 @@ CREATE UNIQUE INDEX services_scoped_name ON control.services(team_id, name_scope
 CREATE UNIQUE INDEX services_certificate_hostname ON control.services(certificate_hostname) WHERE deleted_at IS NULL AND certificate_hostname<>'';
 CREATE TABLE control.service_port_claims (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
+    service_id text REFERENCES control.services(id) ON DELETE RESTRICT,
+    public_url_id text REFERENCES control.public_urls(id) ON DELETE RESTRICT,
+    CHECK ((service_id IS NOT NULL) <> (public_url_id IS NOT NULL)),
     ingress_pool_id text NOT NULL REFERENCES control.ingress_pools(id) ON DELETE RESTRICT,
     port integer NOT NULL CHECK (port BETWEEN 1024 AND 65535),
     state text NOT NULL DEFAULT 'held' CHECK (state IN ('held','quarantined','released')),
@@ -1684,6 +1687,20 @@ CREATE TABLE control.service_port_claims (
 );
 CREATE UNIQUE INDEX service_ports_held ON control.service_port_claims(ingress_pool_id,port) WHERE state<>'released';
 CREATE UNIQUE INDEX service_port_current ON control.service_port_claims(service_id) WHERE state='held';
+CREATE UNIQUE INDEX public_url_port_current ON control.service_port_claims(public_url_id) WHERE state='held';
+-- +goose StatementBegin
+CREATE FUNCTION control.quarantine_public_url_port() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.lifecycle_state='deleted' AND OLD.lifecycle_state<>'deleted' THEN
+        UPDATE control.service_port_claims SET state='quarantined',retired_run_number=NEW.next_publish_run_number-1,
+            reusable_after=NEW.deleted_at+interval '7 days'
+        WHERE public_url_id=NEW.id AND state='held';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER quarantine_public_url_port AFTER UPDATE ON control.public_urls FOR EACH ROW EXECUTE FUNCTION control.quarantine_public_url_port();
 -- +goose StatementBegin
 CREATE FUNCTION control.retire_service_port() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

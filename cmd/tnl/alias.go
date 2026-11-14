@@ -40,5 +40,13 @@ func runAliasChoice(ctx context.Context, flags aliasChoiceCommand, project proje
 	if !use {
 		command, status = "tnl alias release", "default restored"
 	}
-	return writeHumanFrame(stdout, command, status, "tnl status shows alias readiness", clioutput.Fields(clioutput.Field{Label: "alias", Value: flags.Name}, clioutput.Field{Label: "public URL", Value: "https://" + selected.Hostname}, clioutput.Field{Label: "selected worktree", Value: selected.Project}))
+	origin, err := state.IntegrationURLEndpoint(ctx, server, selected.Hostname)
+	if err != nil {
+		return err
+	}
+	fields := []clioutput.Field{{Label: "alias", Value: flags.Name}, {Label: "hostname", Value: selected.Hostname}, {Label: "selected worktree", Value: selected.Project}}
+	if origin != "" {
+		fields = append(fields, clioutput.Field{Label: "public URL", Value: origin})
+	}
+	return writeHumanFrame(stdout, command, status, "tnl status shows alias readiness", clioutput.Fields(fields...))
 }

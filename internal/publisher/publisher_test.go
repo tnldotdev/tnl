@@ -505,7 +505,7 @@ func (s *publisherControlStub) CreatePublicURL(_ context.Context, body controlv1
 	publicURL := controlv1.PublicURL{
 		Id: "public_url_created", TeamId: body.TeamId, DomainId: body.DomainId, MembershipId: body.MembershipId,
 		RequirePostQuantum: body.RequirePostQuantum != nil && *body.RequirePostQuantum,
-		CanonicalHostname:  body.CanonicalHostname, PublicUrlScope: body.PublicUrlScope, Purpose: controlv1.PublicURLPurpose(body.Purpose), Target: body.Target, NextPublishRunNumber: 1,
+		CanonicalHostname:  body.CanonicalHostname, Port: 443, PublicUrlScope: body.PublicUrlScope, Purpose: controlv1.PublicURLPurpose(body.Purpose), Target: body.Target, NextPublishRunNumber: 1,
 		Ephemeral: body.Ephemeral != nil && *body.Ephemeral, LifecycleState: controlv1.Enabled,
 	}
 	protocol := controlv1.Http

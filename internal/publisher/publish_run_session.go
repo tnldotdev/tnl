@@ -181,7 +181,7 @@ func runSession(
 		streamCapacity = setup.Traffic.Connections
 	}
 	view, enabled, _ := policy.Lease().Current()
-	if !enabled || view.Hostname != setup.PublicUrl.CanonicalHostname {
+	if !enabled || view.Hostname != setup.PublicUrl.CanonicalHostname || int(view.Port) != setup.PublicUrl.Port {
 		return errors.New("public URL visitor policy has no matching endpoint")
 	}
 	route, err := NewPublicURLServer(PublicURLServerConfig{

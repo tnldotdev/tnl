@@ -63,7 +63,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		if err != nil {
 			return result, err
 		}
-		team, policy.Hostname, policy.Port = row.TeamID, row.CanonicalHostname, 443
+		team, policy.Hostname, policy.Port = row.TeamID, row.CanonicalHostname, int(row.Port)
 		policy.Enabled = row.LifecycleState == "enabled" && (!row.ExpiresAt.Valid || row.ExpiresAt.Time.After(now))
 		policy.Anonymous = row.AccessMode == "anonymous"
 		if row.ExpiresAt.Valid && row.ExpiresAt.Time.After(now) && row.ExpiresAt.Time.Before(policy.ValidUntil) {

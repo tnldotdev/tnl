@@ -25,6 +25,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/managedcert"
@@ -129,7 +130,7 @@ type auditReaderConn struct {
 func (c *auditReaderConn) Read(b []byte) (int, error) { return c.reader.Read(b) }
 
 func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database, inspect *pgxpool.Pool, lease controlstate.IngressLease,
-	actor, team, member, publicID, publicRun, publicHostname string, report serviceaudit.Reporter) {
+	actor, team, member, publicID, publicRun, publicHostname string, publicPort int, report serviceaudit.Reporter) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
@@ -254,11 +255,14 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 		t.Fatal(err)
 	}
 	server, err := ingress.New(listener, ingress.Config{MaxConnections: 20, AuditSink: sink,
+		RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
+		ServicePortRanges: []tcpport.Range{{First: publicPort, Last: publicPort}},
+		HasPublicURLPort:  func(port int) bool { return port == publicPort },
 		Lookup: func(host string) ([]ingress.PublicURL, ingress.LookupReason) {
 			if host != publicHostname {
 				return nil, ingress.LookupNotFound
 			}
-			return []ingress.PublicURL{{ID: publicID, PublishRunID: publicRun, PublishRunNumber: 1, AllowAll: true, AccessMode: "anonymous", Backends: []ingress.Backend{target},
+			return []ingress.PublicURL{{ID: publicID, Port: publicPort, PublishRunID: publicRun, PublishRunNumber: 1, AllowAll: true, AccessMode: "anonymous", Backends: []ingress.Backend{target},
 				AttestSource: func(string, netip.AddrPort, netip.AddrPort) (string, error) { return "audit-fixture-source-proof", nil },
 			}}, ingress.LookupCurrent
 		}})
@@ -318,6 +322,18 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	}
 	visitor, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
 	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := proxyproto.Encode(proxyproto.Header{
+		Source:      visitor.LocalAddr().(*net.TCPAddr).AddrPort(),
+		Destination: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), uint16(publicPort)),
+	})
+	if err != nil {
+		_ = visitor.Close()
+		t.Fatal(err)
+	}
+	if _, err := visitor.Write(metadata); err != nil {
+		_ = visitor.Close()
 		t.Fatal(err)
 	}
 	publicTLS := clientTLS.Clone()

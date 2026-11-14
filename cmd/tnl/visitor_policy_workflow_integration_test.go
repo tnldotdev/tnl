@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func TestIntegrationCLIWorkflowPreparesVisitorPolicyBeforeIssuance(t *testing.T) {
@@ -71,7 +72,11 @@ func TestIntegrationCLIWorkflowForwardsAuthenticatedVisitorSource(t *testing.T) 
 	// the real publisher authenticates ingress source evidence before TLS. a
 	// hand-built routing projection cannot substitute for that exact-run proof.
 	workflowWait(t, 25*time.Second, func() bool {
-		response, err := visitor.Get("https://" + hostname + "/prepared-visitor")
+		saved, err := session.Authenticated().Control.GetPublicURLByHostname(t.Context(), current.Team().Id, hostname)
+		if err != nil {
+			return false
+		}
+		response, err := visitor.Get(naming.HTTPSOrigin(saved.CanonicalHostname, saved.Port) + "/prepared-visitor")
 		if err != nil {
 			return false
 		}

@@ -48,7 +48,7 @@ func TestHTTPShareGrantsUseSessionAndIdempotencyKey(t *testing.T) {
 					t.Error("grant management must use the control session")
 				}
 				if r.Method == http.MethodGet && r.URL.Path == "/v1/visitor/public-urls" {
-					_ = json.NewEncoder(w).Encode(controlv1.AvailablePublicURLPage{PublicUrls: []controlv1.AvailablePublicURL{{Id: id, ServiceProtocol: "http", CanonicalHostname: "app.example.test"}}})
+					_ = json.NewEncoder(w).Encode(controlv1.AvailablePublicURLPage{PublicUrls: []controlv1.AvailablePublicURL{{Id: id, ServiceProtocol: "http", CanonicalHostname: "app.example.test", Port: 25443}}})
 					return
 				}
 				path := "/v1/public-urls/" + id + "/visitor-grants"
@@ -126,8 +126,8 @@ func TestShareTeamSSHUserIsRejectedBeforeAuthentication(t *testing.T) {
 
 func TestShareSelectsOnlyConfiguredPublicURLFromProject(t *testing.T) {
 	webID := "url_0123456789abcdefghijkl"
-	routes := []controlv1.PublicURL{{Id: webID, CanonicalHostname: "web.example.test"}, {Id: "url_abcdefghijkl0123456789", CanonicalHostname: "api.example.test"}}
-	for _, selector := range []string{webID, "web.example.test", "https://web.example.test"} {
+	routes := []controlv1.PublicURL{{Id: webID, CanonicalHostname: "web.example.test", Port: 25443}, {Id: "url_abcdefghijkl0123456789", CanonicalHostname: "api.example.test", Port: 25444}}
+	for _, selector := range []string{webID, "web.example.test", "https://web.example.test", "https://web.example.test:25443"} {
 		got, err := selectSharePublicURL(selector, routes)
 		if err != nil || got.Id != webID {
 			t.Fatalf("selector %q = %+v, %v", selector, got, err)
@@ -136,7 +136,7 @@ func TestShareSelectsOnlyConfiguredPublicURLFromProject(t *testing.T) {
 	if _, err := selectSharePublicURL("", routes); err == nil || !strings.Contains(err.Error(), "select the public URL") {
 		t.Fatalf("ambiguous preview page: %v", err)
 	}
-	for _, selector := range []string{"https://web.example.test/path", "http://web.example.test", "web.example.test:443", "https://web.example.test?secret=yes"} {
+	for _, selector := range []string{"https://web.example.test/path", "http://web.example.test", "web.example.test:443", "https://web.example.test?secret=yes", "https://web.example.test:0", "https://web.example.test:025443", "https://web.example.test:25444"} {
 		if _, err := selectSharePublicURL(selector, routes); err == nil {
 			t.Fatalf("invalid page %q was accepted", selector)
 		}
@@ -157,11 +157,11 @@ func TestShareServiceURLsUseConfiguredNames(t *testing.T) {
 	project := projectConfiguration{}
 	project.Config.Services = config.Services{"web": {Tunnel: &config.Tunnel{}}, "api": {}, "docs": {Tunnel: &config.Tunnel{}}}
 	routes := []controlv1.PublicURL{
-		{Id: "url_web", CanonicalHostname: "web.example.test", ServiceProtocol: controlv1.Http},
-		{Id: "url_docs", CanonicalHostname: "docs.example.test", ServiceProtocol: controlv1.Http},
+		{Id: "url_web", CanonicalHostname: "web.example.test", Port: 25443, ServiceProtocol: controlv1.Http},
+		{Id: "url_docs", CanonicalHostname: "docs.example.test", Port: 25444, ServiceProtocol: controlv1.Http},
 	}
 	services := shareServiceURLs(project, routes, map[string]string{"api": "web.example.test", "web": "web.example.test", "docs": "docs.example.test"})
-	if len(services) != 2 || services["docs"].PublicURL != "https://docs.example.test" || services["web"].PublicURLID != "url_web" {
+	if len(services) != 2 || services["docs"].PublicURL != "https://docs.example.test:25444" || services["web"].PublicURLID != "url_web" {
 		t.Fatalf("unexpected share service mapping: %+v", services)
 	}
 	encoded, err := json.Marshal(services)

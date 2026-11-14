@@ -37,6 +37,16 @@ type wiringControl struct {
 
 func (c *wiringControl) ReadIngressVisitorPolicy(_ context.Context, id string, body ingressv1.IngressVisitorPolicyRequest) (controlv1.VisitorPolicyUpdate, error) {
 	now := time.Now()
+	port := 0
+	for _, event := range c.snapshot.Entries {
+		if event.PublicUrlId == body.Resource.Id && event.Entry.PublishRunId == body.PublishRunId {
+			port = event.Entry.Port
+			break
+		}
+	}
+	if port == 0 {
+		return controlv1.VisitorPolicyUpdate{}, fmt.Errorf("unknown public URL endpoint")
+	}
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("w", 32)))
 	authority, child, err := visitortoken.IssueVisitorSourceAuthority([32]byte{1}, tunnelv1.VisitorSourceAuthority{
 		PublicURLID: body.Resource.Id, PublishRunID: body.PublishRunId, PublishRunNumber: uint64(body.PublishRunNumber),
@@ -52,7 +62,7 @@ func (c *wiringControl) ReadIngressVisitorPolicy(_ context.Context, id string, b
 	}
 	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: []int64{}, SnapshotRequired: body.AfterRevision == 0,
 		VisitorSourceKey: new(child[:]), VisitorSourceAuthority: &wire,
-		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: "pool.example", Port: 443, Issuer: "https://control.example.test",
+		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: "pool.example", Port: port, Issuer: "https://control.example.test",
 			VisitorPolicyRevision: 1, KeyRevision: 1, Enabled: true, ObservedAt: now, ValidUntil: now.Add(10 * time.Second),
 			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "wiring", PublicKey: key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}, nil
 }
@@ -213,6 +223,9 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
+			}
+			for index := range control.snapshot.Entries {
+				control.snapshot.Entries[index].Entry.Port = listener.Addr().(*net.TCPAddr).Port
 			}
 			d := &daemon{ctx: ctx, cancel: cancel, relayClientTLS: &tls.Config{RootCAs: ca.roots}, componentDone: make(chan error, 1)}
 			metrics := observability.New("ingress")

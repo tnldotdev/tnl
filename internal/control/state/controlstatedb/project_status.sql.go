@@ -55,7 +55,7 @@ WITH resources AS (
 ), publications AS (
     SELECT resource.service,resource.deployment,resource.worktree_key,resource.service_id,resource.public_url_id,
         COALESCE(service.certificate_hostname,url.canonical_hostname,'')::text AS hostname,
-        COALESCE(service.service_port,CASE WHEN url.id IS NOT NULL THEN 443 ELSE 0 END)::integer AS port,
+        COALESCE(service.service_port,url.port,0)::integer AS port,
         COALESCE(service.enabled AND service.deleted_at IS NULL,url.lifecycle_state='enabled',false)::boolean AS enabled,
         COALESCE(url.dns_state,'')::text AS dns_state,
         COALESCE(public_run.id,private_run.id,'')::text AS run_id,

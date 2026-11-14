@@ -31,7 +31,7 @@ func aliasTestTunnel(t *testing.T, state *Database, scope AliasScope, project, l
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tunnel.SetPublicURL(t.Context(), id, label+"."+scope.Namespace); err != nil {
+	if err := tunnel.SetPublicURL(t.Context(), id, "https://"+label+"."+scope.Namespace); err != nil {
 		t.Fatal(err)
 	}
 	if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {

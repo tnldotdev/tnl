@@ -33,7 +33,7 @@ func (d *Database) snapshotAliases(ctx context.Context, tx *sql.Tx, project stri
 	}
 	result := make([]AliasInfo, 0, len(rows))
 	for _, row := range rows {
-		info := AliasInfo{Name: row.Name, Server: row.ServerOrigin, Hostname: row.Hostname, PublicURL: "https://" + row.Hostname,
+		info := AliasInfo{Name: row.Name, Server: row.ServerOrigin, Hostname: row.Hostname, PublicURL: row.PublicURL,
 			Service: row.Service, SelectedProject: row.SelectedProjectRoot, DefaultProject: row.PrimaryProjectRoot, State: "unavailable"}
 		receiver, receiverErr := queries.ReadyAliasReceiver(ctx, clientstatedb.ReadyAliasReceiverParams{
 			AliasID: row.ID, ProjectRoot: row.SelectedProjectRoot, Now: at.UnixNano(),

@@ -349,7 +349,7 @@ func mustOnlyBackend(
 func forwardingTestEntry(now time.Time, address string) ingressv1.IngressRoutingTableEntry {
 	now = now.UTC()
 	return ingressv1.IngressRoutingTableEntry{
-		PublicUrlId: "public_url_1", PublishRunId: "publish_run_1", PublishRunNumber: 2,
+		PublicUrlId: "public_url_1", PublishRunId: "publish_run_1", PublishRunNumber: 2, Port: 443,
 		PublicUrlExpiresAt: now.Add(time.Hour),
 		PublisherConnections: []ingressv1.IngressRoutingPublisherConnection{{
 			ConnectionSlot: 0, PublisherConnectionId: "publisher_connection_1",

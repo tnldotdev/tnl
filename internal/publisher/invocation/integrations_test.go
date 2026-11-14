@@ -98,7 +98,7 @@ func TestWebhookReadyTelemetryRequiresPublishedURLAndSelectedReceiver(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tunnel.SetPublicURL(t.Context(), id, "api.member.example.test"); err != nil {
+	if err := tunnel.SetPublicURL(t.Context(), id, "https://api.member.example.test"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {

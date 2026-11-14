@@ -31,6 +31,9 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 	oauth.Handler = integrations.OAuthHandler(state, server, oauthHost, nil)
 	oauthPublisher := startOwnedIntegrationPublisher(t, fixture.owner, oauth, fixture.diagnostics)
 	oauthReady := waitForPublisherReady(t, oauthPublisher)
+	if err := state.SaveIntegrationURLEndpoint(t.Context(), server, oauthReady.PublicURLID, oauthReady.PublicURL); err != nil {
+		t.Fatal(err)
+	}
 	waitForReadyPublisherConnections(t, fixture.inspect, oauthReady.PublicURLID, oauthReady.PublishRunNumber, 2)
 	project := t.TempDir()
 	_, namespace, found := strings.Cut(oauthHost, ".")
@@ -39,9 +42,9 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 	}
 	integrationScope := clientstate.IntegrationScope{PrimaryProjectRoot: project, Namespace: namespace}
 	type app struct {
-		name, hostname string
-		callbacks      chan string
-		tunnel         *clientstate.Tunnel
+		name, origin string
+		callbacks    chan string
+		tunnel       *clientstate.Tunnel
 	}
 	apps := make([]app, 0, 2)
 	for _, name := range []string{"web", "api"} {
@@ -54,7 +57,7 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 				provider := url.URL{Scheme: "https", Host: "idp.example.test", Path: "/authorize"}
 				query := provider.Query()
 				query.Set("state", name+"-state")
-				query.Set("redirect_uri", "https://"+oauthHost+"/api/auth/callback/provider")
+				query.Set("redirect_uri", oauthReady.PublicURL+"/api/auth/callback/provider")
 				provider.RawQuery = query.Encode()
 				response.Header().Set("Location", provider.String())
 				response.WriteHeader(http.StatusFound)
@@ -80,7 +83,7 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 		config.Observe = func(event publisher.Event) error {
 			switch event.Type {
 			case publisher.EventPublicURLAssigned:
-				return tunnel.SetPublicURL(context.Background(), event.PublicURLID, event.Hostname)
+				return tunnel.SetPublicURL(context.Background(), event.PublicURLID, event.PublicURL)
 			case publisher.EventProvisioning:
 				return tunnel.SetProvisioning(context.Background(), event.PublishRunNumber)
 			case publisher.EventReady:
@@ -91,7 +94,7 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 		handle := startOwnedIntegrationPublisher(t, fixture.owner, config, fixture.diagnostics)
 		ready := waitForPublisherReady(t, handle)
 		waitForReadyPublisherConnections(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
-		apps = append(apps, app{name: name, hostname: hostname, callbacks: observed, tunnel: tunnel})
+		apps = append(apps, app{name: name, origin: ready.PublicURL, callbacks: observed, tunnel: tunnel})
 	}
 	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
 	if err := state.MarkIntegrationURLReady(t.Context(), server, oauthHost, "test-publisher"); err != nil {
@@ -119,7 +122,7 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 		return response
 	}
 	for _, app := range apps {
-		authorization := visit("https://" + app.hostname + "/login")
+		authorization := visit(app.origin + "/login")
 		if authorization.StatusCode != http.StatusFound || !strings.Contains(authorization.Header.Get("Location"), "state="+app.name+"-state") {
 			t.Fatalf("%s authorization = %d %q", app.name, authorization.StatusCode, authorization.Header.Get("Location"))
 		}
@@ -129,7 +132,7 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 	stopIntegrationPublisher(t, oauthPublisher)
 	oauthPublisher = startOwnedIntegrationPublisher(t, fixture.owner, oauth, fixture.diagnostics)
 	restarted := fixture.waitReady(t, oauthPublisher)
-	if restarted.PublicURLID != oauthReady.PublicURLID || restarted.PublishRunNumber <= oauthReady.PublishRunNumber {
+	if restarted.PublicURLID != oauthReady.PublicURLID || restarted.PublicURL != oauthReady.PublicURL || restarted.PublishRunNumber <= oauthReady.PublishRunNumber {
 		t.Fatalf("OAuth restart replaced saved URL or reused a run: %+v -> %+v", oauthReady, restarted)
 	}
 	saved, err := fixture.identity.routes.GetPublicURLByHostname(t.Context(), fixture.identity.teamID, oauthHost)
@@ -140,9 +143,9 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 	// observed state, not the currently active service or the latest login.
 	for index := len(apps) - 1; index >= 0; index-- {
 		selected := apps[index]
-		callback := fmt.Sprintf("https://%s/api/auth/callback/provider?code=opaque&state=%s-state", oauthHost, selected.name)
+		callback := fmt.Sprintf("%s/api/auth/callback/provider?code=opaque&state=%s-state", oauthReady.PublicURL, selected.name)
 		redirect := visit(callback)
-		if redirect.StatusCode != http.StatusSeeOther || redirect.Header.Get("Location") != "https://"+selected.hostname+"/api/auth/callback/provider?code=opaque&state="+selected.name+"-state" {
+		if redirect.StatusCode != http.StatusSeeOther || redirect.Header.Get("Location") != selected.origin+"/api/auth/callback/provider?code=opaque&state="+selected.name+"-state" {
 			t.Fatalf("%s routed to %d %q", selected.name, redirect.StatusCode, redirect.Header.Get("Location"))
 		}
 		if response := visit(redirect.Header.Get("Location")); response.StatusCode != http.StatusNoContent {

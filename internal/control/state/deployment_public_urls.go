@@ -89,7 +89,7 @@ func (d *Database) createDeploymentPublicURL(ctx context.Context, tx pgx.Tx, r A
 	if err != nil {
 		return "", err
 	}
-	url, err := d.insertPublicURL(ctx, q, request, namespace, ingress, revision, prefixes, r.Now)
+	url, err := d.insertPublicURL(ctx, tx, q, request, namespace, ingress, revision, prefixes, r.Now)
 	if err != nil {
 		return "", projectConstraintError(err)
 	}

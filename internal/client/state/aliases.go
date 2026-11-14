@@ -180,7 +180,7 @@ func (d *Database) AliasCandidate(ctx context.Context, id string) (AliasSelectio
 	}
 	return selection, TunnelInfo{ID: tunnel.ID, Server: tunnel.ServerOrigin, Project: tunnel.ProjectRoot,
 		Service: tunnel.Service.String, IntegrationScope: IntegrationScope{PrimaryProjectRoot: tunnel.PrimaryProjectRoot.String, Namespace: tunnel.IntegrationNamespace.String}, State: TunnelState(tunnel.State),
-		Target: tunnel.Target.String, Hostname: tunnel.Hostname.String, PublicURL: "https://" + tunnel.Hostname.String,
+		Target: tunnel.Target.String, Hostname: tunnel.Hostname.String, PublicURL: tunnel.PublicURL,
 		PublicURLID: tunnel.PublicURLID.String, PublishRunNumber: uint64(tunnel.PublishRunNumber.Int64)}, nil
 }
 

@@ -2081,6 +2081,7 @@ type AuthorizeServiceClientCertificateRequest struct {
 type AvailablePublicURL struct {
 	CanonicalHostname string                          `json:"canonical_hostname"`
 	Id                string                          `json:"id"`
+	Port              int                             `json:"port"`
 	ServiceProtocol   PublicURLServiceProtocol        `json:"service_protocol"`
 	TeamId            string                          `json:"team_id"`
 	TeamName          string                          `json:"team_name"`
@@ -3519,9 +3520,12 @@ type PublicURL struct {
 	NextPublishRunNumber int64                   `json:"next_publish_run_number,string"`
 	OpenPublishRunId     *PublishRunID           `json:"open_publish_run_id,omitempty"`
 	PolicyRevision       int64                   `json:"policy_revision,string"`
-	PublicUrlScope       PublicURLScope          `json:"public_url_scope"`
-	PublisherPool        *bool                   `json:"publisher_pool,omitempty"`
-	Purpose              PublicURLPurpose        `json:"purpose"`
+
+	// Port The reserved public endpoint port. Zero means no public endpoint reservation and never selects a local listener.
+	Port           int              `json:"port"`
+	PublicUrlScope PublicURLScope   `json:"public_url_scope"`
+	PublisherPool  *bool            `json:"publisher_pool,omitempty"`
+	Purpose        PublicURLPurpose `json:"purpose"`
 
 	// RequirePostQuantum Require TLS 1.3 hybrid post-quantum key agreement from public HTTPS visitors.
 	RequirePostQuantum bool                     `json:"require_post_quantum"`

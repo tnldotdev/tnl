@@ -95,8 +95,13 @@ func (p Publisher) serve(parent context.Context, interval time.Duration) error {
 		defer mu.Unlock()
 		var observeErr error
 		switch event.Type {
+		case publisher.EventPublicURLAssigned:
+			observeErr = p.State.SaveIntegrationURLEndpoint(ctx, p.Server, event.PublicURLID, event.PublicURL)
 		case publisher.EventReady:
-			observeErr = p.State.MarkIntegrationURLReady(ctx, p.Server, p.Hostname, publisherInstanceID)
+			observeErr = p.State.SaveIntegrationURLEndpoint(ctx, p.Server, event.PublicURLID, event.PublicURL)
+			if observeErr == nil {
+				observeErr = p.State.MarkIntegrationURLReady(ctx, p.Server, p.Hostname, publisherInstanceID)
+			}
 			ready = observeErr == nil
 		case publisher.EventProvisioning, publisher.EventDraining:
 			ready = false

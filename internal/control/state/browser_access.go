@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 )
@@ -208,7 +209,8 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 	if err != nil {
 		return BrowserHandoff{}, fmt.Errorf("controlstate: read preview landing URL: %w", err)
 	}
-	next := "https://" + publicURL.CanonicalHostname + attempt.ReturnPath
+	origin := naming.HTTPSOrigin(publicURL.CanonicalHostname, int(publicURL.Port))
+	next := origin + attempt.ReturnPath
 	hosts, err := queries.ReadyBrowserHosts(ctx, controlstatedb.ReadyBrowserHostsParams{
 		PublicURLID: attempt.PublicURLID, PreviewID: attempt.PreviewID, Now: timestamptz(now),
 	})
@@ -246,7 +248,7 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 		if err != nil {
 			return BrowserHandoff{}, fmt.Errorf("controlstate: save other-host browser handoff: %w", err)
 		}
-		next = "https://" + host.CanonicalHostname + "/__tnl/team/handoff/" + ticket
+		next = naming.HTTPSOrigin(host.CanonicalHostname, int(host.Port)) + "/__tnl/team/handoff/" + ticket
 	}
 	if initialRunID != "" && attempt.PublishRunID != "" {
 		selected, err := queries.GetPublishRun(ctx, attempt.PublishRunID)
@@ -271,7 +273,7 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 	if err := tx.Commit(ctx); err != nil {
 		return BrowserHandoff{}, err
 	}
-	return BrowserHandoff{Token: firstToken, PublicURLID: attempt.PublicURLID, ReturnPath: attempt.ReturnPath, Origin: "https://" + publicURL.CanonicalHostname}, nil
+	return BrowserHandoff{Token: firstToken, PublicURLID: attempt.PublicURLID, ReturnPath: attempt.ReturnPath, Origin: origin}, nil
 }
 
 func (d *Database) RedeemBrowserHandoff(ctx context.Context, auth PublishRunAuthentication, token string, now time.Time) (_ string, _ string, _ string, _ bool, _ time.Time, retErr error) {

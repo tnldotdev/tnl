@@ -103,6 +103,8 @@ func TestIntegrationShareTokenPreparesExactPermission(t *testing.T) {
 				return
 			case "wrong-host":
 				permission.Hostname = "other.example.test"
+			case "wrong-port":
+				permission.Port++
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(permission)
@@ -129,6 +131,7 @@ func TestIntegrationShareTokenPreparesExactPermission(t *testing.T) {
 		{"parent expiry", "json", "1m", "success"},
 		{"preparation unavailable", "human", "24h", "unavailable"},
 		{"wrong host", "json", "24h", "wrong-host"},
+		{"wrong port", "json", "24h", "wrong-port"},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			mode.Store(item.mode)
@@ -174,7 +177,7 @@ func TestIntegrationShareTokenPreparesExactPermission(t *testing.T) {
 				t.Fatal(err)
 			}
 			at := time.Now()
-			view := visitortoken.View{Issuer: server.URL, Scope: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: publicURL.ID}, Hostname: publicURL.CanonicalHostname, Port: 443,
+			view := visitortoken.View{Issuer: server.URL, Scope: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: publicURL.ID}, Hostname: publicURL.CanonicalHostname, Port: uint16(publicURL.Port),
 				VisitorPolicyRevision: result.permission.VisitorPolicyRevision, ObservedAt: at, ValidUntil: at.Add(visitortoken.PolicyLifetime)}.WithVerificationKeys(map[string]ed25519.PublicKey{keyID: public})
 			verified, err := visitortoken.VerifyBearer(visitortoken.Token(token), view, at)
 			if err != nil || verified.Facts().Subject != (visitortoken.Share{ShareID: result.source.ShareId}) || !verified.Facts().ExpiresAt.Equal(result.permission.ExpiresAt) {

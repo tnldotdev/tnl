@@ -261,6 +261,20 @@ function assignment(registration = "a") {
   };
 }
 
+test("preparation retains the exact allocated HTTP port", async () => {
+  const value = assignment();
+  const publicURL = "https://api.member.example:25443";
+  value.public_url = publicURL;
+  value.project.services.api.port = 25443;
+  value.project.services.api.url = publicURL;
+  const handle = await createPreparedService({ service: "api" }, "node", {
+    start: async () => testEndpoint,
+    request: async (_endpoint, operation) => (operation === "prepare" ? value : undefined),
+  });
+  expect(handle.publicURL).toBe(publicURL);
+  await handle.close();
+});
+
 test("private HTTP preparation has no public address or browser-visible target", async () => {
   const handle = await createPreparedService({ service: "api" }, "node", {
     start: async () => testEndpoint,

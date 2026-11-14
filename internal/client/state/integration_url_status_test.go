@@ -37,8 +37,12 @@ func TestIntegrationURLStatusUsesPublisherLeaseAndProjectIdentity(t *testing.T) 
 	if err := database.MarkIntegrationURLReady(t.Context(), server, oauthHost, "publisher"); err != nil {
 		t.Fatal(err)
 	}
+	const origin = "https://" + oauthHost + ":25443"
+	if err := database.SaveIntegrationURLEndpoint(t.Context(), server, testPublicURLID, origin); err != nil {
+		t.Fatal(err)
+	}
 	snapshot, err := database.Snapshot(t.Context())
-	if err != nil || len(snapshot.IntegrationURLs) != 1 || snapshot.IntegrationURLs[0].State != "ready" {
+	if err != nil || len(snapshot.IntegrationURLs) != 1 || snapshot.IntegrationURLs[0].State != "ready" || snapshot.IntegrationURLs[0].PublicURL != origin {
 		t.Fatalf("ready project oauth = %#v, %v", snapshot.IntegrationURLs, err)
 	}
 	observed = now.Add(13 * time.Second)
@@ -52,7 +56,7 @@ func TestIntegrationURLStatusUsesPublisherLeaseAndProjectIdentity(t *testing.T) 
 	}
 	snapshot, err = database.Snapshot(t.Context())
 	if err != nil || len(snapshot.IntegrationURLs) != 1 || snapshot.IntegrationURLs[0].State != "unavailable" ||
-		snapshot.IntegrationURLs[0].Reason != failure.IntegrationURLNotReady {
+		snapshot.IntegrationURLs[0].Reason != failure.IntegrationURLNotReady || snapshot.IntegrationURLs[0].PublicURL != origin {
 		t.Fatalf("stopped publisher status = %#v, %v", snapshot.IntegrationURLs, err)
 	}
 }

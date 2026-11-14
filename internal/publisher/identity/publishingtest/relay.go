@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"sync"
 	"time"
 
@@ -153,7 +154,14 @@ func (f *Fixture) Visit(ctx context.Context, address string) (int, []byte, error
 	if err != nil {
 		return 0, nil, err
 	}
-	header := proxyproto.Header{Source: netip.MustParseAddrPort("127.0.0.1:45123"), Destination: netip.MustParseAddrPort("127.0.0.1:443")}
+	port := 443
+	if u.Port() != "" {
+		port, err = strconv.Atoi(u.Port())
+		if err != nil || port < 1 || port > 65535 {
+			return 0, nil, errors.New("invalid visitor port")
+		}
+	}
+	header := proxyproto.Header{Source: netip.MustParseAddrPort("127.0.0.1:45123"), Destination: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), uint16(port))}
 	proof, err := visitortoken.SignVisitorSource(child, authority, f.sourceSequence.Add(1), tunnelv1.VisitorSourceBinding{
 		PublicURLID: r.PublicURLID, PublishRunID: r.PublishRunID, PublishRunNumber: r.PublishRunNumber,
 		VisitorID: id, Source: header.Source, Destination: header.Destination,

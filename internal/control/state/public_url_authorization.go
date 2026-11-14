@@ -44,7 +44,8 @@ func (d *Database) getPublicURLForAuthorization(ctx context.Context, id, key str
 
 func publicURLFromAuthorizationRow(row controlstatedb.GetPublicURLForAuthorizationDataRow) PublicURL {
 	return publicURLFromProjection(publicURLProjection{
-		ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
+		Port: row.Port,
+		ID:   row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
 		CanonicalHostname: row.CanonicalHostname, Target: row.Target, Namespace: row.Namespace, RequirePostQuantum: row.RequirePostQuantum,
 		PublicURLScope: row.PublicURLScope, Purpose: row.Purpose, AccessMode: row.AccessMode,
 		PolicyRevision: row.PolicyRevision, LifecycleState: row.LifecycleState,

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
-	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -52,7 +51,7 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := clientproject.ServiceWorktreeLabel("api", worktree) + ".ecstatic-penguin.tnl.dev"
-	if service.Namespace != "ecstatic-penguin.tnl.dev" || service.Hostname != want || service.URL != "https://"+want || service.Port != 443 || !service.Public {
+	if service.Namespace != "ecstatic-penguin.tnl.dev" || service.Hostname != want {
 		t.Fatalf("service metadata = %#v", service)
 	}
 	claimed := "studio.example.test"
@@ -63,7 +62,7 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	want = clientproject.ServiceWorktreeLabel("api", worktree) + ".chase.studio.example.test"
-	if service.Namespace != "chase.studio.example.test" || service.Hostname != want || service.URL != "https://"+want || service.Port != 443 || !service.Public {
+	if service.Namespace != "chase.studio.example.test" || service.Hostname != want {
 		t.Fatalf("custom-domain metadata = %#v", service)
 	}
 }
@@ -76,7 +75,7 @@ func TestConfiguredServiceRejectsNonHTTPPublicURLMetadata(t *testing.T) {
 				Tunnel:  &config.Tunnel{Name: new("api")},
 			}
 			metadata, err := ConfiguredService("api", clientproject.Worktree{}, effective, appliedTestContext())
-			if err == nil || !reflect.DeepEqual(metadata, meta.Service{}) {
+			if err == nil || !reflect.DeepEqual(metadata, ConfiguredHostname{}) {
 				t.Fatalf("non-HTTP public URL received endpoint metadata: %+v, error: %v", metadata, err)
 			}
 			if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ProjectConfigInvalid {

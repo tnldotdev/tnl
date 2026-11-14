@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -58,7 +59,7 @@ func TestIntegrationShareAccessBindsPublisherAndRevocation(t *testing.T) {
 		t.Fatalf("wrong secret redeemed: %v", err)
 	}
 	redemption, err := database.RedeemShare(t.Context(), f.authentication(), share.ID, secret, nil, now)
-	if err != nil || redemption.ShareID != share.ID || redemption.NextURL != "https://"+publicURL.CanonicalHostname+"/" || redemption.CookieSecret == "" {
+	if err != nil || redemption.ShareID != share.ID || redemption.NextURL != publicURL.Origin()+"/" || redemption.CookieSecret == "" {
 		t.Fatalf("redeemed link = %+v, %v", redemption, err)
 	}
 	cookie, err := base64.RawURLEncoding.DecodeString(redemption.CookieSecret)
@@ -148,7 +149,7 @@ func TestIntegrationShareHandoffIsShortLivedAndBoundToTheTargetPublicURL(t *test
 		t.Fatal(err)
 	}
 	parsed, err := url.Parse(initial.NextURL)
-	if err != nil || parsed.Hostname() != apiRoute.CanonicalHostname {
+	if err != nil || parsed.Hostname() != apiRoute.CanonicalHostname || parsed.Port() != strconv.Itoa(apiRoute.Port) {
 		t.Fatalf("handoff hostname = %s, %v", initial.NextURL, err)
 	}
 	tokenText := strings.TrimPrefix(parsed.Path, "/__tnl/share/handoff/")
@@ -163,7 +164,7 @@ func TestIntegrationShareHandoffIsShortLivedAndBoundToTheTargetPublicURL(t *test
 		t.Fatalf("handoff accepted on original host: %v", err)
 	}
 	visited, err := database.RedeemShare(t.Context(), api.authentication(), "", nil, token, now)
-	if err != nil || visited.ShareID != share.ID || visited.NextURL != "https://route-session.example.test/" || visited.CookieSecret == "" {
+	if err != nil || visited.ShareID != share.ID || visited.NextURL != "https://route-session.example.test:25443/" || visited.CookieSecret == "" {
 		t.Fatalf("redeemed handoff = %+v, %v", visited, err)
 	}
 	if _, err := database.RedeemShare(t.Context(), api.authentication(), "", nil, token, now); !errors.Is(err, ErrShareNotFound) {

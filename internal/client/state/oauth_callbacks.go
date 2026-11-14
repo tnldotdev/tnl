@@ -26,6 +26,7 @@ type OAuthCallbackScope struct {
 // alias origin is independent of the local app tunnel receiving the callback.
 type OAuthRedirectOrigin struct {
 	Hostname         string
+	PublicURL        string
 	PublicURLID      string
 	PublishRunNumber uint64
 }
@@ -129,7 +130,7 @@ func (d *Database) ConsumeOAuthCallback(ctx context.Context, server, hostname, s
 		origin = row.Hostname.String
 	}
 	return OAuthCallback{TunnelID: row.TunnelID, Path: row.CallbackPath}, OAuthRedirectOrigin{
-		Hostname:    origin,
+		Hostname: origin, PublicURL: row.PublicURL,
 		PublicURLID: row.PublicURLID, PublishRunNumber: uint64(row.PublishRunNumber),
 	}, nil
 }

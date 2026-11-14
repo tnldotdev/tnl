@@ -82,7 +82,7 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 	}
 	authorized := make([]controlstate.AuthorizedSharePublicURL, 0, len(ids))
 	var revision uint64
-	entryHostname := ""
+	entryOrigin := ""
 	for _, id := range ids {
 		publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), id)
 		if errors.Is(err, controlstate.ErrPublicURLNotFound) {
@@ -126,7 +126,7 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 			PublicURLID: id, ExpectedMutationRevision: publicURL.MutationRevision,
 		})
 		if id == body.EntryPublicUrlId {
-			entryHostname = publicURL.CanonicalHostname
+			entryOrigin = publicURL.Origin()
 		}
 	}
 	share, err := h.shares.CreateShare(request.Context(), controlstate.CreateShareRequest{
@@ -140,7 +140,7 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 		writeControlStateProblem(request.Context(), response, "create share", err)
 		return
 	}
-	writeJSON(response, http.StatusCreated, shareCreationResponse(share, entryHostname, encodedSecret))
+	writeJSON(response, http.StatusCreated, shareCreationResponse(share, entryOrigin, encodedSecret))
 }
 
 func (h *handler) createGuestShare(response http.ResponseWriter, request *http.Request, guest controlstate.GuestTrial, publicURLID, key, label string, fingerprint [32]byte, secret string, expiresAt time.Time) {
@@ -169,12 +169,12 @@ func (h *handler) createGuestShare(response http.ResponseWriter, request *http.R
 		return
 	}
 	response.Header().Set("Cache-Control", "no-store")
-	writeJSON(response, http.StatusCreated, shareCreationResponse(share, publicURL.CanonicalHostname, secret))
+	writeJSON(response, http.StatusCreated, shareCreationResponse(share, publicURL.Origin(), secret))
 }
 
-func shareCreationResponse(share controlstate.Share, hostname, secret string) controlv1.ShareCreation {
+func shareCreationResponse(share controlstate.Share, origin, secret string) controlv1.ShareCreation {
 	return controlv1.ShareCreation{Share: shareResponse(share),
-		Link:        "https://" + hostname + "/__tnl/share/" + share.ID + "." + secret,
+		Link:        origin + "/__tnl/share/" + share.ID + "." + secret,
 		TokenSource: controlv1.VisitorTokenShareSource{Kind: controlv1.VisitorTokenShare, ShareId: share.ID, Secret: secret}}
 }
 

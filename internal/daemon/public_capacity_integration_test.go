@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
@@ -54,10 +55,10 @@ func TestIntegrationPublicRunCapacity(t *testing.T) {
 					process := startIntegrationProcessWithOptions(t, second, integrationProcessOptions{serviceHTTPClient: f.serviceHTTP,
 						relayClientTLS: f.roots, owner: owner, listeners: listeners})
 					waitForProcessReady(t, process)
-					visitors = []*integrationVisitor{f.visitor, newIntegrationVisitor(t, f.pebble.roots, publicListener.Addr().String(), owner)}
+					visitors = []*integrationVisitor{f.visitor, newProxiedIntegrationVisitor(t, f.pebble.roots, second.IngressListen, owner)}
 					ready = func(t *testing.T, handle *integrationPublisher) publisher.Event {
 						event := waitForPublisherReady(t, handle)
-						if event.Hostname != f.identity.hostname || event.PublicURL != "https://"+f.identity.hostname {
+						if event.Hostname != f.identity.hostname || event.PublicURL == "" || event.PublicURL != naming.HTTPSOrigin(event.Hostname, integrationPublicURLPort(t, f.inspect, event.PublicURLID)) {
 							t.Fatalf("publisher ready event = %#v", event)
 						}
 						waitForReadyPublisherConnections(t, f.inspect, event.PublicURLID, event.PublishRunNumber, 2)

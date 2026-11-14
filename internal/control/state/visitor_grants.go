@@ -389,6 +389,7 @@ type AvailablePublicURL struct {
 	TeamID            string `json:"team_id"`
 	TeamName          string `json:"team_name"`
 	CanonicalHostname string `json:"canonical_hostname"`
+	Port              int    `json:"port"`
 	ServiceProtocol   string `json:"service_protocol"`
 	VisitorAccess     string `json:"visitor_access"`
 }
@@ -404,7 +405,7 @@ func (d *Database) ListAvailablePublicURLs(ctx context.Context, identityID, team
 	}
 	page := AvailablePublicURLPage{PublicURLs: make([]AvailablePublicURL, min(len(rows), 100))}
 	for i, row := range rows[:len(page.PublicURLs)] {
-		item := AvailablePublicURL{ID: row.ID, TeamID: row.TeamID, TeamName: row.TeamName, CanonicalHostname: row.CanonicalHostname, ServiceProtocol: row.ServiceProtocol, VisitorAccess: row.VisitorAccess}
+		item := AvailablePublicURL{ID: row.ID, TeamID: row.TeamID, TeamName: row.TeamName, CanonicalHostname: row.CanonicalHostname, Port: int(row.Port), ServiceProtocol: row.ServiceProtocol, VisitorAccess: row.VisitorAccess}
 		page.PublicURLs[i] = item
 	}
 	if len(rows) > 100 {

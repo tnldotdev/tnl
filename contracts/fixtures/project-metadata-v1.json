@@ -2,6 +2,45 @@
   "version": 1,
   "cases": [
     {
+      "name": "public integrations retain allocated ports",
+      "valid": true,
+      "metadata": {
+        "version": 1,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "web": {
+            "protocol": "http",
+            "namespace": "member.example",
+            "hostname": "web.member.example",
+            "port": 25443,
+            "public": true,
+            "url": "https://web.member.example:25443"
+          }
+        },
+        "oauth": {
+          "hostname": "oauth.member.example",
+          "url": "https://oauth.member.example:25444"
+        },
+        "aliases": {
+          "review": {
+            "hostname": "review.member.example",
+            "url": "https://review.member.example:25445",
+            "service": "web"
+          }
+        },
+        "webhooks": {
+          "stripe": {
+            "hostname": "hooks.member.example",
+            "url": "https://hooks.member.example:25446/hooks/stripe",
+            "path": "/hooks/stripe",
+            "service": "web",
+            "methods": ["POST"]
+          }
+        }
+      }
+    },
+    {
       "name": "http endpoint",
       "valid": true,
       "metadata": {

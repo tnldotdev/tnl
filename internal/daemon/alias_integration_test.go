@@ -85,7 +85,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 		Prepare: func(context.Context) (integrations.Snapshot, error) {
 			return integrations.Snapshot{Config: oauthConfig}, nil
 		}})
-	waitIntegrationURLWorkerReady(t, oauthReady)
+	oauthEndpoint := waitIntegrationURLWorkerReady(t, oauthReady)
 	primary := filepath.Join(t.TempDir(), "main")
 	group := clientstate.IntegrationScope{PrimaryProjectRoot: primary, Namespace: namespace}
 	scope := clientstate.AliasScope{Server: server, ProjectKey: primary, TeamID: fixture.identity.teamID, MembershipID: fixture.identity.membershipID, Namespace: namespace, Name: "review"}
@@ -102,7 +102,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 			switch request.URL.Path {
 			case "/login", "/pending":
 				http.SetCookie(response, &http.Cookie{Name: "session", Value: name, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
-				query := url.Values{"state": {name + request.URL.Path}, "redirect_uri": {"https://" + oauthHost + "/callback"}}
+				query := url.Values{"state": {name + request.URL.Path}, "redirect_uri": {oauthEndpoint.PublicURL + "/callback"}}
 				response.Header().Set("Location", "https://idp.example.test/authorize?"+query.Encode())
 				response.WriteHeader(http.StatusFound)
 			case "/callback":
@@ -126,7 +126,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 		config.Observe = func(event publisher.Event) error {
 			switch event.Type {
 			case publisher.EventPublicURLAssigned:
-				return tunnel.SetPublicURL(t.Context(), event.PublicURLID, event.Hostname)
+				return tunnel.SetPublicURL(t.Context(), event.PublicURLID, event.PublicURL)
 			case publisher.EventProvisioning:
 				return tunnel.SetProvisioning(t.Context(), event.PublishRunNumber)
 			case publisher.EventReady:
@@ -170,35 +170,35 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 		}
 		return response, string(body)
 	}
-	if _, body := visit("https://" + aliasHost + "/"); body != "main" {
+	if _, body := visit(first.PublicURL + "/"); body != "main" {
 		t.Fatal("alias did not default to the primary checkout")
 	}
-	login, _ := visit("https://" + aliasHost + "/login")
+	login, _ := visit(first.PublicURL + "/login")
 	if login.StatusCode != http.StatusFound {
 		t.Fatal("alias login failed")
 	}
-	callback, _ := visit("https://" + oauthHost + "/callback?state=main%2Flogin&code=opaque")
-	if callback.StatusCode != http.StatusSeeOther || !strings.HasPrefix(callback.Header.Get("Location"), "https://"+aliasHost+"/callback?") {
+	callback, _ := visit(oauthEndpoint.PublicURL + "/callback?state=main%2Flogin&code=opaque")
+	if callback.StatusCode != http.StatusSeeOther || !strings.HasPrefix(callback.Header.Get("Location"), first.PublicURL+"/callback?") {
 		t.Fatal("callback returned to an ordinary worktree URL")
 	}
 	returned, _ := visit(callback.Header.Get("Location"))
 	if returned.StatusCode != http.StatusNoContent || <-apps[0].callbacks != "session=main" {
 		t.Fatal("alias-origin callback lost its host-only state cookie")
 	}
-	visit("https://" + aliasHost + "/pending")
+	visit(first.PublicURL + "/pending")
 	if _, err := state.SelectAlias(t.Context(), scope, apps[1].project, true); err != nil {
 		t.Fatal(err)
 	}
 	second := waitIntegrationURLWorkerReady(t, apps[1].ready)
-	if second.PublicURLID != first.PublicURLID || second.PublishRunNumber <= first.PublishRunNumber {
+	if second.PublicURLID != first.PublicURLID || second.PublicURL != first.PublicURL || second.PublishRunNumber <= first.PublishRunNumber {
 		t.Fatal("handoff did not replace the alias publish run")
 	}
 	waitForReadyPublisherConnections(t, fixture.inspect, second.PublicURLID, second.PublishRunNumber, 2)
 	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
-	if _, body := visit("https://" + aliasHost + "/"); body != "feature" {
+	if _, body := visit(second.PublicURL + "/"); body != "feature" {
 		t.Fatal("forced handoff did not reach the selected worktree")
 	}
-	stale, _ := visit("https://" + oauthHost + "/callback?state=main%2Fpending&code=opaque")
+	stale, _ := visit(oauthEndpoint.PublicURL + "/callback?state=main%2Fpending&code=opaque")
 	if stale.StatusCode != http.StatusGone || len(apps[1].callbacks) != 0 {
 		t.Fatal("old alias login reached the replacement worktree")
 	}
@@ -208,7 +208,10 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 	third := waitIntegrationURLWorkerReady(t, apps[0].ready)
 	waitForReadyPublisherConnections(t, fixture.inspect, third.PublicURLID, third.PublishRunNumber, 2)
 	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
-	if _, body := visit("https://" + aliasHost + "/"); body != "main" {
+	if third.PublicURL != first.PublicURL {
+		t.Fatal("alias release changed its reserved endpoint")
+	}
+	if _, body := visit(third.PublicURL + "/"); body != "main" {
 		t.Fatal("release did not restore the primary checkout")
 	}
 	saved, err := fixture.identity.routes.GetPublicURL(t.Context(), third.PublicURLID)

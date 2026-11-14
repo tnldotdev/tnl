@@ -82,8 +82,11 @@ func (q *Queries) ExpireOAuthCallbacks(ctx context.Context, now int64) error {
 
 const getCurrentOAuthCallback = `-- name: GetCurrentOAuthCallback :one
 SELECT c.callback_path, c.callback_query, c.expires_at, t.id AS tunnel_id, t.hostname, c.origin_hostname,
+    CAST(CASE WHEN c.origin_public_url_id=t.public_url_id THEN t.public_url ELSE COALESCE(endpoint.public_url,'') END AS TEXT) AS public_url,
     c.origin_public_url_id AS public_url_id, c.origin_publish_run_number AS publish_run_number
 FROM oauth_pending_callbacks c JOIN local_tunnels t ON t.id = c.tunnel_id
+LEFT JOIN integration_url_endpoints endpoint ON endpoint.server_origin=c.server_origin AND endpoint.hostname=c.origin_hostname
+    AND endpoint.public_url_id=c.origin_public_url_id
 WHERE c.server_origin = ?1 AND c.hostname = ?2
   AND c.state_digest = ?3 AND c.callback_path = ?4
   AND c.expires_at > ?5 AND t.lease_expires_at > ?5
@@ -96,7 +99,7 @@ WHERE c.server_origin = ?1 AND c.hostname = ?2
         AND a.selected_project_root = t.project_root AND a.selection_revision = r.selection_revision
         AND r.target_public_url_id = t.public_url_id AND r.target_publish_run_number = t.publish_run_number
         AND r.public_url_id = c.origin_public_url_id AND r.publish_run_number = c.origin_publish_run_number
-        AND p.expires_at > ?5))
+         AND p.expires_at > ?5 AND endpoint.public_url IS NOT NULL))
 `
 
 type GetCurrentOAuthCallbackParams struct {
@@ -114,6 +117,7 @@ type GetCurrentOAuthCallbackRow struct {
 	TunnelID         string
 	Hostname         sql.NullString
 	OriginHostname   string
+	PublicURL        string
 	PublicURLID      string
 	PublishRunNumber int64
 }
@@ -134,6 +138,7 @@ func (q *Queries) GetCurrentOAuthCallback(ctx context.Context, arg GetCurrentOAu
 		&i.TunnelID,
 		&i.Hostname,
 		&i.OriginHostname,
+		&i.PublicURL,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
 	)

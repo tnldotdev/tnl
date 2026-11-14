@@ -45,7 +45,7 @@ func (*shareRoutesStub) GetPublicURLForAuthorization(_ context.Context, id strin
 	}
 	return controlstate.PublicURL{
 		ID: id, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
-		CanonicalHostname: "web.example.test", Target: "http://127.0.0.1:3000",
+		CanonicalHostname: "web.example.test", Port: 25443, Target: "http://127.0.0.1:3000",
 		PublicURLScope: controlstate.PublicURLScopeMember, MutationRevision: 3,
 		LifecycleState: controlstate.PublicURLLifecycleEnabled,
 		Purpose:        controlstate.PublicURLPurposeApp, ServiceProtocol: controlstate.PublicURLServiceHTTP,
@@ -109,7 +109,7 @@ func TestShareCreateAuthorizesEachIncludedURLAndDeliversCredentialOnce(t *testin
 	}}
 	routes := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{
 		ID: "url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
-		CanonicalHostname: "web.example.test", Target: "http://127.0.0.1:3000",
+		CanonicalHostname: "web.example.test", Port: 25443, Target: "http://127.0.0.1:3000",
 		PublicURLScope: controlstate.PublicURLScopeMember, MutationRevision: 3,
 		LifecycleState: controlstate.PublicURLLifecycleEnabled,
 		Purpose:        controlstate.PublicURLPurposeApp, ServiceProtocol: controlstate.PublicURLServiceHTTP,
@@ -144,7 +144,7 @@ func TestShareCreateAuthorizesEachIncludedURLAndDeliversCredentialOnce(t *testin
 		t.Fatal(err)
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(creation.TokenSource.Secret)
-	if err != nil || len(raw) != 32 || sha256.Sum256(raw) != shares.created.SecretFingerprint || creation.TokenSource.ShareId != shares.share.ID || creation.Link != "https://web.example.test/__tnl/share/"+shares.share.ID+"."+creation.TokenSource.Secret {
+	if err != nil || len(raw) != 32 || sha256.Sum256(raw) != shares.created.SecretFingerprint || creation.TokenSource.ShareId != shares.share.ID || creation.Link != "https://web.example.test:25443/__tnl/share/"+shares.share.ID+"."+creation.TokenSource.Secret {
 		t.Fatal("creation did not deliver a complete credential for the saved digest")
 	}
 	read := httptest.NewRequest(http.MethodGet, "/v1/shares/shr_example", nil)

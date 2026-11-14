@@ -60,9 +60,10 @@ const assignmentSchema = z
       project.dev &&
       (hostname === "" && public_url === ""
         ? metadata === undefined
-        : public_url === `https://${hostname}` &&
-          metadata?.hostname === hostname &&
-          metadata.protocol === "http")
+        : metadata?.protocol === "http" &&
+          public_url === metadata.url &&
+          URL.parse(public_url)?.hostname === hostname &&
+          metadata.hostname === hostname)
     );
   })
   .transform(({ registration_id, service, hostname, public_url, project }) => ({

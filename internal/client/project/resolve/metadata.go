@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -94,7 +95,9 @@ func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) 
 		if err != nil {
 			return meta.Metadata{}, err
 		}
-		metadata.OAuth = &oauth
+		if oauth.URL != "" {
+			metadata.OAuth = &oauth
+		}
 	}
 	names := make([]string, 0, len(r.project.Config.Services))
 	for name := range r.project.Config.Services {
@@ -157,7 +160,10 @@ func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) 
 				continue
 			}
 		} else {
-			serviceMetadata, err = ConfiguredService(name, r.project.Worktree, effective, serviceContext)
+			serviceMetadata, err = r.publicServiceMetadata(ctx, name, effective, serviceContext)
+			if errors.Is(err, clientcontrol.ErrNotFound) {
+				continue
+			}
 		}
 		if err != nil {
 			return meta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
@@ -184,6 +190,29 @@ func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) 
 		return meta.Metadata{}, err
 	}
 	return metadata, nil
+}
+
+func (r *MetadataResolver) publicServiceMetadata(ctx context.Context, name string, effective clientproject.ResolvedService, current team.Context) (meta.Service, error) {
+	selected, err := ConfiguredService(name, r.project.Worktree, effective, current)
+	if err != nil {
+		return meta.Service{}, err
+	}
+	server, err := r.server(ctx, effective.Server)
+	if err != nil {
+		return meta.Service{}, err
+	}
+	client, err := r.client(ctx, server)
+	if err != nil {
+		return meta.Service{}, err
+	}
+	assigned, err := client.Control.GetPublicURLByHostname(ctx, current.Team().Id, selected.Hostname)
+	if err != nil {
+		return meta.Service{}, err
+	}
+	if assigned.ServiceProtocol != controlv1.Http || assigned.LifecycleState != controlv1.Enabled || naming.HTTPSOrigin(assigned.CanonicalHostname, assigned.Port) == "" {
+		return meta.Service{}, errors.New("saved public URL has no current HTTP endpoint")
+	}
+	return meta.NewEndpoint(selected.Namespace, assigned.CanonicalHostname, "http", assigned.Port, true)
 }
 
 func (r *MetadataResolver) localServiceMetadata(ctx context.Context, name string, effective clientproject.ResolvedService, current team.Context) (meta.Service, error) {
@@ -254,7 +283,26 @@ func projectAliasMetadata(ctx context.Context, resolver *MetadataResolver, metad
 			namespace, _ := current.Namespace(domain)
 			hostname = definition.RelativeName(name) + "." + namespace
 		}
-		aliases[name] = meta.Alias{Hostname: hostname, URL: "https://" + hostname, Service: definition.Service}
+		server, err := resolver.server(ctx, effective.Server)
+		if err != nil {
+			return nil, err
+		}
+		client, err := resolver.client(ctx, server)
+		if err != nil {
+			return nil, err
+		}
+		assigned, err := client.Control.GetPublicURLByHostname(ctx, current.Team().Id, hostname)
+		if errors.Is(err, clientcontrol.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		origin := naming.HTTPSOrigin(assigned.CanonicalHostname, assigned.Port)
+		if origin == "" {
+			return nil, errors.New("saved alias has no exact public endpoint")
+		}
+		aliases[name] = meta.Alias{Hostname: hostname, URL: origin, Service: definition.Service}
 	}
 	return aliases, nil
 }
@@ -274,6 +322,9 @@ func projectWebhookMetadata(ctx context.Context, state *clientstate.Database, pr
 		if err != nil {
 			return nil, err
 		}
+		if origin.URL == "" {
+			continue
+		}
 		methods := slices.Clone(definition.Methods)
 		if len(methods) == 0 {
 			methods = []string{"POST"}
@@ -283,15 +334,21 @@ func projectWebhookMetadata(ctx context.Context, state *clientstate.Database, pr
 	return result, nil
 }
 
+// ConfiguredHostname selects a name, not a future port or public origin.
+type ConfiguredHostname struct {
+	Namespace string
+	Hostname  string
+}
+
 func ConfiguredService(
 	service string,
 	worktree clientproject.Worktree,
 	effective clientproject.ResolvedService,
 	current team.Context,
-) (meta.Service, error) {
+) (ConfiguredHostname, error) {
 	protocol := config.ServiceProtocol(effective.Publish)
 	if protocol != "http" {
-		return meta.Service{}, failure.Wrap("resolve public URL metadata", failure.ProjectConfigInvalid, errors.New("public URL metadata requires protocol http"))
+		return ConfiguredHostname{}, failure.Wrap("resolve public URL metadata", failure.ProjectConfigInvalid, errors.New("public URL metadata requires protocol http"))
 	}
 	publicURL, name, selectedDomain := "", "", ""
 	ephemeral := false
@@ -312,10 +369,10 @@ func ConfiguredService(
 	}
 	hostname, domain, _, err := PublishHostname(publicURL, name, selectedDomain, current)
 	if err != nil {
-		return meta.Service{}, err
+		return ConfiguredHostname{}, err
 	}
 	namespace, _ := current.Namespace(domain)
-	return meta.NewEndpoint(namespace, hostname, protocol, 443, true)
+	return ConfiguredHostname{Namespace: namespace, Hostname: hostname}, nil
 }
 
 func (r *MetadataResolver) Context(

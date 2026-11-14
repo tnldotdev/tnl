@@ -42,7 +42,7 @@ func newAliasFixture(t *testing.T) aliasFixture {
 			t.Fatal(err)
 		}
 		hostname := []string{"api-main", "api-feature"}[index] + "." + scope.Namespace
-		if err := tunnel.SetPublicURL(t.Context(), id, hostname); err != nil {
+		if err := tunnel.SetPublicURL(t.Context(), id, "https://"+hostname); err != nil {
 			t.Fatal(err)
 		}
 		if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {
@@ -114,6 +114,9 @@ func TestAliasOAuthReturnsToInitiatingOriginAndExpiresAcrossHandoff(t *testing.T
 	if err := f.state.MarkIntegrationURLReady(t.Context(), testServer, selection.Hostname, "alias-publisher"); err != nil {
 		t.Fatal(err)
 	}
+	if err := f.state.SaveIntegrationURLEndpoint(t.Context(), testServer, aliasID, "https://"+selection.Hostname); err != nil {
+		t.Fatal(err)
+	}
 	if err := f.state.MarkAliasRunReady(t.Context(), clientstate.AliasPublishRun{Selection: selection, Receiver: receiver, Owner: "alias-owner", PublicURLID: aliasID, Number: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -156,6 +159,9 @@ func TestAliasFinalOAuthHopRejectsReplacementRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := f.state.MarkIntegrationURLReady(t.Context(), testServer, selection.Hostname, "alias"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.state.SaveIntegrationURLEndpoint(t.Context(), testServer, id, "https://"+selection.Hostname); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.state.MarkAliasRunReady(t.Context(), clientstate.AliasPublishRun{Selection: selection, Receiver: receiver, Owner: "first", PublicURLID: id, Number: 1}); err != nil {

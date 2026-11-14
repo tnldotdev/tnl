@@ -129,12 +129,13 @@ schemas:
   AvailablePublicURL:
     type: object
     additionalProperties: false
-    required: [id, team_id, team_name, canonical_hostname, service_protocol, visitor_access]
+    required: [id, team_id, team_name, canonical_hostname, port, service_protocol, visitor_access]
     properties:
       id: { type: string }
       team_id: { type: string }
       team_name: { type: string }
       canonical_hostname: { type: string }
+      port: { type: integer, minimum: 1, maximum: 65535 }
       service_protocol: { $ref: "../openapi.yaml#/components/schemas/PublicURLServiceProtocol" }
       visitor_access: { type: string, enum: [owner, preview_team, team_grant, identity_grant] }
   BrowserHandoffRequest:

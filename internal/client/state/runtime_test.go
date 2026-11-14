@@ -37,7 +37,7 @@ func TestRuntimeJournalUnifiesAppNamedAndDirectPublications(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := tunnel.SetPublicURL(t.Context(), testPublicURLID, "service.example"); err != nil {
+		if err := tunnel.SetPublicURL(t.Context(), testPublicURLID, "https://service.example"); err != nil {
 			t.Fatal(err)
 		}
 		publicURL := "https://service.example"
@@ -470,7 +470,7 @@ func TestRuntimePublicationEventsMatchCompleteSnapshotObservation(t *testing.T) 
 			defer tunnel.Finish(context.Background(), nil)
 			assertCompletePublicationEvent(t, database, project)
 			now = now.Add(time.Second)
-			if err := tunnel.SetPublicURL(t.Context(), testPublicURLID, "service.example"); err != nil {
+			if err := tunnel.SetPublicURL(t.Context(), testPublicURLID, "https://service.example"); err != nil {
 				t.Fatal(err)
 			}
 			assertCompletePublicationEvent(t, database, project)

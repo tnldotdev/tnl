@@ -101,7 +101,10 @@ func lockVisitorResource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scop
 		if row.Purpose != "app" && row.Purpose != "alias" && row.Purpose != "demo" || row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(now) {
 			return resource, ErrVisitorPermission
 		}
-		resource.TeamID, resource.Hostname, resource.Port, resource.Anonymous = row.TeamID, row.CanonicalHostname, 443, row.AccessMode == "anonymous"
+		if row.Port < 1024 || row.Port > 65535 {
+			return resource, ErrVisitorPermission
+		}
+		resource.TeamID, resource.Hostname, resource.Port, resource.Anonymous = row.TeamID, row.CanonicalHostname, uint16(row.Port), row.AccessMode == "anonymous"
 		if row.ExpiresAt.Valid {
 			resource.ExpiresAt = row.ExpiresAt.Time
 		}

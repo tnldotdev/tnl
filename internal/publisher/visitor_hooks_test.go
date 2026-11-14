@@ -104,7 +104,7 @@ func TestHTTPAuthorizationPrecedesPromotionAndTarget(t *testing.T) {
 }
 
 func TestReadinessProofIsExactSingleUseAndStripped(t *testing.T) {
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 8}
+	run := PublishRunIdentity{Hostname: "route.example", Port: 443, PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 8}
 	proof, err := NewReadinessProof(run, "/health")
 	if err != nil {
 		t.Fatal(err)
@@ -160,6 +160,28 @@ func TestReadinessProofIsExactSingleUseAndStripped(t *testing.T) {
 	}
 }
 
+func TestReadinessProofCannotCrossReservedPorts(t *testing.T) {
+	run := PublishRunIdentity{Hostname: "route.example", Port: 25443, PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 8}
+	proof, err := NewReadinessProof(run, "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "https://route.example:25443/health", nil)
+	request.Header.Set(publisherproxy.ReadinessProbeHeader, proof.HeaderValue())
+	other := run
+	other.Port++
+	if proof.consume(request, other) || proof.HeaderValue() == "" {
+		t.Fatal("another port consumed the proof for the approved endpoint")
+	}
+	if !proof.consume(request, run) {
+		t.Fatal("the exact endpoint could not consume its own proof")
+	}
+	run.Port = 0
+	if _, err := NewReadinessProof(run, "/health"); err == nil {
+		t.Fatal("readiness accepted an unreserved public endpoint")
+	}
+}
+
 func TestReadinessProofForHTTPSTargetIsSingleUseAndPrivate(t *testing.T) {
 	var forwarded atomic.Int32
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -177,7 +199,7 @@ func TestReadinessProofForHTTPSTargetIsSingleUseAndPrivate(t *testing.T) {
 	if forwarded.Load() != 0 {
 		t.Fatal("preflight sent an HTTP request to the target")
 	}
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 8}
+	run := PublishRunIdentity{Hostname: "route.example", Port: 443, PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 8}
 	proof, err := NewReadinessProof(run, "/health")
 	if err != nil {
 		t.Fatal(err)

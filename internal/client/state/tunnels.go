@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -201,14 +204,15 @@ func (t *Tunnel) Context() context.Context { return t.ctx }
 // Finish records the original cause after joining lease maintenance.
 func (t *Tunnel) CancelWithCause(err error) { t.cancel(err) }
 
-func (t *Tunnel) SetPublicURL(ctx context.Context, publicURLID, hostname string) error {
-	hostname, err := naming.CanonicalizeHostname(hostname)
+func (t *Tunnel) SetPublicURL(ctx context.Context, publicURLID, publicURL string) error {
+	hostname, err := parsePublicTunnelAddress(publicURL)
 	if err != nil || !validPublicURLID(publicURLID) {
 		return errors.New("clientstate: invalid tunnel route")
 	}
 	rows, err := t.database.queries.SetTunnelPublicURL(ctx, clientstatedb.SetTunnelPublicURLParams{
 		PublicURLID: sql.NullString{String: publicURLID, Valid: true}, Hostname: sql.NullString{String: hostname, Valid: true},
-		Now: t.database.now().UTC().UnixNano(), ID: t.id,
+		PublicURL: strings.TrimSuffix(publicURL, "/"),
+		Now:       t.database.now().UTC().UnixNano(), ID: t.id,
 	})
 	return tunnelUpdateResult(rows, err)
 }
@@ -235,6 +239,7 @@ func (t *Tunnel) SetReady(ctx context.Context, publicURL string, publishRunNumbe
 	}
 	rows, err := t.database.queries.SetTunnelReady(ctx, clientstatedb.SetTunnelReadyParams{
 		Hostname:         sql.NullString{String: hostname, Valid: true},
+		PublicURL:        strings.TrimSuffix(publicURL, "/"),
 		PublishRunNumber: sql.NullInt64{Int64: versionValue, Valid: true},
 		Now:              t.database.now().UTC().UnixNano(), ID: t.id,
 	})
@@ -247,12 +252,20 @@ func parsePublicTunnelAddress(address string) (string, error) {
 		return "", invalid
 	}
 	parsed, err := url.Parse(address)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Port() != "" ||
-		parsed.Path != "" && parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" {
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
+		parsed.Path != "" && parsed.Path != "/" || parsed.RawPath != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", invalid
 	}
 	hostname, err := naming.CanonicalizeHostname(parsed.Hostname())
-	if err != nil || hostname != parsed.Host {
+	if err != nil || hostname != parsed.Hostname() {
+		return "", invalid
+	}
+	if port := parsed.Port(); port != "" {
+		value, err := strconv.Atoi(port)
+		if err != nil || !tcpport.ValidNetwork(value) || strconv.Itoa(value) != port || parsed.Host != net.JoinHostPort(hostname, port) {
+			return "", invalid
+		}
+	} else if parsed.Host != hostname {
 		return "", invalid
 	}
 	return hostname, nil
@@ -386,14 +399,11 @@ func tunnelInfo(row clientstatedb.LocalTunnel, observedAt time.Time) TunnelInfo 
 		ID: row.ID, Command: TunnelCommand(row.Command), State: state, ProcessID: int(row.ProcessID),
 		Server: row.ServerOrigin, Project: row.ProjectRoot, Service: row.Service.String,
 		PublicURLID: row.PublicURLID.String, PublishRunNumber: uint64(row.PublishRunNumber.Int64),
-		Hostname: row.Hostname.String, Target: row.Target.String, Framework: row.Framework.String,
+		Hostname: row.Hostname.String, PublicURL: row.PublicURL, Target: row.Target.String, Framework: row.Framework.String,
 		IntegrationScope: IntegrationScope{PrimaryProjectRoot: row.PrimaryProjectRoot.String, Namespace: row.IntegrationNamespace.String},
 		StartedAt:        unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),
 		HeartbeatAt: unixNanoTime(row.HeartbeatAt), LeaseExpiresAt: unixNanoTime(row.LeaseExpiresAt),
 		Failure: row.FailureCode.String,
-	}
-	if info.Hostname != "" {
-		info.PublicURL = "https://" + info.Hostname
 	}
 	return info
 }

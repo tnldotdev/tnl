@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -37,6 +38,10 @@ func bindPublicRun(config Config, setup controlv1.PublishRunSetup) (publicRunAut
 	if setup.PublishRun.PublicUrlId != setup.PublicUrl.Id || setup.PublishRun.TeamId != setup.PublicUrl.TeamId {
 		return publicRunAuthority{}, errors.New("publisher: server returned a different publish run")
 	}
+	if naming.HTTPSOrigin(setup.PublicUrl.CanonicalHostname, setup.PublicUrl.Port) == "" ||
+		config.AssignedPublicURL != nil && (config.AssignedPublicURL.Id != setup.PublicUrl.Id || config.AssignedPublicURL.Port != setup.PublicUrl.Port) {
+		return publicRunAuthority{}, errors.New("publisher: publish run has a different or unreserved public endpoint")
+	}
 	if setup.PublicUrl.ServiceProtocol != controlv1.Http {
 		return publicRunAuthority{}, errors.New("publisher: public HTTPS requires a certificate plan; services use private publisher runs")
 	}
@@ -49,7 +54,7 @@ func bindPublicRun(config Config, setup controlv1.PublishRunSetup) (publicRunAut
 		return publicRunAuthority{}, errors.New("publisher: server returned invalid publish run token")
 	}
 	return publicRunAuthority{client: config.Control, token: token, plan: plan, teamID: setup.PublicUrl.TeamId,
-		identity: PublishRunIdentity{Hostname: setup.PublicUrl.CanonicalHostname, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, Number: uint64(setup.PublishRun.PublishRunNumber)}}, nil
+		identity: PublishRunIdentity{Hostname: setup.PublicUrl.CanonicalHostname, Port: setup.PublicUrl.Port, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, Number: uint64(setup.PublishRun.PublishRunNumber)}}, nil
 }
 
 func (r publicRunAuthority) markReady(ctx context.Context) error {

@@ -376,7 +376,12 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
     if public_url is not None:
         url = text(public_url)
         try:
-            expected = f"https://{hostname(urlsplit(url).hostname)}"
+            parts = urlsplit(url)
+            host = hostname(parts.hostname)
+            port = parts.port
+            if port is not None and not 1 <= port <= 65535:
+                raise InvalidResponse()
+            expected = f"https://{host}" + (f":{port}" if port is not None else "")
         except ValueError:
             raise InvalidResponse() from None
         if url != expected:
