@@ -60,7 +60,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 		}
 		access := deploymentAssignmentAccess(t, d, replica, assignment, now)
 		attempt++
-		prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, fmt.Sprintf("managed-test-%d", attempt), now, ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision})
+		prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, fmt.Sprintf("managed-test-%d", attempt), now, ServiceRunRequest{Metadata: ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}})
 		if err != nil {
 			t.Fatal(err)
 		}

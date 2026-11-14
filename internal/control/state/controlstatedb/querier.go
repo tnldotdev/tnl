@@ -30,6 +30,7 @@ type Querier interface {
 	AdvanceIngressRoutingRetentionFloor(ctx context.Context, revision int64) (int64, error)
 	AdvanceServiceRunNumber(ctx context.Context, arg AdvanceServiceRunNumberParams) (int64, error)
 	AdvanceTeamPolicyRevision(ctx context.Context, arg AdvanceTeamPolicyRevisionParams) (int64, error)
+	AuthorizeServiceHTTPVisitor(ctx context.Context, arg AuthorizeServiceHTTPVisitorParams) (pgtype.Timestamptz, error)
 	BeginAdminRelayDrain(ctx context.Context, arg BeginAdminRelayDrainParams) (BeginAdminRelayDrainRow, error)
 	BeginGuestPublishRun(ctx context.Context, arg BeginGuestPublishRunParams) (int64, error)
 	BeginIngressDrain(ctx context.Context, arg BeginIngressDrainParams) (ControlIngressLease, error)
@@ -81,6 +82,8 @@ type Querier interface {
 	ClosePublishRun(ctx context.Context, arg ClosePublishRunParams) (ControlPublishRun, error)
 	ClosePublishRunConnections(ctx context.Context, arg ClosePublishRunConnectionsParams) error
 	CloseServiceRun(ctx context.Context, arg CloseServiceRunParams) (int64, error)
+	// only an exact stored terminal tuple proves a finite traffic budget can retire.
+	ClosedServiceRuns(ctx context.Context, runIds []string) ([]ClosedServiceRunsRow, error)
 	CompanySessionAuthorized(ctx context.Context, arg CompanySessionAuthorizedParams) (bool, error)
 	CompanySessionRefreshValid(ctx context.Context, arg CompanySessionRefreshValidParams) (pgtype.Bool, error)
 	CompanySubjectDeadline(ctx context.Context, arg CompanySubjectDeadlineParams) (pgtype.Timestamptz, error)

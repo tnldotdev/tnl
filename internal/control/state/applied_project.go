@@ -174,22 +174,7 @@ func NormalizeProjectConfiguration(input ProjectConfiguration) (ProjectConfigura
 		}
 	}
 	for key, s := range c.Services {
-		if !serviceName.MatchString(key) {
-			return c, "", ErrProjectConfigurationInvalid
-		}
-		if s.Name == "" {
-			s.Name = key
-		}
-		if !serviceName.MatchString(s.Name) {
-			return c, "", ErrProjectConfigurationInvalid
-		}
-		if s.Protocol == "" {
-			s.Protocol = "http"
-		}
-		if (ServiceMetadata{Protocol: s.Protocol}).Validate() != nil || s.Access != nil && !s.Access.Team || (len(s.Target) == 0 && s.TargetDiscovery == nil) || len(s.Target) > 8192 || strings.ContainsAny(s.Target, "\x00\r\n") {
-			return c, "", ErrProjectConfigurationInvalid
-		}
-		if err := normalizeAppliedProjectService(&s, c.Settings == nil); err != nil {
+		if err := normalizeAppliedProjectService(key, &s, c.Settings == nil); err != nil {
 			return c, "", err
 		}
 		c.Services[key] = s

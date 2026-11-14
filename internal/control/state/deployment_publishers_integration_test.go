@@ -103,7 +103,7 @@ func TestIntegrationDeploymentPublisherScopeRecoveryAndRevocation(t *testing.T) 
 	}
 	assignment := assignments.Services[0]
 	access := deploymentAssignmentAccess(t, d, a, assignment, now)
-	prepared, err := d.PrepareServiceRun(ctx, assignment.ServiceID, access.PublisherIdentity, "scoped", now, ServiceMetadata{Protocol: "postgres", PublisherPool: true, TrustRevision: assignment.TrustRevision})
+	prepared, err := d.PrepareServiceRun(ctx, assignment.ServiceID, access.PublisherIdentity, "scoped", now, ServiceRunRequest{Metadata: ServiceMetadata{Protocol: "postgres", PublisherPool: true, TrustRevision: assignment.TrustRevision}})
 	if err != nil {
 		t.Fatal(err)
 	}

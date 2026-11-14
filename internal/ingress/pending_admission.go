@@ -14,9 +14,11 @@ type visitorAdmission struct {
 	mu                          sync.Mutex
 	server                      *Server
 	key                         trafficKey
+	limits                      TrafficLimits
 	source                      netip.Addr
 	runID, hostname             string
 	ordinary, closed, attempted bool
+	metered                     bool // ordinary byte accounting, not target permission.
 	deadline                    time.Time
 	upload, download            int64
 	release                     func()
@@ -49,12 +51,18 @@ func (s *Server) admitVisitor(route PublicURL, source netip.Addr, denied bool) (
 	if !valid {
 		return nil, "invalid_traffic_projection"
 	}
-	key := trafficKey{url: route.ID, run: route.PublishRunNumber, id: route.PublishRunID}
+	key := trafficKey{service: route.ID, run: route.PublishRunNumber, id: route.PublishRunID}
+	admission, reason := s.admitTrafficVisitor(key, l, source, denied)
+	accepted = admission != nil
+	return admission, reason
+}
+
+func (s *Server) admitTrafficVisitor(key trafficKey, limits TrafficLimits, source netip.Addr, denied bool) (*visitorAdmission, string) {
 	kind := visitorConnection
 	if denied {
 		kind = pendingConnection
 	}
-	release, reason := s.admitClass(kind, route.ID)
+	release, reason := s.admitClass(kind, key.service)
 	if release == nil {
 		return nil, reason
 	}
@@ -62,16 +70,54 @@ func (s *Server) admitVisitor(route PublicURL, source netip.Addr, denied bool) (
 	if denied {
 		budgetRelease, reason = s.traffic.acquirePending(key, source)
 	} else {
-		budgetRelease, reason = s.traffic.acquire(key, l)
+		budgetRelease, reason = s.traffic.acquire(key, limits)
 	}
 	if budgetRelease == nil {
 		release()
 		return nil, reason
 	}
-	accepted = true
-	return &visitorAdmission{server: s, key: key, source: source, runID: route.PublishRunID, ordinary: !denied,
+	return &visitorAdmission{server: s, key: key, limits: limits, source: source, runID: key.id, ordinary: !denied, metered: !denied,
 		deadline: time.Now().Add(s.config.Pending.Timeout), upload: s.config.Pending.UploadBytes, download: s.config.Pending.DownloadBytes,
 		release: func() { release(); budgetRelease() }}, ""
+}
+
+// before control selects a run, only the process pending slot is known.
+// control's anonymous fact selects ordinary accounting; other runs stay pending.
+func (s *Server) admitPendingService() (*visitorAdmission, string) {
+	release, reason := s.admitClass(pendingConnection, "")
+	if release == nil {
+		return nil, reason
+	}
+	return &visitorAdmission{server: s, release: release,
+		deadline: time.Now().Add(s.config.Pending.Timeout), upload: s.config.Pending.UploadBytes, download: s.config.Pending.DownloadBytes}, ""
+}
+
+func (v *visitorAdmission) selectRun(key trafficKey, limits TrafficLimits, source netip.Addr, anonymous bool) string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.closed || v.ordinary || v.key.service != "" {
+		return "service_already_selected"
+	}
+	if !limits.Within(v.server.config.Traffic.Ceiling) {
+		return "invalid_traffic_projection"
+	}
+	v.key, v.limits, v.source, v.runID = key, limits, source, key.id
+	if anonymous {
+		// anonymous is an explicit control accounting fact, not target permission.
+		// skip pending run/source buckets and debit the ordinary run before open.
+		if reason := v.reserveLocked(limits); reason != "" {
+			return reason
+		}
+		v.metered = true
+		return ""
+	}
+	budgetRelease, reason := v.server.traffic.acquirePending(key, source)
+	if budgetRelease == nil {
+		return reason
+	}
+	release := v.release
+	v.release = func() { release(); budgetRelease() }
+	return ""
 }
 
 func (v *visitorAdmission) close() {
@@ -93,7 +139,7 @@ func (v *visitorAdmission) beforeWrite(ctx context.Context, upload bool, size in
 		v.mu.Unlock()
 		return net.ErrClosed
 	}
-	ordinary := v.ordinary
+	ordinary := v.ordinary && v.metered
 	if !ordinary {
 		remaining := &v.download
 		if upload {
@@ -164,7 +210,7 @@ func (s *Server) PromotePendingAdmission(ctx context.Context, h tunnelv1.Admissi
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.closed || v.ordinary || v.attempted || !v.deadline.After(time.Now()) || h.PublicURLID != v.key.url || h.PublishRunID != v.runID || h.PublishRunNumber != v.key.run {
+	if v.closed || v.ordinary || v.attempted || !v.deadline.After(time.Now()) || h.PublicURLID != v.key.service || h.PublishRunID != v.runID || h.PublishRunNumber != v.key.run {
 		return reject(tunnelv1.StalePublishRunNumber)
 	}
 	v.attempted = true
@@ -173,7 +219,7 @@ func (s *Server) PromotePendingAdmission(ctx context.Context, h tunnelv1.Admissi
 	if reason == LookupCurrent {
 		reason = LookupNotFound
 		for _, candidate := range candidates {
-			if candidate.PublishRunID == v.runID && candidate.ID == v.key.url && candidate.PublishRunNumber == v.key.run {
+			if candidate.PublishRunID == v.runID && candidate.ID == v.key.service && candidate.PublishRunNumber == v.key.run {
 				current, reason = candidate, LookupCurrent
 				break
 			}
@@ -201,16 +247,39 @@ func (s *Server) PromotePendingAdmission(ctx context.Context, h tunnelv1.Admissi
 	if !valid {
 		return reject(tunnelv1.InvalidMessage)
 	}
-	release, resource := s.admitClass(visitorConnection, current.ID)
-	if release == nil {
+	if resource := v.reserveLocked(l); resource != "" {
 		s.rejectCapacity(resource)
 		return reject(tunnelv1.CapacityExceeded)
 	}
-	budgetRelease, resource := s.traffic.acquire(v.key, l)
+	v.metered = true
+	return tunnelv1.AdmissionResult{Type: tunnelv1.StreamAccepted}
+}
+
+func (v *visitorAdmission) reserve(limits TrafficLimits) string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.reserveLocked(limits)
+}
+
+func (v *visitorAdmission) meterOrdinaryBytes() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.metered = true
+}
+
+func (v *visitorAdmission) reserveLocked(limits TrafficLimits) string {
+	if v.closed || v.ordinary || !v.deadline.After(time.Now()) {
+		return "pending_expired"
+	}
+	s := v.server
+	release, resource := s.admitClass(visitorConnection, v.key.service)
+	if release == nil {
+		return resource
+	}
+	budgetRelease, resource := s.traffic.acquire(v.key, limits)
 	if budgetRelease == nil {
 		release()
-		s.rejectCapacity(resource)
-		return reject(tunnelv1.CapacityExceeded)
+		return resource
 	}
 	v.release()
 	v.release = func() { release(); budgetRelease() }
@@ -218,7 +287,7 @@ func (s *Server) PromotePendingAdmission(ctx context.Context, h tunnelv1.Admissi
 	if v.timer != nil {
 		v.timer.Stop()
 	}
-	return tunnelv1.AdmissionResult{Type: tunnelv1.StreamAccepted}
+	return ""
 }
 
 func (s *Server) observeTraffic(stage, result string) {

@@ -173,7 +173,7 @@ func TestIntegrationLocalServiceHTTPAnonymousPolicyReachesPublisher(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	preparation, err := d.PrepareServiceRun(ctx, local.ServiceID, access, "anonymous-http", now, *local.Metadata)
+	preparation, err := d.PrepareServiceRun(ctx, local.ServiceID, access, "anonymous-http", now, ServiceRunRequest{Metadata: *local.Metadata})
 	if err != nil {
 		t.Fatal(err)
 	}

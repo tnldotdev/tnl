@@ -21,6 +21,8 @@ paths:
     $ref: "./paths/public-services.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1public-services~1promote"
   /internal/v1/ingresses/{ingress_id}/public-services/close:
     $ref: "./paths/public-services.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1public-services~1close"
+  /internal/v1/ingresses/{ingress_id}/public-services/closed-runs:
+    $ref: "./paths/public-services.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1public-services~1closed-runs"
   /internal/v1/ingresses/{ingress_id}/service-observations:
     $ref: "./paths/reporting.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1service-observations"
   /internal/v1/ingresses/register:
@@ -68,6 +70,12 @@ components:
       $ref: "./schemas/public-services.yaml#/schemas/PublicServiceVisitorAdmission"
     PublicServiceVisitorStatus:
       $ref: "./schemas/public-services.yaml#/schemas/PublicServiceVisitorStatus"
+    ServiceRunReference:
+      $ref: "./schemas/public-services.yaml#/schemas/ServiceRunReference"
+    ServiceRunClosureLookup:
+      $ref: "./schemas/public-services.yaml#/schemas/ServiceRunClosureLookup"
+    ServiceRunClosures:
+      $ref: "./schemas/public-services.yaml#/schemas/ServiceRunClosures"
     ServiceRelay:
       $ref: "./schemas/public-services.yaml#/schemas/ServiceRelay"
     Identifier:

@@ -78,3 +78,19 @@ func TestPublishRunTrafficResponseUsesResolvedPeriod(t *testing.T) {
 		t.Fatalf("traffic wire limits: %+v", r)
 	}
 }
+
+func TestServiceRunTrafficInputBoundary(t *testing.T) {
+	for _, traffic := range []string{
+		`null`, `{"connections":null}`, `{"rate_per":null}`, `{"total_connections":null}`,
+		`{"connections":0}`, `{"rate_per":"1ns"}`, `{"upload_bytes":1}`, `{"unknown":1}`,
+	} {
+		t.Run(traffic, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"protocol":"tcp","trust_revision":"1","traffic":`+traffic+`}`))
+			(&handler{}).PrepareServiceRun(w, r, "service", controlv1.PrepareServiceRunParams{})
+			if w.Code != http.StatusBadRequest {
+				t.Fatal("invalid traffic reached publisher authority", w.Code, w.Body.String())
+			}
+		})
+	}
+}

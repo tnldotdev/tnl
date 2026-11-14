@@ -38,15 +38,21 @@ func publishRunTrafficSelection(w http.ResponseWriter, r *http.Request) (*traffi
 	if body.Traffic == nil {
 		return nil, preferences, true
 	}
-	s := body.Traffic
-	selection := &trafficlimits.Selection{Connections: s.Connections, Rate: s.Rate, RatePer: s.RatePer,
-		Burst: s.Burst, UploadBytes: s.UploadBytes, DownloadBytes: s.DownloadBytes,
-		TotalConnections: s.TotalConnections, TotalUploadBytes: s.TotalUploadBytes, TotalDownloadBytes: s.TotalDownloadBytes}
+	selection := trafficSelection(body.Traffic)
 	if err := selection.Validate(); err != nil {
 		writeControlStateProblem(r.Context(), w, "select publish-run traffic limits", controlstate.ErrTrafficSelection)
 		return nil, nil, false
 	}
 	return selection, preferences, true
+}
+
+func trafficSelection(s *controlv1.TrafficSelection) *trafficlimits.Selection {
+	if s == nil {
+		return nil
+	}
+	return &trafficlimits.Selection{Connections: s.Connections, Rate: s.Rate, RatePer: s.RatePer,
+		Burst: s.Burst, UploadBytes: s.UploadBytes, DownloadBytes: s.DownloadBytes,
+		TotalConnections: s.TotalConnections, TotalUploadBytes: s.TotalUploadBytes, TotalDownloadBytes: s.TotalDownloadBytes}
 }
 
 func trafficHasNull(raw json.RawMessage) bool {

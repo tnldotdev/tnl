@@ -34,6 +34,13 @@ type ingressRuntime struct {
 	audit              *ingressServiceAudit
 }
 
+func (r *ingressRuntime) load() int64 {
+	if r.publicServices == nil {
+		return 0
+	}
+	return r.publicServices.Load()
+}
+
 // only fully constructed controllers enter the immutable collection snapshot.
 // metric callbacks never read the constructor-owned daemon runtime slice.
 type ingressLeaseSnapshot struct{ controllers []*ingress.Controller }
@@ -176,7 +183,6 @@ func (d *daemon) startIngressRuntime(
 	}
 	runtime.configuredIdentity, runtime.processRunID = runtimeConfig.ingressID, runID
 	routingTable := new(ingress.RoutingTable)
-	var publicServer *ingress.Server
 	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit, Https: true}
 	registration.Region = settings.region
 	registration.IngressPoolId, registration.ServicePorts = string(settings.ingressPoolID), settings.servicePortRanges.Ports()
@@ -189,16 +195,7 @@ func (d *daemon) startIngressRuntime(
 		Registration:    registration,
 		RenewalInterval: settings.leaseRenewalInterval, RetryInterval: settings.controlRetryInterval,
 		RoutingWait: settings.routingTableWait, Observer: metrics,
-		Load: func() int64 {
-			var private int64
-			if runtime.publicServices != nil {
-				private = runtime.publicServices.Load()
-			}
-			if publicServer == nil {
-				return private
-			}
-			return publicServer.Load() + private
-		},
+		Load: runtime.load,
 	})
 	if err != nil {
 		return err
@@ -263,7 +260,6 @@ func (d *daemon) startIngressRuntime(
 		},
 		RequireProxyHeader: settings.requireProxyHeader, TrustedProxyPeers: settings.trustedProxyPeers, MaxConnections: publicCapacity,
 		Traffic: settings.traffic, Pending: settings.pending,
-		TerminalTrafficRuns:       routingTable.TerminalTrafficRuns,
 		MaxClientHelloConnections: settings.clientHelloConnectionLimit,
 		MaxControlConnections:     settings.standaloneControlConnectionLimit,
 		MaxRelayConnections:       settings.standaloneRelayConnectionLimit,
@@ -319,7 +315,6 @@ func (d *daemon) startIngressRuntime(
 			metrics.SetCapacityLimit(resource, limit)
 		}
 	}
-	publicServer = server
 	d.publishIngressRuntime(runtime)
 	owned = true
 	d.start("run ingress control", func() error { return controller.Run(ctx) })

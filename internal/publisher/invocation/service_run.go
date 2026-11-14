@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
@@ -15,11 +14,13 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
+	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -71,6 +72,14 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	if err != nil {
 		return publisherapp.Configuration{}, err
 	}
+	traffic, err := config.ResolveTrafficSelection(effectiveTunnelLimits(effective))
+	if err != nil {
+		return publisherapp.Configuration{}, err
+	}
+	native, err = native.WithTraffic(traffic)
+	if err != nil {
+		return publisherapp.Configuration{}, err
+	}
 	if config.TargetType(definition) != "app" {
 		plan.Project, plan.ProjectService = &project.Project, service.Name
 	}
@@ -78,54 +87,13 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	if err != nil {
 		return publisherapp.Configuration{}, err
 	}
-	var pinMu sync.Mutex
-	var pending, pin targetplan.TargetSnapshot
-	var pinRun uint64
-	var probe *httpaccess.ReadinessProof
-	var probeRun uint64
-	var probeMu sync.Mutex
-	localCheck := func(ctx context.Context, current publisherapp.Service) publisherapp.Observation {
-		pinMu.Lock()
-		captured, run := pin, pinRun
-		pinMu.Unlock()
-		observation := publisherapp.Observation{Target: current.Target, RegistrationID: current.RegistrationID, RunNumber: current.RunNumber, Readiness: current.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"}
-		if run != current.RunNumber || captured.Address == "" || !binding.Current(ctx, captured) {
-			return observation
-		}
-		local := current
-		local.Target = captured.Address
-		observation = publisherapp.ProbeServiceTarget(ctx, local, transport)
-		observation.Target = current.Target
-		if !binding.Current(ctx, captured) {
-			observation.Ready, observation.Reason = false, "runtime.target_changed"
-		}
-		return observation
+	readiness := &serviceRunReadiness{binding: binding, transport: transport, path: service.Readiness.Path}
+	if saved.Protocol == controlv1.ServiceProtocolHTTP && saved.Endpoint != nil && saved.Endpoint.Public {
+		readiness.publicURL = "https://" + saved.Endpoint.Hostname
 	}
-	check := func(ctx context.Context, current publisherapp.Service) publisherapp.Observation {
-		if saved.Protocol != controlv1.ServiceProtocolHTTP || saved.Endpoint == nil || !saved.Endpoint.Public {
-			return localCheck(ctx, current)
-		}
-		observation := publisherapp.Observation{Target: current.Target, RegistrationID: current.RegistrationID, RunNumber: current.RunNumber, Readiness: current.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"}
-		probeMu.Lock()
-		defer probeMu.Unlock()
-		pinMu.Lock()
-		captured, run, proof, proofNumber := pin, pinRun, probe, probeRun
-		pinMu.Unlock()
-		if run != current.RunNumber || proofNumber != run || proof == nil || captured.Address == "" || !binding.Current(ctx, captured) {
-			return observation
-		}
-		secret, err := proof.Renew()
-		if err != nil {
-			return observation
-		}
-		local := current
-		local.PublicURL = "https://" + saved.Endpoint.Hostname
-		observation = publisherapp.ProbeWithProof(ctx, local, nil, secret)
-		// a successful unrelated responder is not proof that this run served it.
-		if !binding.Current(ctx, captured) || proof.HeaderValue() != "" {
-			observation.Ready, observation.Reason = false, "runtime.target_changed"
-		}
-		return observation
+	var readinessProof func(httpaccess.ReadinessRun) *httpaccess.ReadinessProof
+	if saved.Protocol == controlv1.ServiceProtocolHTTP {
+		readinessProof = readiness.proof
 	}
 	policy, err := config.ResolveInspection(effective.Inspection, config.Protocol(definition))
 	if err != nil {
@@ -136,12 +104,9 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 		return publisherapp.Configuration{}, err
 	}
 	publication := &publisherapp.ServicePublication{Options: clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish,
-		Server: auth.ServerEndpoint, Project: project.Root, Target: service.Target, Service: service.Name, ServiceProtocol: saved.Protocol}, Check: check}
-	if saved.Protocol == controlv1.ServiceProtocolHTTP && saved.Endpoint != nil && saved.Endpoint.Public {
-		publication.URL = "https://" + saved.Endpoint.Hostname
-	}
+		Server: auth.ServerEndpoint, Project: project.Root, Target: service.Target, Service: service.Name, ServiceProtocol: saved.Protocol}, Check: readiness.check, URL: readiness.publicURL}
 	publication.Run = func(ctx context.Context, observe func(uint64, bool) error, summary inspection.Observer) error {
-		var runNumber atomic.Uint64
+		var pending targetplan.TargetSnapshot
 		capture := func(target targetplan.TargetSnapshot) error {
 			actual, err := binding.Capture(ctx)
 			if err != nil {
@@ -150,56 +115,43 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 			if target.Address != actual.Address || target.Identity != actual.Identity {
 				return publisherapp.ErrRegistrationStale
 			}
-			pinMu.Lock()
 			pending = actual
-			pinMu.Unlock()
 			return nil
 		}
 		publish := func() error {
 			return targetplan.PublishPrivate(ctx, plan, publisherservice.RunConfig{Telemetry: a.Telemetry, Control: native, State: profile, Access: native.Access, Identity: identity, ServiceID: saved.Id, Target: plan.Target, Metadata: publisheridentity.ServiceMetadata(saved),
 				InspectionMode: policy.Mode, ObserveSummary: summary,
 				Prepared: func(preparation controlv1.ServiceRunPreparation) error {
-					run := uint64(preparation.RunNumber)
-					pinMu.Lock()
-					pin, pinRun = pending, run
-					pinMu.Unlock()
-					runNumber.Store(run)
-					return observe(run, false)
+					readiness.prepare(pending, preparation)
+					return observe(uint64(preparation.RunNumber), false)
 				},
 				AdmitRequest: func(r *http.Request) error {
-					run := runNumber.Load()
-					if ctx.Err() != nil || !a.manager.CurrentRun(service.Name, service.RegistrationID, service.Target, run) {
+					current := readiness.load()
+					if ctx.Err() != nil || !a.manager.CurrentRun(service.Name, service.RegistrationID, service.Target, current.run.Number) {
 						return publisherapp.ErrRegistrationStale
 					}
-					pinMu.Lock()
-					captured, number := pin, pinRun
-					pinMu.Unlock()
-					if number != run || !binding.Current(r.Context(), captured) {
+					if readiness.load() != current || !binding.Current(r.Context(), current.target) {
 						return publisherapp.ErrRegistrationStale
 					}
 					return nil
 				},
-				ReadinessProof: serviceReadinessProof(saved.Protocol, service.Readiness.Path, func(run httpaccess.ReadinessRun, proof *httpaccess.ReadinessProof) {
-					pinMu.Lock()
-					probe, probeRun = proof, run.Number
-					pinMu.Unlock()
-				}),
+				ReadinessProof: readinessProof,
 				Healthy: func(probe context.Context) bool {
 					current := service
-					current.RunNumber = runNumber.Load()
-					observation := localCheck(probe, current)
-					if saved.Endpoint == nil || !saved.Endpoint.Public || saved.Protocol != controlv1.ServiceProtocolHTTP {
+					current.RunNumber = readiness.load().run.Number
+					observation := readiness.localCheck(probe, current)
+					if readiness.publicURL == "" {
 						a.manager.Observe(observation)
 					}
 					return observation.Ready
 				}, Ready: func() error {
-					run := runNumber.Load()
+					run := readiness.load().run.Number
 					if err := observe(run, true); err != nil {
 						return err
 					}
 					current := service
 					current.RunNumber = run
-					a.manager.Observe(check(ctx, current))
+					a.manager.Observe(readiness.check(ctx, current))
 					return nil
 				}}, targetplan.TargetHooks{Resolver: a.TargetResolver, Capture: capture})
 		}
@@ -214,7 +166,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 			if err == nil || !privateAppRetry(err) {
 				return err
 			}
-			if run := runNumber.Load(); run != 0 {
+			if run := readiness.load().run.Number; run != 0 {
 				if err := observe(run, false); err != nil {
 					return err
 				}
@@ -235,21 +187,96 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	return publisherapp.Configuration{Service: publication, Inspection: policy, PrimaryRoot: primary, SharedRoot: shared}, nil
 }
 
-func serviceReadinessProof(protocol controlv1.ServiceProtocol, path string, prepared func(httpaccess.ReadinessRun, *httpaccess.ReadinessProof)) func(httpaccess.ReadinessRun) *httpaccess.ReadinessProof {
-	if protocol != controlv1.ServiceProtocolHTTP {
+type serviceRunBinding struct {
+	target targetplan.TargetSnapshot
+	run    httpaccess.ReadinessRun
+	proof  *httpaccess.ReadinessProof
+}
+
+// preparation replaces the entire binding, including its proof. public probes
+// serialize renewal through consumption without holding the binding mutex.
+type serviceRunReadiness struct {
+	binding   *targetplan.TargetBinding
+	transport targettransport.Transport
+	path      string
+	publicURL string
+	mu        sync.Mutex
+	probeMu   sync.Mutex
+	current   serviceRunBinding
+}
+
+func (r *serviceRunReadiness) load() serviceRunBinding {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.current
+}
+
+func (r *serviceRunReadiness) prepare(target targetplan.TargetSnapshot, preparation controlv1.ServiceRunPreparation) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.current = serviceRunBinding{target: target, run: httpaccess.ReadinessRun{
+		Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: preparation.ServiceId},
+		ID:      preparation.ServiceRunId, Number: uint64(preparation.RunNumber), Hostname: preparation.Hostname,
+	}}
+}
+
+func (r *serviceRunReadiness) proof(run httpaccess.ReadinessRun) *httpaccess.ReadinessProof {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.current.run != run {
 		return nil
 	}
+	path := r.path
 	if path == "" {
 		path = "/"
 	}
-	return func(run httpaccess.ReadinessRun) *httpaccess.ReadinessProof {
-		proof, err := httpaccess.NewReadinessProof(run, path)
-		if err != nil {
-			return nil
-		}
-		prepared(run, proof)
-		return proof
+	proof, err := httpaccess.NewReadinessProof(run, path)
+	if err != nil {
+		return nil
 	}
+	r.current.proof = proof
+	return proof
+}
+
+func (r *serviceRunReadiness) localCheck(ctx context.Context, service publisherapp.Service) publisherapp.Observation {
+	current := r.load()
+	observation := publisherapp.Observation{Target: service.Target, RegistrationID: service.RegistrationID, RunNumber: service.RunNumber, Readiness: service.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"}
+	if current.run.Number != service.RunNumber || current.target.Address == "" || !r.binding.Current(ctx, current.target) {
+		return observation
+	}
+	local := service
+	local.Target = current.target.Address
+	observation = publisherapp.ProbeServiceTarget(ctx, local, r.transport)
+	observation.Target = service.Target
+	latest := r.load()
+	if latest.run != current.run || latest.target != current.target || !r.binding.Current(ctx, current.target) {
+		observation.Ready, observation.Reason = false, "runtime.target_changed"
+	}
+	return observation
+}
+
+func (r *serviceRunReadiness) check(ctx context.Context, service publisherapp.Service) publisherapp.Observation {
+	if r.publicURL == "" {
+		return r.localCheck(ctx, service)
+	}
+	r.probeMu.Lock()
+	defer r.probeMu.Unlock()
+	current := r.load()
+	observation := publisherapp.Observation{Target: service.Target, RegistrationID: service.RegistrationID, RunNumber: service.RunNumber, Readiness: service.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"}
+	if current.run.Number != service.RunNumber || current.proof == nil || current.target.Address == "" || !r.binding.Current(ctx, current.target) {
+		return observation
+	}
+	secret, err := current.proof.Renew()
+	if err != nil {
+		return observation
+	}
+	service.PublicURL = r.publicURL
+	observation = publisherapp.ProbeWithProof(ctx, service, nil, secret)
+	// a successful unrelated responder is not proof that this run served it.
+	if r.load() != current || !r.binding.Current(ctx, current.target) || current.proof.HeaderValue() != "" {
+		observation.Ready, observation.Reason = false, "runtime.target_changed"
+	}
+	return observation
 }
 
 func privateAppRetry(err error) bool {

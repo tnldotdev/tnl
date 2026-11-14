@@ -208,7 +208,7 @@ func privateFixture(t *testing.T, target string) (*Prepared, *Bound, tunnelv1.Se
 	identity := authorityv1.PublisherEnrollmentResult{ClientId: id(opaqueid.PublisherIdentityPrefix), GrantId: id(opaqueid.PublisherGrantPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix), TeamId: team, Kind: authorityv1.Service, ServiceId: &service}
 	const hostname = "service.worktree.member.example.test"
 	plan := controlv1.CertificatePlan{CacheKey: "service-test", Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: controlv1.Dns01}
-	prep := controlv1.ServiceRunPreparation{TeamId: team, ServiceId: service, ServiceRunId: id(opaqueid.ServiceRunPrefix), RunNumber: 7, PublisherIdentityId: identity.ClientId, PublisherGrantId: identity.GrantId, PublisherKeyId: identity.KeyId, IdempotencyKey: id(opaqueid.IdempotencyPrefix), ExpiresAt: time.Now().Add(time.Minute), Hostname: hostname, DomainId: domain, CertificatePlan: &plan}
+	prep := controlv1.ServiceRunPreparation{TeamId: team, ServiceId: service, ServiceRunId: id(opaqueid.ServiceRunPrefix), RunNumber: 7, PublisherIdentityId: identity.ClientId, PublisherGrantId: identity.GrantId, PublisherKeyId: identity.KeyId, IdempotencyKey: id(opaqueid.IdempotencyPrefix), ExpiresAt: time.Now().Add(time.Minute), Hostname: hostname, DomainId: domain, CertificatePlan: &plan, Traffic: serviceTrafficFixture()}
 	approved := controlv1.Service{Id: service, TeamId: team, DomainId: &domain, Protocol: controlv1.Tcp, Enabled: true, TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: hostname, Port: 25443}}
 	p, err := newManagedPrepared(prep, approved, RunConfig{Identity: identity, Target: target})
 	if err != nil {

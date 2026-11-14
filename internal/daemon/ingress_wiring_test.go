@@ -21,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
@@ -42,6 +43,9 @@ type wiringControl struct {
 	promotedReady chan struct{}
 	routingReady  chan struct{}
 	routingOnce   sync.Once
+	load          func() int64
+	pendingLoad   int64
+	promotedLoad  int64
 }
 
 func (*wiringControl) ReadIngressVisitorPolicy(context.Context, string, ingressv1.IngressVisitorPolicyRequest) (controlv1.VisitorPolicyUpdate, error) {
@@ -99,6 +103,9 @@ func (c *wiringControl) AdmitPublicServiceVisitor(_ context.Context, id string, 
 	}
 	c.visitors[claim.VisitorConnectionId] = false
 	c.admitted++
+	if c.load != nil {
+		c.pendingLoad = c.load()
+	}
 	admission := c.admission
 	admission.VisitorConnectionId = claim.VisitorConnectionId
 	admission.ConnectedRelays = append([]ingressv1.ServiceRelay(nil), admission.ConnectedRelays...)
@@ -125,6 +132,9 @@ func (c *wiringControl) PromotePublicServiceVisitor(_ context.Context, id string
 		return ingress.ErrServiceAdmission
 	}
 	if !promoted {
+		if c.load != nil {
+			c.promotedLoad = c.load()
+		}
 		c.visitors[lookup.VisitorConnectionId] = true
 		c.promoted++
 		if c.promotedReady != nil && c.promoted == 1 {
@@ -144,6 +154,15 @@ func (c *wiringControl) ClosePublicServiceVisitor(_ context.Context, id string, 
 		c.closed++
 	}
 	return nil
+}
+
+func (c *wiringControl) ClosedServiceRuns(_ context.Context, id string, lookup ingressv1.ServiceRunClosureLookup) (ingressv1.ServiceRunClosures, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.currentLease(id, lookup.IngressRunId, lookup.IngressLeaseRevision) {
+		return ingressv1.ServiceRunClosures{}, ingress.ErrServiceAdmission
+	}
+	return ingressv1.ServiceRunClosures{Closed: []ingressv1.ServiceRunReference{}}, nil
 }
 
 // currentLease requires the caller to hold mu.
@@ -303,6 +322,9 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 				ServiceId: ref.ServiceID, ServiceRunId: ref.ServiceRunID, RunNumber: int64(ref.RunNumber),
 				ExpiresAt: now.Add(time.Minute), ConnectedRelays: []ingressv1.ServiceRelay{primary, alternate},
 			}
+			limits := trafficlimits.Default()
+			control.admission.Traffic = ingressv1.IngressTrafficLimits{Connections: limits.Connections, Rate: limits.Rate, RatePerNs: int64(limits.Period()),
+				Burst: limits.Burst, UploadBytes: limits.UploadBytes, DownloadBytes: limits.DownloadBytes}
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
@@ -325,6 +347,12 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 				}
 			})
 			wiringServiceAwait(t, control.routingReady)
+			control.mu.Lock()
+			control.load = d.ingresses[0].load
+			control.mu.Unlock()
+			if got := d.ingresses[0].load(); got != 0 {
+				t.Fatal("idle ingress reported physical visitors", got)
+			}
 			if !d.ingresses[0].controller.Ready(time.Now()) {
 				t.Fatal("production controller not ready after installing its empty snapshot")
 			}
@@ -382,9 +410,13 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 			}
 			control.mu.Lock()
 			admitted, promoted, closed, retained := control.admitted, control.promoted, control.closed, len(control.visitors)
+			pendingLoad, promotedLoad := control.pendingLoad, control.promotedLoad
 			control.mu.Unlock()
 			if admitted != 1 || closed != 1 || retained != 0 || !fail && promoted != 1 {
 				t.Fatalf("service admission did not finish exactly once: admitted=%d promoted=%d closed=%d retained=%d", admitted, promoted, closed, retained)
+			}
+			if pendingLoad != 1 || !fail && promotedLoad != 1 || d.ingresses[0].load() != 0 {
+				t.Fatalf("physical visitor counted more than once: pending=%d promoted=%d closed=%d", pendingLoad, promotedLoad, d.ingresses[0].load())
 			}
 			if len(forwarded) != 0 || len(publisherResult) != 0 {
 				t.Fatal("committed service stream was replayed")

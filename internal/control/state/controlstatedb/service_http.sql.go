@@ -12,6 +12,41 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const authorizeServiceHTTPVisitor = `-- name: AuthorizeServiceHTTPVisitor :one
+UPDATE control.public_service_visitors
+SET authorized_at=COALESCE(authorized_at,$1),valid_until=$2
+WHERE visitor_connection_id=$3 AND service_id=$4
+AND service_run_id=$5 AND run_number=$6
+AND source_ip=$7 AND destination_port=443
+AND closed_at IS NULL AND valid_until>$1
+RETURNING valid_until
+`
+
+type AuthorizeServiceHTTPVisitorParams struct {
+	Now                 pgtype.Timestamptz
+	ValidUntil          pgtype.Timestamptz
+	VisitorConnectionID string
+	ServiceID           string
+	ServiceRunID        string
+	RunNumber           int64
+	SourceIp            netip.Addr
+}
+
+func (q *Queries) AuthorizeServiceHTTPVisitor(ctx context.Context, arg AuthorizeServiceHTTPVisitorParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, authorizeServiceHTTPVisitor,
+		arg.Now,
+		arg.ValidUntil,
+		arg.VisitorConnectionID,
+		arg.ServiceID,
+		arg.ServiceRunID,
+		arg.RunNumber,
+		arg.SourceIp,
+	)
+	var valid_until pgtype.Timestamptz
+	err := row.Scan(&valid_until)
+	return valid_until, err
+}
+
 const cleanupServiceHTTPLogins = `-- name: CleanupServiceHTTPLogins :exec
 DELETE FROM control.service_http_browser_logins stored WHERE stored.state_digest IN
     (SELECT expired.state_digest FROM control.service_http_browser_logins expired WHERE expired.expires_at<=$1 LIMIT 100)
@@ -417,7 +452,8 @@ func (q *Queries) ServiceHTTPBrowserPermission(ctx context.Context, arg ServiceH
 }
 
 const serviceHTTPTransportBinding = `-- name: ServiceHTTPTransportBinding :one
-SELECT (v.promoted_at IS NOT NULL)::boolean AS admitted,LEAST($1::timestamptz+interval '2 minutes',
+SELECT (v.authorized_at IS NOT NULL)::boolean AS authorized,
+    (v.promoted_at IS NOT NULL)::boolean AS admitted,LEAST($1::timestamptz+interval '2 minutes',
     run.publisher_expires_at,run.certificate_expires_at,g.expires_at,ingress.lease_expires_at,
     (SELECT max(relay.lease_expires_at) FROM control.service_connection_slots slot
      JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
@@ -457,6 +493,7 @@ type ServiceHTTPTransportBindingParams struct {
 }
 
 type ServiceHTTPTransportBindingRow struct {
+	Authorized bool
 	Admitted   bool
 	ValidUntil pgtype.Timestamptz
 }
@@ -472,7 +509,7 @@ func (q *Queries) ServiceHTTPTransportBinding(ctx context.Context, arg ServiceHT
 		arg.DestinationPort,
 	)
 	var i ServiceHTTPTransportBindingRow
-	err := row.Scan(&i.Admitted, &i.ValidUntil)
+	err := row.Scan(&i.Authorized, &i.Admitted, &i.ValidUntil)
 	return i, err
 }
 

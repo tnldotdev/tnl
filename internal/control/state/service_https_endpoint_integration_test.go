@@ -33,7 +33,7 @@ func TestIntegrationServiceHTTPSHasNoExclusiveReservation(t *testing.T) {
 	setReleaseProjectExposure(t, d, &r, &applied, false)
 	assertEndpoint(false)
 	publisher := serviceReleasePublisher(t, d, r, now)
-	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "shared-https", now, service.ServiceMetadata)
+	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "shared-https", now, ServiceRunRequest{Metadata: service.ServiceMetadata})
 	if err != nil || prepared.Hostname != service.Endpoint.Hostname {
 		t.Fatal("connector-only HTTP lost its HTTPS transport identity", prepared, err)
 	}

@@ -24,7 +24,7 @@ func (c changedPreparationControl) PrepareServiceRun(ctx context.Context, servic
 }
 
 func TestServicePreparationIsValidatedBeforeLocalObservation(t *testing.T) {
-	for _, boundary := range []string{"idempotency", "service", "run", "number", "hostname", "publisher", "expired"} {
+	for _, boundary := range []string{"idempotency", "service", "run", "number", "hostname", "publisher", "expired", "traffic-missing", "traffic-invalid"} {
 		t.Run(boundary, func(t *testing.T) {
 			cfg, control := lifecycleFixture(t)
 			cfg.Control = changedPreparationControl{RunControl: control, change: func(p *controlv1.ServiceRunPreparation) {
@@ -43,6 +43,10 @@ func TestServicePreparationIsValidatedBeforeLocalObservation(t *testing.T) {
 					p.PublisherIdentityId = "pub_" + strings.Repeat("P", 22)
 				case "expired":
 					p.ExpiresAt = time.Now()
+				case "traffic-missing":
+					p.Traffic = controlv1.TrafficLimits{}
+				case "traffic-invalid":
+					p.Traffic.RatePerNs = 0
 				}
 			}}
 			observed := false

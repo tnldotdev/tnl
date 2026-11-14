@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/netip"
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
@@ -14,6 +15,7 @@ import (
 )
 
 type serviceHTTPStore interface {
+	AuthorizeServiceHTTPVisitor(context.Context, controlstate.ServiceHTTPRun, string, netip.Addr, int, time.Time) (controlstate.ServiceVisitorValidity, error)
 	ServiceHTTPBrowserTeam(context.Context, visitorscope.Scope, time.Time) (string, error)
 	BeginServiceBrowserLogin(context.Context, visitorscope.Scope, string, string, string, []byte, *controlstate.CompanyLoginIntent, time.Time) (string, error)
 	RedeemServiceBrowserHandoff(context.Context, controlstate.ServiceHTTPRun, string, time.Time) (controlv1.BrowserHandoffResponse, error)
@@ -38,6 +40,26 @@ func (h *handler) serviceHTTP(w http.ResponseWriter, r *http.Request) (serviceHT
 
 func serviceHTTPRun(service, run, token string, number int64) controlstate.ServiceHTTPRun {
 	return controlstate.ServiceHTTPRun{Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: service}, RunID: run, Number: number, Token: credentials.ServiceRunToken(token)}
+}
+
+func (h *handler) AuthorizeServiceHTTPVisitor(w http.ResponseWriter, r *http.Request, service controlv1.ServiceID, run controlv1.ServiceRunID) {
+	store, token, ok := h.serviceHTTP(w, r)
+	if !ok {
+		return
+	}
+	var body controlv1.AuthorizeServiceHTTPVisitorRequest
+	if decodeJSONLimited(w, r, &body, 4096) != nil || body.RunNumber < 1 || !validVisitorSource(body.SourceIp) || body.DestinationPort != 443 {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service HTTP visitor authorization")
+		return
+	}
+	source, _ := netip.ParseAddr(body.SourceIp)
+	decision, err := store.AuthorizeServiceHTTPVisitor(r.Context(), serviceHTTPRun(service, run, token, body.RunNumber), body.VisitorConnectionId, source, int(body.DestinationPort), time.Now())
+	if err != nil {
+		writeManagedCertificateProblem(r.Context(), w, "authorize service HTTP visitor", err)
+		return
+	}
+	observability.AuthorizationAdmission(r.Context(), "service_http_visitor", decision.Allowed, decision.Admitted)
+	writeJSON(w, 200, controlv1.ServiceClientCertificateDecision{Allowed: decision.Allowed, Admitted: decision.Admitted, ValidUntil: decision.ValidUntil})
 }
 
 func (h *handler) RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Request, service controlv1.ServiceID, run controlv1.ServiceRunID) {

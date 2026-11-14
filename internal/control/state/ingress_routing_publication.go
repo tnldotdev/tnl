@@ -145,7 +145,7 @@ func (pending *pendingIngressRoutingTableEvents) addEvent(
 	now time.Time,
 ) (*publishedIngressRoutingTableEvent, error) {
 	policy := IPPolicy(route.IpPolicy)
-	traffic, err := decodePublishRunTraffic(session.TrafficLimits)
+	traffic, err := decodeRunTraffic(session.TrafficLimits)
 	if err != nil {
 		return nil, err
 	}

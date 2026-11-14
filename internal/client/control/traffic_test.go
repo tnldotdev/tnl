@@ -66,3 +66,56 @@ func TestPublisherRunTrafficUsesTypedBodyAndProofHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestTrafficSelectionPreservesExplicitChoicesWithoutSharingPointers(t *testing.T) {
+	input := &trafficlimits.Selection{
+		Connections: new(48), Rate: new(40), RatePer: new("2s"), Burst: new(50),
+		UploadBytes: new(int64(4 << 20)), DownloadBytes: new(int64(8 << 20)),
+		TotalConnections: new(int64(0)), TotalUploadBytes: new(int64(7)), TotalDownloadBytes: new(int64(8)),
+	}
+	want := &controlv1.TrafficSelection{
+		Connections: new(48), Rate: new(40), RatePer: new("2s"), Burst: new(50),
+		UploadBytes: new(int64(4 << 20)), DownloadBytes: new(int64(8 << 20)),
+		TotalConnections: new(int64(0)), TotalUploadBytes: new(int64(7)), TotalDownloadBytes: new(int64(8)),
+	}
+	first, err := TrafficSelection(input)
+	if err != nil || !reflect.DeepEqual(first, want) {
+		t.Fatal("traffic conversion changed explicit choices", first, err)
+	}
+	second, err := TrafficSelection(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	*first.Connections, *first.Rate, *first.RatePer, *first.Burst = 1, 1, "1m", 1
+	*first.UploadBytes, *first.DownloadBytes = 1, 1
+	*first.TotalConnections, *first.TotalUploadBytes, *first.TotalDownloadBytes = 1, 1, 1
+	if !reflect.DeepEqual(second, want) {
+		t.Fatal("one request changed another request's traffic choices")
+	}
+	again, err := TrafficSelection(input)
+	if err != nil || !reflect.DeepEqual(again, want) {
+		t.Fatal("request traffic changed caller-owned choices", again, err)
+	}
+	*input.Connections, *input.RatePer, *input.TotalConnections = 24, "1s", 3
+	if !reflect.DeepEqual(second, want) {
+		t.Fatal("caller changed already-converted traffic choices")
+	}
+}
+
+func TestTrafficSelectionKeepsOmissionAndRejectsInvalidChoices(t *testing.T) {
+	if got, err := TrafficSelection(nil); err != nil || got != nil {
+		t.Fatal("omitted traffic became an explicit selection", got, err)
+	}
+	if got, err := TrafficSelection(&trafficlimits.Selection{}); err != nil || !reflect.DeepEqual(got, &controlv1.TrafficSelection{}) {
+		t.Fatal("empty traffic resolved operator defaults", got, err)
+	}
+	for _, invalid := range []*trafficlimits.Selection{
+		{Connections: new(0)}, {Rate: new(0)}, {RatePer: new("invalid")}, {Burst: new(0)},
+		{UploadBytes: new(int64(1))}, {DownloadBytes: new(int64(1))},
+		{TotalConnections: new(int64(-1))}, {TotalUploadBytes: new(int64(-1))}, {TotalDownloadBytes: new(int64(-1))},
+	} {
+		if got, err := TrafficSelection(invalid); err == nil || got != nil {
+			t.Fatal("invalid selection became a wire request", got, err)
+		}
+	}
+}

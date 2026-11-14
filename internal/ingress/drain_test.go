@@ -68,7 +68,7 @@ func TestDrainDeadlineForcesBackendClosed(t *testing.T) {
 	p := config.PublicServices
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.sessions != 0 || p.pending != 0 || p.active != 0 || p.streams != 0 || len(p.connections) != 0 {
+	if p.sessions != 0 || !publicServiceCapacityReleased(p) || p.streams != 0 || len(p.connections) != 0 {
 		t.Fatal("forced drain retained service forwarding ownership")
 	}
 }

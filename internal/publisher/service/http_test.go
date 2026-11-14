@@ -26,6 +26,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 
@@ -69,7 +70,7 @@ func serviceHTTPConfiguredFixture(t *testing.T, target http.Handler, h2, inline 
 	if err := header.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	frontend := HTTP{Subject: scope, RunID: header.ServiceRunID, Number: 1, Hostname: update.View.Hostname, Port: update.View.Port, Header: header, Policy: policy}
+	frontend := HTTP{Control: serviceHTTPAdmissionControl{}, Subject: scope, RunID: header.ServiceRunID, Number: 1, Token: credentials.ServiceRunToken("run-token"), Hostname: update.View.Hostname, Port: update.View.Port, Header: header, Policy: policy}
 	if configure != nil {
 		configure(&frontend)
 	}
@@ -98,6 +99,18 @@ func serviceHTTPConfiguredFixture(t *testing.T, target http.Handler, h2, inline 
 type serviceHTTPGrantControl struct {
 	HTTPControl
 	client httpaccess.TokenClient
+}
+
+type serviceHTTPAdmissionControl struct {
+	HTTPControl
+	authorize func(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error)
+}
+
+func (c serviceHTTPAdmissionControl) AuthorizeServiceHTTPVisitor(ctx context.Context, service, run string, token credentials.ServiceRunToken, request controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+	if c.authorize != nil {
+		return c.authorize(ctx, service, run, token, request)
+	}
+	return controlv1.ServiceClientCertificateDecision{Allowed: true, Admitted: true, ValidUntil: time.Now().Add(time.Minute)}, nil
 }
 
 func (c serviceHTTPGrantControl) IssueVisitorToken(ctx context.Context, request controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {

@@ -36,7 +36,7 @@ func serviceIngressConfig(t *testing.T, openings ...serviceRelayOpening) Config 
 	if len(openings) < 1 || len(openings) > 2 {
 		t.Fatal("service fixture requires one or two relay slots")
 	}
-	p, base, _, _ := publicServiceTestSetup(t)
+	p, base, _, _ := publicServiceTestSetup(t, true)
 	base.relays = base.relays[:len(openings)]
 	p.config.Control = &httpsServiceControl{
 		publicServiceControlFixture: base,

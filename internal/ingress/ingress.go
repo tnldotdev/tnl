@@ -91,7 +91,6 @@ type Config struct {
 	OnForwardingFailure       func(string, uint64, string, ForwardingFailureReason, int)
 	Traffic                   TrafficConfig
 	Pending                   PendingConfig
-	TerminalTrafficRuns       func([]TrafficRun) map[TrafficRun]struct{}
 }
 
 type Server struct {
@@ -167,8 +166,7 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		openContext = observability.WithMetrics(openContext, metrics)
 	}
 	traffic := newTrafficAdmission(config.Traffic, config.Pending)
-	traffic.terminalRuns = config.TerminalTrafficRuns
-	return &Server{
+	server := &Server{
 		listener:        listener,
 		config:          config,
 		openContext:     openContext,
@@ -181,7 +179,14 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		traffic:         traffic,
 		servicePorts:    servicePorts,
 		pendingVisitors: make(map[string]*visitorAdmission),
-	}, nil
+	}
+	if config.PublicServices != nil {
+		if err := config.PublicServices.bindServer(server); err != nil {
+			cancelOpens()
+			return nil, err
+		}
+	}
+	return server, nil
 }
 
 func (s *Server) Serve() error {

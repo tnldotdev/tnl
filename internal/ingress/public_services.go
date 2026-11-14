@@ -23,52 +23,36 @@ type ServiceForwarder interface {
 }
 
 type PublicServicesConfig struct {
-	AuditSink                                                    serviceaudit.Sink
-	Metrics                                                      Metrics
-	Observer                                                     OperationObserver
-	IngressPoolID                                                string
-	Control                                                      PublicServiceControl
-	Forwarder                                                    ServiceForwarder
-	CurrentLease                                                 func() ingressv1.IngressLease
-	MaxSessions, MaxPending, MaxServiceStreams, MaxSourceStreams int
-	PendingTimeout                                               time.Duration
-	RecheckInterval, HardAuthorizationTTL, RecheckTimeout        time.Duration
+	AuditSink                                             serviceaudit.Sink
+	Metrics                                               Metrics
+	Observer                                              OperationObserver
+	IngressPoolID                                         string
+	Control                                               PublicServiceControl
+	Forwarder                                             ServiceForwarder
+	CurrentLease                                          func() ingressv1.IngressLease
+	PendingTimeout                                        time.Duration
+	RecheckInterval, HardAuthorizationTTL, RecheckTimeout time.Duration
 }
 
 // PublicServices carries application TLS unchanged from trusted destination
 // ports. it has no connector listener, transport TLS, or routing history.
 type PublicServices struct {
-	config                    PublicServicesConfig
-	mu                        sync.Mutex
-	sessions, pending, active int
-	streams                   int
-	services                  map[string]int
-	sources                   map[netip.Addr]int
-	connections               map[net.Conn]context.CancelFunc
-	admissions                context.Context
-	stopAdmissions            context.CancelFunc
-	changed                   chan struct{}
-	closed                    bool
-	nextRelay                 atomic.Uint64
+	config         PublicServicesConfig
+	server         *Server
+	mu             sync.Mutex
+	sessions       int
+	streams        int
+	connections    map[net.Conn]context.CancelFunc
+	admissions     context.Context
+	stopAdmissions context.CancelFunc
+	changed        chan struct{}
+	closed         bool
+	nextRelay      atomic.Uint64
 }
 
 func NewPublicServices(config PublicServicesConfig) (*PublicServices, error) {
 	if config.Control == nil || config.Forwarder == nil || config.CurrentLease == nil {
 		return nil, errors.New("ingress: public services need control, forwarding and a current lease")
-	}
-	for _, item := range []struct {
-		value        *int
-		defaultValue int
-	}{
-		{&config.MaxSessions, 256}, {&config.MaxPending, 128},
-		{&config.MaxServiceStreams, 64}, {&config.MaxSourceStreams, 16},
-	} {
-		if *item.value < 0 {
-			return nil, errors.New("ingress: public service capacity must be positive")
-		}
-		if *item.value == 0 {
-			*item.value = item.defaultValue
-		}
 	}
 	if config.PendingTimeout < 0 {
 		return nil, errors.New("ingress: public service timeout must be positive")
@@ -94,8 +78,20 @@ func NewPublicServices(config PublicServicesConfig) (*PublicServices, error) {
 		config.IngressPoolID = "ingress-a"
 	}
 	admissions, stop := context.WithCancel(context.Background())
-	return &PublicServices{config: config, services: make(map[string]int), sources: make(map[netip.Addr]int),
-		connections: make(map[net.Conn]context.CancelFunc), admissions: admissions, stopAdmissions: stop, changed: make(chan struct{})}, nil
+	return &PublicServices{config: config, connections: make(map[net.Conn]context.CancelFunc),
+		admissions: admissions, stopAdmissions: stop, changed: make(chan struct{})}, nil
+}
+
+// the public listener owns one process traffic meter. service forwarding shares
+// that meter and its ordinary/pending classes, never a second set of buckets.
+func (p *PublicServices) bindServer(server *Server) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.server != nil || p.sessions != 0 {
+		return errors.New("ingress: public services already bound to a listener")
+	}
+	p.server = server
+	return nil
 }
 
 func (p *PublicServices) lease(now time.Time) (ingressv1.IngressLease, error) {
@@ -128,7 +124,7 @@ func validPrivateSocketPair(source, destination netip.AddrPort) bool {
 func (p *PublicServices) acquireSession(ctx context.Context, connection net.Conn) (context.Context, func(), bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.closed || p.admissions.Err() != nil || p.sessions >= p.config.MaxSessions {
+	if p.server == nil || p.closed || p.admissions.Err() != nil {
 		return nil, nil, false
 	}
 	ctx, cancel := context.WithCancel(ctx)
@@ -191,83 +187,6 @@ func (p *PublicServices) Close() error {
 }
 
 func (p *PublicServices) Load() int64 { p.mu.Lock(); defer p.mu.Unlock(); return int64(p.sessions) }
-
-type privateStreamAdmission struct {
-	owner            *PublicServices
-	service          string
-	source           netip.Addr
-	promoted, closed bool
-}
-
-func (p *PublicServices) pendingStream(service string, source netip.Addr) (*privateStreamAdmission, bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.closed || p.admissions.Err() != nil || p.pending >= p.config.MaxPending || p.services[service] >= p.config.MaxServiceStreams || p.sources[source] >= p.config.MaxSourceStreams {
-		return nil, false
-	}
-	p.pending++
-	p.services[service]++
-	p.sources[source]++
-	return &privateStreamAdmission{owner: p, service: service, source: source}, true
-}
-
-func (a *privateStreamAdmission) promote() bool {
-	p := a.owner
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if a.closed || a.promoted || p.active >= p.config.MaxSessions*4 {
-		return false
-	}
-	a.promoted = true
-	p.pending--
-	p.active++
-	return true
-}
-
-func (a *privateStreamAdmission) selectService(service string) bool {
-	p := a.owner
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if a.closed || a.promoted {
-		return false
-	}
-	if a.service == service {
-		return true
-	}
-	if p.services[service] >= p.config.MaxServiceStreams {
-		return false
-	}
-	p.services[a.service]--
-	if p.services[a.service] == 0 {
-		delete(p.services, a.service)
-	}
-	p.services[service]++
-	a.service = service
-	return true
-}
-
-func (a *privateStreamAdmission) close() {
-	p := a.owner
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if a.closed {
-		return
-	}
-	a.closed = true
-	if a.promoted {
-		p.active--
-	} else {
-		p.pending--
-	}
-	p.services[a.service]--
-	if p.services[a.service] == 0 {
-		delete(p.services, a.service)
-	}
-	p.sources[a.source]--
-	if p.sources[a.source] == 0 {
-		delete(p.sources, a.source)
-	}
-}
 
 func privateRecheckDelay(interval, timeout time.Duration, deadline time.Time) time.Duration {
 	remaining := time.Until(deadline)

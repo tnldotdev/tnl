@@ -23,10 +23,11 @@ func (c *Client) CreatePublisherRun(ctx context.Context, id, retry, token, proof
 }
 
 func publishRunRequest(selection *trafficlimits.Selection, preferred []string) (controlv1.CreatePublishRunRequest, error) {
-	body, err := publishRunTrafficRequest(selection)
+	traffic, err := TrafficSelection(selection)
 	if err != nil {
-		return body, err
+		return controlv1.CreatePublishRunRequest{}, err
 	}
+	body := controlv1.CreatePublishRunRequest{Traffic: traffic}
 	preferences, err := region.Preferences(preferred)
 	if err != nil {
 		return body, err
@@ -37,17 +38,19 @@ func publishRunRequest(selection *trafficlimits.Selection, preferred []string) (
 	return body, nil
 }
 
-func publishRunTrafficRequest(selection *trafficlimits.Selection) (controlv1.CreatePublishRunRequest, error) {
+// TrafficSelection converts explicit choices without resolving defaults or
+// retaining caller-owned pointers.
+func TrafficSelection(selection *trafficlimits.Selection) (*controlv1.TrafficSelection, error) {
 	if selection == nil {
-		return controlv1.CreatePublishRunRequest{}, nil
+		return nil, nil
 	}
 	if err := selection.Validate(); err != nil {
-		return controlv1.CreatePublishRunRequest{}, err
+		return nil, err
 	}
-	s := selection
-	return controlv1.CreatePublishRunRequest{Traffic: &controlv1.TrafficSelection{
+	s := selection.Clone()
+	return &controlv1.TrafficSelection{
 		Connections: s.Connections, Rate: s.Rate, RatePer: s.RatePer, Burst: s.Burst,
 		UploadBytes: s.UploadBytes, DownloadBytes: s.DownloadBytes,
 		TotalConnections: s.TotalConnections, TotalUploadBytes: s.TotalUploadBytes, TotalDownloadBytes: s.TotalDownloadBytes,
-	}}, nil
+	}, nil
 }

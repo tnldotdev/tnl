@@ -91,7 +91,7 @@ func TestIntegrationPrivateServiceFirstPublicBindingRetainsRun(t *testing.T) {
 	assignment := replica.assignments.Services[0]
 	access := deploymentAssignmentAccess(t, d, replica, assignment, now)
 	metadata := ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}
-	old, err := d.PrepareServiceRun(ctx, assignment.ServiceID, access.PublisherIdentity, "private-binding", now, metadata)
+	old, err := d.PrepareServiceRun(ctx, assignment.ServiceID, access.PublisherIdentity, "private-binding", now, ServiceRunRequest{Metadata: metadata})
 	if err != nil || old.Hostname == "" {
 		t.Fatal("private preparation lost its managed TLS identity", err)
 	}
@@ -115,7 +115,7 @@ func TestIntegrationPrivateServiceFirstPublicBindingRetainsRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	metadata.TrustRevision = service.TrustRevision
-	next, err := d.PrepareServiceRun(ctx, service.ServiceID, access.PublisherIdentity, "public-binding", now, metadata)
+	next, err := d.PrepareServiceRun(ctx, service.ServiceID, access.PublisherIdentity, "public-binding", now, ServiceRunRequest{Metadata: metadata})
 	if err != nil || next.Hostname != old.Hostname {
 		t.Fatal("replacement did not retain its TLS identity", err)
 	}

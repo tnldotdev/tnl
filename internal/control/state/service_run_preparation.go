@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -24,6 +25,15 @@ type ServiceRunPreparation struct {
 	ExpiresAt                                                                                       time.Time
 	CertificatePlan                                                                                 CertificatePlan
 	Hostname, DomainID                                                                              string
+	Traffic                                                                                         trafficlimits.Limits
+}
+
+// ServiceRunRequest separates run-local selections from saved target trust.
+type ServiceRunRequest struct {
+	Metadata                        ServiceMetadata
+	PreferredRegions                []string
+	TrafficSelection                *trafficlimits.Selection
+	TrafficDefaults, TrafficCeiling trafficlimits.Limits
 }
 
 type ServiceRunAssignment struct {
@@ -49,13 +59,18 @@ type ServiceRunHealth struct {
 
 func serviceAssignmentSeedContext(id string) string { return "service-slot-seed/" + id }
 
-func serviceRunPreparation(r controlstatedb.ControlServiceRun) ServiceRunPreparation {
+func serviceRunPreparation(r controlstatedb.ControlServiceRun) (ServiceRunPreparation, error) {
+	traffic, err := decodeRunTraffic(r.TrafficLimits)
+	if err != nil {
+		return ServiceRunPreparation{}, err
+	}
 	return ServiceRunPreparation{ServiceID: r.ServiceID, TeamID: r.TeamID, RunID: r.ID,
 		PublisherIdentityID: r.PublisherIdentityID, PublisherGrantID: r.PublisherGrantID,
 		PublisherKeyID: r.PublisherKeyID, IdempotencyKey: r.IdempotencyKey,
 		RunNumber: r.RunNumber, ExpiresAt: r.PreparationExpiresAt.Time,
 		Hostname: r.CertificateHostname, DomainID: r.CertificateDomainID.String,
-		CertificatePlan: CertificatePlan{CacheKey: r.CertificateCacheKey, Scope: r.CertificateScope, Identifiers: slices.Clone(r.CertificateIdentifiers), ChallengeMethod: certificateidentity.ChallengeDNS01}}
+		Traffic:         traffic,
+		CertificatePlan: CertificatePlan{CacheKey: r.CertificateCacheKey, Scope: r.CertificateScope, Identifiers: slices.Clone(r.CertificateIdentifiers), ChallengeMethod: certificateidentity.ChallengeDNS01}}, nil
 }
 
 func servicePublisherMatches(p PublisherIdentity, serviceID string) bool {
@@ -66,8 +81,8 @@ func servicePublisherMatches(p PublisherIdentity, serviceID string) bool {
 		opaqueid.Valid(p.GrantID, opaqueid.PublisherGrantPrefix)
 }
 
-func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p PublisherIdentity, key string, now time.Time, metadata ServiceMetadata, preferred ...string) (result ServiceRunPreparation, retErr error) {
-	preferred, retErr = region.Preferences(preferred)
+func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p PublisherIdentity, key string, now time.Time, request ServiceRunRequest) (result ServiceRunPreparation, retErr error) {
+	preferred, retErr := region.Preferences(request.PreferredRegions)
 	if retErr != nil {
 		return result, retErr
 	}
@@ -96,7 +111,7 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 	if err != nil {
 		return result, err
 	}
-	if metadata.Validate() != nil || metadata.TrustRevision != service.TrustRevision || !serviceMetadataMatches(saved, metadata) {
+	if request.Metadata.Validate() != nil || request.Metadata.TrustRevision != service.TrustRevision || !serviceMetadataMatches(saved, request.Metadata) {
 		return result, ErrServiceConflict
 	}
 	keyRecord, err := q.GetPublisherKey(ctx, controlstatedb.GetPublisherKeyParams{ID: p.KeyID, PublisherIdentityID: p.ID})
@@ -110,6 +125,10 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		return result, ErrServiceAccess
 	}
 	digest := sha256.Sum256([]byte(serviceID + "\x00" + p.ID + "\x00" + p.GrantID + "\x00" + p.KeyID))
+	digest, err = runTrafficDigest(digest, request.TrafficSelection)
+	if err != nil {
+		return result, err
+	}
 	digest = regionRequestDigest(digest, preferred)
 	var existingID string
 	err = tx.QueryRow(ctx, `SELECT id FROM control.service_runs WHERE service_id=$1 AND idempotency_key=$2 AND publisher_identity_id=$3`, serviceID, key, p.ID).Scan(&existingID)
@@ -124,10 +143,18 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		if serviceRunLifecycleState(run.State) != serviceRunPrepared || run.ClosedAt.Valid || !run.PreparationExpiresAt.Time.After(now) || !bytes.Equal(run.RequestDigest, digest[:]) || run.PublisherIdentityID != p.ID || run.PublisherGrantID != p.GrantID || run.PublisherKeyID != p.KeyID {
 			return result, ErrServiceConflict
 		}
+		result, err = serviceRunPreparation(run)
+		if err != nil {
+			return result, err
+		}
 		if err = tx.Commit(ctx); err != nil {
 			return result, err
 		}
-		return serviceRunPreparation(run), nil
+		return result, nil
+	}
+	traffic, err := resolveRunTraffic(request.TrafficSelection, request.TrafficDefaults, request.TrafficCeiling)
+	if err != nil {
+		return result, err
 	}
 	var activeID string
 	err = tx.QueryRow(ctx, `SELECT id FROM control.service_runs WHERE service_id=$1 AND closed_at IS NULL
@@ -178,6 +205,7 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 	}
 	run, err := q.PrepareServiceRun(ctx, controlstatedb.PrepareServiceRunParams{
 		PreferredRegions: preferred,
+		TrafficLimits:    traffic,
 		ID:               id, ServiceID: serviceID, TeamID: service.TeamID, RunNumber: int64(number),
 		PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, PublisherKeyID: p.KeyID, IdempotencyKey: key,
 		RequestDigest: digest[:], PreparationExpiresAt: timestamptz(now.Add(2 * time.Minute)),
@@ -188,10 +216,14 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 	if err != nil {
 		return result, err
 	}
+	result, err = serviceRunPreparation(run)
+	if err != nil {
+		return result, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return result, err
 	}
-	return serviceRunPreparation(run), nil
+	return result, nil
 }
 
 func (d *Database) serviceAssignmentSeed(run controlstatedb.ControlServiceRun) (credentials.AssignmentSeed, error) {
@@ -216,7 +248,7 @@ func privateAssignments(ctx context.Context, q *controlstatedb.Queries, seed cre
 	result := make([]ServiceRunAssignment, 0, 2)
 	for index, slot := range rows {
 		binding, err := checkedPrivateAssignmentBinding(slot.ServiceID, slot.ServiceRunID, slot.PublisherConnectionID, slot.RunNumber, slot.ConnectionAssignmentRevision)
-		if err != nil || !binding.serviceRunBinding.matches(run) || int(slot.ConnectionSlot) != index {
+		if err != nil || !binding.ServiceRunReference.matches(run) || int(slot.ConnectionSlot) != index {
 			return nil, ErrServiceAccess
 		}
 		state, err := privateAssignmentState(slot.State)
@@ -384,7 +416,7 @@ func replenishServiceConnections(ctx context.Context, q *controlstatedb.Queries,
 	}
 	for index, old := range replaced {
 		binding, err := checkedPrivateAssignmentBinding(old.ServiceID, old.ServiceRunID, old.PublisherConnectionID, old.RunNumber, old.ConnectionAssignmentRevision)
-		if err != nil || !binding.serviceRunBinding.matches(run) {
+		if err != nil || !binding.ServiceRunReference.matches(run) {
 			return ErrServiceAccess
 		}
 		revision, err := nextPrivateRevision(binding.revision)

@@ -17,7 +17,7 @@ func TestPublicServiceAdmissionExpiryAtUse(t *testing.T) {
 	for _, expiry := range []string{"run", "relay"} {
 		t.Run(expiry, func(t *testing.T) {
 			_, c, _, _ := publicServiceTestSetup(t)
-			p := ingressv1.PublicServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, ExpiresAt: now.Add(time.Minute), ConnectedRelays: c.relays}
+			p := ingressv1.PublicServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, Traffic: c.traffic, ExpiresAt: now.Add(time.Minute), ConnectedRelays: c.relays}
 			if expiry == "run" {
 				p.ExpiresAt = now
 			} else {
@@ -60,9 +60,14 @@ func TestPublicServiceVisitorRejectsExpiredOrMalformedClaim(t *testing.T) {
 		"missing service":    func(p *ingressv1.PublicServiceVisitorAdmission) { p.ServiceId = "" },
 		"missing run":        func(p *ingressv1.PublicServiceVisitorAdmission) { p.ServiceRunId = "" },
 		"missing run number": func(p *ingressv1.PublicServiceVisitorAdmission) { p.RunNumber = 0 },
-		"missing relays":     func(p *ingressv1.PublicServiceVisitorAdmission) { p.ConnectedRelays = nil },
-		"invalid slot":       func(p *ingressv1.PublicServiceVisitorAdmission) { p.ConnectedRelays[0].ConnectionSlot = 2 },
-		"duplicate slot":     func(p *ingressv1.PublicServiceVisitorAdmission) { p.ConnectedRelays[1].ConnectionSlot = 0 },
+		"missing traffic":    func(p *ingressv1.PublicServiceVisitorAdmission) { p.Traffic = ingressv1.IngressTrafficLimits{} },
+		"anonymous non-HTTP": func(p *ingressv1.PublicServiceVisitorAdmission) { p.Anonymous = true },
+		"invalid traffic period": func(p *ingressv1.PublicServiceVisitorAdmission) {
+			p.Traffic.RatePerNs = 0
+		},
+		"missing relays": func(p *ingressv1.PublicServiceVisitorAdmission) { p.ConnectedRelays = nil },
+		"invalid slot":   func(p *ingressv1.PublicServiceVisitorAdmission) { p.ConnectedRelays[0].ConnectionSlot = 2 },
+		"duplicate slot": func(p *ingressv1.PublicServiceVisitorAdmission) { p.ConnectedRelays[1].ConnectionSlot = 0 },
 		"duplicate relay service": func(p *ingressv1.PublicServiceVisitorAdmission) {
 			p.ConnectedRelays[1].RelayServiceId = p.ConnectedRelays[0].RelayServiceId
 		},

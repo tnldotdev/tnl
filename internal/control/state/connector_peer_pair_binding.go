@@ -83,7 +83,7 @@ func (d *Database) connectorPeerPairBinding(ctx context.Context, tx pgx.Tx, run 
 		claimUntil = minTime(claimUntil, claim.ConfirmedUntil.Time)
 	}
 	if b.source.IsValid() {
-		if err := d.serviceHTTPSourceAllowed(ctx, q, run.ServiceID, b.source); err != nil {
+		if _, err := d.serviceHTTPSourcePolicy(ctx, q, run.ServiceID, b.source); err != nil {
 			return connectorPeerBinding{}, err
 		}
 	}

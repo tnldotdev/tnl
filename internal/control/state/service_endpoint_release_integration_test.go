@@ -70,7 +70,7 @@ func TestIntegrationServiceEndpointReleasePreservesServiceAndHistoricalClaims(t 
 			}
 			setReleaseProjectExposure(t, d, &r, &applied, false)
 			publisher := serviceReleasePublisher(t, d, r, now)
-			prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "before-release", now, service.ServiceMetadata)
+			prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "before-release", now, ServiceRunRequest{Metadata: service.ServiceMetadata})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -104,7 +104,7 @@ func TestIntegrationServiceEndpointReleasePreservesServiceAndHistoricalClaims(t 
 			if err := d.CloseServiceRun(ctx, run.ServiceID, run.RunID, run.Token, now); err != nil {
 				t.Fatal(err)
 			}
-			private, err := d.PrepareServiceRun(ctx, service.ID, publisher, "after-release", now, released.ServiceMetadata)
+			private, err := d.PrepareServiceRun(ctx, service.ID, publisher, "after-release", now, ServiceRunRequest{Metadata: released.ServiceMetadata})
 			if err != nil || private.Hostname != prepared.Hostname || private.RunNumber <= prepared.RunNumber {
 				t.Fatal("release revoked the publisher grant or zero-port binding", private, err)
 			}
@@ -216,7 +216,7 @@ func TestIntegrationServiceEndpointReleaseQuarantineTracksLateIssuance(t *testin
 	setReleaseProjectExposure(t, d, &r, &applied, false)
 	ctx := t.Context()
 	publisher := serviceReleasePublisher(t, d, r, now)
-	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "release-issuance", now, service.ServiceMetadata)
+	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "release-issuance", now, ServiceRunRequest{Metadata: service.ServiceMetadata})
 	if err != nil {
 		t.Fatal(err)
 	}

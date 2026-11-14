@@ -77,7 +77,7 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 		}
 		leases[id] = lease
 	}
-	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "connector-pair", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "connector-pair", now, controlstate.ServiceRunRequest{Metadata: controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +317,7 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherPrepared, err := d.PrepareServiceRun(ctx, otherService.ID, otherPublisher, "other-connector-pair", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	otherPrepared, err := d.PrepareServiceRun(ctx, otherService.ID, otherPublisher, "other-connector-pair", now, controlstate.ServiceRunRequest{Metadata: controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}

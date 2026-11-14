@@ -192,7 +192,7 @@ func (d *Database) createPublishRun(
 	if err != nil {
 		return result, err
 	}
-	request.RequestDigest, err = publishRunTrafficDigest(request.RequestDigest, request.TrafficSelection)
+	request.RequestDigest, err = runTrafficDigest(request.RequestDigest, request.TrafficSelection)
 	if err != nil {
 		return result, err
 	}
@@ -322,7 +322,7 @@ func (d *Database) createPublishRun(
 	if err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: protect publish run digest: %w", err)
 	}
-	traffic, err := resolvePublishRunTraffic(request)
+	traffic, err := resolveRunTraffic(request.TrafficSelection, request.TrafficDefaults, request.TrafficCeiling)
 	if err != nil {
 		return PublishRunSetup{}, err
 	}
@@ -569,7 +569,7 @@ func publishRunSetup(
 		PolicyRevision: uint64(session.PolicyRevision), PublishRunToken: token, State: PublishRunState(session.State),
 		CreatedAt: session.CreatedAt.Time, ExpiresAt: session.PublisherExpiresAt.Time,
 	}
-	traffic, err := decodePublishRunTraffic(session.TrafficLimits)
+	traffic, err := decodeRunTraffic(session.TrafficLimits)
 	if err != nil {
 		return PublishRunSetup{}, err
 	}

@@ -41,24 +41,24 @@ func privateAssignmentState(s string) (PublisherConnectionState, error) {
 	}
 }
 
-type serviceRunBinding struct {
-	serviceID, runID string
-	number           int64
+type ServiceRunReference struct {
+	ServiceID, RunID string
+	RunNumber        int64
 }
 
-func checkedServiceRunBinding(serviceID, runID string, number int64) (serviceRunBinding, error) {
+func checkedServiceRunBinding(serviceID, runID string, number int64) (ServiceRunReference, error) {
 	if !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) || !opaqueid.Valid(runID, opaqueid.ServiceRunPrefix) || number < 1 {
-		return serviceRunBinding{}, ErrServiceAccess
+		return ServiceRunReference{}, ErrServiceAccess
 	}
-	return serviceRunBinding{serviceID: serviceID, runID: runID, number: number}, nil
+	return ServiceRunReference{ServiceID: serviceID, RunID: runID, RunNumber: number}, nil
 }
 
-func (b serviceRunBinding) matches(run controlstatedb.ControlServiceRun) bool {
-	return b.serviceID == run.ServiceID && b.runID == run.ID && b.number == run.RunNumber
+func (b ServiceRunReference) matches(run controlstatedb.ControlServiceRun) bool {
+	return b.ServiceID == run.ServiceID && b.RunID == run.ID && b.RunNumber == run.RunNumber
 }
 
 type privateAssignmentBinding struct {
-	serviceRunBinding
+	ServiceRunReference
 	connectionID string
 	revision     int64
 }
@@ -68,11 +68,11 @@ func checkedPrivateAssignmentBinding(serviceID, runID, connectionID string, numb
 	if err != nil || !opaqueid.Valid(connectionID, opaqueid.PublisherConnectionPrefix) || revision < 1 {
 		return privateAssignmentBinding{}, ErrServiceAccess
 	}
-	return privateAssignmentBinding{serviceRunBinding: run, connectionID: connectionID, revision: revision}, nil
+	return privateAssignmentBinding{ServiceRunReference: run, connectionID: connectionID, revision: revision}, nil
 }
 
 func (b privateAssignmentBinding) matches(slot controlstatedb.ControlServiceConnectionSlot) bool {
-	return b.serviceID == slot.ServiceID && b.runID == slot.ServiceRunID && b.number == slot.RunNumber &&
+	return b.ServiceID == slot.ServiceID && b.RunID == slot.ServiceRunID && b.RunNumber == slot.RunNumber &&
 		b.connectionID == slot.PublisherConnectionID && b.revision == slot.ConnectionAssignmentRevision
 }
 

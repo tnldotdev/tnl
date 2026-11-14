@@ -174,6 +174,40 @@ func (q *Queries) CloseServiceRun(ctx context.Context, arg CloseServiceRunParams
 	return result.RowsAffected(), nil
 }
 
+const closedServiceRuns = `-- name: ClosedServiceRuns :many
+SELECT run.service_id,run.id,run.run_number
+FROM control.service_runs run
+WHERE run.id=ANY($1::text[])
+    AND run.state='closed' AND run.closed_at IS NOT NULL ORDER BY run.id
+`
+
+type ClosedServiceRunsRow struct {
+	ServiceID string
+	ID        string
+	RunNumber int64
+}
+
+// only an exact stored terminal tuple proves a finite traffic budget can retire.
+func (q *Queries) ClosedServiceRuns(ctx context.Context, runIds []string) ([]ClosedServiceRunsRow, error) {
+	rows, err := q.db.Query(ctx, closedServiceRuns, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClosedServiceRunsRow
+	for rows.Next() {
+		var i ClosedServiceRunsRow
+		if err := rows.Scan(&i.ServiceID, &i.ID, &i.RunNumber); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteService = `-- name: DeleteService :one
 UPDATE control.services SET enabled = false, deleted_at = $1, updated_at = $1
 WHERE id = $2 AND team_id = $3 AND deleted_at IS NULL RETURNING id, team_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, trust_revision, endpoint_revision, visitor_revision, publisher_pool, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at
@@ -1159,7 +1193,7 @@ func (q *Queries) LockService(ctx context.Context, id string) (ControlService, e
 }
 
 const lockServiceRun = `-- name: LockServiceRun :one
-SELECT preferred_regions, id, service_id, team_id, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, ready_at, closed_at, assignments_open FROM control.service_runs
+SELECT preferred_regions, traffic_limits, id, service_id, team_id, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, ready_at, closed_at, assignments_open FROM control.service_runs
 WHERE id = $1 AND service_id = $2 FOR UPDATE
 `
 
@@ -1173,6 +1207,7 @@ func (q *Queries) LockServiceRun(ctx context.Context, arg LockServiceRunParams) 
 	var i ControlServiceRun
 	err := row.Scan(
 		&i.PreferredRegions,
+		&i.TrafficLimits,
 		&i.ID,
 		&i.ServiceID,
 		&i.TeamID,
@@ -1208,19 +1243,20 @@ func (q *Queries) LockServiceRun(ctx context.Context, arg LockServiceRunParams) 
 }
 
 const prepareServiceRun = `-- name: PrepareServiceRun :one
-INSERT INTO control.service_runs(preferred_regions, id, service_id, team_id, run_number,
+INSERT INTO control.service_runs(preferred_regions, traffic_limits, id, service_id, team_id, run_number,
     publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key,
     request_digest, preparation_expires_at, assignment_seed_ciphertext,
     assignment_seed_storage_key_id, certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,certificate_hostname,state, created_at, publisher_expires_at)
-VALUES ($1, $2, $3, $4, $5,
-    $6, $7, $8,
-    $9, $10,
-    $11, $12,
-    $13,$14,$15,$16,$17,$18, 'prepared', $19, $20) RETURNING preferred_regions, id, service_id, team_id, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, ready_at, closed_at, assignments_open
+VALUES ($1, convert_from($2::bytea,'UTF8')::jsonb, $3, $4, $5, $6,
+    $7, $8, $9,
+    $10, $11,
+    $12, $13,
+    $14,$15,$16,$17,$18,$19, 'prepared', $20, $21) RETURNING preferred_regions, traffic_limits, id, service_id, team_id, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, ready_at, closed_at, assignments_open
 `
 
 type PrepareServiceRunParams struct {
 	PreferredRegions           []string
+	TrafficLimits              []byte
 	ID                         string
 	ServiceID                  string
 	TeamID                     string
@@ -1248,6 +1284,7 @@ type PrepareServiceRunParams struct {
 func (q *Queries) PrepareServiceRun(ctx context.Context, arg PrepareServiceRunParams) (ControlServiceRun, error) {
 	row := q.db.QueryRow(ctx, prepareServiceRun,
 		arg.PreferredRegions,
+		arg.TrafficLimits,
 		arg.ID,
 		arg.ServiceID,
 		arg.TeamID,
@@ -1271,6 +1308,7 @@ func (q *Queries) PrepareServiceRun(ctx context.Context, arg PrepareServiceRunPa
 	var i ControlServiceRun
 	err := row.Scan(
 		&i.PreferredRegions,
+		&i.TrafficLimits,
 		&i.ID,
 		&i.ServiceID,
 		&i.TeamID,
@@ -1366,7 +1404,7 @@ WHERE run.id = $2 AND run.run_number = $3
         WHERE slot.service_run_id = run.id AND slot.state = 'ready' AND slot.session_open
         GROUP BY slot.service_run_id
         HAVING count(*) >= CASE WHEN run.ready_at IS NULL THEN 2 ELSE 1 END)
-RETURNING run.preferred_regions, run.id, run.service_id, run.team_id, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.preparation_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.started_at, run.state, run.healthy, run.stream_capacity, run.reported_streams, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_domain_id, run.certificate_hostname, run.certificate_issuance_id, run.certificate_expires_at, run.created_at, run.publisher_expires_at, run.ready_at, run.closed_at, run.assignments_open
+RETURNING run.preferred_regions, run.traffic_limits, run.id, run.service_id, run.team_id, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.preparation_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.started_at, run.state, run.healthy, run.stream_capacity, run.reported_streams, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_domain_id, run.certificate_hostname, run.certificate_issuance_id, run.certificate_expires_at, run.created_at, run.publisher_expires_at, run.ready_at, run.closed_at, run.assignments_open
 `
 
 type ReadyServiceRunParams struct {
@@ -1386,6 +1424,7 @@ func (q *Queries) ReadyServiceRun(ctx context.Context, arg ReadyServiceRunParams
 	var i ControlServiceRun
 	err := row.Scan(
 		&i.PreferredRegions,
+		&i.TrafficLimits,
 		&i.ID,
 		&i.ServiceID,
 		&i.TeamID,
@@ -1435,7 +1474,7 @@ WHERE run.id = $2 AND run.run_number = $3
     AND publisher.id = run.publisher_identity_id AND publisher.team_id = service.team_id
     AND publisher.revoked_at IS NULL
     AND control.active_publisher(publisher.id,$6)
-RETURNING run.preferred_regions, run.id, run.service_id, run.team_id, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.preparation_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.started_at, run.state, run.healthy, run.stream_capacity, run.reported_streams, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_domain_id, run.certificate_hostname, run.certificate_issuance_id, run.certificate_expires_at, run.created_at, run.publisher_expires_at, run.ready_at, run.closed_at, run.assignments_open
+RETURNING run.preferred_regions, run.traffic_limits, run.id, run.service_id, run.team_id, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.preparation_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.started_at, run.state, run.healthy, run.stream_capacity, run.reported_streams, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_domain_id, run.certificate_hostname, run.certificate_issuance_id, run.certificate_expires_at, run.created_at, run.publisher_expires_at, run.ready_at, run.closed_at, run.assignments_open
 `
 
 type RenewServiceRunParams struct {
@@ -1459,6 +1498,7 @@ func (q *Queries) RenewServiceRun(ctx context.Context, arg RenewServiceRunParams
 	var i ControlServiceRun
 	err := row.Scan(
 		&i.PreferredRegions,
+		&i.TrafficLimits,
 		&i.ID,
 		&i.ServiceID,
 		&i.TeamID,

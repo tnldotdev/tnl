@@ -1,4 +1,17 @@
 schemas:
+  AuthorizeServiceHTTPVisitorRequest:
+    type: object
+    additionalProperties: false
+    required: [run_number, visitor_connection_id, source_ip, destination_port]
+    properties:
+      run_number:
+        type: string
+        pattern: "^[0-9]+$"
+        x-go-type: int64
+        x-oapi-codegen-extra-tags: { json: "run_number,string" }
+      visitor_connection_id: { type: string, pattern: "^vc_[A-Za-z0-9]{22}$" }
+      source_ip: { type: string, maxLength: 45 }
+      destination_port: { type: integer, enum: [443] }
   ReleaseServiceEndpointRequest:
     type: object
     additionalProperties: false
@@ -128,6 +141,8 @@ schemas:
     properties:
       preferred_regions:
         $ref: "./common.yaml#/schemas/PreferredRegions"
+      traffic:
+        $ref: "../openapi.yaml#/components/schemas/TrafficSelection"
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }
       trust_revision:
@@ -331,6 +346,7 @@ schemas:
         expires_at,
         hostname,
         domain_id,
+        traffic,
       ]
     properties:
       team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
@@ -351,6 +367,7 @@ schemas:
       certificate_plan: { $ref: "../openapi.yaml#/components/schemas/CertificatePlan" }
       hostname: { type: string, minLength: 1, maxLength: 253 }
       domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
+      traffic: { $ref: "../openapi.yaml#/components/schemas/TrafficLimits" }
   ServiceRunSetup:
     type: object
     additionalProperties: false

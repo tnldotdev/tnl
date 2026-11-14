@@ -253,7 +253,7 @@ schemas:
   TrafficSelection:
     type: object
     additionalProperties: false
-    description: Explicit encrypted visitor traffic limits, resolved once against operator defaults and ceilings when the publish run is created. Omitted values use operator defaults. Zero totals mean unlimited.
+    description: Explicit encrypted public endpoint traffic limits, resolved once against operator defaults and ceilings when the service run is prepared. Omitted values use operator defaults. Zero totals mean unlimited.
     properties:
       connections:
         type: integer
@@ -296,6 +296,51 @@ schemas:
         type: integer
         format: int64
         minimum: 0
+  TrafficLimits:
+    type: object
+    additionalProperties: false
+    description: Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
+    required: [connections, rate, rate_per_ns, burst, upload_bytes, download_bytes]
+    properties:
+      connections:
+        type: integer
+        minimum: 1
+        maximum: 1048576
+      rate:
+        type: integer
+        minimum: 1
+        maximum: 2147483648
+      rate_per_ns:
+        type: integer
+        format: int64
+        minimum: 1000000
+        maximum: 86400000000000
+      burst:
+        type: integer
+        minimum: 1
+        maximum: 2147483648
+      upload_bytes:
+        type: integer
+        format: int64
+        minimum: 65536
+        maximum: 1099511627776
+      download_bytes:
+        type: integer
+        format: int64
+        minimum: 65536
+        maximum: 1099511627776
+      total_connections:
+        type: integer
+        format: int64
+        minimum: 1
+      total_upload_bytes:
+        type: integer
+        format: int64
+        minimum: 1
+      total_download_bytes:
+        type: integer
+        format: int64
+        minimum: 1
   ConnectionAssignment:
     type: object
     additionalProperties: false

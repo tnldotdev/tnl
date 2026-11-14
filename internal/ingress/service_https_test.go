@@ -44,7 +44,7 @@ func (c *httpsServiceControl) AdmitPublicServiceVisitor(_ context.Context, ingre
 		return ingressv1.PublicServiceVisitorAdmission{}, ErrServiceAdmission
 	}
 	return ingressv1.PublicServiceVisitorAdmission{
-		ServiceId: service.service, ServiceRunId: service.run, RunNumber: 1,
+		ServiceId: service.service, ServiceRunId: service.run, RunNumber: 1, Traffic: c.traffic, Anonymous: c.anonymous,
 		VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: time.Now().Add(time.Minute), ConnectedRelays: c.relays,
 	}, nil
 }
@@ -96,7 +96,7 @@ func (f *httpsServiceForwarder) OpenPrivate(_ context.Context, _ ingressv1.Servi
 }
 
 func TestServiceHTTPSRoutesTwoHostnamesOnShared443(t *testing.T) {
-	p, base, _, _ := publicServiceTestSetup(t)
+	p, base, _, _ := publicServiceTestSetup(t, true)
 	control := &httpsServiceControl{publicServiceControlFixture: base, services: make(map[string]httpsService), claims: make(chan ingressv1.PublicServiceVisitorClaim, 8)}
 	targets := &httpsServiceForwarder{ctx: t.Context(), services: make(map[string]httpsService), observed: make(chan httpsServiceObservation, 8)}
 	roots := x509.NewCertPool()

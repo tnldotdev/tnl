@@ -8,7 +8,10 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync/atomic"
+	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
@@ -29,6 +32,7 @@ type HTTPControl interface {
 	httpaccess.PolicyClient
 	httpaccess.TokenClient
 	ControlURL() string
+	AuthorizeServiceHTTPVisitor(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error)
 	RedeemServiceBrowserHandoff(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) (controlv1.BrowserHandoffResponse, error)
 	CheckServiceBrowserSession(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) (controlv1.BrowserAccessResponse, error)
 	RevokeServiceBrowserSession(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) error
@@ -81,7 +85,7 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
 
 func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestream.HTTPTarget) error {
 	h := f.Header
-	if f.Policy == nil || f.ReadinessProof != nil && f.probes == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || h.PublicService == nil || h.ServiceID != f.Subject.ID || h.ServiceRunID != f.RunID || h.RunNumber != uint64(f.Number) || h.PublicService.DestinationPort != f.Port || f.Port != 443 || h.Validate() != nil {
+	if f.Control == nil || f.Policy == nil || f.ReadinessProof != nil && f.probes == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || h.PublicService == nil || h.ServiceID != f.Subject.ID || h.ServiceRunID != f.RunID || h.RunNumber != uint64(f.Number) || h.PublicService.DestinationPort != f.Port || f.Port != 443 || h.Validate() != nil {
 		return servicestream.ErrEndpoint
 	}
 	source, err := netip.ParseAddr(h.SourceIP)
@@ -95,6 +99,29 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 	scheme := "http"
 	if target.Transport.TLS != nil {
 		scheme = "https"
+	}
+	// ingress admission belongs to this exact visitor connection. each HTTP
+	// request still needs its own local permission and policy guard.
+	var admitted atomic.Bool
+	admit := func(ctx context.Context) error {
+		if admitted.Load() {
+			return ctx.Err()
+		}
+		ctx, cancel := context.WithDeadline(ctx, h.ExpiresAt)
+		defer cancel()
+		result, err := awaitServiceVisitorAdmission(ctx, func(ctx context.Context) (controlv1.ServiceClientCertificateDecision, error) {
+			return f.Control.AuthorizeServiceHTTPVisitor(ctx, f.Subject.ID, f.RunID, f.Token, controlv1.AuthorizeServiceHTTPVisitorRequest{
+				RunNumber: f.Number, VisitorConnectionId: h.VisitorConnectionID, SourceIp: source.Unmap().String(), DestinationPort: 443,
+			})
+		})
+		if err != nil {
+			return err
+		}
+		if !result.Allowed || !result.Admitted {
+			return servicestream.ErrEndpoint
+		}
+		admitted.Store(true)
+		return ctx.Err()
 	}
 	wrap := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -163,6 +190,14 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 					return
 				}
 				defer release()
+				if err := admit(r.Context()); err != nil {
+					servicestream.DenyHTTP(w, http.StatusServiceUnavailable)
+					return
+				}
+				if _, enabled, _ := f.Policy.Current(); !enabled {
+					servicestream.DenyHTTP(w, http.StatusServiceUnavailable)
+					return
+				}
 				r = serviceApplicationRequest(r)
 				next.ServeHTTP(w, r)
 				return
@@ -188,6 +223,11 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 				return
 			}
 			defer release()
+			if err := admit(r.Context()); err != nil {
+				outcome, reason = "failed", "unavailable"
+				servicestream.DenyHTTP(w, http.StatusServiceUnavailable)
+				return
+			}
 			r = serviceApplicationRequest(r)
 			// report the decision before an upgrade or long-lived response.
 			outcome, reason = "allowed", ""
@@ -199,6 +239,34 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 		return httpstream.ServeHandler(ctx, client, wrap(target.Handler))
 	}
 	return httpstream.Serve(ctx, client, &url.URL{Scheme: scheme, Host: target.Address}, target.Dial, wrap)
+}
+
+// awaitServiceVisitorAdmission uses the same ingress acknowledgment for HTTP and
+// certificate visitors. permission alone never allows target bytes.
+func awaitServiceVisitorAdmission(ctx context.Context, authorize func(context.Context) (controlv1.ServiceClientCertificateDecision, error)) (controlv1.ServiceClientCertificateDecision, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return controlv1.ServiceClientCertificateDecision{}, context.Cause(ctx)
+		}
+		result, err := authorize(ctx)
+		if err != nil || !result.Allowed {
+			return result, err
+		}
+		if !result.ValidUntil.After(time.Now()) {
+			return controlv1.ServiceClientCertificateDecision{}, servicestream.ErrEndpoint
+		}
+		if result.Admitted {
+			return result, ctx.Err()
+		}
+		observability.PublisherAuthorization(ctx, true, false, nil)
+		timer := time.NewTimer(25 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return controlv1.ServiceClientCertificateDecision{}, context.Cause(ctx)
+		case <-timer.C:
+		}
+	}
 }
 
 func serviceApplicationRequest(r *http.Request) *http.Request {
