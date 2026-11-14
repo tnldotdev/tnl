@@ -183,11 +183,15 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 			}
 			return false, fmt.Errorf("app publication is not ready: tunnels=%+v services=%+v", snapshot.Tunnels, app.Services)
 		})
-		if tunnel.PublicURL != assigned.PublicURL || tunnel.Target != app.URL || tunnel.PublishRunNumber != uint64(index) {
+		if tunnel.PublicURL == "" || assigned.PublicURL != "" && tunnel.PublicURL != assigned.PublicURL || tunnel.Target != app.URL || tunnel.PublishRunNumber != uint64(index) {
 			t.Fatalf("app-led tunnel = %+v; assignment = %+v", tunnel, assigned)
 		}
+		snapshot, err := publisherapp.ReadSnapshot(project, fixture.stateDirectory)
+		if err != nil || len(snapshot.Services) != 1 || snapshot.Services[0].PublicURL != tunnel.PublicURL {
+			t.Fatal("app snapshot lost the allocated public URL", err)
+		}
 		waitForIntegrationCondition(t, 20*time.Second, func(ctx context.Context) (bool, error) {
-			response, body, err := visitor.requestURLContext(ctx, http.MethodGet, assigned.PublicURL+"/", nil)
+			response, body, err := visitor.requestURLContext(ctx, http.MethodGet, tunnel.PublicURL+"/", nil)
 			return err == nil && response.StatusCode == http.StatusOK && response.Header.Get("X-Tnl-Fixture") == "app-led" && strings.Contains(string(body), "app-led visitor"), err
 		})
 		runIntegrationBinaryCommand(t, project, fixture.environment, fixture.tnlPath,

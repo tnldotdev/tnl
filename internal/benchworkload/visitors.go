@@ -19,8 +19,10 @@ import (
 const RequestTimeout = 5 * time.Second
 
 type Visitor struct {
-	Roots         *x509.CertPool
-	Address       string
+	Roots   *x509.CertPool
+	Address string
+	// replace only the network hostname, retaining the origin port.
+	DialHost      string
 	Resolver      *net.Resolver
 	Network       string
 	SourceAddress *net.TCPAddr
@@ -43,6 +45,12 @@ func (v Visitor) httpClient(disableKeepAlives bool) (*http.Client, *http.Transpo
 		}
 		if v.Address != "" {
 			address = v.Address
+		} else if v.DialHost != "" {
+			_, port, err := net.SplitHostPort(address)
+			if err != nil {
+				return nil, err
+			}
+			address = net.JoinHostPort(v.DialHost, port)
 		}
 		return dialer.DialContext(ctx, network, address)
 	}

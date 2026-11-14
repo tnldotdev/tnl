@@ -128,6 +128,39 @@ func TestVisitorBindsConfiguredIPv4Source(t *testing.T) {
 	}
 }
 
+func TestVisitorDialHostRetainsOriginPortAndTLSIdentity(t *testing.T) {
+	server := httptest.NewTLSServer(Origin(32))
+	defer server.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	// the test certificate covers example.com, but its network destination is
+	// loopback. preserving the allocated port must not replace Host or TLS SNI.
+	_, port, err := net.SplitHostPort(server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := "https://example.com:" + port
+	visitor := Visitor{Roots: roots, DialHost: "127.0.0.1", PayloadBytes: 32}
+	if row := visitor.Request(t.Context(), origin, time.Now()); row.Error != "" || row.Bytes != 32 {
+		t.Fatalf("origin-port request failed: %+v", row)
+	}
+	stream, err := visitor.Hold(t.Context(), origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if row := visitor.Request(t.Context(), "https://wrong.example:"+port, time.Now()); row.Error == "" {
+		t.Fatal("dial override replaced the authenticated origin hostname")
+	}
+	visitor.Address = server.Listener.Addr().String()
+	visitor.DialHost = "unreachable.invalid"
+	if row := visitor.Request(t.Context(), "https://example.com:20000", time.Now()); row.Error != "" {
+		t.Fatalf("explicit direct frontend address lost precedence: %+v", row)
+	}
+}
+
 func TestBandwidthPacesAndVerifiesBothDirections(t *testing.T) {
 	server := httptest.NewTLSServer(Origin(1))
 	defer server.Close()
