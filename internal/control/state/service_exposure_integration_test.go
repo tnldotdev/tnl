@@ -48,7 +48,7 @@ func TestIntegrationPerServiceExposureKeepsPrivateRunsAndCapacity(t *testing.T) 
 			t.Fatal("control reachability leaked into publisher lifecycle settings")
 		}
 		access := deploymentAssignmentAccess(t, d, replica, assignment, now)
-		prepared, err := d.PrepareServiceRun(ctx, assignment.ServiceID, access.PublisherIdentity, "mixed-"+assignment.Service, now, ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision})
+		prepared, err := d.PrepareServiceRun(ctx, assignment.ServiceID, access.PublisherIdentity, "mixed-"+assignment.Service, now, ServiceRunRequest{Metadata: ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}})
 		if err != nil {
 			t.Fatal(err)
 		}

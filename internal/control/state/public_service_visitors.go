@@ -11,6 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 )
 
 type PublicServiceVisitorAdmission struct {
@@ -18,6 +19,8 @@ type PublicServiceVisitorAdmission struct {
 	RunNumber                      int64
 	ExpiresAt                      time.Time
 	Relays                         []ServiceRelay
+	Traffic                        trafficlimits.Limits
+	Anonymous                      bool
 }
 
 // AdmitPublicServiceVisitor reserves bounded pre-authentication capacity. HTTP
@@ -60,9 +63,11 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 	// reject disallowed HTTP sources before opening TLS or reserving pending
 	// capacity. the publisher still enforces the current policy on each request.
 	if service.Protocol == "http" {
-		if err = d.serviceHTTPSourceAllowed(ctx, q, service.ID, source); err != nil {
+		mode, err := d.serviceHTTPSourcePolicy(ctx, q, service.ID, source)
+		if err != nil {
 			return result, err
 		}
+		result.Anonymous = mode == VisitorAccessAnonymous
 	}
 	current, err := lockCurrentIngressLease(ctx, q, lease, now)
 	if err != nil || current.Draining {
@@ -93,14 +98,19 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 	// retries retain their original setup bound but still need the current run
 	// and certificate. a saved pending row cannot revive expired serving state.
 	var runUntil time.Time
-	err = tx.QueryRow(ctx, `SELECT LEAST(run.publisher_expires_at,run.certificate_expires_at,g.expires_at)
+	var traffic []byte
+	err = tx.QueryRow(ctx, `SELECT LEAST(run.publisher_expires_at,run.certificate_expires_at,g.expires_at),run.traffic_limits
 	    FROM control.service_runs run JOIN control.publisher_grants g ON g.id=run.publisher_grant_id
 	    JOIN control.publisher_identities publisher ON publisher.id=run.publisher_identity_id
 	    WHERE run.id=$1 AND run.service_id=$2 AND run.run_number=$3 AND run.state='ready' AND run.healthy
 	    AND run.closed_at IS NULL AND run.publisher_expires_at>$4 AND run.certificate_expires_at>$4
-	    AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$4) AND publisher.revoked_at IS NULL`, result.RunID, result.ServiceID, result.RunNumber, now).Scan(&runUntil)
+	    AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$4) AND publisher.revoked_at IS NULL`, result.RunID, result.ServiceID, result.RunNumber, now).Scan(&runUntil, &traffic)
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
+	}
+	result.Traffic, err = decodeRunTraffic(traffic)
+	if err != nil {
+		return result, err
 	}
 	result.ExpiresAt = minTime(result.ExpiresAt, runUntil)
 	if !existing {
@@ -172,11 +182,20 @@ func (d *Database) PublicServiceVisitorStatus(ctx context.Context, lease Ingress
 		return result, err
 	}
 	if protocol == "http" {
-		// HTTP permission terminates at the publisher. this transport lease only
-		// retains the selected run and ingress capacity; it grants no app access.
+		if _, err := d.serviceHTTPSourcePolicy(ctx, q, service, source); err != nil {
+			if errors.Is(err, ErrServiceAccess) {
+				return PublicServiceVisitorStatus{State: PublicServiceVisitorDenied, ValidUntil: now}, nil
+			}
+			return result, err
+		}
 		transport, err := q.ServiceHTTPTransportBinding(ctx, controlstatedb.ServiceHTTPTransportBindingParams{ServiceID: service, ServiceRunID: run, RunNumber: number, VisitorConnectionID: visitor, SourceIp: source, DestinationPort: binding.DestinationPort, Now: timestamptz(now)})
 		if err != nil {
 			return result, publisherLookupError(err, ErrServiceAccess)
+		}
+		if !transport.Authorized {
+			// TLS and browser preparation retain the original pending deadline.
+			result.State = PublicServiceVisitorPending
+			return result, tx.Commit(ctx)
 		}
 		result.ValidUntil = transport.ValidUntil.Time
 		if !result.ValidUntil.After(now) {
@@ -190,7 +209,7 @@ func (d *Database) PublicServiceVisitorStatus(ctx context.Context, lease Ingress
 			result.State = PublicServiceVisitorAllowed
 		}
 	} else if binding.WorkloadSessionID.Valid {
-		if err := d.serviceHTTPSourceAllowed(ctx, q, service, source); err != nil {
+		if _, err := d.serviceHTTPSourcePolicy(ctx, q, service, source); err != nil {
 			return result, err
 		}
 		validity, err := recheckWorkloadPublicServiceVisitor(ctx, tx, service, run, number, visitor, binding.WorkloadSessionID.String, source, nil, now)
@@ -213,7 +232,7 @@ func (d *Database) PublicServiceVisitorStatus(ctx context.Context, lease Ingress
 			result.State = PublicServiceVisitorPending
 		}
 	} else {
-		if err := d.serviceHTTPSourceAllowed(ctx, q, service, source); err != nil {
+		if _, err := d.serviceHTTPSourcePolicy(ctx, q, service, source); err != nil {
 			if errors.Is(err, ErrServiceAccess) {
 				return PublicServiceVisitorStatus{State: PublicServiceVisitorDenied, ValidUntil: now}, nil
 			}
@@ -241,7 +260,8 @@ func (d *Database) PromotePublicServiceVisitor(ctx context.Context, lease Ingres
 	var id string
 	err := d.pool.QueryRow(ctx, `UPDATE control.public_service_visitors v SET promoted_at=COALESCE(v.promoted_at,$5)
 	    FROM control.services service,control.ingress_leases ingress
-	    WHERE v.visitor_connection_id=$1 AND v.ingress_id=$2 AND v.ingress_run_id=$3 AND v.ingress_lease_revision=$4 AND v.closed_at IS NULL AND v.valid_until>$5 AND (v.identity_id IS NOT NULL OR v.workload_session_id IS NOT NULL OR service.protocol='http')
+	    WHERE v.visitor_connection_id=$1 AND v.ingress_id=$2 AND v.ingress_run_id=$3 AND v.ingress_lease_revision=$4 AND v.closed_at IS NULL AND v.valid_until>$5
+	    AND ((service.protocol='http' AND v.authorized_at IS NOT NULL) OR (service.protocol<>'http' AND (v.identity_id IS NOT NULL OR v.workload_session_id IS NOT NULL)))
 	    AND service.id=v.service_id AND service.public AND service.enabled AND service.deleted_at IS NULL
 	    AND ingress.ingress_id=v.ingress_id AND ingress.ingress_run_id=v.ingress_run_id AND ingress.ingress_lease_revision=v.ingress_lease_revision AND ingress.lease_expires_at>$5
 	    RETURNING v.visitor_connection_id`, visitor, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now).Scan(&id)

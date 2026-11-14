@@ -129,11 +129,11 @@ func TestIntegrationProviderRegionServiceRun(t *testing.T) {
 	access := deploymentAssignmentAccess(t, d, replica, assignment, now)
 	metadata := ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}
 	preferences := []string{"fly:sjc", "aws:us-west-1"}
-	prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "regional", now, metadata, preferences...)
+	prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "regional", now, ServiceRunRequest{Metadata: metadata, PreferredRegions: preferences})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "regional", now, metadata, "aws:us-west-1"); !errors.Is(err, ErrServiceConflict) {
+	if _, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "regional", now, ServiceRunRequest{Metadata: metadata, PreferredRegions: []string{"aws:us-west-1"}}); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("preparation retry changed preferences", err)
 	}
 	run, err := d.StartServiceRun(t.Context(), assignment.ServiceID, prep.RunID, prep.RunNumber, access.PublisherIdentity, now)

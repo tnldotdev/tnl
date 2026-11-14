@@ -121,7 +121,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 		}
 		leases[id] = lease
 	}
-	prep, err := d.PrepareServiceRun(ctx, service.ID, publisher, "claims", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	prep, err := d.PrepareServiceRun(ctx, service.ID, publisher, "claims", now, controlstate.ServiceRunRequest{Metadata: controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}

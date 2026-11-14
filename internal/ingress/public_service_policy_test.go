@@ -12,9 +12,7 @@ func publicServiceWaitAuthorized(t *testing.T, p *PublicServices) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		p.mu.Lock()
-		active := p.active
-		p.mu.Unlock()
+		_, active := publicServiceAdmissionCounts(p)
 		if active == 1 {
 			return
 		}
@@ -156,7 +154,7 @@ func TestPublicServiceLiveVisitorCloseJoinsBlockedRecheckAndCopy(t *testing.T) {
 	}
 	_ = p.Close()
 	stop()
-	if c.recheckActive.Load() != 0 || p.Load() != 0 || p.pending != 0 || p.active != 0 {
+	if c.recheckActive.Load() != 0 || p.Load() != 0 || !publicServiceCapacityReleased(p) {
 		t.Fatal("close did not join policy and release capacity")
 	}
 	select {

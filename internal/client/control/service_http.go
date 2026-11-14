@@ -8,6 +8,12 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
+func (c *Client) AuthorizeServiceHTTPVisitor(ctx context.Context, service, run string, token credentials.ServiceRunToken, input controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+	return request[controlv1.ServiceClientCertificateDecision](ctx, c, token.String(), func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.AuthorizeServiceHTTPVisitor(ctx, service, run, input, e...)
+	})
+}
+
 func (c *Client) RedeemServiceBrowserHandoff(ctx context.Context, service, run string, token credentials.ServiceRunToken, input controlv1.ServiceBrowserRequest) (controlv1.BrowserHandoffResponse, error) {
 	return request[controlv1.BrowserHandoffResponse](ctx, c, token.String(), func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.RedeemServiceBrowserHandoff(ctx, service, run, input, e...)

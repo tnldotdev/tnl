@@ -26,7 +26,7 @@ func TestIntegrationServicePortHistoryBaselinePreservesAuthority(t *testing.T) {
 	old := replica.assignments.Services[1]
 	access := deploymentAssignmentAccess(t, d, replica, old, now)
 	if _, err := d.PrepareServiceRun(ctx, old.ServiceID, access.PublisherIdentity, "before-retirement", now,
-		ServiceMetadata{Protocol: old.Configuration.Protocol, TrustRevision: old.TrustRevision}); err != nil {
+		ServiceRunRequest{Metadata: ServiceMetadata{Protocol: old.Configuration.Protocol, TrustRevision: old.TrustRevision}}); err != nil {
 		t.Fatal(err)
 	}
 	r.ExpectedRevision = applied.Revision
@@ -61,8 +61,8 @@ func TestIntegrationServicePortHistoryBaselinePreservesAuthority(t *testing.T) {
 		}
 	}
 	var held, quarantined int
-	if err := d.pool.QueryRow(ctx, `SELECT count(*) FILTER(WHERE state='held' AND retired_run_number IS NULL),
-	    count(*) FILTER(WHERE state='quarantined' AND retired_run_number=1 AND dns_cleared_at IS NULL)
+	if err := d.pool.QueryRow(ctx, `SELECT count(*) FILTER(WHERE state='held' AND retired_issuance_revision IS NULL),
+	    count(*) FILTER(WHERE state='quarantined' AND retired_issuance_revision=0 AND dns_cleared_at IS NULL)
 	    FROM control.service_port_claims`).Scan(&held, &quarantined); err != nil || held != 1 || quarantined != 1 {
 		t.Fatal("baseline lost the deletion fence", held, quarantined, err)
 	}

@@ -12,6 +12,21 @@ type PublicServiceControl interface {
 	PublicServiceVisitorStatus(context.Context, string, ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error)
 	ClosePublicServiceVisitor(context.Context, string, ingressv1.PublicServiceVisitorLookup) error
 	PromotePublicServiceVisitor(context.Context, string, ingressv1.PublicServiceVisitorLookup) error
+	ClosedServiceRuns(context.Context, string, ingressv1.ServiceRunClosureLookup) (ingressv1.ServiceRunClosures, error)
+}
+
+func (c *HTTPControlClient) ClosedServiceRuns(ctx context.Context, id string, body ingressv1.ServiceRunClosureLookup) (ingressv1.ServiceRunClosures, error) {
+	response, err := c.client.ClosedServiceRunsWithResponse(ctx, id, body)
+	if err != nil {
+		return ingressv1.ServiceRunClosures{}, err
+	}
+	if response == nil {
+		return ingressv1.ServiceRunClosures{}, ingressHTTPProblem(0, nil)
+	}
+	if response.JSON200 == nil {
+		return ingressv1.ServiceRunClosures{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
+	}
+	return *response.JSON200, nil
 }
 
 func (c *HTTPControlClient) AdmitPublicServiceVisitor(ctx context.Context, id string, body ingressv1.PublicServiceVisitorClaim) (ingressv1.PublicServiceVisitorAdmission, error) {

@@ -37,8 +37,7 @@ func TestTrafficTotalsSurviveSameRunTombstoneRecovery(t *testing.T) {
 			t.Fatal(err)
 		}
 		a := trafficFixture(t)
-		a.terminalRuns = table.TerminalTrafficRuns
-		key := trafficKey{url: event.PublicUrlId, id: event.Entry.PublishRunId, run: uint64(event.PublishRunNumber)}
+		key := trafficKey{service: event.PublicUrlId, id: event.Entry.PublishRunId, run: uint64(event.PublishRunNumber)}
 		limits := a.config.Default
 		limits.TotalConnections, limits.TotalUploadBytes, limits.TotalDownloadBytes = 1, 4, 4
 		release, reason := a.acquire(key, limits)
@@ -67,7 +66,7 @@ func TestTrafficTotalsSurviveSameRunTombstoneRecovery(t *testing.T) {
 		if err := table.ApplyPage(2, ingressv1.IngressRoutingTablePage{ThroughRevision: 3, NextRevision: 3, Events: []ingressv1.IngressRoutingTableEvent{recovered}}); err != nil {
 			t.Fatal(err)
 		}
-		if r, reason := a.acquire(key, limits); r != nil || reason != "public_url_connection_total" {
+		if r, reason := a.acquire(key, limits); r != nil || reason != "service_connection_total" {
 			if r != nil {
 				r()
 			}
@@ -176,11 +175,20 @@ func tcpPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
 func TestPendingDirectMySQLServerFirstHalfClose(t *testing.T) {
 	visitor, ingress := tcpPair(t)
 	upstream, mysql := tcpPair(t)
-	pending := &pendingPublicServiceConn{Conn: ingress, ctx: t.Context(), promoted: make(chan struct{})}
-	pending.upload.Store(64 << 10)
-	pending.download.Store(128 << 10)
+	p, c, _, _ := publicServiceTestSetup(t)
+	admission, reason := p.server.admitTrafficVisitor(trafficKey{service: c.service, id: c.run, run: 1}, p.server.config.Traffic.Default, netip.MustParseAddr("192.0.2.4"), true)
+	if admission == nil {
+		t.Fatal(reason)
+	}
+	defer admission.close()
+	pending := &budgetConn{Conn: ingress, beforeWrite: func(size int) error {
+		return admission.beforeWrite(t.Context(), false, size)
+	}}
+	outbound := &budgetConn{Conn: upstream, beforeWrite: func(size int) error {
+		return admission.beforeWrite(t.Context(), true, size)
+	}}
 	done := make(chan error, 1)
-	go func() { _, err := streamcopy.Copy(pending, upstream); done <- err }()
+	go func() { _, err := streamcopy.Copy(pending, outbound); done <- err }()
 	t.Cleanup(func() { _ = ingress.Close(); _ = upstream.Close(); <-done })
 	// a MySQL ERR packet may precede any client byte. its EOF must reach the
 	// visitor immediately, rather than waiting for pending authorization expiry.
@@ -209,21 +217,20 @@ func TestTrafficTerminalRetirementIsBoundedAndExact(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		a := trafficFixture(t)
 		var table RoutingTable
-		a.terminalRuns = table.TerminalTrafficRuns
 		event := trafficRoutingEvent(time.Now(), 1, false)
-		key := trafficKey{url: event.PublicUrlId, id: event.Entry.PublishRunId, run: uint64(event.PublishRunNumber)}
+		key := trafficKey{service: event.PublicUrlId, id: event.Entry.PublishRunId, run: uint64(event.PublishRunNumber)}
 		limits := a.config.Default
 		limits.TotalConnections = 1
 		release, _ := a.acquire(key, limits)
 		defer release()
 		// fill the finite table with unknown runs. no absence or age can make
 		// those totals safe to discard, including after a fresh snapshot.
-		sibling := trafficKey{url: key.url, id: "sibling", run: key.run + 1}
+		sibling := trafficKey{service: key.service, id: "sibling", run: key.run + 1}
 		a.runs[sibling] = &runTraffic{limits: limits}
 		for n := 2; n < maxTrafficKeys; n++ {
-			a.runs[trafficKey{url: fmt.Sprint(n), id: "unknown", run: 1}] = &runTraffic{limits: limits}
+			a.runs[trafficKey{service: fmt.Sprint(n), id: "unknown", run: 1}] = &runTraffic{limits: limits}
 		}
-		if r, reason := a.acquire(trafficKey{url: "new", id: "new", run: 1}, limits); r != nil || reason != "traffic_keys" {
+		if r, reason := a.acquire(trafficKey{service: "new", id: "new", run: 1}, limits); r != nil || reason != "traffic_keys" {
 			t.Fatal("table did not fail closed", reason)
 		}
 		if err := table.ApplySnapshot(ingressv1.IngressRoutingTableSnapshot{ThroughRevision: 1, Entries: []ingressv1.IngressRoutingTableEvent{event}}); err != nil {
@@ -235,16 +242,20 @@ func TestTrafficTerminalRetirementIsBoundedAndExact(t *testing.T) {
 		if err := table.ApplyPage(1, ingressv1.IngressRoutingTablePage{ThroughRevision: 2, NextRevision: 2, Events: []ingressv1.IngressRoutingTableEvent{closed}}); err != nil {
 			t.Fatal(err)
 		}
-		// the routing table owns its proof, and active copies keep their budget.
+		// routing history cannot retire totals. explicit closure also keeps the
+		// entry until its last active copy has joined.
 		proof = false
 		time.Sleep(31 * time.Second)
 		a.prune(time.Now())
+		terminal := []ingressv1.ServiceRunReference{{ServiceId: key.service, ServiceRunId: key.id, RunNumber: int64(key.run)}}
+		a.retireTerminal(terminal)
 		if len(a.runs) != maxTrafficKeys {
 			t.Fatal("retired active or unknown run")
 		}
 		release()
 		time.Sleep(31 * time.Second)
-		if r, reason := a.acquire(trafficKey{url: "new", id: "new", run: 1}, limits); r == nil {
+		a.retireTerminal(terminal)
+		if r, reason := a.acquire(trafficKey{service: "new", id: "new", run: 1}, limits); r == nil {
 			t.Fatal("terminal proof did not free a bounded slot", reason)
 		} else {
 			r()

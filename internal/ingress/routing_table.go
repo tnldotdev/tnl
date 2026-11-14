@@ -144,35 +144,6 @@ func (t *RoutingTable) Revision() (int64, bool) {
 	return t.revision, t.initialized
 }
 
-// TerminalTrafficRuns proves that control closed these exact runs. absence,
-// temporary tombstones, sibling runs, and expired projections prove nothing.
-// traffic keeps unknown totals in its bounded key table and fails closed at
-// capacity rather than resetting a potentially live run after a resnapshot.
-func (t *RoutingTable) TerminalTrafficRuns(candidates []TrafficRun) map[TrafficRun]struct{} {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	if !t.initialized || len(candidates) == 0 {
-		return nil
-	}
-	requested := make(map[TrafficRun]struct{}, len(candidates))
-	for _, candidate := range candidates {
-		requested[candidate] = struct{}{}
-	}
-	runs := make(map[TrafficRun]struct{})
-	for _, bucket := range t.routes {
-		for _, stored := range bucket {
-			if stored.tombstone && stored.entry.PublishRunClosed != nil && *stored.entry.PublishRunClosed {
-				entry := stored.entry
-				run := TrafficRun{PublicURLID: entry.PublicUrlId, PublishRunID: entry.PublishRunId, PublishRunNumber: uint64(entry.PublishRunNumber)}
-				if _, wanted := requested[run]; wanted {
-					runs[run] = struct{}{}
-				}
-			}
-		}
-	}
-	return runs
-}
-
 func currentEntry(stored routingTableEntry, now time.Time) (ingressv1.IngressRoutingTableEntry, LookupReason) {
 	if stored.tombstone {
 		return ingressv1.IngressRoutingTableEntry{}, LookupTombstone

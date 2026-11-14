@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
@@ -33,10 +34,11 @@ import (
 
 var ErrPrivateStream = errors.New("private publisher: stream is not bound to the current claimed connection")
 
-// Prepared retains control's exact endpoint and certificate plan across retries.
+// Prepared retains control's exact endpoint, traffic approval and certificate plan across retries.
 type Prepared struct {
 	Preparation controlv1.ServiceRunPreparation
 	*preparedCertificate
+	traffic             trafficlimits.Limits
 	clock               func() time.Time
 	target              string
 	handler             http.Handler
@@ -118,6 +120,10 @@ func (p *Prepared) Activate(setup controlv1.ServiceRunSetup) (*Bound, error) {
 		setup.RunToken == "" ||
 		!p.Preparation.ExpiresAt.After(time.Now()) ||
 		len(setup.PublisherConnections) != 2 {
+		return nil, ErrPrivateStream
+	}
+	traffic, err := serviceTraffic(p.Preparation.Traffic)
+	if err != nil || traffic != p.traffic {
 		return nil, ErrPrivateStream
 	}
 	var connections [2]controlv1.ConnectionAssignment

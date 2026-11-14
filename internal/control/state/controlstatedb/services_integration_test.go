@@ -101,10 +101,10 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 		}
 		wrong := metadata
 		wrong.Protocol = "postgres"
-		if _, err = d.PrepareServiceRun(ctx, service.ID, publisher, "wrong", now, wrong); !errors.Is(err, controlstate.ErrServiceConflict) {
+		if _, err = d.PrepareServiceRun(ctx, service.ID, publisher, "wrong", now, controlstate.ServiceRunRequest{Metadata: wrong}); !errors.Is(err, controlstate.ErrServiceConflict) {
 			t.Fatalf("mismatched pool protocol admitted: %v", err)
 		}
-		prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "pool-start", now, metadata)
+		prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "pool-start", now, controlstate.ServiceRunRequest{Metadata: metadata})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -125,7 +125,7 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 		if _, err = d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 1}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = d.PrepareServiceRun(ctx, service.ID, publisher, "duplicate", now, metadata); !errors.Is(err, controlstate.ErrServiceConflict) {
+		if _, err = d.PrepareServiceRun(ctx, service.ID, publisher, "duplicate", now, controlstate.ServiceRunRequest{Metadata: metadata}); !errors.Is(err, controlstate.ErrServiceConflict) {
 			t.Fatalf("same publisher joined twice: %v", err)
 		}
 		publishers = append(publishers, publisher)
@@ -280,7 +280,7 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	nextDigest := sha256.Sum256([]byte("replacement.internal\x00system\x00"))
 	trust.Digest = hex.EncodeToString(nextDigest[:])
 	changed.TLS = &trust
-	if _, err = d.PrepareServiceRun(ctx, service.ID, publishers[1], "wrong-trust", now, changed); !errors.Is(err, controlstate.ErrServiceConflict) {
+	if _, err = d.PrepareServiceRun(ctx, service.ID, publishers[1], "wrong-trust", now, controlstate.ServiceRunRequest{Metadata: changed}); !errors.Is(err, controlstate.ErrServiceConflict) {
 		t.Fatalf("unapproved TLS identity joined pool: %v", err)
 	}
 	updated, err := d.ConfigureService(ctx, service.ID, person, changed, now)
@@ -293,10 +293,10 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	if _, err = d.ConfigureService(ctx, service.ID, person, metadata, now); !errors.Is(err, controlstate.ErrServiceConflict) {
 		t.Fatalf("stale trust revision replaced approved trust: %v", err)
 	}
-	if _, err = d.PrepareServiceRun(ctx, service.ID, publishers[1], "old-trust", now, metadata); !errors.Is(err, controlstate.ErrServiceConflict) {
+	if _, err = d.PrepareServiceRun(ctx, service.ID, publishers[1], "old-trust", now, controlstate.ServiceRunRequest{Metadata: metadata}); !errors.Is(err, controlstate.ErrServiceConflict) {
 		t.Fatalf("publisher rejoined with obsolete trust: %v", err)
 	}
-	prepared, err := d.PrepareServiceRun(ctx, service.ID, publishers[1], "approved-trust", now, updated.ServiceMetadata)
+	prepared, err := d.PrepareServiceRun(ctx, service.ID, publishers[1], "approved-trust", now, controlstate.ServiceRunRequest{Metadata: updated.ServiceMetadata})
 	if err != nil {
 		t.Fatal(err)
 	}

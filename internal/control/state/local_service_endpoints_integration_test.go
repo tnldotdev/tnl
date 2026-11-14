@@ -63,7 +63,7 @@ func TestIntegrationPrivateManagedLocalNamespacesAndCapturedPlans(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	prep, err := d.PrepareServiceRun(t.Context(), record.ID, access, "managed-local", now, record.ServiceMetadata)
+	prep, err := d.PrepareServiceRun(t.Context(), record.ID, access, "managed-local", now, ServiceRunRequest{Metadata: record.ServiceMetadata})
 	if err != nil {
 		t.Fatal(err)
 	}

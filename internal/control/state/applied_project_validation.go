@@ -53,7 +53,22 @@ func appliedLocalTargetDescriptor(target, protocol string) (bool, error) {
 	return true, nil
 }
 
-func normalizeAppliedProjectService(s *ProjectServiceConfiguration, local bool) error {
+func normalizeAppliedProjectService(key string, s *ProjectServiceConfiguration, local bool) error {
+	if !serviceName.MatchString(key) {
+		return ErrProjectConfigurationInvalid
+	}
+	if s.Name == "" {
+		s.Name = key
+	}
+	if !serviceName.MatchString(s.Name) {
+		return ErrProjectConfigurationInvalid
+	}
+	if s.Protocol == "" {
+		s.Protocol = "http"
+	}
+	if (ServiceMetadata{Protocol: s.Protocol}).Validate() != nil || s.Access != nil && !s.Access.Team || (len(s.Target) == 0 && s.TargetDiscovery == nil) || len(s.Target) > 8192 || strings.ContainsAny(s.Target, "\x00\r\n") {
+		return ErrProjectConfigurationInvalid
+	}
 	if s.PublicURL != nil && s.Public != nil {
 		return ErrProjectConfigurationInvalid
 	}
@@ -84,8 +99,8 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration, local bool) 
 		if len(s.HTTP.Paths) > 32 || len(s.HTTP.Paths) > 0 && s.PublicURL == nil {
 			return ErrProjectConfigurationInvalid
 		}
-		for prefix := range s.HTTP.Paths {
-			if !targetsyntax.ValidMountPrefix(prefix) {
+		for prefix, mount := range s.HTTP.Paths {
+			if !targetsyntax.ValidMountPrefix(prefix) || !serviceName.MatchString(mount.Service) || mount.Service == key {
 				return ErrProjectConfigurationInvalid
 			}
 		}

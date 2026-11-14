@@ -59,7 +59,7 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 		limit, resource = s.config.MaxConnections, "public_connections"
 	case pendingConnection:
 		limit, resource = s.config.Pending.Connections, "denied_connections"
-		if s.byDenied[key] >= s.config.Pending.PublicURLConnections {
+		if key != "" && s.byDenied[key] >= s.config.Pending.PublicURLConnections {
 			return nil, "denied_public_url_connections"
 		}
 	case controlConnection:

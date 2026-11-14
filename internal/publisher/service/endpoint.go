@@ -15,7 +15,6 @@ import (
 
 	serviceconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
@@ -39,6 +38,10 @@ type ManagedControl interface {
 }
 
 func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved controlv1.Service, cfg RunConfig) (*Prepared, error) {
+	traffic, err := serviceTraffic(preparation.Traffic)
+	if err != nil {
+		return nil, err
+	}
 	if approved.Endpoint == nil || !serviceendpoint.Valid(string(approved.Protocol), approved.Endpoint.Hostname, approved.Endpoint.Port, approved.Endpoint.Public) || preparation.CertificatePlan == nil || preparation.ServiceId != approved.Id || !opaqueid.Valid(preparation.ServiceRunId, opaqueid.ServiceRunPrefix) || preparation.TeamId != approved.TeamId || preparation.PublisherIdentityId != cfg.Identity.ClientId || preparation.PublisherGrantId != cfg.Identity.GrantId || preparation.PublisherKeyId != cfg.Identity.KeyId || preparation.RunNumber < 1 || !preparation.ExpiresAt.After(time.Now()) {
 		return nil, ErrPrivateStream
 	}
@@ -60,7 +63,8 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 			return nil, err
 		}
 	}
-	prepared := &Prepared{Preparation: preparation, target: target, handler: cfg.Handler, managedHostname: approved.Endpoint.Hostname, servicePort: uint16(approved.Endpoint.Port), managedProtocol: serviceconfig.ProtocolName(approved.Protocol), clock: time.Now, preparedCertificate: &preparedCertificate{}}
+	preparation.Traffic = cloneTrafficApproval(preparation.Traffic)
+	prepared := &Prepared{Preparation: preparation, traffic: traffic, target: target, handler: cfg.Handler, managedHostname: approved.Endpoint.Hostname, servicePort: uint16(approved.Endpoint.Port), managedProtocol: serviceconfig.ProtocolName(approved.Protocol), clock: time.Now, preparedCertificate: &preparedCertificate{}}
 	prepared.inspectionMode, prepared.observeSummary = cfg.InspectionMode, cfg.ObserveSummary
 	prepared.admitRequest = cfg.AdmitRequest
 	prepared.managedPublic = approved.Endpoint.Public
@@ -156,22 +160,6 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 		}
 		return servicestream.Decision{Allowed: result.Allowed, ValidUntil: result.ValidUntil}, err
 	}
-	awaitAdmission := func(ctx context.Context, authorize func(context.Context) (controlv1.ServiceClientCertificateDecision, error)) (servicestream.Decision, error) {
-		for {
-			result, err := authorize(ctx)
-			if err != nil || !result.Allowed || result.Admitted {
-				return decision(result, err)
-			}
-			observability.PublisherAuthorization(ctx, true, false, nil)
-			timer := time.NewTimer(25 * time.Millisecond)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return servicestream.Decision{}, context.Cause(ctx)
-			case <-timer.C:
-			}
-		}
-	}
 	prepared.managedVisitor = func(header tunnelv1.ServiceForwardingHeader) servicestream.Authentication {
 		if header.PublicService != nil {
 			if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
@@ -180,9 +168,10 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 				return servicestream.HTTPVisitor{Frontend: frontend}
 			}
 			return servicestream.CertificateVisitor{Check: func(check context.Context, leaf *x509.Certificate) (servicestream.Decision, error) {
-				return awaitAdmission(check, func(ctx context.Context) (controlv1.ServiceClientCertificateDecision, error) {
+				result, err := awaitServiceVisitorAdmission(check, func(ctx context.Context) (controlv1.ServiceClientCertificateDecision, error) {
 					return control.AuthorizeServiceClientCertificate(ctx, setup.ServiceId, setup.ServiceRunId, credentials.ServiceRunToken(setup.RunToken), controlv1.AuthorizeServiceClientCertificateRequest{RunNumber: setup.RunNumber, VisitorConnectionId: header.VisitorConnectionID, SourceIp: header.SourceIP, DestinationPort: int(header.PublicService.DestinationPort), Certificate: leaf.Raw})
 				})
+				return decision(result, err)
 			}}
 		}
 		return nil

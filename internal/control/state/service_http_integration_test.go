@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/control/storagekey"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
@@ -46,7 +48,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		t.Helper()
 		a := replica.assignments.Services[index]
 		access := deploymentAssignmentAccess(t, d, replica, a, now)
-		prep, err := d.PrepareServiceRun(t.Context(), a.ServiceID, access.PublisherIdentity, key, now, ServiceMetadata{Protocol: "http", TrustRevision: a.TrustRevision})
+		prep, err := d.PrepareServiceRun(t.Context(), a.ServiceID, access.PublisherIdentity, key, now, ServiceRunRequest{Metadata: ServiceMetadata{Protocol: "http", TrustRevision: a.TrustRevision}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -106,6 +108,45 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		return visitor, port
 	}
 	visitor, port := admit(a)
+	source := netip.MustParseAddr("192.0.2.10")
+	pending, err := d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
+	if err != nil || pending.State != PublicServiceVisitorPending {
+		t.Fatal("valid HTTP transport claimed request permission", pending, err)
+	}
+	retry, err := d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now.Add(time.Second))
+	if err != nil || retry.State != PublicServiceVisitorPending || !retry.ValidUntil.Equal(pending.ValidUntil) {
+		t.Fatal("pending status extended its original deadline", retry, err)
+	}
+	if err := d.PromotePublicServiceVisitor(t.Context(), lease.IngressLeaseIdentity, visitor, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("ingress promoted HTTP before request permission", err)
+	}
+	for _, test := range []struct {
+		name string
+		auth ServiceHTTPRun
+		ip   netip.Addr
+		port int
+		id   string
+	}{
+		{"other service", b, source, 443, visitor},
+		{"wrong run", ServiceHTTPRun{Subject: a.Subject, RunID: b.RunID, Number: a.Number, Token: a.Token}, source, 443, visitor},
+		{"wrong number", ServiceHTTPRun{Subject: a.Subject, RunID: a.RunID, Number: a.Number + 1, Token: a.Token}, source, 443, visitor},
+		{"wrong token", ServiceHTTPRun{Subject: a.Subject, RunID: a.RunID, Number: a.Number, Token: b.Token}, source, 443, visitor},
+		{"wrong source", a, netip.MustParseAddr("192.0.2.11"), 443, visitor},
+		{"wrong port", a, source, 25443, visitor},
+		{"unknown visitor", a, source, 443, mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := d.AuthorizeServiceHTTPVisitor(t.Context(), test.auth, test.id, test.ip, test.port, now); !errors.Is(err, ErrServiceAccess) {
+				t.Fatal("HTTP authorization widened its forwarding identity", err)
+			}
+		})
+	}
+	if expired, err := d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, pending.ValidUntil); err != nil || expired.State != PublicServiceVisitorDenied {
+		t.Fatal("pending HTTP transport survived its fixed deadline", expired, err)
+	}
+	if _, err := d.AuthorizeServiceHTTPVisitor(t.Context(), a, visitor, source, 443, pending.ValidUntil); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("publisher revived an expired pending visitor", err)
+	}
 	for _, hostname := range []string{"", "unknown.example.test", "UPPER.example.test"} {
 		if _, err := d.AdmitPublicServiceVisitor(t.Context(), lease.IngressLeaseIdentity, PrimaryIngressPoolID, mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), hostname, 443, netip.MustParseAddr("192.0.2.10"), now); !errors.Is(err, ErrServiceAccess) {
 			t.Fatal("shared HTTPS selected a missing or invalid hostname", err)
@@ -155,6 +196,14 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		guard.Close()
 	}
 	check(a, GrantTokenSource{Credential: grant.RefreshCredential}, true)
+	decision, err := d.AuthorizeServiceHTTPVisitor(t.Context(), a, visitor, source, 443, now)
+	if err != nil || !decision.Allowed || decision.Admitted {
+		t.Fatal("publisher permission bypassed ingress acknowledgment", decision, err)
+	}
+	repeated, err := d.AuthorizeServiceHTTPVisitor(t.Context(), a, visitor, source, 443, now)
+	if err != nil || repeated != decision {
+		t.Fatal("repeated HTTP authorization was not idempotent", repeated, err)
+	}
 	status, err := d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
 	if err != nil || status.State != PublicServiceVisitorAuthenticated {
 		t.Fatal("transport bypassed promotion", status, err)
@@ -165,6 +214,17 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	status, err = d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
 	if err != nil || status.State != PublicServiceVisitorAllowed {
 		t.Fatal(status, err)
+	}
+	decision, err = d.AuthorizeServiceHTTPVisitor(t.Context(), a, visitor, source, 443, now)
+	if err != nil || !decision.Allowed || !decision.Admitted {
+		t.Fatal("publisher did not observe ingress acknowledgment", decision, err)
+	}
+	closed, _ := admit(a)
+	if err := d.ClosePublicServiceVisitor(t.Context(), lease.IngressLeaseIdentity, closed, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.AuthorizeServiceHTTPVisitor(t.Context(), a, closed, source, 443, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("publisher revived a closed visitor", err)
 	}
 	wrongAuth := a
 	wrongAuth.Subject.Kind = visitorscope.PublicURL
@@ -284,7 +344,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		t.Fatal("browser session widened run scope")
 	}
 	// manual/company suspension invalidates both a signed-in visitor and the
-	// current authority behind a service-scoped bearer grant.
+	// current authority behind a service-scoped bearer grant, not the transport.
 	if _, err = d.pool.Exec(t.Context(), `UPDATE control.team_memberships SET manual_suspended_at=$3 WHERE team_id=$1 AND identity_id=$2`, r.TeamID, r.ActorID, now); err != nil {
 		t.Fatal(err)
 	}
@@ -294,6 +354,56 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	if err != nil || status.State != PublicServiceVisitorAllowed {
 		t.Fatal("HTTP authority changed its independent transport lease", status, err)
 	}
+	// restore the actor's membership before changing publication configuration.
+	if _, err = d.pool.Exec(t.Context(), `UPDATE control.team_memberships SET manual_suspended_at=NULL WHERE team_id=$1 AND identity_id=$2`, r.TeamID, r.ActorID); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("source policy apply retires previous publication", func(t *testing.T) {
+		r.ExpectedRevision = applied.Revision
+		service := r.Configuration.Services["a"]
+		service.HTTP = &config.HTTPService{Access: &config.Access{IP: []string{"203.0.113.10"}}}
+		r.Configuration.Services["a"] = service
+		changed, err := d.ApplyProjectConfiguration(t.Context(), r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		q := controlstatedb.New(d.pool)
+		if _, err := d.serviceHTTPSourcePolicy(t.Context(), q, a.Subject.ID, source); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("current source policy retained the excluded source", err)
+		}
+		if _, err := d.serviceHTTPSourcePolicy(t.Context(), q, a.Subject.ID, netip.MustParseAddr("203.0.113.10")); err != nil {
+			t.Fatal("current source policy rejected the configured source", err)
+		}
+		var retired bool
+		if err := d.pool.QueryRow(t.Context(), `SELECT run.closed_at IS NOT NULL AND publisher_grant.revoked_at IS NOT NULL
+		    FROM control.service_runs run JOIN control.publisher_grants publisher_grant ON publisher_grant.id=run.publisher_grant_id
+		    WHERE run.id=$1`, a.RunID).Scan(&retired); err != nil || !retired {
+			t.Fatal("changed HTTP configuration retained its previous run or publisher grant", retired, err)
+		}
+		if _, err := d.AuthorizeServiceHTTPVisitor(t.Context(), a, visitor, source, 443, now); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("retired publication retained HTTP visitor authorization", err)
+		}
+		status, err := d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
+		if err != nil || status.State != PublicServiceVisitorDenied {
+			t.Fatal("retired publication retained its promoted HTTP transport", status, err)
+		}
+		r.ExpectedRevision = changed.Revision
+		service.HTTP = nil
+		r.Configuration.Services["a"] = service
+		if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.serviceHTTPSourcePolicy(t.Context(), q, a.Subject.ID, source); err != nil {
+			t.Fatal("restored source policy rejected the original source", err)
+		}
+		if _, err := d.AuthorizeServiceHTTPVisitor(t.Context(), a, visitor, source, 443, now); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("restoring source policy revived the retired publication", err)
+		}
+		status, err = d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
+		if !errors.Is(err, ErrServiceAccess) || status.State != PublicServiceVisitorDenied {
+			t.Fatal("restoring source policy revived the retired visitor", status, err)
+		}
+	})
 }
 
 func mustOpaqueID(t *testing.T, prefix string) string {

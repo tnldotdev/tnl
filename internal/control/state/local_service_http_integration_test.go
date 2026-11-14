@@ -43,10 +43,10 @@ func TestIntegrationLocalServiceHTTPPolicySurvivesRealizationAndApply(t *testing
 	check := func(id, allowed, denied string, total int) {
 		t.Helper()
 		q := controlstatedb.New(d.pool)
-		if err := d.serviceHTTPSourceAllowed(ctx, q, id, netip.MustParseAddr(allowed)); err != nil {
+		if _, err := d.serviceHTTPSourcePolicy(ctx, q, id, netip.MustParseAddr(allowed)); err != nil {
 			t.Fatal("allowed source rejected", err)
 		}
-		if err := d.serviceHTTPSourceAllowed(ctx, q, id, netip.MustParseAddr(denied)); !errors.Is(err, ErrServiceAccess) {
+		if _, err := d.serviceHTTPSourcePolicy(ctx, q, id, netip.MustParseAddr(denied)); !errors.Is(err, ErrServiceAccess) {
 			t.Fatal("HTTP policy admitted an excluded source", err)
 		}
 		settings, err := d.serviceHTTPSettings(ctx, q, id)
@@ -59,7 +59,7 @@ func TestIntegrationLocalServiceHTTPPolicySurvivesRealizationAndApply(t *testing
 	if err != nil || approved.HTTPLimits == nil || *approved.HTTPLimits.Total != 100 {
 		t.Fatal("local publisher did not receive approved request limits", approved, err)
 	}
-	run, err := d.PrepareServiceRun(ctx, first.ServiceID, access, "local-http-policy", now, *first.Metadata)
+	run, err := d.PrepareServiceRun(ctx, first.ServiceID, access, "local-http-policy", now, ServiceRunRequest{Metadata: *first.Metadata})
 	if err != nil {
 		t.Fatal(err)
 	}

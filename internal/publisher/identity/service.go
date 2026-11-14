@@ -69,6 +69,10 @@ func (n *Native) PrepareServiceRun(ctx context.Context, serviceID, key, access s
 	if !sameServiceDeclaration(declaration, ServiceDeclaration(service)) {
 		return controlv1.ServiceRunPreparation{}, ErrScope
 	}
+	declaration.Traffic, err = serviceRunTraffic(n.traffic, declaration.Traffic)
+	if err != nil {
+		return controlv1.ServiceRunPreparation{}, err
+	}
 	return control.PrepareServiceRun(ctx, serviceID, key, access, declaration)
 }
 
@@ -186,8 +190,9 @@ func MatchServiceDeclaration(service controlv1.Service, protocol string, trust *
 }
 
 func sameServiceDeclaration(a, b controlv1.ServiceRunDeclaration) bool {
-	// placement is a run-local preference, not part of the saved target trust.
+	// placement and traffic are run-local choices, not saved target trust.
 	a.PreferredRegions, b.PreferredRegions = nil, nil
+	a.Traffic, b.Traffic = nil, nil
 	x, err := json.Marshal(a)
 	if err != nil {
 		return false

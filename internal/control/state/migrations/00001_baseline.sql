@@ -1681,12 +1681,11 @@ CREATE TABLE control.service_port_claims (
     claimed_at timestamptz NOT NULL,
     retired_at timestamptz,
     reusable_after timestamptz,
-    retired_run_number bigint,
     retired_issuance_revision bigint,
     dns_cleared_at timestamptz,
-    CONSTRAINT service_port_retired_runs CHECK (
-        (state='held' AND retired_at IS NULL AND retired_run_number IS NULL AND retired_issuance_revision IS NULL AND dns_cleared_at IS NULL)
-        OR (state<>'held' AND retired_at IS NOT NULL AND retired_run_number IS NOT NULL AND retired_run_number>=0
+    CONSTRAINT service_port_retirement CHECK (
+        (state='held' AND retired_at IS NULL AND retired_issuance_revision IS NULL AND dns_cleared_at IS NULL)
+        OR (state<>'held' AND retired_at IS NOT NULL
             AND retired_issuance_revision IS NOT NULL AND retired_issuance_revision>=0)),
     CHECK ((state='held') = (reusable_after IS NULL))
 );
@@ -1696,7 +1695,7 @@ CREATE UNIQUE INDEX service_port_current ON control.service_port_claims(service_
 CREATE FUNCTION control.retire_service_port() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL THEN
-        UPDATE control.service_port_claims SET state='quarantined',retired_at=NEW.deleted_at,retired_run_number=NEW.next_run_number-1,
+        UPDATE control.service_port_claims SET state='quarantined',retired_at=NEW.deleted_at,
             retired_issuance_revision=COALESCE((SELECT max(created_revision) FROM control.acme_orders WHERE service_id=NEW.id),0),
             reusable_after=GREATEST(NEW.deleted_at+interval '7 days',COALESCE((SELECT max(not_after) FROM control.acme_orders WHERE certificate_scope=NEW.certificate_scope),NEW.deleted_at))
             WHERE service_id=NEW.id AND state='held';
@@ -1799,6 +1798,7 @@ ALTER TABLE control.visitor_grants ADD CONSTRAINT visitor_grants_invitation_fkey
 -- endpoint and certificate plan. visitor TLS keys never enter control storage.
 CREATE TABLE control.service_runs (
     preferred_regions text[] NOT NULL DEFAULT '{}' CHECK (cardinality(preferred_regions)<=8 AND array_position(preferred_regions, NULL) IS NULL),
+    traffic_limits jsonb NOT NULL CHECK (jsonb_typeof(traffic_limits) = 'object'),
     id text PRIMARY KEY CHECK (id ~ '^srun_[A-Za-z0-9]{22}$'), service_id text NOT NULL, team_id text NOT NULL,
     run_number bigint NOT NULL CHECK (run_number >= 1),
     publisher_identity_id text NOT NULL, publisher_grant_id text NOT NULL,
@@ -1976,6 +1976,7 @@ CREATE TABLE control.public_service_visitors (
     identity_id text,
     device_id text,
     certificate_digest bytea CHECK (certificate_digest IS NULL OR octet_length(certificate_digest)=32),
+    authorized_at timestamptz,
     promoted_at timestamptz,
     valid_until timestamptz NOT NULL,
     created_at timestamptz NOT NULL,

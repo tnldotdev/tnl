@@ -12,14 +12,21 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
+type auditSinkFunc func(serviceaudit.Observation) bool
+
+func (f auditSinkFunc) Observe(o serviceaudit.Observation) bool { return f(o) }
+
 type publicServiceControlFixture struct {
 	mu                                   sync.Mutex
 	service, run                         string
+	traffic                              ingressv1.IngressTrafficLimits
+	anonymous                            bool
 	relays                               []ingressv1.ServiceRelay
 	claimStarted, claimGate              chan struct{}
 	recheckStarted, recheckGate          chan struct{}
@@ -29,6 +36,26 @@ type publicServiceControlFixture struct {
 	deny, pending, authenticated         bool
 	recheckErr, promoteErr               error
 	initialValidUntil, recheckValidUntil time.Time
+	closedRuns                           []ingressv1.ServiceRunReference
+	closureStarted, closureGate          chan struct{}
+	closureErr                           error
+}
+
+func (c *publicServiceControlFixture) ClosedServiceRuns(ctx context.Context, _ string, lookup ingressv1.ServiceRunClosureLookup) (ingressv1.ServiceRunClosures, error) {
+	if len(lookup.ServiceRuns) < 1 || len(lookup.ServiceRuns) > 128 {
+		return ingressv1.ServiceRunClosures{}, ErrServiceAdmission
+	}
+	if c.closureStarted != nil {
+		c.closureStarted <- struct{}{}
+	}
+	if c.closureGate != nil {
+		select {
+		case <-c.closureGate:
+		case <-ctx.Done():
+			return ingressv1.ServiceRunClosures{}, ctx.Err()
+		}
+	}
+	return ingressv1.ServiceRunClosures{Closed: c.closedRuns}, c.closureErr
 }
 
 func (c *publicServiceControlFixture) AdmitPublicServiceVisitor(ctx context.Context, id string, claim ingressv1.PublicServiceVisitorClaim) (ingressv1.PublicServiceVisitorAdmission, error) {
@@ -49,7 +76,7 @@ func (c *publicServiceControlFixture) AdmitPublicServiceVisitor(ctx context.Cont
 	if until.IsZero() {
 		until = time.Now().Add(time.Minute)
 	}
-	return ingressv1.PublicServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: until, ConnectedRelays: append([]ingressv1.ServiceRelay(nil), c.relays...)}, nil
+	return ingressv1.PublicServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, Traffic: c.traffic, Anonymous: c.anonymous, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: until, ConnectedRelays: append([]ingressv1.ServiceRelay(nil), c.relays...)}, nil
 }
 
 func (c *publicServiceControlFixture) PublicServiceVisitorStatus(ctx context.Context, _ string, _ ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error) {
@@ -176,10 +203,24 @@ func publicServiceTestID(t *testing.T, prefix string) string {
 	return id
 }
 
-func publicServiceTestSetup(t *testing.T) (*PublicServices, *publicServiceControlFixture, *publicServiceForwarderFixture, ingressv1.IngressLease) {
+func publicServiceTraffic(limits TrafficLimits) ingressv1.IngressTrafficLimits {
+	traffic := ingressv1.IngressTrafficLimits{Connections: limits.Connections, Rate: limits.Rate, RatePerNs: int64(limits.Period()), Burst: limits.Burst, UploadBytes: limits.UploadBytes, DownloadBytes: limits.DownloadBytes}
+	if limits.TotalConnections > 0 {
+		traffic.TotalConnections = &limits.TotalConnections
+	}
+	if limits.TotalUploadBytes > 0 {
+		traffic.TotalUploadBytes = &limits.TotalUploadBytes
+	}
+	if limits.TotalDownloadBytes > 0 {
+		traffic.TotalDownloadBytes = &limits.TotalDownloadBytes
+	}
+	return traffic
+}
+
+func publicServiceTestSetup(t *testing.T, unbound ...bool) (*PublicServices, *publicServiceControlFixture, *publicServiceForwarderFixture, ingressv1.IngressLease) {
 	t.Helper()
 	lease := ingressv1.IngressLease{IngressId: "ingress-a", IngressRunId: publicServiceTestID(t, opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}
-	control := &publicServiceControlFixture{service: publicServiceTestID(t, opaqueid.ServicePrefix), run: publicServiceTestID(t, opaqueid.ServiceRunPrefix)}
+	control := &publicServiceControlFixture{service: publicServiceTestID(t, opaqueid.ServicePrefix), run: publicServiceTestID(t, opaqueid.ServiceRunPrefix), traffic: publicServiceTraffic(trafficFixture(t).config.Default)}
 	for slot := range 2 {
 		control.relays = append(control.relays, ingressv1.ServiceRelay{PublisherConnectionId: publicServiceTestID(t, opaqueid.PublisherConnectionPrefix), ConnectionSlot: slot, ConnectionAssignmentRevision: 1, RelayServiceId: []string{"a", "b"}[slot], RelayId: []string{"relay-a", "relay-b"}[slot], RelayRunId: publicServiceTestID(t, opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, InternalRelayAddress: "127.0.0.1:443", TlsServerName: "relay.test", LeaseExpiresAt: time.Now().Add(time.Minute)})
 	}
@@ -187,6 +228,16 @@ func publicServiceTestSetup(t *testing.T) (*PublicServices, *publicServiceContro
 	direct, err := NewPublicServices(PublicServicesConfig{Control: control, Forwarder: forwarder, CurrentLease: func() ingressv1.IngressLease { return lease }})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(unbound) == 0 || !unbound[0] {
+		listener, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = listener.Close() })
+		if _, err := New(listener, Config{PublicServices: direct, MaxConnections: 256}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Cleanup(func() { _ = direct.Close(); forwarder.workers.Wait() })
 	return direct, control, forwarder, lease
@@ -341,7 +392,7 @@ func TestPublicServicesCloseJoinsBlockedAdmission(t *testing.T) {
 	if err := p.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if p.Load() != 0 || p.pending != 0 || p.active != 0 || forwarder.count() != 0 || control.closed != 1 {
+	if p.Load() != 0 || !publicServiceCapacityReleased(p) || forwarder.count() != 0 || control.closed != 1 {
 		t.Fatal("close left setup or capacity owned")
 	}
 }

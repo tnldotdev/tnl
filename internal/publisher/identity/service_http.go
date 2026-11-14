@@ -8,6 +8,7 @@ import (
 )
 
 type serviceHTTPControl interface {
+	AuthorizeServiceHTTPVisitor(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error)
 	RedeemServiceBrowserHandoff(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) (controlv1.BrowserHandoffResponse, error)
 	CheckServiceBrowserSession(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) (controlv1.BrowserAccessResponse, error)
 	RevokeServiceBrowserSession(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) error
@@ -18,6 +19,13 @@ func (n *Native) serviceHTTP(service string) (serviceHTTPControl, error) {
 		return nil, err
 	}
 	return n.Services, nil
+}
+func (n *Native) AuthorizeServiceHTTPVisitor(ctx context.Context, service, run string, token credentials.ServiceRunToken, body controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+	c, err := n.serviceHTTP(service)
+	if err != nil {
+		return controlv1.ServiceClientCertificateDecision{}, err
+	}
+	return c.AuthorizeServiceHTTPVisitor(ctx, service, run, token, body)
 }
 func (n *Native) RedeemServiceBrowserHandoff(ctx context.Context, service, run string, token credentials.ServiceRunToken, body controlv1.ServiceBrowserRequest) (controlv1.BrowserHandoffResponse, error) {
 	c, err := n.serviceHTTP(service)

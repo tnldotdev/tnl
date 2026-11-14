@@ -13,7 +13,7 @@ const ByteRatePattern = `^[1-9][0-9]*(KiB|MiB|GiB)/s$`
 
 var byteRatePattern = regexp.MustCompile(ByteRatePattern)
 
-// Limits belongs to one exact public URL and publish run, independently on each
+// Limits belongs to one exact service run, independently on each
 // ingress process. zero totals mean unlimited; rates count encrypted bytes.
 type Limits struct {
 	Connections        int           `json:"connections"`
@@ -73,7 +73,7 @@ func ValidateDefaults(defaults, ceiling Limits) error {
 func totalWithin(value, ceiling int64) bool { return ceiling == 0 || value > 0 && value <= ceiling }
 
 // Selection contains only explicitly selected values. control resolves it once
-// at publish-run creation and persists the resolved result with that run.
+// at service-run preparation and persists the resolved result with that run.
 type Selection struct {
 	Connections        *int    `json:"connections,omitempty"`
 	Rate               *int    `json:"rate,omitempty"`

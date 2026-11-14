@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -122,24 +123,22 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 	if !validLocalProjectServiceScope(r.ProjectKey, r.SourceFingerprint, r.Service, r.WorktreeKey) {
 		return result, ErrProjectConfigurationInvalid
 	}
-	services := map[string]ProjectServiceConfiguration{r.Service: r.Configuration}
 	if err := (ServicePlacement{WorktreeKey: r.WorktreeKey, WorktreeLabel: r.WorktreeLabel, DomainID: r.DomainID}).Validate(); err != nil {
 		return result, err
 	}
-	// this endpoint realizes one resource, not the path destinations. include
-	// inert declarations only so shared path-reference validation remains exact.
-	if r.Configuration.HTTP != nil {
-		for _, mount := range r.Configuration.HTTP.Paths {
-			if mount.Service != r.Service {
-				services[mount.Service] = ProjectServiceConfiguration{Protocol: "http", Target: "app"}
-			}
-		}
+	data, err := json.Marshal(r.Configuration)
+	if err != nil || len(data) > 512<<10 {
+		return result, ErrProjectConfigurationInvalid
 	}
-	c, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: services})
-	if err != nil {
+	var s ProjectServiceConfiguration
+	if err = json.Unmarshal(data, &s); err != nil {
 		return result, err
 	}
-	s := c.Services[r.Service]
+	// realization validates one binding. only the actual project can validate
+	// cross-service destinations; never invent neighboring declarations here.
+	if err = normalizeAppliedProjectService(r.Service, &s, true); err != nil {
+		return result, err
+	}
 	if (s.PublicURL != nil) != (r.PublicURLID != "") {
 		return result, ErrProjectConfigurationInvalid
 	}

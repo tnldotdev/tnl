@@ -125,6 +125,33 @@ paths:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunSetup" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor:
+    post:
+      operationId: authorizeServiceHTTPVisitor
+      tags: [service-runs]
+      summary: Record locally verified HTTP request permission and check ingress admission
+      description: The publisher reports permission only after authorizing an application request or verifying its exact readiness proof. Browser preparation and valid TLS alone do not authorize a visitor. Control rechecks the exact run, source, public endpoint, and live transport. The publisher must wait for admitted before calling the target.
+      security: [{ serviceRunAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - name: service_run_id
+          in: path
+          required: true
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { $ref: "../openapi.yaml#/components/schemas/AuthorizeServiceHTTPVisitorRequest" }
+      responses:
+        "200":
+          description: Current permission and ingress capacity acknowledgment for the exact visitor
+          content:
+            application/json:
+              schema:
+                { $ref: "../openapi.yaml#/components/schemas/ServiceClientCertificateDecision" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate:
     post:
       operationId: authorizeServiceClientCertificate

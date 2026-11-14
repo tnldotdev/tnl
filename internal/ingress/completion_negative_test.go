@@ -202,8 +202,9 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	// authenticate only after the pending reservation and live stream are visible.
 	completionAwait(t, ctx, control.recheckStarted)
 	p.mu.Lock()
-	sessions, pending, active, streams := p.sessions, p.pending, p.active, p.streams
+	sessions, streams := p.sessions, p.streams
 	p.mu.Unlock()
+	pending, active := publicServiceAdmissionCounts(p)
 	if sessions != 1 || pending != 1 || active != 0 || streams != 1 || metrics.streams.Load() != 1 {
 		t.Fatalf("restricted service skipped pending capacity: sessions=%d pending=%d active=%d streams=%d", sessions, pending, active, streams)
 	}
@@ -213,8 +214,9 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	unblockRecheck()
 	completionAwait(t, ctx, control.promoteStarted)
 	p.mu.Lock()
-	sessions, pending, active, streams = p.sessions, p.pending, p.active, p.streams
+	sessions, streams = p.sessions, p.streams
 	p.mu.Unlock()
+	pending, active = publicServiceAdmissionCounts(p)
 	if sessions != 1 || pending != 0 || active != 1 || streams != 1 {
 		t.Fatalf("authenticated service did not promote exactly once: sessions=%d pending=%d active=%d streams=%d", sessions, pending, active, streams)
 	}
@@ -293,14 +295,15 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 		}
 	}
 	p.mu.Lock()
-	sessions, pending, active, streams = p.sessions, p.pending, p.active, p.streams
-	connections, services, sources := len(p.connections), len(p.services), len(p.sources)
+	sessions, streams = p.sessions, p.streams
+	connections = len(p.connections)
 	p.mu.Unlock()
+	pending, active = publicServiceAdmissionCounts(p)
 	control.mu.Lock()
 	rechecks, closed := control.rechecks, control.closed
 	control.mu.Unlock()
-	if sessions != 0 || pending != 0 || active != 0 || streams != 0 || connections != 0 || services != 0 || sources != 0 || metrics.streams.Load() != 0 {
-		t.Fatalf("completion retained service ownership: sessions=%d pending=%d active=%d streams=%d connections=%d services=%d sources=%d gauge=%d", sessions, pending, active, streams, connections, services, sources, metrics.streams.Load())
+	if sessions != 0 || pending != 0 || active != 0 || streams != 0 || connections != 0 || !publicServiceCapacityReleased(p) || metrics.streams.Load() != 0 {
+		t.Fatalf("completion retained service ownership: sessions=%d pending=%d active=%d streams=%d connections=%d gauge=%d", sessions, pending, active, streams, connections, metrics.streams.Load())
 	}
 	if control.recheckActive.Load() != 0 || rechecks < 2 || closed != 1 {
 		t.Fatalf("completion missed a service lifecycle boundary: rechecks=%d active rechecks=%d closed=%d", rechecks, control.recheckActive.Load(), closed)

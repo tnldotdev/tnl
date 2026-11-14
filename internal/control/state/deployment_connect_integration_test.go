@@ -122,7 +122,7 @@ func newDeploymentConnectFixture(t *testing.T) deploymentConnectFixture {
 	publisher := enrollAppliedDeployment(t, d, project, enrollment, now)
 	assignment := publisher.assignments.Services[0]
 	access := deploymentAssignmentAccess(t, d, publisher, assignment, now)
-	prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "deployment-connect", now, ServiceMetadata{Protocol: "postgres", PublisherPool: true, TrustRevision: assignment.TrustRevision})
+	prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "deployment-connect", now, ServiceRunRequest{Metadata: ServiceMetadata{Protocol: "postgres", PublisherPool: true, TrustRevision: assignment.TrustRevision}})
 	if err != nil {
 		t.Fatal(err)
 	}

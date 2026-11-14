@@ -183,7 +183,7 @@ func (d *Database) AuthorizeServiceClientCertificate(ctx context.Context, servic
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	if err := d.serviceHTTPSourceAllowed(ctx, q, service, source); err != nil {
+	if _, err := d.serviceHTTPSourcePolicy(ctx, q, service, source); err != nil {
 		return result, err
 	}
 	run, err := serviceRunAuthorization(ctx, tx, q, service, runID, token, now)

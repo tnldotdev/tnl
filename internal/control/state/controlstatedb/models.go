@@ -826,6 +826,7 @@ type ControlPublicServiceVisitor struct {
 	IdentityID           pgtype.Text
 	DeviceID             pgtype.Text
 	CertificateDigest    []byte
+	AuthorizedAt         pgtype.Timestamptz
 	PromotedAt           pgtype.Timestamptz
 	ValidUntil           pgtype.Timestamptz
 	CreatedAt            pgtype.Timestamptz
@@ -1412,13 +1413,13 @@ type ControlServicePortClaim struct {
 	ClaimedAt               pgtype.Timestamptz
 	RetiredAt               pgtype.Timestamptz
 	ReusableAfter           pgtype.Timestamptz
-	RetiredRunNumber        pgtype.Int8
 	RetiredIssuanceRevision pgtype.Int8
 	DnsClearedAt            pgtype.Timestamptz
 }
 
 type ControlServiceRun struct {
 	PreferredRegions           []string
+	TrafficLimits              []byte
 	ID                         string
 	ServiceID                  string
 	TeamID                     string

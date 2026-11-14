@@ -43,7 +43,7 @@ func TestIntegrationLocalServiceExposureRetainsIdentityAndRuns(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			oldRun, err := d.PrepareServiceRun(ctx, private.ServiceID, access, "local-private", now, *private.Metadata)
+			oldRun, err := d.PrepareServiceRun(ctx, private.ServiceID, access, "local-private", now, ServiceRunRequest{Metadata: *private.Metadata})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -73,7 +73,7 @@ func TestIntegrationLocalServiceExposureRetainsIdentityAndRuns(t *testing.T) {
 			if err := d.CloseServiceRun(ctx, oldRun.ServiceID, oldRun.RunID, started.Token, now); err != nil {
 				t.Fatal(err)
 			}
-			next, err := d.PrepareServiceRun(ctx, private.ServiceID, access, "local-public", now, record.ServiceMetadata)
+			next, err := d.PrepareServiceRun(ctx, private.ServiceID, access, "local-public", now, ServiceRunRequest{Metadata: record.ServiceMetadata})
 			if err != nil || next.Hostname != record.Endpoint.Hostname {
 				t.Fatal("publisher lost its grant or binding", next, err)
 			}

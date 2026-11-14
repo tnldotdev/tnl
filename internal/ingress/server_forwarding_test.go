@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -94,15 +93,6 @@ func TestIngressEnforcesProxySourceAndPublicURLAllowlist(t *testing.T) {
 	}
 }
 
-type gatedOpenBackend struct {
-	entered    chan struct{}
-	release    <-chan struct{}
-	connection net.Conn
-	err        error
-}
-
-func (*gatedOpenBackend) ConnectionSlot() uint8 { return 0 }
-
 func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 	release := make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
@@ -123,15 +113,13 @@ func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 		}
 	})
 	p := config.PublicServices
-	p.config.MaxPending, p.config.MaxServiceStreams, p.config.MaxSourceStreams = 2, 1, 2
+	config.Pending.Connections, config.Pending.PublicURLConnections, config.Pending.SourceConnections = 2, 1, 2
 	config.Metrics, p.config.Metrics = metrics, metrics
 	server, address := startIngress(t, config)
 	first := ingressClient(t, address, "route.example", "192.0.2.4:40001")
 	result := ingressWorker(t, func() { unblock(); _ = first.Close() }, first.Handshake)
 	ingressAwait(t, entered)
-	p.mu.Lock()
-	pending, active := p.pending, p.active
-	p.mu.Unlock()
+	pending, active := publicServiceAdmissionCounts(p)
 	if pending != 1 || active != 0 {
 		t.Fatal("unauthenticated setup did not retain separate pending capacity", pending, active)
 	}
@@ -153,21 +141,8 @@ func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 	server.active.Wait()
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if opens.Load() != 1 || p.sessions != 0 || p.pending != 0 || p.active != 0 || len(p.services) != 0 || len(p.sources) != 0 {
+	if opens.Load() != 1 || p.sessions != 0 || !publicServiceCapacityReleased(p) {
 		t.Fatal("denied service setup opened another relay or retained capacity")
-	}
-}
-
-func (b *gatedOpenBackend) Start(ctx context.Context, _ string, _ bool, proxy, initial []byte) (net.Conn, error) {
-	close(b.entered)
-	select {
-	case <-b.release:
-		if b.err != nil {
-			return nil, b.err
-		}
-		return startTestBackend(ctx, b.connection, proxy, initial)
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	}
 }
 
@@ -175,20 +150,33 @@ func TestIngressRecordsRouteCapacityAndVisitorStreamOpenFailure(t *testing.T) {
 	release := make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
 	t.Cleanup(unblock)
-	backend := &gatedOpenBackend{entered: make(chan struct{}), release: release, err: errors.New("publisher unavailable")}
-	metrics := &testMetrics{visitorOutcomes: make(chan string, 2)}
-	config := publicURLConfig(backend)
+	entered := make(chan struct{})
+	var opens atomic.Int32
+	config := serviceIngressConfig(t, func(ctx context.Context, _ tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+		if opens.Add(1) != 1 {
+			return nil, errors.New("exhausted run opened another relay stream")
+		}
+		close(entered)
+		select {
+		case <-release:
+			return nil, errors.New("publisher unavailable")
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+	control := config.PublicServices.config.Control.(*httpsServiceControl)
+	control.anonymous = true
+	total := int64(1)
+	control.traffic.TotalConnections = &total
+	metrics := &testMetrics{visitorOutcomes: make(chan string, 3)}
 	config.Metrics = metrics
+	config.PublicServices.config.Metrics = metrics
 	config.MaxConnections = 2
-	config.Traffic.Default = trafficlimits.Default()
-	// lifetime admission follows pool selection and remains attributable to a run.
-	// a full concurrent pool has no selected run; pool_selection_test covers it.
-	config.Traffic.Default.TotalConnections = 1
-	_, address := startIngress(t, config)
-	first := ingressClient(t, address, "route.example", "")
+	server, address := startIngress(t, config)
+	first := ingressClient(t, address, "route.example", "192.0.2.4:40001")
 	result := ingressWorker(t, func() { unblock(); _ = first.Close() }, first.Handshake)
-	ingressAwait(t, backend.entered)
-	second := ingressClient(t, address, "route.example", "")
+	ingressAwait(t, entered)
+	second := ingressClient(t, address, "route.example", "192.0.2.4:40002")
 	if err := second.Handshake(); err == nil {
 		t.Fatal("capacity-denied visitor completed TLS")
 	}
@@ -196,12 +184,22 @@ func TestIngressRecordsRouteCapacityAndVisitorStreamOpenFailure(t *testing.T) {
 	if err := ingressAwait(t, result); err == nil {
 		t.Fatal("failed publisher completed TLS")
 	}
+	// ordinary concurrency is available again, but the failed anonymous open
+	// retains its lifetime debit and cannot consume another relay opening.
+	third := ingressClient(t, address, "route.example", "192.0.2.4:40003")
+	if err := third.Handshake(); err == nil {
+		t.Fatal("failed open released the lifetime connection debit")
+	}
 	outcomes := map[string]int{}
-	for range 2 {
+	for range 3 {
 		outcomes[ingressAwait(t, metrics.visitorOutcomes)]++
 	}
-	if outcomes["capacity_denied"] != 1 || outcomes["open_failed"] != 1 {
+	if outcomes["capacity_denied"] != 2 || outcomes["open_failed"] != 1 || opens.Load() != 1 {
 		t.Fatalf("outcomes = %v", outcomes)
+	}
+	server.active.Wait()
+	if !publicServiceCapacityReleased(config.PublicServices) {
+		t.Fatal("anonymous failed open retained concurrent capacity")
 	}
 }
 

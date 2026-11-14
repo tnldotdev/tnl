@@ -284,7 +284,7 @@ func TestIntegrationAppliedProjectDeploymentAssignmentsRunsAndRevocation(t *test
 					t.Fatal(err)
 				}
 				metadata := ServiceMetadata{Protocol: assignment.Configuration.Protocol, TLS: trust, PublisherPool: true, TrustRevision: assignment.TrustRevision}
-				prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "deployment", now, metadata)
+				prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "deployment", now, ServiceRunRequest{Metadata: metadata})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -520,7 +520,7 @@ func TestIntegrationAppliedProjectDeploymentReassignmentKeepsSavedService(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.PrepareServiceRun(t.Context(), a.ServiceID, current.PublisherIdentity, "http", now, ServiceMetadata{Protocol: "http", TLS: trust, PublisherPool: true, TrustRevision: a.TrustRevision}); err != nil {
+	if _, err = d.PrepareServiceRun(t.Context(), a.ServiceID, current.PublisherIdentity, "http", now, ServiceRunRequest{Metadata: ServiceMetadata{Protocol: "http", TLS: trust, PublisherPool: true, TrustRevision: a.TrustRevision}}); err != nil {
 		t.Fatal("private HTTP/TLS assignment is not publishable", err)
 	}
 	var teamGrants int
@@ -641,10 +641,10 @@ func TestIntegrationAppliedProjectHTTPSettingsAndTargetTrust(t *testing.T) {
 	checkIP := func(allowed, denied string) {
 		t.Helper()
 		q := controlstatedb.New(d.pool)
-		if err := d.serviceHTTPSourceAllowed(t.Context(), q, id, netip.MustParseAddr(allowed)); err != nil {
+		if _, err := d.serviceHTTPSourcePolicy(t.Context(), q, id, netip.MustParseAddr(allowed)); err != nil {
 			t.Fatal(err)
 		}
-		if err := d.serviceHTTPSourceAllowed(t.Context(), q, id, netip.MustParseAddr(denied)); !errors.Is(err, ErrServiceAccess) {
+		if _, err := d.serviceHTTPSourcePolicy(t.Context(), q, id, netip.MustParseAddr(denied)); !errors.Is(err, ErrServiceAccess) {
 			t.Fatal("service HTTP source filter widened", err)
 		}
 	}
@@ -727,7 +727,7 @@ func TestIntegrationAppliedProjectHTTPSettingsAndTargetTrust(t *testing.T) {
 	if _, err = d.pool.Exec(t.Context(), `UPDATE control.deployments SET configuration_ciphertext=$2,storage_key_id=$3 WHERE id=$1`, deployment.ID, encrypted, d.storageKey.CurrentID()); err != nil {
 		t.Fatal(err)
 	}
-	if err = d.serviceHTTPSourceAllowed(t.Context(), controlstatedb.New(d.pool), id, netip.MustParseAddr("203.0.113.10")); !errors.Is(err, ErrServiceAccess) {
+	if _, err = d.serviceHTTPSourcePolicy(t.Context(), controlstatedb.New(d.pool), id, netip.MustParseAddr("203.0.113.10")); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("malformed stored HTTP limits admitted a visitor", err)
 	}
 }

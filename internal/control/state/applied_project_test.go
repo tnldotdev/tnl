@@ -83,6 +83,36 @@ func TestNormalizeAppliedHTTPSettingsDoNotDisappear(t *testing.T) {
 	}
 }
 
+func TestLocalServiceNormalizationDoesNotInventProjectDestinations(t *testing.T) {
+	service := func(prefix, destination string) ProjectServiceConfiguration {
+		return ProjectServiceConfiguration{Target: "app", PublicURL: &ProjectServicePublicURL{}, HTTP: &config.HTTPService{
+			Paths: map[string]config.PathMount{prefix: {Service: destination}},
+		}}
+	}
+	single := service("/api", "api")
+	if err := normalizeAppliedProjectService("web", &single, true); err != nil || single.Name != "web" || single.Protocol != "http" {
+		t.Fatal("one binding could not normalize without fabricated siblings", single, err)
+	}
+	if _, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": single}}); !errors.Is(err, ErrProjectConfigurationInvalid) {
+		t.Fatal("whole project accepted a missing path destination", err)
+	}
+	for _, invalid := range []ProjectServiceConfiguration{
+		service("/__tnl/hooks", "api"), service("/api", "web"), service("/api", "invalid name"), service("api", "api"),
+	} {
+		if err := normalizeAppliedProjectService("web", &invalid, true); !errors.Is(err, ErrProjectConfigurationInvalid) {
+			t.Fatal("single-binding normalization lost path bounds", err)
+		}
+	}
+	for _, destination := range []ProjectServiceConfiguration{
+		{Protocol: "tcp", Target: "localhost:3001"},
+		{Protocol: "postgres", Target: "localhost:5432"},
+	} {
+		if _, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": single, "api": destination}}); !errors.Is(err, ErrProjectConfigurationInvalid) {
+			t.Fatal("project boundary accepted a non-HTTP path destination", err)
+		}
+	}
+}
+
 func appliedTargetTrust(t *testing.T, hostname string) *ProjectTargetTLS {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
