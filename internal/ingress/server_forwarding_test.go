@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
@@ -102,31 +103,39 @@ type gatedOpenBackend struct {
 
 func (*gatedOpenBackend) ConnectionSlot() uint8 { return 0 }
 
-type gatedDeniedBackend struct {
-	*gatedOpenBackend
-}
-
 func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 	release := make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
 	t.Cleanup(unblock)
-	backend := gatedDeniedBackend{&gatedOpenBackend{entered: make(chan struct{}), release: release, err: errors.New("relay unavailable")}}
+	entered := make(chan struct{})
 	metrics := &testMetrics{visitorOutcomes: make(chan string, 2)}
-	config := Config{
-		RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Pending: PendingConfig{Connections: 2, PublicURLConnections: 1, SourceConnections: 1}, Metrics: metrics,
-		Lookup: func(host string) ([]PublicURL, LookupReason) {
-			if host != "route.example" {
-				return nil, LookupNotFound
-			}
-			return []PublicURL{{ID: "public_url_test", PublishRunID: "publish_run_test", PublishRunNumber: 1, AccessMode: "restricted", Backends: []Backend{backend},
-				HashedIPPolicy: hashedPolicyForTest(t, "198.51.100.0/24"), AttestSource: testBackendSourceProof}}, LookupCurrent
-		},
-	}
-	_, address := startIngress(t, config)
-	first := ingressClient(t, address, "route.example", "198.51.100.1:40001")
+	var opens atomic.Int32
+	config := serviceIngressConfig(t, func(ctx context.Context, _ tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+		if opens.Add(1) != 1 {
+			return nil, errors.New("pending capacity opened another service stream")
+		}
+		close(entered)
+		select {
+		case <-release:
+			return nil, errors.New("relay unavailable")
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+	p := config.PublicServices
+	p.config.MaxPending, p.config.MaxServiceStreams, p.config.MaxSourceStreams = 2, 1, 2
+	config.Metrics, p.config.Metrics = metrics, metrics
+	server, address := startIngress(t, config)
+	first := ingressClient(t, address, "route.example", "192.0.2.4:40001")
 	result := ingressWorker(t, func() { unblock(); _ = first.Close() }, first.Handshake)
-	ingressAwait(t, backend.entered)
-	second := ingressClient(t, address, "route.example", "198.51.100.2:40002")
+	ingressAwait(t, entered)
+	p.mu.Lock()
+	pending, active := p.pending, p.active
+	p.mu.Unlock()
+	if pending != 1 || active != 0 {
+		t.Fatal("unauthenticated setup did not retain separate pending capacity", pending, active)
+	}
+	second := ingressClient(t, address, "route.example", "192.0.2.4:40002")
 	if err := second.Handshake(); err == nil {
 		t.Fatal("denied connection bypassed capacity")
 	}
@@ -140,6 +149,12 @@ func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 	}
 	if outcomes["capacity_denied"] != 1 || outcomes["open_failed"] != 1 {
 		t.Fatalf("denied outcomes = %v", outcomes)
+	}
+	server.active.Wait()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if opens.Load() != 1 || p.sessions != 0 || p.pending != 0 || p.active != 0 || len(p.services) != 0 || len(p.sources) != 0 {
+		t.Fatal("denied service setup opened another relay or retained capacity")
 	}
 }
 
@@ -190,13 +205,30 @@ func TestIngressRecordsRouteCapacityAndVisitorStreamOpenFailure(t *testing.T) {
 	}
 }
 
+type serviceSetupDrainConn struct {
+	net.Conn
+	writes    int
+	committed chan struct{}
+	resume    <-chan struct{}
+}
+
+func (c *serviceSetupDrainConn) Write(data []byte) (int, error) {
+	n, err := c.Conn.Write(data)
+	c.writes++
+	if c.writes == 2 && n > 0 {
+		close(c.committed)
+		<-c.resume
+	}
+	return n, err
+}
+
 func TestIngressRecordsPublisherSetupFailures(t *testing.T) {
-	for _, tracking := range []bool{false, true} {
-		t.Run(fmt.Sprintf("tracking_failure=%t", tracking), func(t *testing.T) {
+	for _, visitorBytes := range []int{0, 1} {
+		t.Run(fmt.Sprintf("visitor_bytes=%d", visitorBytes), func(t *testing.T) {
 			a, b := net.Pipe()
 			ownIngressConn(t, a)
 			ownIngressConn(t, b)
-			if tracking {
+			if visitorBytes != 0 {
 				ingressWorker(t, func() { _ = b.Close() }, func() error { _, err := io.Copy(io.Discard, b); return err })
 			} else {
 				_ = b.Close()
@@ -204,20 +236,42 @@ func TestIngressRecordsPublisherSetupFailures(t *testing.T) {
 			release := make(chan struct{})
 			unblock := sync.OnceFunc(func() { close(release) })
 			t.Cleanup(unblock)
-			backend := &gatedOpenBackend{entered: make(chan struct{}), release: release, connection: a}
+			entered := make(chan struct{})
+			committed, resume := make(chan struct{}), make(chan struct{})
+			resumeWrite := sync.OnceFunc(func() { close(resume) })
+			t.Cleanup(resumeWrite)
+			var opens atomic.Int32
 			metrics := &testMetrics{visitorOutcomes: make(chan string, 1)}
-			config := publicURLConfig(backend)
-			config.Metrics = metrics
+			config := serviceIngressConfig(t, func(ctx context.Context, _ tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+				if opens.Add(1) != 1 {
+					return nil, errors.New("failed setup opened another service stream")
+				}
+				close(entered)
+				select {
+				case <-release:
+					if visitorBytes != 0 {
+						return &serviceSetupDrainConn{Conn: a, committed: committed, resume: resume}, nil
+					}
+					return a, nil
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			})
+			p := config.PublicServices
+			config.Metrics, p.config.Metrics = metrics, metrics
 			server, address := startIngress(t, config)
-			client := ingressClient(t, address, "route.example", "")
+			client := ingressClient(t, address, "route.example", "192.0.2.4:42000")
 			result := ingressWorker(t, func() { unblock(); _ = client.Close() }, client.Handshake)
-			ingressAwait(t, backend.entered)
-			if tracking {
-				server.mu.Lock()
-				server.closing = true
-				server.mu.Unlock()
-			}
+			ingressAwait(t, entered)
 			unblock()
+			if visitorBytes != 0 {
+				// the service owner stops while a completed prefix write is still
+				// returning. shutdown must retain commitment and close its backend.
+				ingressAwait(t, committed)
+				p.StopAccepting()
+				server.cancelOpens()
+				resumeWrite()
+			}
 			if err := ingressAwait(t, result); err == nil {
 				t.Fatal("failed setup completed TLS")
 			}
@@ -225,12 +279,19 @@ func TestIngressRecordsPublisherSetupFailures(t *testing.T) {
 			metrics.forwardedMu.Lock()
 			bytes := metrics.forwardedBytes["visitor_to_publisher"]
 			metrics.forwardedMu.Unlock()
-			if tracking {
+			if visitorBytes != 0 {
 				if outcome != "committed_failed" || bytes <= 0 {
-					t.Fatalf("committed tracking failure = %s, bytes=%d", outcome, bytes)
+					t.Fatalf("committed setup failure = %s, bytes=%d", outcome, bytes)
 				}
 			} else if outcome != "open_failed" || bytes != 0 {
 				t.Fatalf("zero-byte setup failure = %s, bytes=%d", outcome, bytes)
+			}
+			server.active.Wait()
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			if opens.Load() != 1 || p.sessions != 0 || p.streams != 0 || len(p.connections) != 0 ||
+				metrics.visitorOpenSuccesses.Load() != 0 || metrics.visitorOpenFailures.Load() != 1 || len(metrics.visitorOutcomes) != 0 {
+				t.Fatal("failed service setup retained ownership or duplicated an observation")
 			}
 		})
 	}
