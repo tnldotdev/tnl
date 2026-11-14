@@ -268,6 +268,11 @@
                             },
                             "required": ["name", "public_url"]
                           }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
                         }
                       ],
                       "properties": {
@@ -322,7 +327,7 @@
                         },
                         "public": {
                           "type": "boolean",
-                          "description": "Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only."
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
                         },
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
@@ -633,6 +638,11 @@
                             },
                             "required": ["name", "public_url"]
                           }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
                         }
                       ],
                       "properties": {
@@ -699,7 +709,7 @@
                         },
                         "public": {
                           "type": "boolean",
-                          "description": "Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only."
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
                         },
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
@@ -1011,6 +1021,11 @@
                             },
                             "required": ["name", "public_url"]
                           }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
                         }
                       ],
                       "properties": {
@@ -1079,7 +1094,7 @@
                         },
                         "public": {
                           "type": "boolean",
-                          "description": "Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only."
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
                         },
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
@@ -1391,6 +1406,11 @@
                             },
                             "required": ["name", "public_url"]
                           }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
                         }
                       ],
                       "properties": {
@@ -1452,7 +1472,7 @@
                         },
                         "public": {
                           "type": "boolean",
-                          "description": "Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only."
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
                         },
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
@@ -1764,6 +1784,11 @@
                             },
                             "required": ["name", "public_url"]
                           }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
                         }
                       ],
                       "properties": {
@@ -1807,7 +1832,7 @@
                         },
                         "public": {
                           "type": "boolean",
-                          "description": "Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only."
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
                         },
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
@@ -2119,6 +2144,11 @@
                             },
                             "required": ["name", "public_url"]
                           }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
                         }
                       ],
                       "properties": {
@@ -2168,7 +2198,7 @@
                         },
                         "public": {
                           "type": "boolean",
-                          "description": "Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only."
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
                         },
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
@@ -2480,6 +2510,11 @@
                             },
                             "required": ["name", "public_url"]
                           }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
                         }
                       ],
                       "properties": {
@@ -2530,7 +2565,7 @@
                         },
                         "public": {
                           "type": "boolean",
-                          "description": "Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only."
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
                         },
                         "inspection": {
                           "$ref": "#/$defs/Inspection"

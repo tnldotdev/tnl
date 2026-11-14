@@ -69,7 +69,9 @@ type BindingReferences<
         }
     : { readonly publicURL?: never; readonly http?: never }) &
   (Deployment extends "local"
-    ? { readonly public?: never }
+    ? Binding extends { readonly publicURL: object }
+      ? { readonly public?: never }
+      : unknown
     : Binding extends { readonly publicURL: object }
       ? {
           readonly type?: "app" | "address";

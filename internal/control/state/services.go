@@ -154,7 +154,7 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 		if row.DeletedAt.Valid || row.TeamID != teamID || row.Name != name || !serviceMetadataMatches(saved, metadata) || row.PublisherPool != metadata.PublisherPool {
 			return result, ErrServiceConflict
 		}
-		if err = d.ensureLocalServiceEndpoint(ctx, tx, row.ID, actorID, name, placement, now); err != nil {
+		if err = d.ensureLocalServiceEndpoint(ctx, tx, row.ID, actorID, name, placement, row.Public, now); err != nil {
 			return result, err
 		}
 		result, err = checkedServiceRecord(row)
@@ -187,7 +187,7 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 	if _, err = tx.Exec(ctx, `UPDATE control.services SET protocol=$2, tls_metadata=convert_from($3::bytea,'UTF8')::jsonb, publisher_pool=$4 WHERE id=$1`, id, metadata.Protocol, encoded, metadata.PublisherPool); err != nil {
 		return result, err
 	}
-	if err = d.ensureLocalServiceEndpoint(ctx, tx, id, actorID, name, placement, now); err != nil {
+	if err = d.ensureLocalServiceEndpoint(ctx, tx, id, actorID, name, placement, false, now); err != nil {
 		return result, err
 	}
 	row, err := controlstatedb.New(tx).LockService(ctx, id)

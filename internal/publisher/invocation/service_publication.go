@@ -346,7 +346,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		output.Starting()
 	}
 	emit := func(state string) error {
-		return output.Event(ServiceEvent{State: state, ServiceID: job.ServiceID, Name: name, Target: target, Hostname: approved.Endpoint.Hostname, Port: approved.Endpoint.Port})
+		return output.Event(ServiceEvent{State: state, ServiceID: job.ServiceID, Name: name, Target: target, Hostname: approved.Endpoint.Hostname, Port: approved.Endpoint.Port, Protocol: string(approved.Protocol), Public: approved.Endpoint.Public})
 	}
 	if err := emit("starting"); err != nil {
 		return err

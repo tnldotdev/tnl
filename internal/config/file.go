@@ -222,8 +222,8 @@ func ValidateTNL(config TNL) error {
 	publicHostnames := make(map[string]string)
 	for _, name := range names {
 		service := config.Services[name]
-		if deployment == "local" && service.Public != nil {
-			return fmt.Errorf("services.%s.public: per-service public endpoint access currently requires a saved deployment", name)
+		if service.Tunnel != nil && service.Public != nil {
+			return fmt.Errorf("services.%s: public and public_url are mutually exclusive", name)
 		}
 		if service.Access != nil && !service.Access.Team {
 			return fmt.Errorf("services.%s.access requires team: true", name)

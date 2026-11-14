@@ -298,7 +298,7 @@ schemas:
       target_discovery: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetDiscovery" }
       public:
         type: boolean
-        description: Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only. Overrides the retained deployment default.
+        description: Public endpoint access for this service binding, independent of visitor authorization. Local bindings allocate only when realized by an authorized worktree. False keeps connector access only. Overrides the retained deployment default. Mutually exclusive with public_url.
       public_url: { $ref: "../openapi.yaml#/components/schemas/ProjectServicePublicURL" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetTLS" }
       access: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceAccess" }
