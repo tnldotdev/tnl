@@ -94,6 +94,37 @@ test("disabled Next preserves origins without preparing or requiring a bound tar
   expect(bootstrap.requests).toHaveLength(0);
 });
 
+test("Next keeps the allocated origin without adding its port to allowed origins", async () => {
+  const project = testPublicProject(true);
+  const url = "https://api.member.example:25443";
+  project.services.api = { ...project.services.api, port: 25443, url };
+  const bootstrap = await startTestBootstrap({
+    responseBody: JSON.stringify({
+      hostname: "api.member.example",
+      publicURL: url,
+      service: "api",
+      project,
+    }),
+  });
+  await withProcessEnvironment(
+    { ...bootstrap.environment, __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3200" },
+    async () => {
+      const result = await withTnl(
+        { allowedDevOrigins: ["existing.example"] },
+        { preview: "required" },
+      )(developmentPhase, context);
+      expect(result.allowedDevOrigins).toEqual(["existing.example", "api.member.example"]);
+      expect(JSON.parse(result.env?.TNL_PROJECT_RUNTIME ?? "null")).toMatchObject({
+        services: { api: { port: 25443, url } },
+      });
+    },
+  );
+  expect(bootstrap.requests.map((request) => request.path)).toEqual([
+    "/v1/prepare",
+    "/v1/register",
+  ]);
+});
+
 test("local preview override can disable required Next publication without a bound target", async () => {
   const bootstrap = await startTestBootstrap();
   await withProcessEnvironment({ ...bootstrap.environment, TNL_PREVIEW: "off" }, async () => {

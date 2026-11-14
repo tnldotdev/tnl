@@ -125,6 +125,59 @@ def test_native_assignment_is_http_only_for_selected_app(
 
 
 @pytest.mark.parametrize(
+    ("host", "valid"),
+    [
+        ("web.example", True),
+        ("127.1.example", True),
+        ("2130706433.example", True),
+        ("0x7f000001.example", True),
+        ("0177.0.0.1.example", True),
+        ("api-123.7.example", True),
+        ("api.123-test", True),
+        ("api.0x7f-test", True),
+        ("127.0.0.1", False),
+        ("127.1", False),
+        ("2130706433", False),
+        ("0x7f000001", False),
+        ("0177.0.0.1", False),
+        ("api.123", False),
+        ("api.0xff", False),
+        ("0x", False),
+    ],
+)
+def test_public_assignment_requires_canonical_dns_origin(host: str, valid: bool) -> None:
+    url = f"https://{host}:25443"
+    value = {
+        "version": 1,
+        "registration_id": "reg_" + "a" * 32,
+        "service": "web",
+        "hostname": host,
+        "public_url": url,
+        "project": {
+            "dev": True,
+            "namespace": "example",
+            "services": {
+                "web": {
+                    "protocol": "http",
+                    "namespace": "example",
+                    "hostname": host,
+                    "port": 25443,
+                    "public": True,
+                    "url": url,
+                }
+            },
+        },
+    }
+    endpoint = Endpoint("http://127.0.0.1:1234", "b" * 64, "a" * 32, "app", "web")
+    if valid:
+        assignment = _protocol.parse_assignment(value, endpoint)
+        assert assignment.hostname == host and assignment.public_url == url
+    else:
+        with pytest.raises(InvalidResponse):
+            _protocol.parse_assignment(value, endpoint)
+
+
+@pytest.mark.parametrize(
     ("path", "value"),
     [
         (("project", "services", "database", "port"), -1),
@@ -153,7 +206,14 @@ def test_native_assignment_is_http_only_for_selected_app(
         (("service",), "invalid name"),
         (("hostname",), "other.member.example"),
         (("public_url",), "https://web.member.example"),
+        (("public_url",), "https://web.member.example:25444"),
+        (("public_url",), "https://other.member.example:25443"),
+        (("public_url",), "http://web.member.example:25443"),
+        (("public_url",), "https://user@web.member.example:25443"),
         (("public_url",), "https://web.member.example:25443/path"),
+        (("public_url",), "https://web.member.example:25443?query"),
+        (("public_url",), "https://web.member.example:25443#fragment"),
+        (("public_url",), "https://web.member.example:025443"),
         (("registration_id",), "reg_bad"),
         (("version",), True),
     ],

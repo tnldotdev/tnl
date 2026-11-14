@@ -130,6 +130,68 @@ def test_status_is_filtered_and_fenced_by_registration_and_bound_target() -> Non
         parse_status(ready, "another", str(native.registration["registration_id"]), native.target)
 
 
+@pytest.mark.parametrize(
+    ("url", "valid"),
+    [
+        ("https://web.example", True),
+        ("https://web.example:1024", True),
+        ("https://web.example:25443", True),
+        ("https://web.example:65535", True),
+        ("https://127.1.example:25443", True),
+        ("https://2130706433.example:25443", True),
+        ("https://0x7f000001.example:25443", True),
+        ("https://0177.0.0.1.example:25443", True),
+        ("https://api-123.7.example:25443", True),
+        ("https://api.123-test:25443", True),
+        ("https://api.0x7f-test:25443", True),
+        ("http://web.example:25443", False),
+        ("https://user:secret@web.example:25443", False),
+        ("https://web.example:25443/", False),
+        ("https://web.example:25443?query", False),
+        ("https://web.example:25443#fragment", False),
+        ("https://web.example:025443", False),
+        ("https://web.example:443", False),
+        ("https://web.example:0", False),
+        ("https://web.example:80", False),
+        ("https://web.example:1023", False),
+        ("https://web.example:65536", False),
+        ("https://127.0.0.1:25443", False),
+        ("https://127.1:25443", False),
+        ("https://2130706433:25443", False),
+        ("https://0x7f000001:25443", False),
+        ("https://0177.0.0.1:25443", False),
+        ("https://api.123:25443", False),
+        ("https://api.0xff:25443", False),
+        ("https://0x:25443", False),
+    ],
+)
+def test_status_preserves_only_canonical_public_http_origins(url: str, valid: bool) -> None:
+    native = FakeNative([])
+    native.invocation_id = "ivk_" + "A" * 22
+    native.registration = {"registration_id": "reg_" + "a" * 32}
+    native.target, native.starts = "http://127.0.0.1:1234", 1
+    snapshot = native.snapshot()
+    services = snapshot["services"]
+    assert isinstance(services, list) and isinstance(services[0], dict)
+    services[0]["public_url"] = url
+    if valid:
+        status = parse_status(
+            snapshot,
+            native.invocation_id,
+            str(native.registration["registration_id"]),
+            native.target,
+        )
+        assert status is not None and status.public_url == url
+    else:
+        with pytest.raises(InvalidResponse):
+            parse_status(
+                snapshot,
+                native.invocation_id,
+                str(native.registration["registration_id"]),
+                native.target,
+            )
+
+
 def test_single_request_handler_requires_an_explicit_asgi_adapter() -> None:
     async def scenario() -> None:
         async def endpoint(request: Request) -> PlainTextResponse:

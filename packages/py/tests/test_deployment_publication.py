@@ -24,17 +24,23 @@ class Session:
     endpoint: Endpoint
     environment: Mapping[str, str] | None
     publications: bool
+    port: int = 443
     registration: dict[str, object] = field(default_factory=dict)
     payloads: list[dict[str, object]] = field(default_factory=list)
     stopped: bool = False
 
     @property
+    def hostname(self) -> str:
+        return f"app-{self.endpoint.owner_id}.example.test"
+
+    @property
     def url(self) -> str:
-        return f"https://app-{self.endpoint.owner_id}.example.test"
+        return f"https://{self.hostname}" + (f":{self.port}" if self.port != 443 else "")
 
 
 class Native(NativeRuntime):
-    def __init__(self) -> None:
+    def __init__(self, port: int = 443, status_port: int | None = None) -> None:
+        self.port, self.status_port = port, status_port
         self.sessions: dict[str, Session] = {}
         self.operations: list[str] = []
         self.status_entered, self.routable = asyncio.Event(), asyncio.Event()
@@ -69,7 +75,7 @@ class Native(NativeRuntime):
             service=service,
             invocation_id=invocation_id,
         )
-        self.sessions[endpoint.capability] = Session(endpoint, environment, publications)
+        self.sessions[endpoint.capability] = Session(endpoint, environment, publications, self.port)
         return endpoint
 
     async def request(
@@ -87,7 +93,7 @@ class Native(NativeRuntime):
                     "public_url": "",
                     "project": {"dev": True, "namespace": "", "services": {}},
                 }
-            host = session.url.removeprefix("https://")
+            host = session.hostname
             return {
                 "version": 1,
                 "registration_id": "reg_" + endpoint.owner_id,
@@ -102,7 +108,7 @@ class Native(NativeRuntime):
                             "protocol": "http",
                             "namespace": "example.test",
                             "hostname": host,
-                            "port": 443,
+                            "port": session.port,
                             "public": True,
                             "url": session.url,
                         }
@@ -145,7 +151,11 @@ class Native(NativeRuntime):
                         "routable": True,
                         "ready": False,
                         "readiness": {"path": "/"},
-                        "public_url": session.url,
+                        "public_url": (
+                            session.url
+                            if self.status_port is None
+                            else f"https://{session.hostname}:{self.status_port}"
+                        ),
                         "run_number": 1,
                     }
                 ],
@@ -593,6 +603,33 @@ def test_lost_unregister_result_is_not_acknowledged_by_a_replacement_owner(
         assert finished.value is closing.value
         assert publication._close_complete
         await deployment.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status_port", [25443, 25444])
+def test_local_named_status_keeps_the_exact_prepared_port(
+    monkeypatch: pytest.MonkeyPatch, status_port: int
+) -> None:
+    async def scenario() -> None:
+        native = Native(25443, status_port)
+        monkeypatch.setattr(_asgi, "_native", native)
+        monkeypatch.setattr(_connections._Scope, "stop", lambda _scope: None)
+        local = tnl.create_client(
+            project="acme/shop", services={"web": {"protocol": "http"}}
+        ).deployment("local")
+        try:
+            if status_port != 25443:
+                with pytest.raises(tnl.TnlError) as caught:
+                    await local.publish("web", tnl.handler(endpoint))
+                assert caught.value.code == "sdk.response_invalid"
+            else:
+                publication = await local.publish("web", tnl.handler(endpoint))
+                assert publication.url == next(iter(native.sessions.values())).url
+                assert publication.url.endswith(":25443")
+        finally:
+            await local.aclose()
+        assert native.sessions and all(session.stopped for session in native.sessions.values())
 
     asyncio.run(scenario())
 

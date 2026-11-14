@@ -1,12 +1,7 @@
 import * as z from "zod";
 import { TnlError } from "../../errors.js";
 import { parseValue } from "../validation.js";
-import {
-  hostnameSchema,
-  httpsOriginSchema,
-  invocationIDSchema,
-  timestampSchema,
-} from "../values.js";
+import { invocationIDSchema, publicHTTPOriginSchema, timestampSchema } from "../values.js";
 
 const textSchema = z.string().max(4096);
 const runNumberSchema = z.int().positive();
@@ -47,12 +42,7 @@ const serviceStatusSchema = z.strictObject({
   service_protocol: z.literal("http").optional(),
   directory: textSchema,
   tunnel_id: textSchema.optional(),
-  public_url: httpsOriginSchema
-    .refine((url) => {
-      const hostname = URL.parse(url)?.hostname;
-      return hostnameSchema.safeParse(hostname).success && url === `https://${hostname}`;
-    })
-    .optional(),
+  public_url: publicHTTPOriginSchema.optional(),
   registration_id: textSchema.optional(),
   target: textSchema.optional(),
   framework: textSchema.optional(),

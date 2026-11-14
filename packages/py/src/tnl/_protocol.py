@@ -81,6 +81,24 @@ def hostname(value: object) -> str:
     return name
 
 
+def public_http_origin(value: object) -> str:
+    url = text(value)
+    try:
+        parts = urlsplit(url)
+        host, port = hostname(parts.hostname), parts.port
+    except ValueError:
+        raise InvalidResponse() from None
+    # public http origins use dns names, not numeric-ending ipv4 spellings.
+    if re.fullmatch(r"(?:[0-9]+|0x[0-9a-f]*)", host.rsplit(".", 1)[-1]) is not None:
+        raise InvalidResponse()
+    if port is not None and not 1024 <= port <= 65535:
+        raise InvalidResponse()
+    expected = f"https://{host}" + (f":{port}" if port is not None else "")
+    if url != expected:
+        raise InvalidResponse()
+    return url
+
+
 @dataclass(frozen=True, slots=True)
 class Assignment:
     registration_id: str
@@ -177,6 +195,8 @@ def parse_assignment(value: object, endpoint: Endpoint) -> Assignment:
         )
     ):
         raise InvalidResponse()
+    if own is not None and own.get("public") is True:
+        public_http_origin(url)
     return Assignment(ident, name, host, url)
 
 
@@ -385,13 +405,7 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
         raise InvalidResponse()
     public_url = item.get("public_url")
     if public_url is not None:
-        url = text(public_url)
-        try:
-            expected = f"https://{hostname(urlsplit(url).hostname)}"
-        except ValueError:
-            raise InvalidResponse() from None
-        if url != expected:
-            raise InvalidResponse()
+        public_http_origin(public_url)
     if "observation" in item:
         observation = object_value(
             item["observation"],

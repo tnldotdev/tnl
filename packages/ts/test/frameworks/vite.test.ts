@@ -125,6 +125,30 @@ describe("tnl", () => {
     );
   });
 
+  test("keeps the allocated public port in metadata and only the hostname in allowed hosts", async () => {
+    const project = testPublicProject(true);
+    const url = "https://api.member.example:25443";
+    project.services.api = { ...project.services.api, port: 25443, url };
+    const bootstrap = await startTestBootstrap({
+      responseBody: JSON.stringify({
+        hostname: "api.member.example",
+        publicURL: url,
+        service: "api",
+        project,
+      }),
+    });
+    await withProcessEnvironment(bootstrap.environment, async () => {
+      const result = await runConfigHook(tnl({ preview: "required" }), {
+        server: { allowedHosts: ["existing.example"] },
+      });
+      expect(result).toMatchObject({
+        server: { allowedHosts: ["existing.example", "api.member.example"] },
+        define: { "process.env.TNL_PROJECT_RUNTIME": expect.stringContaining(url) },
+      });
+    });
+    expect(bootstrap.requests.map((request) => request.path)).toEqual(["/v1/prepare"]);
+  });
+
   test("uses an invocation hostname override for Vite coordination only", async () => {
     const project = testPublicProject(true);
     const bootstrap = await startTestBootstrap({

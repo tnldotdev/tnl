@@ -430,7 +430,7 @@ func (a *appRuntime) prepare(ctx context.Context, request publisherprotocol.Prep
 	defer release()
 	finish := a.manager.BeginPreparation()
 	defer finish()
-	metadata, err := a.operations(a.project).Metadata(ctx)
+	metadata, err := a.operations(a.project).PrepareAppMetadata(ctx, name)
 	if err != nil {
 		return publisherprotocol.Assignment{}, err
 	}

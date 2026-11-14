@@ -41,6 +41,15 @@ export const httpsOriginSchema = z.templateLiteral(["https://", z.string()]).ref
   return url !== null && url.origin === value && url.username === "" && url.password === "";
 });
 
+export const publicHTTPOriginSchema = httpsOriginSchema.refine((value) => {
+  const url = URL.parse(value);
+  return (
+    url !== null &&
+    hostnameSchema.safeParse(url.hostname).success &&
+    (url.port === "" || (Number(url.port) >= 1024 && Number(url.port) <= 65535))
+  );
+});
+
 export const serviceIDSchema = z
   .templateLiteral(["svc_", z.string().regex(/^[A-Za-z0-9]{22}$/)])
   .brand<"ServiceID">();

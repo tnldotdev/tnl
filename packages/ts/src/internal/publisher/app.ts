@@ -6,6 +6,7 @@ import { parseValue } from "../validation.js";
 import {
   hostnameSchema,
   httpsOriginSchema,
+  publicHTTPOriginSchema,
   pathTextSchema,
   registrationIDSchema,
   serviceNameSchema,
@@ -60,9 +61,10 @@ const assignmentSchema = z
       project.dev &&
       (hostname === "" && public_url === ""
         ? metadata === undefined
-        : public_url === `https://${hostname}` &&
-          metadata?.hostname === hostname &&
-          metadata.protocol === "http")
+        : metadata?.hostname === hostname &&
+          metadata.protocol === "http" &&
+          metadata.url === public_url &&
+          (!metadata.public || publicHTTPOriginSchema.safeParse(public_url).success))
     );
   })
   .transform(({ registration_id, service, hostname, public_url, project }) => ({

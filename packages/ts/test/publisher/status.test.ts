@@ -33,6 +33,18 @@ const snapshot = {
 };
 
 describe("publisher status replies", () => {
+  test.each([1024, 25443, 65535])("retains the exact allocated origin on port %s", (port) => {
+    const public_url = `https://web.example:${port}`;
+    expect(
+      parseStatus(
+        { ...snapshot, services: [{ ...service, public_url }] },
+        "web",
+        registrationID,
+        target,
+      )?.publicURL,
+    ).toBe(public_url);
+  });
+
   test("reports readiness only for the registered target and observed publish run", () => {
     expect(parseStatus(snapshot, "web", registrationID, target)).toEqual({
       registered: true,
@@ -57,6 +69,20 @@ describe("publisher status replies", () => {
     },
     { ...service, registered: false },
     { ...service, public_url: "https://web.example/path" },
+    ...[
+      "http://web.example:25443",
+      "https://user:secret@web.example:25443",
+      "https://web.example:25443/",
+      "https://web.example:25443?query",
+      "https://web.example:25443#fragment",
+      "https://web.example:025443",
+      "https://web.example:443",
+      "https://web.example:0",
+      "https://web.example:80",
+      "https://web.example:1023",
+      "https://web.example:65536",
+      "https://127.0.0.1:25443",
+    ].map((public_url) => ({ ...service, public_url })),
     { ...service, service_protocol: "tcp" },
   ])("rejects stale readiness and malformed service facts %#", (item) => {
     expect(() =>

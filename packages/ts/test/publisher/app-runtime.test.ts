@@ -8,6 +8,7 @@ import { assert, afterEach, expect, onTestFinished, test, vi } from "vitest";
 import * as z from "zod";
 import {
   createPreparedService,
+  parseAssignment,
   runtimeRequest,
   startRuntime,
 } from "../../dist/internal/publisher/app.js";
@@ -260,6 +261,66 @@ function assignment(registration = "a") {
     project: testPublicProject(true),
   };
 }
+
+function endpointAssignment(port = 25443) {
+  const value = assignment();
+  const url = `https://api.member.example:${port}`;
+  return {
+    ...value,
+    public_url: url,
+    project: {
+      ...value.project,
+      services: {
+        ...value.project.services,
+        api: { ...value.project.services.api, port, url },
+      },
+    },
+  };
+}
+
+test.each([1024, 25443, 65535])(
+  "preparation keeps the exact allocated HTTP port %s",
+  async (port) => {
+    const value = endpointAssignment(port);
+    const handle = await createPreparedService({ service: "api" }, "node", {
+      start: async () => testEndpoint,
+      request: async (_endpoint, operation) => (operation === "prepare" ? value : undefined),
+    });
+    try {
+      expect(handle.publicURL).toBe(value.public_url);
+      expect(handle.services.api).toMatchObject({ port, url: value.public_url });
+    } finally {
+      await handle.close();
+    }
+  },
+);
+
+test("allocated app assignments reject another hostname, port, or noncanonical origin", () => {
+  const value = endpointAssignment();
+  for (const public_url of [
+    "https://other.member.example:25443",
+    "https://api.member.example:25444",
+    "https://api.member.example",
+    "http://api.member.example:25443",
+    "https://user@api.member.example:25443",
+    "https://api.member.example:25443/",
+    "https://api.member.example:25443?query",
+    "https://api.member.example:25443#fragment",
+    "https://api.member.example:025443",
+  ]) {
+    expect(() => parseAssignment({ ...value, public_url })).toThrow(
+      expect.objectContaining({ code: "sdk.response_invalid" }),
+    );
+  }
+  expect(() => parseAssignment({ ...value, hostname: "other.member.example" })).toThrow(
+    expect.objectContaining({ code: "sdk.response_invalid" }),
+  );
+  for (const port of [1, 80, 1023, 65536]) {
+    expect(() => parseAssignment(endpointAssignment(port))).toThrow(
+      expect.objectContaining({ code: "sdk.response_invalid" }),
+    );
+  }
+});
 
 test("private HTTP preparation has no public address or browser-visible target", async () => {
   const handle = await createPreparedService({ service: "api" }, "node", {

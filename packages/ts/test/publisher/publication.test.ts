@@ -6,6 +6,7 @@ import { publishServer, publishFetch } from "../../src/internal/publisher/public
 import { parseStatus } from "../../src/internal/publisher/status.js";
 import { runtimeRequest, type RuntimeEndpoint } from "../../src/internal/publisher/local.js";
 import { invocationIDSchema } from "../../src/internal/values.js";
+import { testPublicProject } from "../helpers/project.js";
 
 const invocationSchema = z.looseObject({
   invocation_id: z.string(),
@@ -199,6 +200,70 @@ test.each(["terminal", "transient", "forgotten"])(
       restored = true;
       await publication?.close().catch(() => {});
       await new Promise<void>((resolve) => api.close(() => resolve()));
+    }
+  },
+);
+
+test.each([25443, 25444])(
+  "named local publication fences status port %s against its assignment",
+  async (statusPort) => {
+    const app = createServer((_request, response) => response.end("app"));
+    await new Promise<void>((resolve) => app.listen(0, "127.0.0.1", resolve));
+    const project = testPublicProject(true);
+    const assignedURL = "https://api.member.example:25443";
+    project.services.api = { ...project.services.api, port: 25443, url: assignedURL };
+    let target = "";
+    let unregistered = false;
+    try {
+      const publishing = publishServer(
+        app,
+        {},
+        {
+          start: async () => ({
+            version: 1,
+            url: "http://127.0.0.1:12345",
+            capability: "b".repeat(64),
+            owner_id: "a".repeat(32),
+            scope: "app",
+            service: "api",
+          }),
+          request: async (_endpoint, operation, body) => {
+            if (operation === "prepare")
+              return {
+                version: 1,
+                registration_id: id,
+                service: "api",
+                hostname: "api.member.example",
+                public_url: assignedURL,
+                project,
+              };
+            if (operation === "register")
+              target = z.object({ target: z.string() }).parse(body).target;
+            if (operation === "status") {
+              const value = snapshot("api", target);
+              const service = value.services[0];
+              assert(service !== undefined);
+              service.public_url = `https://api.member.example:${statusPort}`;
+              return value;
+            }
+            if (operation === "unregister") unregistered = true;
+            return undefined;
+          },
+          pause: () => new Promise<void>(() => {}),
+        },
+        { kind: "local", service: "api" },
+      );
+      if (statusPort !== 25443) {
+        await expect(publishing).rejects.toMatchObject({ code: "sdk.response_invalid" });
+      } else {
+        const publication = await publishing;
+        expect(publication.url).toBe(assignedURL);
+        await publication.close();
+      }
+      expect(unregistered).toBe(true);
+      expect(app.listening).toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => app.close(() => resolve()));
     }
   },
 );
