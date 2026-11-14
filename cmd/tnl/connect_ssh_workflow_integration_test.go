@@ -119,7 +119,9 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 			if err := os.WriteFile(known, []byte(endpoint.Hostname+" "+hostPublic+"\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			proxyArgs := []string{bin, "--no-telemetry", "--config", configuration, "connect", name, "--deployment", deployment, "--stdio", "--state-dir", person}
+			// both SSH and signal checks use this exact selected binding.
+			connectArgs := []string{"--no-telemetry", "--config", configuration, "connect", name, "--deployment", deployment, "--stdio", "--state-dir", person}
+			proxyArgs := append([]string{bin}, connectArgs...)
 			for i := range proxyArgs {
 				proxyArgs[i] = "'" + strings.ReplaceAll(proxyArgs[i], "'", "'\\''") + "'"
 			}
@@ -152,7 +154,7 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 				t.Run(signal.String(), func(t *testing.T) {
 					ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 					defer cancel()
-					command := exec.CommandContext(ctx, bin, "--no-telemetry", "--config", configuration, "connect", name, "--stdio", "--state-dir", person)
+					command := exec.CommandContext(ctx, bin, connectArgs...)
 					input, err := command.StdinPipe()
 					if err != nil {
 						t.Fatal(err)

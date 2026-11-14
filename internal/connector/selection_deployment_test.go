@@ -59,6 +59,51 @@ func TestConnectDeclaredServiceRequiresSelectedDeploymentBinding(t *testing.T) {
 	}
 }
 
+func TestConnectTCPRequiresItsExplicitDeploymentBinding(t *testing.T) {
+	project := clientproject.Project{Declared: &config.Project{
+		Services: map[string]config.ServiceDeclaration{
+			"internal": {Protocol: new("tcp")},
+			"shell":    {Protocol: new("tcp")},
+		},
+		Deployments: map[string]config.Deployment{
+			"internal": {Targets: map[string]config.DeploymentBinding{
+				"internal": {ServiceTarget: config.ServiceTarget{Address: new(config.Target("sshd.internal:2222"))}},
+			}},
+			"production": {Targets: map[string]config.DeploymentBinding{
+				"shell": {ServiceTarget: config.ServiceTarget{Address: new(config.Target("sshd.internal:2222"))}},
+			}},
+		},
+	}}
+	for _, service := range []struct{ name, deployment, sibling string }{
+		{"internal", "internal", "production"}, {"shell", "production", "internal"},
+	} {
+		t.Run(service.name, func(t *testing.T) {
+			reader := &deploymentSelectionReader{services: []controlv1.Service{{
+				Id: "svc_sibling", Name: service.name, TeamId: "tm_shop", Protocol: "tcp",
+			}}}
+			for _, deployment := range []string{"", service.sibling} {
+				selected, err := project.SelectDeployment(deployment)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := Select(t.Context(), reader, selected, service.name, "tm_shop"); err == nil || reader.calls != 0 {
+					t.Fatal("unbound TCP name borrowed inventory or a sibling deployment", deployment, err)
+				} else if reason, ok := failure.ReasonOf(err); !ok || reason != failure.InvalidTunnelFlags {
+					t.Fatal("unbound TCP name lost its selection error", err)
+				}
+			}
+			selected, err := project.SelectDeployment(service.deployment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key, err := ConfiguredService(selected, service.name)
+			if err != nil || key != service.name || config.SelectedDeployment(selected.Config) != service.deployment || config.Protocol(selected.Config.Services[key]) != "tcp" {
+				t.Fatal("explicit TCP deployment lost its exact binding", key, err)
+			}
+		})
+	}
+}
+
 func TestConnectExactServiceIDRemainsExplicitWithUnboundDeclarations(t *testing.T) {
 	project := clientproject.Project{
 		Declared: &config.Project{Services: map[string]config.ServiceDeclaration{"db": {Protocol: new("postgres")}}},
