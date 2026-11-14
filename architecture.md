@@ -130,6 +130,13 @@ existing namespace allocation table and reuses URL expiration and deletion.
 Native preparation narrows that credential to one URL without issuing another
 grant. Retiring a namespace waits for public URL and service authority alike.
 
+SDK deployment handles compose connections and publications without sharing their
+credentials. Remote publication passes its captured registered credential through
+private invocation IPC and starts a configuration-free local publisher journal.
+Named local publication uses configured app preparation. Both use the existing
+registration manager and workers; registration and routability remain distinct.
+The SDK owns Fetch/ASGI adapter listeners, not supplied Node or Bun servers.
+
 Project status includes deployment identity so two bindings called `db` remain
 distinct. Project retirement removes all deployment bindings and local worktree
 realizations in the same transaction, while retaining the project's source

@@ -6,6 +6,7 @@ import asyncio
 import json
 import selectors
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
@@ -31,6 +32,8 @@ class AssignmentRuntime(NativeRuntime):
         service: str | None = None,
         invocation_id: str | None = None,
         state_dir: str | None = None,
+        publications: bool = False,
+        environment: Mapping[str, str] | None = None,
     ) -> Endpoint:
         return self.endpoint
 

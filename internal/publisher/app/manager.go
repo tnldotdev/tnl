@@ -29,6 +29,7 @@ type registration struct {
 	expires time.Time
 	cancel  context.CancelFunc
 	done    chan struct{}
+	err     error
 }
 
 type Manager struct {
@@ -40,11 +41,14 @@ type Manager struct {
 	registrations map[string]*registration
 	run           Run
 	Alive         func(int) bool
-	idleSince     time.Time
-	preparing     int
-	closed        bool
-	closeOnce     sync.Once
-	writeErr      error
+	// cleanup runs only after the worker joins. a failure retains the
+	// registration and its exact resources for a later unregister attempt.
+	Cleanup   func(Service) error
+	idleSince time.Time
+	preparing int
+	closed    bool
+	closeOnce sync.Once
+	writeErr  error
 }
 
 func New(ctx context.Context, project string, database *clientstate.Database, services []Service, run Run) (*Manager, error) {
@@ -338,6 +342,7 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 	reg.expires = time.Now().Add(LeaseDuration)
 	ctx, cancel := context.WithCancel(observability.LinkContext(m.ctx, scheduling))
 	reg.cancel, reg.done = cancel, make(chan struct{})
+	reg.err = nil
 	copy, done := *service, reg.done
 	m.emitLocked("service.registered", service)
 	if err := m.writeErr; err != nil {
@@ -369,6 +374,7 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 		}
 		current.endPublication()
 		reg.cancel = nil
+		reg.err = independentWorkerFailure(err, ctx.Err() != nil)
 		if err != nil && ctx.Err() == nil {
 			current.Failure = "runtime.publication_failed"
 			if reason, _, ok := failure.Describe(err); ok {
@@ -571,7 +577,7 @@ func (m *Manager) UnregisterTarget(id, owner, target string) error {
 	defer m.op.Unlock()
 	m.mu.Lock()
 	service, reg := m.findLocked(id, owner)
-	if reg == nil || service.Registered && service.Target != target {
+	if reg == nil || service.Target != "" && service.Target != target {
 		m.mu.Unlock()
 		return ErrRegistrationStale
 	}
@@ -603,9 +609,19 @@ func (m *Manager) unregister(id, owner string) error {
 		reg.cancel()
 	}
 	done := reg.done
+	stopped := *service
 	m.mu.Unlock()
 	if done != nil {
 		<-done
+	}
+	m.mu.Lock()
+	runErr := reg.err
+	reg.err = nil
+	m.mu.Unlock()
+	if m.Cleanup != nil {
+		if err := m.Cleanup(stopped); err != nil {
+			return errors.Join(runErr, err)
+		}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -615,7 +631,25 @@ func (m *Manager) unregister(id, owner string) error {
 		m.idleSince = time.Now()
 	}
 	m.emitLocked("service.stopped", service)
-	return m.writeErr
+	return errors.Join(runErr, m.writeErr)
+}
+
+// joined cancellation does not erase an independent worker or cleanup failure.
+func independentWorkerFailure(err error, canceled bool) error {
+	if err == nil || err == context.Canceled || canceled && err == ErrRegistrationStale {
+		return nil
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var failures []error
+		for _, cause := range joined.Unwrap() {
+			failures = append(failures, independentWorkerFailure(cause, canceled))
+		}
+		return errors.Join(failures...)
+	}
+	if cause := errors.Unwrap(err); cause != nil && independentWorkerFailure(cause, canceled) == nil {
+		return nil
+	}
+	return err
 }
 
 // TargetChanged invalidates only the current registration's current run. worker

@@ -7,6 +7,7 @@ import importlib.metadata
 import pathlib
 import subprocess
 import sys
+from collections.abc import Mapping
 
 import httpx
 import websockets
@@ -32,6 +33,8 @@ class NativeStub(NativeRuntime):
         service: str | None = None,
         invocation_id: str | None = None,
         state_dir: str | None = None,
+        publications: bool = False,
+        environment: Mapping[str, str] | None = None,
     ) -> Endpoint:
         self.invocation_id = invocation_id or ""
         return Endpoint(
@@ -41,7 +44,7 @@ class NativeStub(NativeRuntime):
     async def request(
         self, endpoint: Endpoint, operation: str, payload: dict[str, object] | None = None
     ) -> object:
-        if operation == "ad-hoc/register":
+        if operation == "publications/register":
             assert payload is not None
             self.events.append("register")
             self.target = str(payload["target"])
@@ -73,7 +76,7 @@ class NativeStub(NativeRuntime):
                     "ready": False,
                     "readiness": {"path": "/"},
                     "public_url": "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test",
-                    "publish_run_number": 1,
+                    "run_number": 1,
                 }
             ],
         }
@@ -111,7 +114,9 @@ async def main() -> None:
             await send({"type": "websocket.send", "text": str(message["text"])})
             await send({"type": "websocket.close", "code": 1000})
 
-    async with tnl.open(app) as tunnel:
+    assert not hasattr(tnl, "open") and not hasattr(tnl, "Tunnel")
+    deployment = tnl.create_client(project="acme/shop").deployment("local")
+    async with await deployment.publish(app) as tunnel:
         assert tunnel.url == "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test"
         async with httpx.AsyncClient() as client:
             response = await client.get(native.target + "/")
@@ -120,6 +125,7 @@ async def main() -> None:
             await ws.send("wheel websocket")
             assert await ws.recv() == "wheel websocket"
     await tunnel.wait()
+    await deployment.aclose()
     assert native.events == ["startup", "register", "unregister", "shutdown"]
 
 

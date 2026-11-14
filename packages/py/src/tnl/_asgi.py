@@ -7,8 +7,7 @@ import os
 import re
 import secrets
 import socket
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -25,8 +24,10 @@ from ._protocol import (
     RegistrationLost,
     Status,
     TnlError,
+    parse_assignment,
     parse_registration,
     parse_status,
+    service_name,
 )
 
 _native = NativeRuntime()
@@ -56,7 +57,7 @@ async def _join_cleanup[T](task: asyncio.Task[T]) -> T:
 
 
 class _OwnedServer(uvicorn.Server):
-    tunnel: Tunnel | None = None
+    tunnel: Publication | None = None
 
     async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
         if self.tunnel is not None:
@@ -140,8 +141,8 @@ def _limit_payload(value: Limits | None) -> dict[str, object] | None:
     return result
 
 
-class Tunnel:
-    """one temporary public URL and its owned ASGI listener."""
+class Publication:
+    """one public URL publication and its owned ASGI adapter listener."""
 
     def __init__(
         self,
@@ -159,8 +160,19 @@ class Tunnel:
         limits: Limits | None,
         require_post_quantum: bool = False,
         telemetry: bool = True,
+        deployment: dict[str, str] | None = None,
+        service: str | None = None,
+        on_close: Callable[[Publication], None] | None = None,
+        environment: Mapping[str, str] | None = None,
     ) -> None:
         self._native = native
+        self._deployment = None if deployment is None else dict(deployment)
+        self._service = service
+        self._on_close = on_close
+        self._environment = dict(os.environ if environment is None else environment)
+        self._assigned_url: str | None = None
+        self._pid = os.getpid()
+        self._loop = asyncio.get_running_loop()
         self._server = server
         self._serve_task = serve_task
         self._listener = listener
@@ -177,8 +189,10 @@ class Tunnel:
             "pid": os.getpid(),
             "target": self._target,
             "telemetry_disabled": not telemetry
-            or os.getenv("TNL_NO_TELEMETRY", "").lower() in {"1", "true"},
+            or self._environment.get("TNL_NO_TELEMETRY", "").lower() in {"1", "true"},
         }
+        if self._deployment is not None:
+            self._payload["deployment"] = self._deployment
         if publisher_credential_file is not None:
             self._payload["publisher_credential_file"] = publisher_credential_file
         if publisher_identity_id is not None:
@@ -225,7 +239,12 @@ class Tunnel:
             if self._closed:
                 return
             self._endpoint = await self._native.start(
-                self._directory, invocation_id=self._id, state_dir=self._state_dir
+                self._directory,
+                invocation_id=self._id if self._service is None else None,
+                service=self._service,
+                state_dir=self._state_dir,
+                publications=self._deployment is not None,
+                environment=self._environment,
             )
             await self._acknowledge_registration()
 
@@ -235,8 +254,39 @@ class Tunnel:
         # owner, PID, target, and policy until its idempotent reply is reconciled.
         self._registration_uncertain = True
         try:
+            if self._service is not None:
+                assignment = parse_assignment(
+                    await self._native.request(
+                        self._endpoint,
+                        "prepare",
+                        {
+                            "version": 1,
+                            "directory": self._directory,
+                            "service": self._service,
+                            "framework": "python",
+                            "owner": self._owner,
+                            "pid": self._pid,
+                            "telemetry_disabled": self._payload["telemetry_disabled"],
+                        },
+                    ),
+                    self._endpoint,
+                )
+                if not assignment.public_url or (
+                    self._assigned_url is not None and self._assigned_url != assignment.public_url
+                ):
+                    raise InvalidResponse()
+                self._assigned_url = assignment.public_url
+                self._registration = {
+                    "version": 1,
+                    "registration_id": assignment.registration_id,
+                    "owner": self._owner,
+                    "target": self._target,
+                }
+                await self._native.request(self._endpoint, "register", self._registration)
+                self._registration_uncertain = False
+                return
             self._registration = parse_registration(
-                await self._native.request(self._endpoint, "ad-hoc/register", self._payload),
+                await self._native.request(self._endpoint, "publications/register", self._payload),
                 self._owner,
                 self._target,
             )
@@ -251,7 +301,7 @@ class Tunnel:
         self._initial_registration = asyncio.create_task(self._register())
         await asyncio.shield(self._initial_registration)
         self._monitor = asyncio.create_task(self._follow())
-        await self._ready
+        await asyncio.shield(self._ready)
 
     async def unregister(self) -> None:
         await _join_cleanup(asyncio.create_task(self._unregister()))
@@ -289,7 +339,9 @@ class Tunnel:
 
     def _observe(self, status: Status) -> None:
         if status.public_url is not None:
-            if self._url is not None and status.public_url != self._url:
+            if (self._url is not None and status.public_url != self._url) or (
+                self._assigned_url is not None and status.public_url != self._assigned_url
+            ):
                 raise InvalidResponse()
             self._url = status.public_url
         if status.publish_run_number is not None:
@@ -313,7 +365,7 @@ class Tunnel:
                 assert self._endpoint is not None and self._registration is not None
                 status = parse_status(
                     await self._native.request(self._endpoint, "status"),
-                    self._id,
+                    self._service or self._id,
                     str(self._registration["registration_id"]),
                     self._target,
                 )
@@ -352,9 +404,17 @@ class Tunnel:
             pass
 
     async def wait(self) -> None:
+        self._check()
         await asyncio.shield(self._finished)
 
-    async def close(self) -> None:
+    def _check(self) -> None:
+        if self._pid != os.getpid() or self._loop is not asyncio.get_running_loop():
+            raise TnlError(
+                "sdk.client_context_changed", "create a publication in this process and loop"
+            )
+
+    async def aclose(self) -> None:
+        self._check()
         if self._cleanup_task is None or (self._cleanup_task.done() and not self._close_complete):
             self._cleanup_task = asyncio.create_task(self._close())
         await _join_cleanup(self._cleanup_task)
@@ -387,6 +447,8 @@ class Tunnel:
             finally:
                 self._listener.close()
             self._close_complete = True
+            if self._on_close is not None:
+                self._on_close(self)
             if not self._finished.done():
                 if cleanup:
                     self._finished.set_exception(cleanup[0])
@@ -398,6 +460,22 @@ class Tunnel:
                 raise cleanup[0]
             if cleanup:
                 raise ExceptionGroup("publisher and ASGI cleanup failed", cleanup)
+
+    async def __aenter__(self) -> Publication:
+        self._check()
+        if self._closed:
+            raise RegistrationLost()
+        return self
+
+    async def __aexit__(self, _type: object, primary: object, _traceback: object) -> None:
+        try:
+            await self.aclose()
+        except BaseException as cleanup:
+            if isinstance(primary, BaseException):
+                raise BaseExceptionGroup(
+                    "publication operation and cleanup failed", [primary, cleanup]
+                ) from None
+            raise
 
 
 async def _start_asgi(app: ASGIApp) -> tuple[_OwnedServer, asyncio.Task[None], socket.socket]:
@@ -434,8 +512,7 @@ async def _start_asgi(app: ASGIApp) -> tuple[_OwnedServer, asyncio.Task[None], s
         raise
 
 
-@asynccontextmanager
-async def open(
+async def start_publication(
     app: ASGIApp,
     *,
     publisher_credential_file: str | Path | None = None,
@@ -447,8 +524,28 @@ async def open(
     limits: Limits | None = None,
     require_post_quantum: bool = False,
     telemetry: bool = True,
-) -> AsyncIterator[Tunnel]:
+    deployment: dict[str, str] | None = None,
+    service: str | None = None,
+    on_close: Callable[[Publication], None] | None = None,
+    on_start: Callable[[Publication], None] | None = None,
+    environment: Mapping[str, str] | None = None,
+) -> Publication:
     """start ASGI, register its bound listener, and wait for native routability."""
+    if service is not None:
+        service_name(service)
+    if deployment is not None and (
+        service is not None
+        or server is not None
+        or publisher_identity_id is not None
+        or publisher_credential_file is not None
+    ):
+        raise TnlError("sdk.configuration_invalid", "select one captured publication owner")
+    if (service is not None or deployment is not None and "service" in deployment) and (
+        access is not None or limits is not None or require_post_quantum
+    ):
+        raise TnlError(
+            "sdk.configuration_invalid", "named publication uses saved visitor policy and limits"
+        )
     if not callable(app):
         raise TnlError("sdk.configuration_invalid", "pass an ASGI app")
     if not isinstance(require_post_quantum, bool):
@@ -459,8 +556,15 @@ async def open(
         raise TnlError("sdk.configuration_invalid", "select a publisher file or publisher ID")
     # a running connector owner does not inherit later changes to the app's env.
     # send the path, never the credential contents, with this invocation.
-    if publisher_credential_file is None and publisher_identity_id is None:
-        publisher_credential_file = os.getenv("TNL_PUBLISHER_CREDENTIAL_FILE")
+    if (
+        publisher_credential_file is None
+        and publisher_identity_id is None
+        and deployment is None
+        and service is None
+    ):
+        publisher_credential_file = (os.environ if environment is None else environment).get(
+            "TNL_PUBLISHER_CREDENTIAL_FILE"
+        )
     if publisher_credential_file is not None and (
         not isinstance(publisher_credential_file, str | Path)
         or not Path(publisher_credential_file).is_absolute()
@@ -492,7 +596,7 @@ async def open(
     _limit_payload(limits)
     root = str(Path(directory or os.getcwd()).resolve())
     asgi_server, task, listener = await _start_asgi(app)
-    tunnel = Tunnel(
+    tunnel = Publication(
         _native,
         asgi_server,
         task,
@@ -507,13 +611,19 @@ async def open(
         limits,
         require_post_quantum,
         telemetry,
+        deployment,
+        service,
+        on_close,
+        environment,
     )
     try:
+        if on_start is not None:
+            on_start(tunnel)
         await tunnel.start()
-        yield tunnel
+        return tunnel
     except BaseException as primary:
         try:
-            await tunnel.close()
+            await tunnel.aclose()
         except BaseException as cleanup:
             if isinstance(primary, asyncio.CancelledError) and isinstance(
                 cleanup, asyncio.CancelledError
@@ -523,5 +633,3 @@ async def open(
                 "ASGI operation and cleanup failed", [primary, cleanup]
             ) from None
         raise
-    else:
-        await tunnel.close()
