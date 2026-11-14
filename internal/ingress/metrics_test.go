@@ -2,13 +2,14 @@ package ingress
 
 import (
 	"context"
+	"errors"
 	"net"
 	"slices"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type pendingTLSBackend struct{ connection net.Conn }
@@ -21,26 +22,31 @@ func (b pendingTLSBackend) Start(ctx context.Context, _ string, _ bool, proxy, i
 
 type relayAttemptMetrics struct {
 	testMetrics
+	mu    sync.Mutex
 	slots []string
 }
 
 func (m *relayAttemptMetrics) ObserveRelayAttempt(slot string, _ observability.RelayAttemptOutcome) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.slots = append(m.slots, slot)
 }
 
 func TestRelayAttemptReportsAssignedConnectionSlot(t *testing.T) {
-	forwarder := newTestForwarder(t, newForwardingTestMaterial(t))
-	metrics := &relayAttemptMetrics{}
-	server := &Server{config: Config{Metrics: metrics}}
-	for _, slot := range []int{0, 1} {
-		entry := forwardingTestEntry(time.Now(), "relay.example:443")
-		entry.PublisherConnections[0].ConnectionSlot = slot
-		backend := mustOnlyBackend(t, forwarder, entry)
-		if backend.ConnectionSlot() != uint8(slot) {
-			t.Fatalf("backend slot=%d, want %d", backend.ConnectionSlot(), slot)
-		}
-		server.observeRelayAttempt(backend, observability.RelayAttemptCommitted)
+	first, second := newServiceTLSRelay(t), newServiceTLSRelay(t)
+	metrics := &relayAttemptMetrics{testMetrics: testMetrics{visitorOutcomes: make(chan string, 2)}}
+	config := serviceIngressConfig(t, first.open, second.open)
+	config.Metrics, config.PublicServices.config.Metrics = metrics, metrics
+	_, address := startIngress(t, config)
+	for range 2 {
+		visitor := ingressClient(t, address, "route.example", "192.0.2.4:42000")
+		exchangePing(t, visitor)
+		// this payload fixture fully closes its pipes; the separate real TCP
+		// completion proof distinguishes clean shutdown from a half-close failure.
+		ingressAwait(t, metrics.visitorOutcomes)
 	}
+	metrics.mu.Lock()
+	defer metrics.mu.Unlock()
 	if !slices.Equal(metrics.slots, []string{"0", "1"}) {
 		t.Fatalf("reported slots=%v, want [0 1]", metrics.slots)
 	}
@@ -55,11 +61,14 @@ func TestRestrictedVisitorForwardingHasSuccessfulOutcome(t *testing.T) {
 
 func TestVisitorLookupFailureIsCountedOnce(t *testing.T) {
 	metrics := &testMetrics{visitorOutcomes: make(chan string, 2)}
-	_, address := startIngress(t, Config{
-		Metrics: metrics,
-		Lookup:  func(string) ([]PublicURL, LookupReason) { return nil, LookupNotFound },
+	var opened bool
+	config := serviceIngressConfig(t, func(context.Context, tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+		opened = true
+		return nil, errors.New("missing service reached relay forwarding")
 	})
-	visitor := ingressClient(t, address, "missing.example", "")
+	config.Metrics, config.PublicServices.config.Metrics = metrics, metrics
+	server, address := startIngress(t, config)
+	visitor := ingressClient(t, address, "missing.example", "192.0.2.4:42000")
 	if err := visitor.Handshake(); err == nil {
 		t.Fatal("missing hostname was forwarded")
 	}
@@ -71,11 +80,16 @@ func TestVisitorLookupFailureIsCountedOnce(t *testing.T) {
 		t.Fatalf("visitor counted twice: %q", extra)
 	default:
 	}
+	server.active.Wait()
+	if opened {
+		t.Fatal("missing service opened a relay stream")
+	}
 }
 
 func TestConcurrentBackendGaugeReturnsToZero(t *testing.T) {
 	metrics := observability.New("ingress")
-	server := &Server{config: Config{Metrics: metrics}, backends: make(map[net.Conn]struct{})}
+	p, _, _, _ := publicServiceTestSetup(t)
+	p.config.Metrics = metrics
 	var group sync.WaitGroup
 	for range 64 {
 		group.Add(1)
@@ -83,16 +97,19 @@ func TestConcurrentBackendGaugeReturnsToZero(t *testing.T) {
 			defer group.Done()
 			left, right := net.Pipe()
 			defer right.Close()
-			if !server.trackBackend(left) {
-				t.Error("failed to track backend")
-				return
+			backend := p.observeBackend(t.Context(), left)
+			if err := backend.Close(); err != nil {
+				t.Error(err)
 			}
-			if err := server.releaseBackend(t.Context(), left); err != nil {
+			if err := backend.Close(); err != nil {
 				t.Error(err)
 			}
 		}()
 	}
 	group.Wait()
+	if p.streams != 0 {
+		t.Fatal("closed service backends retained ownership", p.streams)
+	}
 	families, err := metrics.Gather()
 	if err != nil {
 		t.Fatal(err)

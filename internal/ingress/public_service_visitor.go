@@ -5,24 +5,32 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"strconv"
 	"sync/atomic"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 // AcceptPublic selects HTTP by inspected hostname on 443 and other protocols by
-// trusted destination port. publisher authentication promotes a bounded connection.
-func (p *PublicServices) AcceptPublic(ctx context.Context, connection net.Conn, source, destination netip.AddrPort, hostname string) (retErr error) {
+// trusted destination port. initial contains already-inspected visitor bytes,
+// absent from connection. publisher authentication promotes a bounded connection.
+func (p *PublicServices) AcceptPublic(ctx context.Context, connection net.Conn, source, destination netip.AddrPort, hostname string, initial []byte) (retErr error) {
 	ctx, finishConnection := observability.Start(ctx, "ingress.public_service_visitor_connection")
 	defer func() { finishConnection(retErr) }()
+	outcome := observability.VisitorLookupMissing
+	if p.config.Metrics != nil {
+		defer func() { p.config.Metrics.ObserveVisitor(outcome) }()
+	}
 	control := p.config.Control
 	if control == nil || connection == nil || !validPrivateSocketPair(source, destination) {
 		return ErrServiceAdmission
@@ -36,16 +44,19 @@ func (p *PublicServices) AcceptPublic(ctx context.Context, connection net.Conn, 
 	}
 	ctx, release, ok := p.acquireSession(ctx, connection)
 	if !ok {
+		outcome = observability.VisitorCapacityDenied
 		return ErrServiceAdmission
 	}
 	defer release()
 	admission, ok := p.pendingStream("", source.Addr().Unmap())
 	if !ok {
+		outcome = observability.VisitorCapacityDenied
 		return ErrServiceAdmission
 	}
 	defer admission.close()
 	lease, err := p.lease(time.Now())
 	if err != nil {
+		outcome = observability.VisitorLookupUnavailable
 		return err
 	}
 	visitor, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
@@ -72,8 +83,10 @@ func (p *PublicServices) AcceptPublic(ctx context.Context, connection net.Conn, 
 	}
 	current, leaseErr := p.lease(time.Now())
 	if leaseErr != nil || !samePrivateLease(current, lease) || claimed.VisitorConnectionId != visitor || validatePublicServiceAdmission(claimed, time.Now()) != nil || !admission.selectService(claimed.ServiceId) {
+		outcome = observability.VisitorInvalidProjection
 		return ErrServiceAdmission
 	}
+	outcome = observability.VisitorOpenFailed
 	audit := serviceaudit.Observation{ServiceID: claimed.ServiceId, ServiceKind: "service", RunID: claimed.ServiceRunId, RunNumber: claimed.RunNumber, VisitorConnectionID: visitor, SourceIP: source.Addr().Unmap().String(), EventType: "connection.open", Outcome: "denied", Reason: "authorization"}
 	var opened atomic.Bool
 	defer func() {
@@ -101,6 +114,14 @@ func (p *PublicServices) AcceptPublic(ctx context.Context, connection net.Conn, 
 	deadline, _ := setup.Deadline()
 	deadline = privateMinTime(deadline, claimed.ExpiresAt)
 	first := int((p.nextRelay.Add(1) - 1) % uint64(len(claimed.ConnectedRelays)))
+	var openingErr error
+	openingStarted := time.Now()
+	openingObserved := false
+	defer func() {
+		if !openingObserved && p.config.Metrics != nil {
+			p.config.Metrics.ObserveVisitorOpen(false, time.Since(openingStarted))
+		}
+	}()
 	for attempt := range claimed.ConnectedRelays {
 		relay := claimed.ConnectedRelays[(first+attempt)%len(claimed.ConnectedRelays)]
 		header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{
@@ -109,45 +130,84 @@ func (p *PublicServices) AcceptPublic(ctx context.Context, connection net.Conn, 
 			SourceIP:      source.Addr().Unmap().String(), VisitorConnectionID: visitor, PublisherConnectionID: relay.PublisherConnectionId, ConnectionAssignmentRevision: uint64(relay.ConnectionAssignmentRevision), ExpiresAt: claimed.ExpiresAt,
 		}, ConnectionSlot: uint8(relay.ConnectionSlot), RelayServiceID: relay.RelayServiceId, RelayID: relay.RelayId, RelayRunID: relay.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLeaseRevision), LeaseExpiresAt: relay.LeaseExpiresAt}
 		attemptCtx, stopAttempt := backendAttemptContext(setup, len(claimed.ConnectedRelays)-attempt)
-		backend, err := p.openPrivateRelay(attemptCtx, relay, header, proxy, deadline)
+		attemptStarted := time.Now()
+		backend, err := p.openPrivateRelay(attemptCtx, relay, header, proxy, initial, deadline)
 		stopAttempt()
+		if p.config.Observer != nil {
+			duration := time.Since(attemptStarted)
+			p.config.Observer.ObserveOperationContext(ctx, observability.OpIngressBackendAttempt, err, duration)
+			if attempt != 0 {
+				p.config.Observer.ObserveOperationContext(ctx, observability.OpIngressFallback, err, duration)
+			}
+		}
 		if err != nil {
+			openingErr = err
+			var opening *tunnel.OpeningError
+			if errors.As(err, &opening) && opening.Committed {
+				outcome = observability.VisitorCommittedFailed
+				if p.config.Metrics != nil {
+					p.config.Metrics.ObserveRelayAttempt(strconv.Itoa(relay.ConnectionSlot), observability.RelayAttemptCommittedFailed)
+					p.config.Metrics.AddForwardedBytes("visitor_to_publisher", opening.VisitorBytes)
+				}
+				return err
+			}
+			if p.config.Metrics != nil {
+				p.config.Metrics.ObserveRelayAttempt(strconv.Itoa(relay.ConnectionSlot), observability.RelayAttemptOpenFailed)
+			}
 			continue
 		}
-		defer backend.Close()
+		if p.config.Metrics != nil {
+			p.config.Metrics.ObserveRelayAttempt(strconv.Itoa(relay.ConnectionSlot), observability.RelayAttemptCommitted)
+			p.config.Metrics.AddForwardedBytes("visitor_to_publisher", int64(len(initial)))
+		}
+		if len(initial) != 0 {
+			outcome = observability.VisitorCommittedFailed
+		}
 		if err = backend.SetDeadline(time.Time{}); err != nil {
-			return err
+			return errors.Join(err, backend.Close())
 		}
 		if err = connection.SetDeadline(time.Time{}); err != nil {
-			return err
+			return errors.Join(err, backend.Close())
+		}
+		openingObserved = true
+		if p.config.Metrics != nil {
+			p.config.Metrics.ObserveVisitorOpen(true, time.Since(openingStarted))
 		}
 		// copying the first application protocol byte commits to this run. failures
 		// after this point close the connection, including server-first MySQL.
 		live, cancel := context.WithCancel(ctx)
 		defer cancel()
 		pending := &pendingPublicServiceConn{Conn: connection, ctx: live, promoted: make(chan struct{})}
-		pending.upload.Store(64 << 10)
+		pending.upload.Store((64 << 10) - int64(len(initial)))
 		pending.download.Store(128 << 10)
 		done := make(chan struct{})
 		var guardErr error
 		go func() {
 			defer close(done)
 			defer cancel()
-			defer connection.Close()
-			defer backend.Close()
 			guardErr = p.guardPublicServiceVisitor(live, control, lease, lookup, claimed.ExpiresAt, pending, admission, onAuthorized)
+			guardErr = errors.Join(guardErr, connection.Close(), backend.Close())
 		}()
 		_, finishForward := observability.Start(ctx, "ingress.forward_connector_visitor")
-		_, err = streamcopy.Copy(pending, backend)
+		copied, err := streamcopy.Copy(pending, backend)
 		finishForward(err)
 		cancel()
 		<-done
-		if errors.Is(guardErr, ErrServiceAdmission) {
-			return ErrServiceAdmission
+		if p.config.Metrics != nil {
+			p.config.Metrics.AddForwardedBytes("visitor_to_publisher", copied.LeftToRight)
+			p.config.Metrics.AddForwardedBytes("publisher_to_visitor", copied.RightToLeft)
 		}
-		return err
+		if failure.Only(guardErr, context.Canceled) {
+			guardErr = nil
+		}
+		result := errors.Join(err, guardErr)
+		outcome = observability.VisitorForwarded
+		if result != nil {
+			outcome = observability.VisitorCommittedFailed
+		}
+		return result
 	}
-	return ErrServiceAdmission
+	return errors.Join(ErrServiceAdmission, openingErr)
 }
 
 // public service admission uses the claim immediately, rather than installing history.
@@ -169,7 +229,7 @@ func validatePublicServiceAdmission(p ingressv1.PublicServiceVisitorAdmission, n
 	return nil
 }
 
-func (p *PublicServices) openPrivateRelay(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, proxy []byte, deadline time.Time) (net.Conn, error) {
+func (p *PublicServices) openPrivateRelay(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, proxy, initial []byte, deadline time.Time) (net.Conn, error) {
 	if header.Validate() != nil {
 		return nil, ErrServiceAdmission
 	}
@@ -177,13 +237,14 @@ func (p *PublicServices) openPrivateRelay(ctx context.Context, relay ingressv1.S
 	if err != nil {
 		return nil, err
 	}
+	connection = p.observeBackend(ctx, connection)
 	setup, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
-	// PROXY metadata is retryable; use the same joined cancellation/deadline
-	// handling as public setup, without sending any visitor bytes.
-	_, err = writeSetup(setup, connection, proxy, nil)
+	// metadata is retryable, but any inspected visitor byte commits this relay.
+	// join setup cancellation before the successful stream enters live copying.
+	written, err := writeSetup(setup, connection, proxy, initial)
 	if err != nil {
-		return nil, errors.Join(err, connection.Close())
+		return nil, &tunnel.OpeningError{Committed: written > 0, VisitorBytes: written, Err: errors.Join(err, connection.Close())}
 	}
 	return connection, nil
 }

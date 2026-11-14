@@ -15,6 +15,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 // gate only the real backend TCP half-close, after all visitor bytes were read.
@@ -37,26 +38,12 @@ func (c *completionTCPConn) CloseWrite() error {
 	return err
 }
 
-type completionBackend struct {
-	pendingTLSBackend
-	pending  atomic.Int32
-	ordinary atomic.Int32
-}
-
-func (b *completionBackend) Start(ctx context.Context, id string, pending bool, proxy, initial []byte) (net.Conn, error) {
-	if pending {
-		b.pending.Add(1)
-	} else {
-		b.ordinary.Add(1)
-	}
-	return b.pendingTLSBackend.Start(ctx, id, pending, proxy, initial)
-}
-
 type completionMetrics struct {
 	testMetrics
 	visitors atomic.Int32
 	opens    atomic.Int32
 	opened   atomic.Int32
+	streams  atomic.Int32
 }
 
 func (m *completionMetrics) ObserveVisitor(outcome observability.VisitorOutcome) {
@@ -73,6 +60,8 @@ func (m *completionMetrics) ObserveVisitorOpen(success bool, _ time.Duration) {
 		m.opened.Add(1)
 	}
 }
+
+func (m *completionMetrics) SetIngressStreams(streams int) { m.streams.Store(int32(streams)) }
 
 type completionCleanup struct {
 	result chan error
@@ -139,21 +128,29 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	gate := &completionTCPConn{TCPConn: connection.(*net.TCPConn), entered: make(chan struct{}), proceed: make(chan struct{}), result: make(chan error, 2)}
 	unblock := sync.OnceFunc(func() { close(gate.proceed) })
 	t.Cleanup(unblock)
-	backend := &completionBackend{pendingTLSBackend: pendingTLSBackend{connection: gate}}
 	metrics := &completionMetrics{testMetrics: testMetrics{visitorOutcomes: make(chan string, 2)}}
 	cleanup := &completionCleanup{result: make(chan error, 2)}
 	failures := make(chan error, 2)
-	var failureCalls atomic.Int32
-	config := publicURLConfig(backend)
-	lookup := config.Lookup
-	config.Lookup = func(host string) ([]PublicURL, LookupReason) {
-		candidates, reason := lookup(host)
-		for index := range candidates {
-			candidates[index].AccessMode = "restricted"
+	var failureCalls, openingCalls atomic.Int32
+	relayHeaders := make(chan tunnelv1.ServiceForwardingHeader, 2)
+	config := serviceIngressConfig(t, func(ctx context.Context, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+		if openingCalls.Add(1) != 1 {
+			return nil, errors.New("completion relay unexpectedly opened twice")
 		}
-		return candidates, reason
-	}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		relayHeaders <- header
+		return gate, nil
+	})
+	p := config.PublicServices
+	control := p.config.Control.(*httpsServiceControl)
+	control.pending = true
+	control.recheckStarted, control.recheckGate, control.promoteStarted = make(chan struct{}, 2), make(chan struct{}), make(chan struct{}, 2)
+	unblockRecheck := sync.OnceFunc(func() { close(control.recheckGate) })
+	t.Cleanup(unblockRecheck)
 	config.Metrics, config.Observer = metrics, cleanup
+	p.config.Metrics, p.config.Observer = metrics, cleanup
 	config.OnError = func(err error) {
 		failureCalls.Add(1)
 		select {
@@ -168,6 +165,7 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	// install every unblock and join before starting the peer or a TLS operation.
 	t.Cleanup(func() {
 		unblock()
+		unblockRecheck()
 		_ = connection.Close()
 		_ = peer.Close()
 		ingressAwait(t, peerDone)
@@ -178,7 +176,7 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 		defer close(peerDone)
 		peerResult <- finishCompletionPeer(peer, certificate, headers)
 	}()
-	visitor := ingressClient(t, address, "route.example", "")
+	visitor := ingressClient(t, address, "route.example", "192.0.2.4:42000")
 	if err := visitor.SetDeadline(deadline); err != nil {
 		t.Fatal("set original visitor deadline")
 	}
@@ -190,8 +188,35 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 		t.Fatal("completion pong changed")
 	}
 	header := completionAwait(t, ctx, headers)
-	if header.Source != netip.MustParseAddrPort(visitor.LocalAddr().String()) || header.Destination != netip.MustParseAddrPort(address) {
+	if header.Source != netip.MustParseAddrPort("192.0.2.4:42000") || header.Destination != netip.MustParseAddrPort("203.0.113.10:443") {
 		t.Fatal("completion PROXY endpoints changed")
+	}
+	claim, forwarding := completionAwait(t, ctx, control.claims), completionAwait(t, ctx, relayHeaders)
+	if claim.Hostname == nil || *claim.Hostname != "route.example" || claim.DestinationPort != 443 || claim.ObservedSourceIp != "192.0.2.4" ||
+		forwarding.ServiceID != control.service || forwarding.ServiceRunID != control.run || forwarding.RunNumber != 1 ||
+		forwarding.VisitorConnectionID != claim.VisitorConnectionId || forwarding.SourceIP != "192.0.2.4" ||
+		forwarding.PublicService == nil || forwarding.PublicService.DestinationPort != 443 {
+		t.Fatal("completion lost its service admission or trusted source", claim, forwarding)
+	}
+	// the first recheck captured pending before its gate. allow the next check to
+	// authenticate only after the pending reservation and live stream are visible.
+	completionAwait(t, ctx, control.recheckStarted)
+	p.mu.Lock()
+	sessions, pending, active, streams := p.sessions, p.pending, p.active, p.streams
+	p.mu.Unlock()
+	if sessions != 1 || pending != 1 || active != 0 || streams != 1 || metrics.streams.Load() != 1 {
+		t.Fatalf("restricted service skipped pending capacity: sessions=%d pending=%d active=%d streams=%d", sessions, pending, active, streams)
+	}
+	control.mu.Lock()
+	control.pending, control.authenticated = false, true
+	control.mu.Unlock()
+	unblockRecheck()
+	completionAwait(t, ctx, control.promoteStarted)
+	p.mu.Lock()
+	sessions, pending, active, streams = p.sessions, p.pending, p.active, p.streams
+	p.mu.Unlock()
+	if sessions != 1 || pending != 0 || active != 1 || streams != 1 {
+		t.Fatalf("authenticated service did not promote exactly once: sessions=%d pending=%d active=%d streams=%d", sessions, pending, active, streams)
 	}
 	if err := visitor.CloseWrite(); err != nil {
 		t.Fatal("visitor TLS close-notify failed")
@@ -237,7 +262,7 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	if !prematureClose && (forwardErr != nil || cleanupErr != nil) {
 		t.Fatal("clean completion returned a forwarding/cleanup failure")
 	}
-	if metrics.visitors.Load() != 1 || metrics.opens.Load() != 1 || metrics.opened.Load() != 1 || backend.pending.Load() != 1 || backend.ordinary.Load() != 0 || gate.calls.Load() != 1 || cleanup.calls.Load() != 1 {
+	if metrics.visitors.Load() != 1 || metrics.opens.Load() != 1 || metrics.opened.Load() != 1 || openingCalls.Load() != 1 || gate.calls.Load() != 1 || cleanup.calls.Load() != 1 {
 		t.Fatal("restricted open/half-close/outcome was not exact-once")
 	}
 	wantFailures := int32(0)
@@ -247,7 +272,7 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	if failureCalls.Load() != wantFailures {
 		t.Fatal("forwarding error callback was not exact-once")
 	}
-	if len(failures) != 0 || len(cleanup.result) != 0 || len(metrics.visitorOutcomes) != 0 {
+	if len(failures) != 0 || len(cleanup.result) != 0 || len(metrics.visitorOutcomes) != 0 || len(relayHeaders) != 0 || len(control.claims) != 0 || len(control.promoteStarted) != 0 {
 		t.Fatal("duplicate completion callback")
 	}
 	metrics.forwardedMu.Lock()
@@ -257,10 +282,28 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 		t.Fatal("completed TLS byte metrics changed")
 	}
 	server.mu.Lock()
-	remaining := len(server.connections) + len(server.backends) + server.admitted[pendingConnection] + server.admitted[visitorConnection]
+	connections, inspecting, admitted := len(server.connections), server.pending, server.admitted
 	server.mu.Unlock()
-	if remaining != 0 {
-		t.Fatal("completion retained owned connections")
+	if connections != 0 || inspecting != 0 {
+		t.Fatal("completion retained server inspection ownership", connections, inspecting)
+	}
+	for kind, count := range admitted {
+		if count != 0 {
+			t.Fatal("completion retained server handoff ownership", kind, count)
+		}
+	}
+	p.mu.Lock()
+	sessions, pending, active, streams = p.sessions, p.pending, p.active, p.streams
+	connections, services, sources := len(p.connections), len(p.services), len(p.sources)
+	p.mu.Unlock()
+	control.mu.Lock()
+	rechecks, closed := control.rechecks, control.closed
+	control.mu.Unlock()
+	if sessions != 0 || pending != 0 || active != 0 || streams != 0 || connections != 0 || services != 0 || sources != 0 || metrics.streams.Load() != 0 {
+		t.Fatalf("completion retained service ownership: sessions=%d pending=%d active=%d streams=%d connections=%d services=%d sources=%d gauge=%d", sessions, pending, active, streams, connections, services, sources, metrics.streams.Load())
+	}
+	if control.recheckActive.Load() != 0 || rechecks < 2 || closed != 1 {
+		t.Fatalf("completion missed a service lifecycle boundary: rechecks=%d active rechecks=%d closed=%d", rechecks, control.recheckActive.Load(), closed)
 	}
 	if err := visitor.Close(); err != nil {
 		t.Fatal("visitor final full close failed")

@@ -203,7 +203,7 @@ func TestServiceHTTPSRequiresHostnameOnlyOnSharedPort(t *testing.T) {
 	} {
 		p, control, forwarder, _ := publicServiceTestSetup(t)
 		connection, client := net.Pipe()
-		err := p.AcceptPublic(t.Context(), connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.AddrPortFrom(netip.MustParseAddr("203.0.113.8"), test.port), test.hostname)
+		err := p.AcceptPublic(t.Context(), connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.AddrPortFrom(netip.MustParseAddr("203.0.113.8"), test.port), test.hostname, nil)
 		connection.Close()
 		client.Close()
 		if !errors.Is(err, ErrServiceAdmission) || forwarder.count() != 0 || control.closed != 0 || p.Load() != 0 {

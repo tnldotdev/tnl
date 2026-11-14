@@ -283,7 +283,8 @@ func (d *daemon) startIngressRuntime(
 		runtimeConfig.configure(&ingressConfig)
 	}
 	ingressConfig.AuditSink = runtime.audit
-	publicServicesConfig := ingress.PublicServicesConfig{IngressPoolID: string(settings.ingressPoolID), Control: runtimeConfig.client, Forwarder: forwarder, CurrentLease: controller.Lease, AuditSink: runtime.audit}
+	publicServicesConfig := ingress.PublicServicesConfig{IngressPoolID: string(settings.ingressPoolID), Control: runtimeConfig.client, Forwarder: forwarder, CurrentLease: controller.Lease, AuditSink: runtime.audit,
+		Metrics: ingressConfig.Metrics, Observer: ingressConfig.Observer}
 	if runtimeConfig.configurePublicServices != nil {
 		runtimeConfig.configurePublicServices(&publicServicesConfig)
 	}
