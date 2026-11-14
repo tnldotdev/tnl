@@ -51,7 +51,7 @@ func (q *Queries) GetPublisherAccess(ctx context.Context, accessTokenDigest []by
 }
 
 const getPublisherAllocation = `-- name: GetPublisherAllocation :one
-SELECT public_url_id, publisher_identity_id, publisher_grant_id, invocation_id FROM control.publisher_namespace_allocations WHERE public_url_id = $1
+SELECT public_url_id, publisher_identity_id, publisher_grant_id, invocation_id, deployment_id FROM control.publisher_namespace_allocations WHERE public_url_id = $1
 `
 
 func (q *Queries) GetPublisherAllocation(ctx context.Context, publicUrlID string) (ControlPublisherNamespaceAllocation, error) {
@@ -62,6 +62,7 @@ func (q *Queries) GetPublisherAllocation(ctx context.Context, publicUrlID string
 		&i.PublisherIdentityID,
 		&i.PublisherGrantID,
 		&i.InvocationID,
+		&i.DeploymentID,
 	)
 	return i, err
 }
@@ -183,8 +184,8 @@ func (q *Queries) InsertPublisherAccess(ctx context.Context, arg InsertPublisher
 }
 
 const insertPublisherAllocation = `-- name: InsertPublisherAllocation :exec
-INSERT INTO control.publisher_namespace_allocations(public_url_id, publisher_identity_id, publisher_grant_id, invocation_id)
-VALUES ($1, $2, $3, $4)
+INSERT INTO control.publisher_namespace_allocations(public_url_id, publisher_identity_id, publisher_grant_id, invocation_id, deployment_id)
+VALUES ($1, $2, $3, $4, $5)
 `
 
 type InsertPublisherAllocationParams struct {
@@ -192,6 +193,7 @@ type InsertPublisherAllocationParams struct {
 	PublisherIdentityID string
 	PublisherGrantID    string
 	InvocationID        string
+	DeploymentID        pgtype.Text
 }
 
 func (q *Queries) InsertPublisherAllocation(ctx context.Context, arg InsertPublisherAllocationParams) error {
@@ -200,6 +202,7 @@ func (q *Queries) InsertPublisherAllocation(ctx context.Context, arg InsertPubli
 		arg.PublisherIdentityID,
 		arg.PublisherGrantID,
 		arg.InvocationID,
+		arg.DeploymentID,
 	)
 	return err
 }

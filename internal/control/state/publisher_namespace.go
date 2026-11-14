@@ -85,13 +85,16 @@ func (d *Database) validatePublisherDeletion(ctx context.Context, q *controlstat
 	if err != nil {
 		return err
 	}
-	if p.GuestID != "" || p.Scope.Kind != "namespace" || u.CreatedByIdentityID != p.CreatorID || r.ActingIdentityID != p.CreatorID {
+	if p.GuestID != "" || p.Scope.Kind != "namespace" && p.Scope.Kind != DeploymentCredentialGrant || !u.Ephemeral || u.CreatedByIdentityID != p.CreatorID || r.ActingIdentityID != p.CreatorID {
 		return ErrPublisherIdentity
 	}
 	return publisherOwnsRun(ctx, q, p, u)
 }
 
 func (d *Database) PublisherMayStartRun(ctx context.Context, p PublisherIdentity, id string) (bool, error) {
+	if p.Scope.Kind == DeploymentCredentialGrant {
+		return controlstatedb.New(d.pool).DeploymentPublicationAllowed(ctx, controlstatedb.DeploymentPublicationAllowedParams{GrantID: p.GrantID, PublicURLID: id})
+	}
 	if p.Scope.Kind == "saved_public_url" {
 		return p.Scope.PublicURLID == id, nil
 	}

@@ -53,7 +53,7 @@ type DeploymentPublisherServiceAssignment struct {
 	Kind          string                      `json:"service_kind"`
 	GrantID       string                      `json:"grant_id"`
 	Hostname      string                      `json:"hostname,omitempty"`
-	TrustRevision int64                       `json:"trust_revision,string"`
+	TrustRevision int64                       `json:"trust_revision,omitempty,string"`
 	Configuration ProjectServiceConfiguration `json:"configuration"`
 }
 type DeploymentPublisherAssignments struct {
@@ -317,6 +317,14 @@ func (d *Database) GetDeploymentPublisherAssignments(ctx context.Context, token 
 		return result, err
 	}
 	for _, s := range services {
+		configuration, ok := c.Services[s.Service]
+		if !ok {
+			return result, ErrDeploymentPublisher
+		}
+		// only the application's owner can supply its listener.
+		if configuration.Target == "app" {
+			continue
+		}
 		allowed, err := q.DeploymentPublisherServiceAllowed(ctx, controlstatedb.DeploymentPublisherServiceAllowedParams{PublisherID: m.PublisherIdentityID, DeploymentID: m.DeploymentID, Service: s.Service, ServiceID: s.ServiceID, PublicURLID: s.PublicURLID})
 		if err != nil {
 			return result, err
@@ -331,10 +339,6 @@ func (d *Database) GetDeploymentPublisherAssignments(ctx context.Context, token 
 			}
 			return result, publisherLookupError(err, ErrDeploymentPublisher)
 		}
-		configuration, ok := c.Services[s.Service]
-		if !ok {
-			return result, ErrDeploymentPublisher
-		}
 		a := DeploymentPublisherServiceAssignment{Service: s.Service, ServiceID: s.PublicURLID.String, Kind: "public_url", GrantID: grant, Configuration: configuration}
 		if s.ServiceID.Valid {
 			a.ServiceID, a.Kind = s.ServiceID.String, "service"
@@ -342,7 +346,11 @@ func (d *Database) GetDeploymentPublisherAssignments(ctx context.Context, token 
 				return result, err
 			}
 		} else {
-			a.Hostname = a.Configuration.PublicURL.Hostname
+			// public URLs have no service trust revision. their exact grant and
+			// binding configuration change together, not when a run starts.
+			if err = tx.QueryRow(ctx, `SELECT canonical_hostname FROM control.public_urls WHERE id=$1 AND lifecycle_state='enabled'`, s.PublicURLID.String).Scan(&a.Hostname); err != nil {
+				return result, err
+			}
 		}
 		result.Services = append(result.Services, a)
 	}
@@ -403,6 +411,29 @@ func listDeploymentPublisherStatus(ctx context.Context, tx pgx.Tx, team, project
 }
 
 func (d *Database) removeDeploymentPublisher(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, deployment string, now time.Time) error {
+	rows, err := tx.Query(ctx, `SELECT allocation.public_url_id FROM control.publisher_namespace_allocations allocation JOIN control.public_urls url ON url.id=allocation.public_url_id WHERE allocation.deployment_id=$1 AND url.lifecycle_state<>'deleted' ORDER BY allocation.public_url_id`, deployment)
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err = d.retireProjectResource(ctx, tx, q, controlstatedb.ControlAppliedProjectService{PublicURLID: text(id)}, now); err != nil {
+			return err
+		}
+	}
 	if err := retireServiceNamespace(ctx, tx, deployment, now); err != nil {
 		return err
 	}
@@ -417,6 +448,6 @@ func (d *Database) removeDeploymentPublisher(ctx context.Context, tx pgx.Tx, q *
 	if _, err := tx.Exec(ctx, `UPDATE control.deployment_publisher_enrollments SET revoked_at=COALESCE(revoked_at,$2) WHERE deployment_id=$1`, deployment, now); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `UPDATE control.deployments SET deleted_at=$2 WHERE id=$1`, deployment, now)
+	_, err = tx.Exec(ctx, `UPDATE control.deployments SET deleted_at=$2 WHERE id=$1`, deployment, now)
 	return err
 }

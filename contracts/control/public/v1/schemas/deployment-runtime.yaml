@@ -121,7 +121,7 @@ schemas:
         }
   DeploymentPublisherServiceAssignment:
     type: object
-    required: [service, service_id, service_kind, grant_id, configuration, trust_revision]
+    required: [service, service_id, service_kind, grant_id, configuration]
     properties:
       service: { type: string }
       service_id: { type: string }
@@ -133,7 +133,9 @@ schemas:
           type: string,
           pattern: "^[0-9]+$",
           x-go-type: int64,
+          x-go-type-skip-optional-pointer: true,
           x-oapi-codegen-extra-tags: { json: "trust_revision,omitempty,string" },
+          description: Required only for saved services. Public URL assignments omit this field; their exact grant and binding configuration fence changes without using the publish-run mutation counter.,
         }
       configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceConfiguration" }
   DeploymentPublisherAcknowledgement:

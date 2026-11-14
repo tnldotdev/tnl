@@ -99,14 +99,17 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration, local bool) 
 	} else {
 		descriptor, err = appliedLocalTargetDescriptor(s.Target, s.Protocol)
 	}
-	if err != nil || descriptor && s.TargetDiscovery == nil && !local {
+	if err != nil || descriptor && s.TargetDiscovery == nil && !local && !(s.Target == "app" && s.PublicURL != nil) {
 		return ErrProjectConfigurationInvalid
 	}
-	if s.PublicURL != nil && (s.Protocol != "http" || !local) {
+	if s.PublicURL != nil && (s.Protocol != "http" || !local && s.PublicURL.Ephemeral) {
+		return ErrProjectConfigurationInvalid
+	}
+	if s.PublicURL != nil && !local && (s.TargetDiscovery != nil || s.HTTP != nil && (s.HTTP.Access != nil || s.HTTP.Limits != nil)) {
 		return ErrProjectConfigurationInvalid
 	}
 	if !descriptor {
-		if s.PublicURL != nil && local {
+		if s.PublicURL != nil {
 			canonical, err := targetsyntax.NormalizeTarget(s.Target)
 			if err != nil {
 				return ErrProjectConfigurationInvalid
