@@ -404,8 +404,8 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		if r.Deployment != "local" {
 			retained = append(retained, record.Deployments["local"].Services)
 		}
-		for _, g := range groups {
-			if managedGroups[g.ID] {
+		for _, g := range deployments {
+			if managedDeployments[g.ID] {
 				continue
 			}
 			snapshot, err := d.openDeploymentConfiguration(g)
