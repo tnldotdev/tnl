@@ -50,7 +50,7 @@ func TestIntegrationWorkloadHTTPReplacementKeepsSubjectsSeparate(t *testing.T) {
 		policy.Deployment = group
 		policies[name] = policy
 	}
-	_, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": protocol}, TeamId: f.identity.teamID, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Workloads: &policies, Settings: &controlv1.DeploymentSettings{Public: new(true)}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Protocol: &protocol, Target: target.URL}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
+	_, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": protocol}, TeamId: f.identity.teamID, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Workloads: &policies, Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Protocol: &protocol, Target: target.URL, Public: new(true)}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
 	if err != nil {
 		t.Fatal(err)
 	}

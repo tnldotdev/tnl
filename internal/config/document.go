@@ -41,7 +41,7 @@ type TNL struct {
 	Tunnel             *Tunnel             `json:"public_url,omitempty" yaml:"public_url,omitempty" jsonschema_description:"Defaults for local public_url blocks and remote HTTP policy. Defaults never enable publication."`
 	Deployment         string              `json:"deployment" yaml:"deployment"`
 	DeploymentSettings DeploymentSettings  `json:"deployment_settings" yaml:"deployment_settings"`
-	Services           Services            `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Bindings for the selected deployment. A local public_url block enables a public URL; remote reachability belongs to the deployment."`
+	Services           Services            `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Bindings for the selected deployment. Public endpoint access is selected on each binding, independently of visitor authorization."`
 	Webhooks           map[string]Webhook  `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
 	Aliases            map[string]Alias    `json:"aliases,omitempty" yaml:"aliases,omitempty" jsonschema_description:"Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."`
 	Workloads          map[string]Workload `json:"workloads,omitempty" yaml:"workloads,omitempty" jsonschema_description:"Named provider identities granting access to exact configured services."`
@@ -52,7 +52,6 @@ type Services map[string]Service
 type DeploymentSettings struct {
 	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
 	Domain      *string `json:"domain,omitempty" yaml:"domain,omitempty" jsonschema_description:"Ready team domain; defaults to the team's default domain when the namespace is first allocated."`
-	Public      bool    `json:"public,omitempty" yaml:"public,omitempty" jsonschema_description:"Enable direct ingress access. Omitted or false uses loopback DNS and requires tnl connect. Native TLS and visitor authorization apply in either mode."`
 }
 
 // ServiceAccess declares team access for a service or local public URL.

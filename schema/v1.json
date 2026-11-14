@@ -250,10 +250,7 @@
                 "maxLength": 253,
                 "minLength": 1
               },
-              "public": {
-                "type": "boolean",
-                "default": false
-              },
+              "public": false,
               "targets": {
                 "additionalProperties": {
                   "oneOf": [

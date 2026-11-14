@@ -16,8 +16,9 @@ func TestIntegrationPerServiceExposureKeepsPrivateRunsAndCapacity(t *testing.T) 
 	}
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
-		"api": {Target: "http://app.internal:3000", Public: new(true)},
-		"db":  {Protocol: "postgres", Target: "db.internal:5432", Public: new(false)},
+		"api":     {Target: "http://app.internal:3000", Public: new(true)},
+		"db":      {Protocol: "postgres", Target: "db.internal:5432", Public: new(false)},
+		"private": {Target: "http://private.internal:3000"},
 	}}
 	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(ctx, r)
@@ -30,6 +31,9 @@ func TestIntegrationPerServiceExposureKeepsPrivateRunsAndCapacity(t *testing.T) 
 	}
 	if !byName["api"].Public || byName["api"].Port != 25443 || byName["db"].Public || byName["db"].Port != 0 {
 		t.Fatal("mixed exposure allocated the wrong public bindings", applied.Services)
+	}
+	if byName["private"].Public || byName["private"].Port != 0 || len(applied.Deployments) != 1 || !applied.Deployments[0].Public {
+		t.Fatal("omission inherited exposure or deployment summary lost its public binding", applied)
 	}
 	enrollment, err := testDeploymentPublisherEnrollment(d, ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
 	if err != nil {
@@ -61,6 +65,9 @@ func TestIntegrationPerServiceExposureKeepsPrivateRunsAndCapacity(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(disabled.Deployments) != 1 || disabled.Deployments[0].Public {
+		t.Fatal("deployment public summary retained a removed default", disabled.Deployments)
+	}
 	for _, service := range disabled.Services {
 		if service.Public || service.ServiceID != byName[service.Service].ServiceID || service.Port != byName[service.Service].Port || service.TrustRevision != byName[service.Service].TrustRevision {
 			t.Fatal("disable changed a retained binding or private identity", service)
@@ -79,8 +86,6 @@ func TestIntegrationPerServiceExposureKeepsPrivateRunsAndCapacity(t *testing.T) 
 	}
 	setPublic("db", false)
 	setPublic("api", true)
-	// explicit false also overrides the retained default in older configurations.
-	r.Configuration.Settings.Public = true
 	reenabled, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)

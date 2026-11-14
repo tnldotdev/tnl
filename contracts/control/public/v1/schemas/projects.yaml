@@ -182,7 +182,6 @@ schemas:
     properties:
       description: { type: string, maxLength: 1024 }
       domain_id: { type: string }
-      public: { type: boolean, default: false }
   ProjectWorkload:
     type: object
     additionalProperties: false
@@ -298,7 +297,7 @@ schemas:
       target_discovery: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetDiscovery" }
       public:
         type: boolean
-        description: Public endpoint access for this service binding, independent of visitor authorization. Local bindings allocate only when realized by an authorized worktree. False keeps connector access only. Overrides the retained deployment default. Mutually exclusive with public_url.
+        description: Public endpoint access for this service binding, independent of visitor authorization. Local bindings allocate only when realized by an authorized worktree. Omission or false keeps connector access only. Mutually exclusive with public_url.
       public_url: { $ref: "../openapi.yaml#/components/schemas/ProjectServicePublicURL" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetTLS" }
       access: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceAccess" }
@@ -461,7 +460,9 @@ schemas:
         items: { type: string }
       namespace: { type: string }
       domain_id: { type: string }
-      public: { type: boolean }
+      public:
+        type: boolean
+        description: Read-only summary indicating that at least one binding has public endpoint access configured. Not a deployment-wide default.
   AppliedProjectService:
     type: object
     required: [service, deployment, service_kind, desired_revision, trust_revision]

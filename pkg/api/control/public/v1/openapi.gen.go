@@ -2004,7 +2004,9 @@ type AppliedDeployment struct {
 	Id              string   `json:"id"`
 	Name            string   `json:"name"`
 	Namespace       string   `json:"namespace"`
-	Public          bool     `json:"public"`
+
+	// Public Read-only summary indicating that at least one binding has public endpoint access configured. Not a deployment-wide default.
+	Public bool `json:"public"`
 }
 
 // AppliedProjectConfiguration defines model for AppliedProjectConfiguration.
@@ -2824,7 +2826,6 @@ type DeploymentService struct {
 type DeploymentSettings struct {
 	Description *string `json:"description,omitempty"`
 	DomainId    *string `json:"domain_id,omitempty"`
-	Public      *bool   `json:"public,omitempty"`
 }
 
 // DeploymentTarget defines model for DeploymentTarget.
@@ -3339,7 +3340,7 @@ type ProjectServiceConfiguration struct {
 	Name     *string             `json:"name,omitempty"`
 	Protocol *ServiceProtocol    `json:"protocol,omitempty"`
 
-	// Public Public endpoint access for this service binding, independent of visitor authorization. Local bindings allocate only when realized by an authorized worktree. False keeps connector access only. Overrides the retained deployment default. Mutually exclusive with public_url.
+	// Public Public endpoint access for this service binding, independent of visitor authorization. Local bindings allocate only when realized by an authorized worktree. Omission or false keeps connector access only. Mutually exclusive with public_url.
 	Public *bool `json:"public,omitempty"`
 
 	// PublicUrl Enables an HTTP public URL. Local URLs belong to the developer preview; remote saved URLs belong to the team/project/deployment and retain their own visitor policy. Remote declarations cannot mark a named URL ephemeral; unnamed application publication allocates temporary URLs separately.

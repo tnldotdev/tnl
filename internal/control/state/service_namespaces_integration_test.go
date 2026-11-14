@@ -80,7 +80,10 @@ func TestIntegrationDeploymentNamespaceAndRename(t *testing.T) {
 	r.ExpectedRevision = renamed.Revision
 	r.ProjectLabel = "a-different-checkout"
 	r.Now = now.Add(3 * time.Second)
-	r.Configuration.Settings.Public = true
+	for name, binding := range r.Configuration.Services {
+		binding.Public = new(true)
+		r.Configuration.Services[name] = binding
+	}
 	changed, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
