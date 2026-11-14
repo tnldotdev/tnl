@@ -46,3 +46,23 @@ func TestProjectHTTPPreservesLargeRevision(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectHTTPRejectsDeploymentWideExposureBeforeMutation(t *testing.T) {
+	store := &projectNumberStore{}
+	h := &handler{dependencies: Stores{ProjectConfiguration: store}, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal()}}
+	for _, value := range []string{"true", "false"} {
+		request := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"team_id":"team_1","deployment":"production","service_declarations":{},"expected_revision":"0","configuration":{"settings":{"public":`+value+`},"services":{},"oauth":false,"webhooks":{}}}`))
+		request.Header.Set("Authorization", "Bearer access-token")
+		response := httptest.NewRecorder()
+		h.ApplyProjectConfiguration(response, request, "project")
+		if response.Code != http.StatusBadRequest || store.calls != 0 {
+			t.Fatalf("deployment-wide exposure reached state: %s: %d %s", value, response.Code, response.Body.String())
+		}
+		var problem struct {
+			Code string `json:"code"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil || problem.Code != "invalid_request" {
+			t.Fatal("retired field lost its invalid-request classification", problem, err)
+		}
+	}
+}

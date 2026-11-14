@@ -33,7 +33,6 @@ var (
 type DeploymentSettings struct {
 	Description string `json:"description,omitempty"`
 	DomainID    string `json:"domain_id,omitempty"`
-	Public      bool   `json:"public,omitempty"`
 }
 type ProjectServicePublicURL struct {
 	RequirePostQuantum *bool                `json:"require_post_quantum,omitempty"`
@@ -553,7 +552,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			return result, err
 		}
 		if entry.ServiceID.Valid && entry.DeploymentID.Valid {
-			if err = d.ensureServiceEndpoint(ctx, tx, entry.ServiceID.String, entry.DeploymentID.String, projectServicePublic(c.Settings, s), r.DNSAutomation, r.Now); err != nil {
+			if err = d.ensureServiceEndpoint(ctx, tx, entry.ServiceID.String, entry.DeploymentID.String, projectServicePublic(s), r.DNSAutomation, r.Now); err != nil {
 				return result, err
 			}
 		}
@@ -785,7 +784,11 @@ func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row cont
 		if err := tx.QueryRow(ctx, `SELECT array_agg(name ORDER BY name) FROM control.deployment_names WHERE deployment_id=$1`, deployment.ID).Scan(&names); err != nil {
 			return result, err
 		}
-		result.Deployments = append(result.Deployments, AppliedDeployment{ID: deployment.ID, Name: deployment.Name, DeploymentNames: names, Namespace: deployment.Namespace, DomainID: deployment.DomainID.String, Public: deployment.Public})
+		public := false
+		for _, service := range result.Services {
+			public = public || service.Public || service.Kind == "public_url"
+		}
+		result.Deployments = append(result.Deployments, AppliedDeployment{ID: deployment.ID, Name: deployment.Name, DeploymentNames: names, Namespace: deployment.Namespace, DomainID: deployment.DomainID.String, Public: public})
 	}
 	return result, err
 }

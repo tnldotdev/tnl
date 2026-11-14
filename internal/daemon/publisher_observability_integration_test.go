@@ -335,8 +335,8 @@ func TestIntegrationPublisherObservabilityPublicService(t *testing.T) {
 				Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"echo": protocol},
 				TeamId: f.identity.teamID, Source: &testProjectSource,
 				Configuration: controlv1.ProjectConfiguration{
-					Settings: &controlv1.DeploymentSettings{Public: &public},
-					Services: map[string]controlv1.ProjectServiceConfiguration{"echo": {Protocol: &protocol, Target: target.address}},
+					Settings: &controlv1.DeploymentSettings{},
+					Services: map[string]controlv1.ProjectServiceConfiguration{"echo": {Protocol: &protocol, Target: target.address, Public: &public}},
 					Webhooks: map[string]controlv1.ProjectWebhook{},
 				},
 			})

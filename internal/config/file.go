@@ -189,7 +189,7 @@ func ValidateTNL(config TNL) error {
 		return errors.New("selected deployment must be a lowercase DNS label")
 	}
 	settings := config.DeploymentSettings
-	if deployment == "local" && (settings.Description != nil || settings.Domain != nil || settings.Public) {
+	if deployment == "local" && (settings.Description != nil || settings.Domain != nil) {
 		return errors.New("local selection has no saved deployment settings")
 	}
 	if deployment == "local" && len(config.Workloads) != 0 {

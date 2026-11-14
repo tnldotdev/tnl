@@ -234,7 +234,7 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 		if e != nil {
 			return result, e
 		}
-		if e = d.ensureLocalServiceEndpoint(ctx, tx, row.ID, r.ActorID, s.Name, ServicePlacement{DomainID: r.DomainID, WorktreeKey: localPlacementKey(r.WorktreeKey), WorktreeLabel: r.WorktreeLabel, SourceKey: r.ProjectKey + "/" + r.SourceFingerprint + "/" + r.WorktreeKey + "/" + r.Service, DNSAutomation: r.DNSAutomation}, projectServicePublic(nil, s), r.Now); e != nil {
+		if e = d.ensureLocalServiceEndpoint(ctx, tx, row.ID, r.ActorID, s.Name, ServicePlacement{DomainID: r.DomainID, WorktreeKey: localPlacementKey(r.WorktreeKey), WorktreeLabel: r.WorktreeLabel, SourceKey: r.ProjectKey + "/" + r.SourceFingerprint + "/" + r.WorktreeKey + "/" + r.Service, DNSAutomation: r.DNSAutomation}, projectServicePublic(s), r.Now); e != nil {
 			return result, e
 		}
 		row, e = q.LockService(ctx, row.ID)
@@ -413,7 +413,7 @@ func (d *Database) reconcileLocalProjectServices(ctx context.Context, tx pgx.Tx,
 			if err = d.updateLocalService(ctx, tx, q, row, local, r.Now); err != nil {
 				return err
 			}
-			if err = d.setLocalServiceExposure(ctx, tx, row.ID, projectServicePublic(nil, *s), r.Now); err != nil {
+			if err = d.setLocalServiceExposure(ctx, tx, row.ID, projectServicePublic(*s), r.Now); err != nil {
 				return err
 			}
 			if err = d.saveLocalServiceHTTP(ctx, tx, row.ID, s.HTTP); err != nil {

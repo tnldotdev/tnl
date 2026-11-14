@@ -315,7 +315,10 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	p := r.Configuration.Workloads["test"]
 	p.MaxDurationSeconds = 10
 	r.Configuration.Workloads["test"] = p
-	r.Configuration.Settings.Public = true
+	for name, binding := range r.Configuration.Services {
+		binding.Public = new(true)
+		r.Configuration.Services[name] = binding
+	}
 	applied, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)

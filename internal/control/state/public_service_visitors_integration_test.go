@@ -49,7 +49,10 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 	setPublic := func(public bool) {
 		t.Helper()
 		r.DNSAutomation = true
-		r.Configuration.Settings.Public = public
+		for name, binding := range r.Configuration.Services {
+			binding.Public = new(public)
+			r.Configuration.Services[name] = binding
+		}
 		r.ExpectedRevision = applied.Revision
 		applied, err = d.ApplyProjectConfiguration(ctx, r)
 		if err != nil {

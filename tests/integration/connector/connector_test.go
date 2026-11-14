@@ -697,7 +697,8 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 			workloadPolicy["token"] = map[string]any{"env": "FIXTURE_GOOGLE_ASSERTION"}
 		}
 	}
-	configuration := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "services": map[string]any{serviceName: map[string]any{"protocol": protocol}}, "deployments": map[string]any{"remote": map[string]any{"public": true, "targets": map[string]any{serviceName: targetDefinition}}}, "workloads": map[string]any{"test": workloadPolicy}}}
+	targetDefinition["public"] = true
+	configuration := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "services": map[string]any{serviceName: map[string]any{"protocol": protocol}}, "deployments": map[string]any{"remote": map[string]any{"targets": map[string]any{serviceName: targetDefinition}}}, "workloads": map[string]any{"test": workloadPolicy}}}
 	if startup == "action-wrong-provider" {
 		configuration["tnl"].(map[string]any)["workloads"] = map[string]any{"test": map[string]any{"deployment": "remote", "fly": map[string]any{"app": "fixture", "org": "example"}, "services": []string{serviceName}}}
 	}
