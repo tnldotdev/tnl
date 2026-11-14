@@ -225,9 +225,6 @@ func ValidateTNL(config TNL) error {
 		if service.Public != nil && service.Tunnel != nil {
 			return fmt.Errorf("services.%s.public: endpoint reachability cannot be combined with public_url", name)
 		}
-		if deployment == "local" && service.Public != nil {
-			return fmt.Errorf("services.%s.public: per-service public endpoint access currently requires a saved deployment", name)
-		}
 		if service.Access != nil && !service.Access.Team {
 			return fmt.Errorf("services.%s.access requires team: true", name)
 		}

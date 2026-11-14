@@ -54,7 +54,7 @@ func appliedLocalTargetDescriptor(target, protocol string) (bool, error) {
 }
 
 func normalizeAppliedProjectService(s *ProjectServiceConfiguration, local bool) error {
-	if s.Public != nil && (local || s.PublicURL != nil) {
+	if s.Public != nil && s.PublicURL != nil {
 		return ErrProjectConfigurationInvalid
 	}
 	if s.HTTP != nil {

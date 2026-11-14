@@ -31,17 +31,27 @@ func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service
 	if err = reconcileServiceEndpoint(ctx, tx, serviceEndpoint{ServiceID: service, DeploymentID: deployment, DomainID: domain, Hostname: hostname, Namespace: namespace, PoolID: pool, Public: public, Automation: automation}, now); err != nil {
 		return err
 	}
-	// first public enablement changes the exact captured binding. a prepared or
-	// serving zero-port run cannot acquire authority for the allocated port.
-	if _, err = tx.Exec(ctx, `UPDATE control.service_runs run SET state='closed',closed_at=$3
-		FROM control.services service WHERE service.id=$1 AND run.service_id=service.id
-		AND run.closed_at IS NULL AND service.certificate_hostname<>''
-		AND service.service_port IS DISTINCT FROM $2::integer`, service, port, now); err != nil {
+	if err = bindServicePort(ctx, tx, service, port, public, now); err != nil {
 		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE control.services SET
-	    trust_revision=trust_revision+CASE WHEN certificate_hostname<>'' AND service_port IS DISTINCT FROM $5::integer THEN 1 ELSE 0 END,
-	    certificate_hostname=$2,certificate_scope=$3,domain_id=$4,service_port=$5,ingress_pool_id=$6,public=$7,name_scope=$8 WHERE id=$1`, service, hostname, namespace, domain, port, pool, public, deployment)
+	    certificate_hostname=$2,certificate_scope=$3,domain_id=$4,ingress_pool_id=$5,name_scope=$6 WHERE id=$1`, service, hostname, namespace, domain, pool, deployment)
+	return projectConstraintError(err)
+}
+
+// first allocation changes an exact signed binding for both local and remote
+// services. retained disable/re-enable does not change private run authority.
+// callers hold the service row lock before entering this operation.
+func bindServicePort(ctx context.Context, tx pgx.Tx, service string, port int, public bool, now time.Time) error {
+	if _, err := tx.Exec(ctx, `UPDATE control.service_runs run SET state='closed',closed_at=$3
+	    FROM control.services service WHERE service.id=$1 AND run.service_id=service.id
+	    AND run.closed_at IS NULL AND service.certificate_hostname<>''
+	    AND service.service_port IS DISTINCT FROM $2::integer`, service, port, now); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `UPDATE control.services SET
+	    trust_revision=trust_revision+CASE WHEN certificate_hostname<>'' AND service_port IS DISTINCT FROM $2::integer THEN 1 ELSE 0 END,
+	    service_port=$2,public=$3 WHERE id=$1`, service, port, public)
 	return projectConstraintError(err)
 }
 

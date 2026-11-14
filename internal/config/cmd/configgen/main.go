@@ -236,7 +236,7 @@ func deploymentBindingSchema() *jsonschema.Schema {
 	access := jsonschema.NewProperties()
 	access.Set("team", &jsonschema.Schema{Type: "boolean", Const: true})
 	properties.Set("access", &jsonschema.Schema{Type: "object", Properties: access, Required: []string{"team"}, AdditionalProperties: jsonschema.FalseSchema})
-	properties.Set("public", &jsonschema.Schema{Type: "boolean", Description: "Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only."})
+	properties.Set("public", &jsonschema.Schema{Type: "boolean", Description: "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."})
 	properties.Set("inspection", &jsonschema.Schema{Ref: "#/$defs/Inspection"})
 	tunnel := tunnelSchema()
 	tunnel.Description = "Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present."
@@ -269,7 +269,10 @@ func deploymentBindingSchema() *jsonschema.Schema {
 		}
 		conflict := jsonschema.NewProperties()
 		conflict.Set("public_url", &jsonschema.Schema{Required: []string{"hostname"}})
-		variant.AllOf = []*jsonschema.Schema{{Not: &jsonschema.Schema{Required: []string{"name", "public_url"}, Properties: conflict}}}
+		variant.AllOf = []*jsonschema.Schema{
+			{Not: &jsonschema.Schema{Required: []string{"name", "public_url"}, Properties: conflict}},
+			{Not: &jsonschema.Schema{Required: []string{"public", "public_url"}}},
+		}
 		kind, _ := variant.Properties.Get("type")
 		if kind.Const == "address" || kind.Const == "app" {
 			variant.Required = slices.DeleteFunc(variant.Required, func(name string) bool { return name == "type" })
