@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -38,6 +39,10 @@ func TestIntegrationServiceAuditBatchAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(d.Close)
+	const issuer = "https://control.example.test"
+	if err := d.PrepareVisitorSigningKeys(ctx, issuer, now); err != nil {
+		t.Fatal(err)
+	}
 	session, err := controltest.Session(ctx, d, "example.test", time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
@@ -52,12 +57,20 @@ func TestIntegrationServiceAuditBatchAPI(t *testing.T) {
 	relays := newAuditCompositionRelays(t, d, now)
 	first := newAuditCompositionRun(t, d, pool, relays, actor, m.TeamID, m.ID, "audit-api", now)
 	other := newAuditCompositionRun(t, d, pool, relays, actor, m.TeamID, m.ID, "audit-other", now)
-	h, err := NewHandler(Config{}, DatabaseStores(d), d, nil)
+	h, err := NewHandler(Config{ControlURL: issuer}, DatabaseStores(d), d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewTLSServer(h)
 	t.Cleanup(server.Close)
+	control, err := clientcontrol.New(server.URL, server.Client(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	permission, err := d.CreateServiceHTTPGrant(ctx, first.service.ID, actor, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: now.Add(time.Hour)}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	post := func(client *http.Client, endpoint, token string, body any, want int) []byte {
 		t.Helper()
 		encoded, err := json.Marshal(body)
@@ -140,7 +153,7 @@ func TestIntegrationServiceAuditBatchAPI(t *testing.T) {
 	claimedScope["team_id"] = "emitter-chosen-team"
 	post(ingressServer.Client(), endpoint, secret, map[string]any{"events": []any{claimedScope}}, 400)
 	post(ingressServer.Client(), endpoint+"0", secret, batch, 409)
-	exerciseServiceAuditQueueComposition(t, d, pool, lease, first,
+	exerciseServiceAuditQueueComposition(t, d, pool, lease, first, control, permission.Permission.VisitorToken,
 		serviceaudit.HTTPReporter(ingressServer.Client(), func(context.Context) (serviceaudit.Destination, error) {
 			return serviceaudit.Destination{URL: endpoint, Bearer: secret}, nil
 		}))
