@@ -182,39 +182,17 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	// to authorize; a slow database must not mint a later deadline.
 	recheckUntil := minTime(deadline, requestAt.Add(5*time.Minute))
 	if r.Action != "renew" {
-		slots, err := publication.connections(ctx, q)
+		ready, leaseUntil, err := publication.readyRelays(ctx, tx, now, true)
 		if err != nil {
 			return result, err
 		}
-		if len(slots) != 2 || slots[0].relayService == slots[1].relayService {
+		if ready == nil {
 			return result, ErrServiceAccess
 		}
-		for i, slot := range slots {
-			if !slot.ready(publication, i) {
-				return result, ErrServiceAccess
-			}
-			var lease RelayLeaseIdentity
-			var address, serverName string
-			var leaseRevision int64
-			var leaseUntil time.Time
-			err = tx.QueryRow(ctx, `SELECT lease.relay_service_id,lease.relay_id,lease.relay_run_id,lease.relay_lease_revision,service.relay_address,service.tls_server_name,lease.lease_expires_at
-		    FROM control.relay_leases lease JOIN control.relay_services service ON service.relay_service_id=lease.relay_service_id
-		    WHERE lease.relay_id=$1 AND lease.relay_run_id=$2 AND lease.relay_lease_revision=$3 AND lease.relay_service_id=$4
-		    AND lease.lease_expires_at>$5 AND NOT lease.draining AND service.enabled FOR SHARE OF lease,service`, slot.relayID.String, slot.relayRunID.String, slot.leaseRevision.Int64, slot.relayService, now).
-				Scan(&lease.RelayServiceID, &lease.RelayID, &lease.RelayRunID, &leaseRevision, &address, &serverName, &leaseUntil)
-			if err != nil {
-				return result, publisherLookupError(err, ErrServiceAccess)
-			}
-			if slot.address != address || slot.serverName != serverName {
-				return ConnectorPeerPair{}, ErrServiceAccess
-			}
-			lease.RelayLeaseRevision = uint64(leaseRevision)
-			recheckUntil = minTime(recheckUntil, leaseUntil)
-			// a lease is required now and again at relay claim, but its short
-			// renewal interval is not the pair's serving authority deadline.
-			result.Relays[i] = ConnectorPeerPairRelay{PublisherConnectionID: slot.connectionID, AssignmentRevision: slot.assignment,
-				RelayLease: lease, RelayAddress: address, TLSServerName: serverName}
-		}
+		result.Relays = ready.Relays
+		// a lease is required now and again at relay claim, but its short
+		// renewal interval is not the pair's serving authority deadline.
+		recheckUntil = minTime(recheckUntil, leaseUntil)
 		if !recheckUntil.After(checkedNow()) || r.ExpectedRelays != result.Relays {
 			return ConnectorPeerPair{}, ErrServiceAccess
 		}

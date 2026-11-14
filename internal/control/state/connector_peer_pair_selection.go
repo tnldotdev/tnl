@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 )
 
 func connectorPairReadySelection(ctx context.Context, tx pgx.Tx, runID, serviceID string, number int64, now time.Time) (*ConnectorPeerPairReady, error) {
@@ -20,36 +20,49 @@ func connectorPairReadySelection(ctx context.Context, tx pgx.Tx, runID, serviceI
 	if err != nil {
 		return nil, err
 	}
-	slots, err := controlstatedb.New(tx).ListServiceConnectionSlots(ctx, runID)
+	p := connectorPeerPublication{scope: visitorscope.Scope{Kind: visitorscope.Service, ID: serviceID}, runID: runID, number: number, publisherID: publisher}
+	ready, _, err := p.readyRelays(ctx, tx, now, false)
+	return ready, err
+}
+
+func (p connectorPeerPublication) readyRelays(ctx context.Context, tx pgx.Tx, now time.Time, lockLeases bool) (*ConnectorPeerPairReady, time.Time, error) {
+	slots, err := p.connections(ctx, controlstatedb.New(tx))
 	if err != nil || len(slots) != 2 {
-		return nil, err
+		return nil, time.Time{}, err
 	}
-	if slots[0].RelayServiceID == slots[1].RelayServiceID {
-		return nil, nil
+	if slots[0].relayService == slots[1].relayService {
+		return nil, time.Time{}, nil
 	}
-	ready := &ConnectorPeerPairReady{PublisherIdentityID: publisher}
+	ready := &ConnectorPeerPairReady{PublisherIdentityID: p.publisherID}
+	var until time.Time
 	for i, slot := range slots {
-		if int(slot.ConnectionSlot) != i || slot.ServiceID != serviceID || slot.RunNumber != number || slot.State != "ready" || !slot.SessionOpen ||
-			!opaqueid.Valid(slot.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) || slot.ConnectionAssignmentRevision < 1 ||
-			!slot.RelayID.Valid || !slot.RelayRunID.Valid || !slot.RelayLeaseRevision.Valid || slot.RelayLeaseRevision.Int64 < 1 {
-			return nil, nil
+		if !slot.ready(p, i) {
+			return nil, time.Time{}, nil
 		}
 		var relay ConnectorPeerPairRelay
 		var revision int64
-		err := tx.QueryRow(ctx, `SELECT lease.relay_service_id,lease.relay_id,lease.relay_run_id,lease.relay_lease_revision,service.relay_address,service.tls_server_name
+		var leaseUntil time.Time
+		query := `SELECT lease.relay_service_id,lease.relay_id,lease.relay_run_id,lease.relay_lease_revision,service.relay_address,service.tls_server_name,lease.lease_expires_at
 		    FROM control.relay_leases lease JOIN control.relay_services service ON service.relay_service_id=lease.relay_service_id
 		    WHERE lease.relay_id=$1 AND lease.relay_run_id=$2 AND lease.relay_lease_revision=$3 AND lease.relay_service_id=$4
-		    AND lease.lease_expires_at>$5 AND NOT lease.draining AND service.enabled`, slot.RelayID.String, slot.RelayRunID.String, slot.RelayLeaseRevision.Int64, slot.RelayServiceID, now).
-			Scan(&relay.RelayLease.RelayServiceID, &relay.RelayLease.RelayID, &relay.RelayLease.RelayRunID, &revision, &relay.RelayAddress, &relay.TLSServerName)
-		if errors.Is(err, pgx.ErrNoRows) || err == nil && (slot.RelayAddress != relay.RelayAddress || slot.TlsServerName != relay.TLSServerName) {
-			return nil, nil
+		    AND lease.lease_expires_at>$5 AND NOT lease.draining AND service.enabled`
+		if lockLeases {
+			query += ` FOR SHARE OF lease,service`
+		}
+		err := tx.QueryRow(ctx, query, slot.relayID.String, slot.relayRunID.String, slot.leaseRevision.Int64, slot.relayService, now).
+			Scan(&relay.RelayLease.RelayServiceID, &relay.RelayLease.RelayID, &relay.RelayLease.RelayRunID, &revision, &relay.RelayAddress, &relay.TLSServerName, &leaseUntil)
+		if errors.Is(err, pgx.ErrNoRows) || err == nil && (slot.address != relay.RelayAddress || slot.serverName != relay.TLSServerName) {
+			return nil, time.Time{}, nil
 		}
 		if err != nil {
-			return nil, err
+			return nil, time.Time{}, err
 		}
 		relay.RelayLease.RelayLeaseRevision = uint64(revision)
-		relay.PublisherConnectionID, relay.AssignmentRevision = slot.PublisherConnectionID, slot.ConnectionAssignmentRevision
+		relay.PublisherConnectionID, relay.AssignmentRevision = slot.connectionID, slot.assignment
 		ready.Relays[i] = relay
+		if until.IsZero() || leaseUntil.Before(until) {
+			until = leaseUntil
+		}
 	}
-	return ready, nil
+	return ready, until, nil
 }

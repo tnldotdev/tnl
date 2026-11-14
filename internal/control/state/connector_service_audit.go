@@ -17,19 +17,23 @@ import (
 // hold delivery keys, authorize a visitor, or transfer authority to a replacement.
 func saveConnectorPeerAuditBinding(ctx context.Context, tx pgx.Tx, pair controlstatedb.ControlConnectorPeerPair, binding connectorPeerBinding, until time.Time) error {
 	result, err := tx.Exec(ctx, `INSERT INTO control.connector_peer_audit_bindings
-		(pair_id,service_id,service_run_id,run_number,publisher_identity_id,identity_id,device_id,source_ip,created_at,expires_at,delivery_generation)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		(pair_id,service_id,service_run_id,run_number,publisher_identity_id,identity_id,device_id,source_ip,created_at,expires_at,delivery_generation,public_url_id,publish_run_id,publish_run_number)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		ON CONFLICT (pair_id,delivery_generation) DO UPDATE SET expires_at=GREATEST(control.connector_peer_audit_bindings.expires_at,EXCLUDED.expires_at)
 		WHERE control.connector_peer_audit_bindings.service_id=EXCLUDED.service_id
 		AND control.connector_peer_audit_bindings.service_run_id=EXCLUDED.service_run_id
 		AND control.connector_peer_audit_bindings.run_number=EXCLUDED.run_number
+		AND control.connector_peer_audit_bindings.public_url_id=EXCLUDED.public_url_id
+		AND control.connector_peer_audit_bindings.publish_run_id=EXCLUDED.publish_run_id
+		AND control.connector_peer_audit_bindings.publish_run_number=EXCLUDED.publish_run_number
 		AND control.connector_peer_audit_bindings.publisher_identity_id=EXCLUDED.publisher_identity_id
 		AND control.connector_peer_audit_bindings.identity_id IS NOT DISTINCT FROM EXCLUDED.identity_id
 		AND control.connector_peer_audit_bindings.device_id IS NOT DISTINCT FROM EXCLUDED.device_id
 		AND control.connector_peer_audit_bindings.source_ip=EXCLUDED.source_ip
 		AND control.connector_peer_audit_bindings.created_at=EXCLUDED.created_at`,
 		pair.ID, pair.ServiceID, pair.ServiceRunID, pair.RunNumber, pair.PublisherIdentityID,
-		nullableText(binding.subject.IdentityID), nullableText(binding.subject.DeviceID), binding.source, pair.CreatedAt.Time, until, pair.DeliveryGeneration)
+		nullableText(binding.subject.IdentityID), nullableText(binding.subject.DeviceID), binding.source, pair.CreatedAt.Time, until, pair.DeliveryGeneration,
+		pair.PublicURLID, pair.PublishRunID, pair.PublishRunNumber)
 	if err != nil {
 		return err
 	}

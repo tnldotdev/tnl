@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 )
 
 var ErrConnectorPeerBindingStale = errors.New("connector network binding is stale")
@@ -53,12 +54,29 @@ func (d *Database) connectorPeerSessionAuthority(ctx context.Context, tx pgx.Tx,
 	if !service.Enabled || service.DeletedAt.Valid || service.TrustRevision != pair.TrustRevision {
 		return VisitorSubject{}, nil, time.Time{}, ErrServiceAccess
 	}
+	metadata, err := checkedServiceMetadata(service)
+	if err != nil {
+		return VisitorSubject{}, nil, time.Time{}, err
+	}
 	publisherUntil, err := connectorPeerPublisherAuthority(ctx, tx, run, now)
 	if err != nil {
 		return VisitorSubject{}, nil, time.Time{}, err
 	}
+	p := connectorPeerPublication{scope: visitorscope.Scope{Kind: visitorscope.Service, ID: run.ServiceID},
+		runID: run.ID, number: run.RunNumber, publisherID: run.PublisherIdentityID, publisherUntil: publisherUntil,
+		metadata: metadata}
+	return d.connectorPeerPublicationAuthority(ctx, tx, p, pair, now)
+}
+
+// callers supply current locked run/grant/certificate facts. this retains the
+// same immutable pair and original native source for both publication families.
+func (d *Database) connectorPeerPublicationAuthority(ctx context.Context, tx pgx.Tx, p connectorPeerPublication, pair controlstatedb.ControlConnectorPeerPair, now time.Time) (VisitorSubject, ed25519.PublicKey, time.Time, error) {
+	if !p.matches(pair) || !pair.ExpiresAt.Time.After(now) || pair.LastAuthorizedAt.Time.After(now) ||
+		len(pair.SessionKeyCiphertext) == 0 || pair.TrustRevision != p.metadata.TrustRevision || !p.publisherUntil.After(now) {
+		return VisitorSubject{}, nil, time.Time{}, ErrServiceAccess
+	}
 	subject, key, subjectUntil, err := d.connectorPeerPairSubjectKey(ctx, tx, pair, now)
-	return subject, key, minTime(pair.ExpiresAt.Time, minTime(publisherUntil, subjectUntil)), err
+	return subject, key, minTime(pair.ExpiresAt.Time, minTime(p.publisherUntil, subjectUntil)), err
 }
 
 // the owner row is the active binding projection. only one pending row exists;
@@ -108,6 +126,7 @@ func expireConnectorPeerPending(ctx context.Context, tx pgx.Tx, pair controlstat
 
 func (d *Database) connectorPeerSnapshot(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlConnectorPeerPair, subject VisitorSubject, now time.Time, pending bool, bound time.Time) (ConnectorPeerPair, error) {
 	p := ConnectorPeerPair{ID: row.ID, ServiceID: row.ServiceID, ServiceRunID: row.ServiceRunID, PublisherIdentityID: row.PublisherIdentityID,
+		PublicURLID: row.PublicURLID, PublishRunID: row.PublishRunID, PublishRunNumber: row.PublishRunNumber,
 		Subject: subject, RunNumber: row.RunNumber, DeliveryGeneration: row.DeliveryGeneration, TrustRevision: row.TrustRevision,
 		OperationID: row.BindingOperationID, BindingChallenge: base64.RawURLEncoding.EncodeToString(row.BindingChallenge), ObservedAt: now, ExpiresAt: bound, BindingState: "active"}
 	if len(row.DeliveryID) != len(p.DeliveryID) || json.Unmarshal(row.Slots, &p.Relays) != nil {

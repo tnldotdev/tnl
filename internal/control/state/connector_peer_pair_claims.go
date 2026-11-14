@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -56,24 +57,22 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 		return result, err
 	}
 	defer rollback(ctx, tx, "claim connector peer pair leg", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, proof.ServiceID); err != nil {
+	if proof.PublicURLID != "" {
+		_, err = lockVisitorResource(ctx, tx, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: proof.PublicURLID}, now)
+	} else {
+		err = lockServiceAdmission(ctx, tx, proof.ServiceID)
+	}
+	if err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: proof.ServiceRunID, ServiceID: proof.ServiceID})
+	publication, err := d.connectorPairPublication(ctx, tx, ConnectorPeerPairRequest{
+		ServiceID: proof.ServiceID, ServiceRunID: proof.ServiceRunID, RunNumber: proof.RunNumber,
+		PublicURLID: proof.PublicURLID, PublishRunID: proof.PublishRunID, PublishRunNumber: proof.PublishRunNumber,
+		PublisherIdentityID: proof.PublisherIdentityID, Action: "renew",
+	}, now)
 	if err != nil {
-		return result, publisherLookupError(err, ErrServiceAccess)
-	}
-	if run.RunNumber != proof.RunNumber || run.PublisherIdentityID != proof.PublisherIdentityID ||
-		(run.State != "ready" && !(run.State == "starting" && run.ReadyAt.Valid)) || !run.Healthy || !activeServiceRun(run, now) ||
-		!run.CertificateExpiresAt.Valid || !run.CertificateExpiresAt.Time.After(now) {
-		return result, ErrServiceAccess
-	}
-	if _, err = q.GetServiceRunPublisherIdentity(ctx, controlstatedb.GetServiceRunPublisherIdentityParams{
-		ID: run.ID, ServiceID: run.ServiceID, RunNumber: run.RunNumber, PublisherIdentityID: run.PublisherIdentityID,
-		PublisherGrantID: run.PublisherGrantID, PublisherKeyID: run.PublisherKeyID, Now: timestamptz(now),
-	}); err != nil {
-		return result, publisherLookupError(err, ErrServiceAccess)
+		return result, err
 	}
 	current, err := q.GetRelayLeaseForClaim(ctx, lease.RelayID)
 	if err != nil {
@@ -86,25 +85,23 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 	}
 	// the run lock serializes assignment replacements. require the exact ready
 	// slot, including its process claim, rather than just a matching service.
-	slots, err := q.ListServiceConnectionSlots(ctx, run.ID)
+	slots, err := publication.connections(ctx, q)
 	if err != nil {
 		return result, err
 	}
 	slotCurrent := false
 	if len(slots) == 2 {
 		slot := slots[proof.ConnectionSlot]
-		slotCurrent = int(slot.ConnectionSlot) == proof.ConnectionSlot && slot.ServiceID == proof.ServiceID && slot.RunNumber == proof.RunNumber &&
-			slot.PublisherConnectionID == proof.PublisherConnectionID && slot.ConnectionAssignmentRevision == proof.AssignmentRevision &&
-			slot.RelayServiceID == lease.RelayServiceID && slot.State == "ready" && slot.SessionOpen &&
-			slot.RelayID.Valid && slot.RelayID.String == lease.RelayID && slot.RelayRunID.Valid && slot.RelayRunID.String == lease.RelayRunID &&
-			slot.RelayLeaseRevision.Valid && slot.RelayLeaseRevision.Int64 == int64(lease.RelayLeaseRevision)
+		slotCurrent = slot.ready(publication, proof.ConnectionSlot) &&
+			slot.connectionID == proof.PublisherConnectionID && slot.assignment == proof.AssignmentRevision &&
+			slot.relayService == lease.RelayServiceID && slot.relayID.String == lease.RelayID && slot.relayRunID.String == lease.RelayRunID &&
+			slot.leaseRevision.Int64 == int64(lease.RelayLeaseRevision)
 	}
 	pair, err := q.LockConnectorPeerPairForLegClaim(ctx, proof.PairID)
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if pair.ServiceID != run.ServiceID || pair.ServiceRunID != run.ID || pair.RunNumber != run.RunNumber ||
-		pair.PublisherIdentityID != run.PublisherIdentityID || !pair.ExpiresAt.Time.After(now) {
+	if !publication.matches(pair) || !pair.ExpiresAt.Time.After(now) {
 		return result, ErrServiceAccess
 	}
 	checked := checkedNow()
@@ -112,14 +109,15 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 		!requestAt.Add(30*time.Second).After(checked) {
 		return result, ErrServiceAccess
 	}
-	_, key, until, err := d.connectorPeerSessionAuthority(ctx, tx, run, pair, checked)
+	_, key, until, err := d.connectorPeerPublicationAuthority(ctx, tx, publication, pair, checked)
 	if err != nil {
 		return result, err
 	}
 	if len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, message, proof.Signature) {
 		return result, ErrServiceAccess
 	}
-	if err = d.serviceHTTPSourceAllowed(ctx, q, proof.ServiceID, observedSource); err != nil {
+	sourceUntil, err := d.connectorPeerSourceDeadline(ctx, tx, publication, observedSource, checkedNow())
+	if err != nil {
 		return result, err
 	}
 	pair, pending, bindingUntil, err := connectorPeerBindingRevision(ctx, tx, pair, proof.DeliveryGeneration, checkedNow())
@@ -131,11 +129,7 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 		delivered[proof.ConnectionSlot].AssignmentRevision != proof.AssignmentRevision || delivered[proof.ConnectionSlot].RelayLease != lease {
 		return result, ErrServiceAccess
 	}
-	publisherUntil, err := connectorPeerPublisherAuthority(ctx, tx, run, checkedNow())
-	if err != nil {
-		return result, err
-	}
-	deadline := minTime(bindingUntil, minTime(until, publisherUntil))
+	deadline := minTime(bindingUntil, minTime(until, sourceUntil))
 	if !deadline.After(checkedNow()) {
 		return result, ErrServiceAccess
 	}
@@ -166,7 +160,7 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 			return result, ErrConnectorPeerBindingStale
 		}
 	}
-	if !slotCurrent || run.State != "ready" || delivered[proof.ConnectionSlot].RelayAddress != current.RelayAddress || delivered[proof.ConnectionSlot].TLSServerName != current.TlsServerName {
+	if !slotCurrent || publication.state != "ready" || delivered[proof.ConnectionSlot].RelayAddress != current.RelayAddress || delivered[proof.ConnectionSlot].TLSServerName != current.TlsServerName {
 		return result, ErrConnectorPeerBindingStale
 	}
 	if _, err = q.SaveConnectorPeerPairLegClaim(ctx, controlstatedb.SaveConnectorPeerPairLegClaimParams{

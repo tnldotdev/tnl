@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"net/netip"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -20,6 +21,7 @@ type connectorPeerPublication struct {
 	runID          string
 	number         int64
 	publisherID    string
+	state          string
 	publisherUntil time.Time
 	metadata       ServiceMetadata
 }
@@ -66,6 +68,7 @@ func (d *Database) connectorPairPublication(ctx context.Context, tx pgx.Tx, r Co
 			return p, ErrServiceAccess
 		}
 		p.runID, p.number, p.publisherID = run.ID, run.RunNumber, run.PublisherIdentityID
+		p.state = run.State
 		p.publisherUntil, err = connectorPeerPublisherAuthority(ctx, tx, run, now)
 		if err != nil {
 			return p, err
@@ -73,6 +76,9 @@ func (d *Database) connectorPairPublication(ctx context.Context, tx pgx.Tx, r Co
 		service, err := q.GetService(ctx, r.ServiceID)
 		if err != nil {
 			return p, err
+		}
+		if !service.Enabled || service.DeletedAt.Valid {
+			return p, ErrServiceAccess
 		}
 		p.metadata, err = checkedServiceMetadata(service)
 		return p, err
@@ -95,6 +101,7 @@ func (d *Database) connectorPairPublication(ctx context.Context, tx pgx.Tx, r Co
 		return p, ErrServiceAccess
 	}
 	p.runID, p.number, p.publisherID = run.ID, run.PublishRunNumber, run.PublisherIdentityID.String
+	p.state = run.State
 	p.publisherUntil, err = d.connectorPublicURLPublisherAuthority(ctx, tx, url, run, now)
 	if err != nil {
 		return p, err
@@ -157,4 +164,30 @@ func (s connectorPeerConnection) ready(p connectorPeerPublication, slot int) boo
 	return int(s.slot) == slot && s.resourceID == p.scope.ID && s.number == p.number && s.state == "ready" && s.open &&
 		opaqueid.Valid(s.connectionID, opaqueid.PublisherConnectionPrefix) && s.assignment >= 1 &&
 		s.relayID.Valid && s.relayRunID.Valid && s.leaseRevision.Valid && s.leaseRevision.Int64 >= 1
+}
+
+func (d *Database) connectorPeerSourceDeadline(ctx context.Context, tx pgx.Tx, p connectorPeerPublication, source netip.Addr, now time.Time) (time.Time, error) {
+	q := controlstatedb.New(tx)
+	if p.scope.Kind == visitorscope.Service {
+		return p.publisherUntil, d.serviceHTTPSourceAllowed(ctx, q, p.scope.ID, source)
+	}
+	url, err := q.LockPublicURLForRun(ctx, p.scope.ID)
+	if err != nil {
+		return time.Time{}, publisherLookupError(err, ErrServiceAccess)
+	}
+	allowed, expires, err := d.visitorIPAllowed(ctx, q, url, source.String(), now)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !allowed {
+		return time.Time{}, ErrServiceAccess
+	}
+	until := p.publisherUntil
+	if expires != nil {
+		until = minTime(until, *expires)
+	}
+	if !until.After(now) {
+		return time.Time{}, ErrServiceAccess
+	}
+	return until, nil
 }

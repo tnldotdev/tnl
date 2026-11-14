@@ -11,6 +11,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
@@ -36,11 +37,20 @@ func (ConnectorPeerPairRebindState) String() string   { return "connector networ
 func (ConnectorPeerPairRebindState) GoString() string { return "connector network binding state" }
 
 func (d *Database) RebindConnectorPeerPair(ctx context.Context, serviceID, pairID string, r ConnectorPeerPairRebindRequest, now time.Time) (result ConnectorPeerPairRebindState, retErr error) {
+	return d.rebindConnectorPeerPair(ctx, visitorscope.Scope{Kind: visitorscope.Service, ID: serviceID}, pairID, r, now)
+}
+
+func (d *Database) RebindPublicURLConnectorPeerPair(ctx context.Context, publicURLID, pairID string, r ConnectorPeerPairRebindRequest, now time.Time) (ConnectorPeerPairRebindState, error) {
+	return d.rebindConnectorPeerPair(ctx, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: publicURLID}, pairID, r, now)
+}
+
+func (d *Database) rebindConnectorPeerPair(ctx context.Context, scope visitorscope.Scope, pairID string, r ConnectorPeerPairRebindRequest, now time.Time) (result ConnectorPeerPairRebindState, retErr error) {
 	clock := newAuthorizationClock(now)
 	p := r.Proof
 	message, err := p.Message()
 	requestAt := p.RequestedAt.UTC().Truncate(time.Microsecond)
-	if err != nil || p.ServiceID != serviceID || p.PairID != pairID || now.IsZero() || d.storageKey == nil || len(r.Signature) != ed25519.SignatureSize ||
+	resourceMatches := scope.Kind == visitorscope.Service && p.ServiceID == scope.ID || scope.Kind == visitorscope.PublicURL && p.PublicURLID == scope.ID
+	if err != nil || !scope.Valid() || !resourceMatches || p.PairID != pairID || now.IsZero() || d.storageKey == nil || len(r.Signature) != ed25519.SignatureSize ||
 		requestAt.After(now.Add(5*time.Second)) || !requestAt.Add(5*time.Minute).After(now) {
 		return result, ErrServiceAccess
 	}
@@ -54,7 +64,7 @@ func (d *Database) RebindConnectorPeerPair(ctx context.Context, serviceID, pairI
 		return result, err
 	}
 	defer rollback(ctx, tx, "rebind connector peer", &retErr)()
-	authority, err := d.visitorAuthorityForSource(ctx, tx, visitorscope.Scope{Kind: visitorscope.Service, ID: serviceID}, r.Source, clock)
+	authority, err := d.visitorAuthorityForSource(ctx, tx, scope, r.Source, clock)
 	if err != nil {
 		return result, err
 	}
@@ -63,15 +73,24 @@ func (d *Database) RebindConnectorPeerPair(ctx context.Context, serviceID, pairI
 		return result, ErrServiceAccess
 	}
 	q := controlstatedb.New(tx)
-	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: p.ServiceRunID, ServiceID: serviceID})
+	publication, err := d.connectorPairPublication(ctx, tx, ConnectorPeerPairRequest{
+		ServiceID: p.ServiceID, ServiceRunID: p.ServiceRunID, RunNumber: p.RunNumber,
+		PublicURLID: p.PublicURLID, PublishRunID: p.PublishRunID, PublishRunNumber: p.PublishRunNumber,
+		PublisherIdentityID: p.PublisherIdentityID, Action: "renew",
+	}, clock.current())
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	pair, err := q.GetConnectorPeerPairForOwner(ctx, controlstatedb.GetConnectorPeerPairForOwnerParams{SubjectKind: subject.Kind, SubjectID: connectorPairSubjectID(subject), ServiceRunID: run.ID, OwnerKey: p.IdempotencyKey})
+	pair, err := q.GetConnectorPeerPairForOwner(ctx, controlstatedb.GetConnectorPeerPairForOwnerParams{SubjectKind: subject.Kind, SubjectID: connectorPairSubjectID(subject),
+		ServiceRunID: publication.serviceRunID(), PublishRunID: publication.publishRunID(), OwnerKey: p.IdempotencyKey})
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if pair.ID != pairID || pair.RunNumber != p.RunNumber || pair.PublisherIdentityID != p.PublisherIdentityID || pair.TrustRevision != p.TrustRevision {
+	var preview pgtype.Text
+	if source, ok := r.Source.(DeviceTokenSource); ok && source.PreviewID != "" {
+		preview = text(source.PreviewID)
+	}
+	if pair.ID != pairID || !publication.matches(pair) || pair.TrustRevision != p.TrustRevision || pair.PreviewID != preview {
 		return result, ErrServiceAccess
 	}
 	if subject.Kind == tunnelv1.VisitorHumanDevice {
@@ -80,7 +99,7 @@ func (d *Database) RebindConnectorPeerPair(ctx context.Context, serviceID, pairI
 			return result, ErrServiceAccess
 		}
 	}
-	_, _, until, err := d.connectorPeerSessionAuthority(ctx, tx, run, pair, clock.current())
+	_, _, until, err := d.connectorPeerPublicationAuthority(ctx, tx, publication, pair, clock.current())
 	if err != nil {
 		return result, err
 	}
@@ -92,7 +111,7 @@ func (d *Database) RebindConnectorPeerPair(ctx context.Context, serviceID, pairI
 		return result, err
 	}
 	digest := sha256.Sum256(message)
-	ready, err := connectorPairReadySelection(ctx, tx, run.ID, serviceID, run.RunNumber, clock.current())
+	ready, relayUntil, err := publication.readyRelays(ctx, tx, clock.current(), false)
 	if err != nil {
 		return result, err
 	}
@@ -108,7 +127,7 @@ func (d *Database) RebindConnectorPeerPair(ctx context.Context, serviceID, pairI
 		if pair.RebindStatus.String == "pending" || p.ExpectedGeneration != pair.HighWaterGeneration || pair.HighWaterGeneration == math.MaxInt64 {
 			return result, ErrServiceConflict
 		}
-		if ready == nil || run.State != "ready" {
+		if ready == nil || publication.state != "ready" {
 			return result, ErrConnectorPeerBindingStale
 		}
 		var expected [2]ConnectorPeerPairRelay
@@ -118,14 +137,7 @@ func (d *Database) RebindConnectorPeerPair(ctx context.Context, serviceID, pairI
 		if expected != ready.Relays {
 			return result, ErrConnectorPeerBindingStale
 		}
-		leases, err := q.ReadConnectorPeerObservationRelayBounds(ctx, controlstatedb.ReadConnectorPeerObservationRelayBoundsParams{ServiceRunID: run.ID, ServiceID: serviceID, Now: timestamptz(clock.current())})
-		if err != nil {
-			return result, err
-		}
-		if len(leases) != 2 {
-			return result, ErrConnectorPeerBindingStale
-		}
-		until = minTime(until, minTime(leases[0].LeaseExpiresAt.Time, leases[1].LeaseExpiresAt.Time))
+		until = minTime(until, relayUntil)
 		secret, challenge := make([]byte, 32), make([]byte, 32)
 		if _, err = rand.Read(secret); err != nil {
 			return result, err
@@ -174,7 +186,7 @@ func (d *Database) RebindConnectorPeerPair(ctx context.Context, serviceID, pairI
 		if base64.RawURLEncoding.EncodeToString(revision.BindingChallenge) != p.BindingChallenge {
 			return result, ErrServiceAccess
 		}
-		binding, err := d.connectorPeerPairBinding(ctx, tx, run, revision, clock.current())
+		binding, err := d.connectorPeerPublicationBinding(ctx, tx, publication, revision, clock.current())
 		if err != nil {
 			return result, err
 		}

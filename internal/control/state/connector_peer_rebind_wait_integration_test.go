@@ -15,6 +15,7 @@ func TestIntegrationConnectorRebindCannotCommitAfterAuthorityWait(t *testing.T) 
 				f := newConnectorPairFixture(t)
 				pair := f.create(t)
 				request := connectorRebindRequest(t, f, pair, "prepare", f.now)
+				at := f.now
 				deadline := f.now.Add(time.Second)
 				if phase == "activate" {
 					state, err := f.d.RebindConnectorPeerPair(f.visitor, pair.ServiceID, pair.ID, request, f.now)
@@ -23,10 +24,20 @@ func TestIntegrationConnectorRebindCannotCommitAfterAuthorityWait(t *testing.T) 
 					}
 					pending := *state.Pending
 					connectorRebindClaimBoth(t, f, pending, connectorPairCompanySource, f.now)
-					connectorRebindReport(t, f, pending, "installed", f.now)
-					connectorRebindReport(t, f, pending, "proved", f.now)
+					// claims record their completion time. the next synthetic
+					// request must not move the control clock behind that fact.
+					var checked time.Time
+					if err := f.d.pool.QueryRow(t.Context(), `SELECT max(checked_at) FROM control.connector_peer_pair_leg_claims
+						WHERE pair_id=$1 AND delivery_generation=$2`, pending.ID, pending.DeliveryGeneration).Scan(&checked); err != nil {
+						t.Fatal(err)
+					}
+					at = checked.Add(time.Microsecond)
+					deadline = at.Add(time.Second)
+					connectorRebindReport(t, f, pending, "installed", at)
+					connectorRebindReport(t, f, pending, "proved", at)
 					request.Proof.Phase, request.Proof.ExpectedGeneration, request.Proof.ExpectedRelays = phase, pending.DeliveryGeneration, nil
 					request.Proof.BindingChallenge, request.Proof.PathProofs = pending.BindingChallenge, connectorRebindProofs(t, pending, 0)
+					request.Proof.RequestedAt = at
 					request = signConnectorRebind(t, f, request.Proof)
 					if _, err := f.d.pool.Exec(t.Context(), `UPDATE control.connector_peer_pending_bindings SET pending_until=$2 WHERE pair_id=$1`, pair.ID, deadline); err != nil {
 						t.Fatal(err)
@@ -62,7 +73,7 @@ func TestIntegrationConnectorRebindCannotCommitAfterAuthorityWait(t *testing.T) 
 				entered := make(chan time.Time, 1)
 				done, join := connectorPairWorker(t, f.visitor, func(ctx context.Context) error {
 					entered <- time.Now()
-					_, err := f.d.RebindConnectorPeerPair(ctx, pair.ServiceID, pair.ID, request, f.now)
+					_, err := f.d.RebindConnectorPeerPair(ctx, pair.ServiceID, pair.ID, request, at)
 					return err
 				})
 				defer join()

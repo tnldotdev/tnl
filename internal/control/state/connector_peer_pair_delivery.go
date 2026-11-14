@@ -10,13 +10,14 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type ConnectorPeerPairDelivery struct {
 	PairID, ServiceID, ServiceRunID, PublisherIdentityID         string
 	RunNumber, DeliveryGeneration, TrustRevision                 int64
+	PublicURLID, PublishRunID                                    string
+	PublishRunNumber                                             int64
 	Subject                                                      VisitorSubject
 	DeliveryID                                                   [16]byte
 	Key, SessionKey, OperationID, BindingChallenge, BindingState string
@@ -29,7 +30,11 @@ func (ConnectorPeerPairDelivery) String() string   { return "connector peer pair
 func (ConnectorPeerPairDelivery) GoString() string { return "connector peer pair delivery" }
 
 func (d *Database) DeliverConnectorPeerPair(ctx context.Context, serviceID, runID, pairID string, generation int64, token string, now time.Time) (ConnectorPeerPairDelivery, error) {
-	return d.connectorPeerPairDelivery(ctx, serviceID, runID, pairID, generation, token, now, nil)
+	return d.connectorPeerPairDelivery(ctx, connectorPeerPublisherSource{serviceID: serviceID, runID: runID, token: token}, pairID, generation, now, nil)
+}
+
+func (d *Database) DeliverPublicURLConnectorPeerPair(ctx context.Context, auth PublishRunAuthentication, pairID string, generation int64, now time.Time) (ConnectorPeerPairDelivery, error) {
+	return d.connectorPeerPairDelivery(ctx, connectorPeerPublisherSource{publishRun: &auth}, pairID, generation, now, nil)
 }
 
 type ConnectorPeerPairPrepared struct {
@@ -41,18 +46,23 @@ type ConnectorPeerPairPrepared struct {
 }
 
 func (d *Database) ConfirmConnectorPeerPairPrepared(ctx context.Context, serviceID, runID, pairID, token string, prepared ConnectorPeerPairPrepared, now time.Time) error {
-	if prepared.DeliveryID == [16]byte{} || !prepared.BindingExpiresAt.After(now) || prepared.Phase != "installed" && prepared.Phase != "proved" {
-		return ErrServiceAccess
-	}
-	_, err := d.connectorPeerPairDelivery(ctx, serviceID, runID, pairID, prepared.DeliveryGeneration, token, now, &prepared)
+	_, err := d.connectorPeerPairDelivery(ctx, connectorPeerPublisherSource{serviceID: serviceID, runID: runID, token: token}, pairID, prepared.DeliveryGeneration, now, &prepared)
+	return err
+}
+
+func (d *Database) ConfirmPublicURLConnectorPeerPairPrepared(ctx context.Context, auth PublishRunAuthentication, pairID string, prepared ConnectorPeerPairPrepared, now time.Time) error {
+	_, err := d.connectorPeerPairDelivery(ctx, connectorPeerPublisherSource{publishRun: &auth}, pairID, prepared.DeliveryGeneration, now, &prepared)
 	return err
 }
 
 // delivery and reports share the same transaction-local authority checks. a
 // publisher must retain its existing in-memory owner; this cannot reconstruct it.
-func (d *Database) connectorPeerPairDelivery(ctx context.Context, serviceID, runID, pairID string, generation int64, token string, now time.Time, prepared *ConnectorPeerPairPrepared) (result ConnectorPeerPairDelivery, retErr error) {
+func (d *Database) connectorPeerPairDelivery(ctx context.Context, source connectorPeerPublisherSource, pairID string, generation int64, now time.Time, prepared *ConnectorPeerPairPrepared) (result ConnectorPeerPairDelivery, retErr error) {
 	clock := newAuthorizationClock(now)
 	if generation < 1 || pairID == "" || now.IsZero() || d.storageKey == nil {
+		return result, ErrServiceAccess
+	}
+	if prepared != nil && (prepared.DeliveryID == [16]byte{} || !prepared.BindingExpiresAt.After(now) || prepared.Phase != "installed" && prepared.Phase != "proved") {
 		return result, ErrServiceAccess
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -60,15 +70,9 @@ func (d *Database) connectorPeerPairDelivery(ctx context.Context, serviceID, run
 		return result, err
 	}
 	defer rollback(ctx, tx, "deliver connector peer binding", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, serviceID); err != nil {
-		return result, err
-	}
 	q := controlstatedb.New(tx)
-	run, err := serviceRunAuthorization(ctx, tx, q, serviceID, runID, token, clock.current())
+	publication, err := d.connectorPeerPublisherPublication(ctx, tx, source, clock.current())
 	if err != nil {
-		return result, err
-	}
-	if _, err = lockVisitorResource(ctx, tx, visitorscope.Scope{Kind: visitorscope.Service, ID: serviceID}, clock.current()); err != nil {
 		return result, err
 	}
 	pair, err := q.LockConnectorPeerPairForLegClaim(ctx, pairID)
@@ -79,7 +83,7 @@ func (d *Database) connectorPeerPairDelivery(ctx context.Context, serviceID, run
 	if err != nil {
 		return result, err
 	}
-	binding, err := d.connectorPeerPairBinding(ctx, tx, run, pair, clock.current())
+	binding, err := d.connectorPeerPublicationBinding(ctx, tx, publication, pair, clock.current())
 	if err != nil {
 		return result, err
 	}
@@ -88,6 +92,7 @@ func (d *Database) connectorPeerPairDelivery(ctx context.Context, serviceID, run
 		return result, ErrServiceAccess
 	}
 	result = ConnectorPeerPairDelivery{PairID: pair.ID, ServiceID: pair.ServiceID, ServiceRunID: pair.ServiceRunID, PublisherIdentityID: pair.PublisherIdentityID,
+		PublicURLID: pair.PublicURLID, PublishRunID: pair.PublishRunID, PublishRunNumber: pair.PublishRunNumber,
 		RunNumber: pair.RunNumber, DeliveryGeneration: generation, TrustRevision: pair.TrustRevision, Subject: binding.subject, SourceIP: binding.source,
 		Relays: binding.relays, ObservedAt: now, ExpiresAt: minTime(bound, binding.expiresAt), OperationID: pair.BindingOperationID,
 		BindingChallenge: base64.RawURLEncoding.EncodeToString(pair.BindingChallenge), BindingState: "active"}

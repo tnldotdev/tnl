@@ -29,6 +29,7 @@ func testConnectorLegProof(t *testing.T, pair ConnectorPeerPair, slot int, at ti
 	leg := pair.Relays[slot]
 	p := tunnelv1.ConnectorPairLegProof{PairID: pair.ID, DeliveryGeneration: pair.DeliveryGeneration,
 		ServiceID: pair.ServiceID, ServiceRunID: pair.ServiceRunID, RunNumber: pair.RunNumber,
+		PublicURLID: pair.PublicURLID, PublishRunID: pair.PublishRunID, PublishRunNumber: pair.PublishRunNumber,
 		PublisherIdentityID: pair.PublisherIdentityID, ConnectionSlot: slot,
 		PublisherConnectionID: leg.PublisherConnectionID, AssignmentRevision: leg.AssignmentRevision,
 		RelayServiceID: leg.RelayLease.RelayServiceID, RelayID: leg.RelayLease.RelayID,

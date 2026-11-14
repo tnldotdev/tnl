@@ -18,6 +18,7 @@ func connectorRebindRequest(t *testing.T, f connectorPairFixture, pair Connector
 	t.Helper()
 	proof := tunnelv1.ConnectorPeerPairRebindProof{Phase: phase, ServiceID: pair.ServiceID, PairID: pair.ID, IdempotencyKey: f.request.IdempotencyKey,
 		ExpectedGeneration: pair.DeliveryGeneration, RequestedAt: at, ServiceRunID: pair.ServiceRunID, RunNumber: pair.RunNumber, PublisherIdentityID: pair.PublisherIdentityID,
+		PublicURLID: pair.PublicURLID, PublishRunID: pair.PublishRunID, PublishRunNumber: pair.PublishRunNumber,
 		TrustRevision: pair.TrustRevision, Subject: pair.Subject}
 	if phase != "inspect" {
 		proof.OperationID, _ = opaqueid.New(opaqueid.IdempotencyPrefix)

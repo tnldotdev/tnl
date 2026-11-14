@@ -23,40 +23,35 @@ type connectorPeerBinding struct {
 // connectorPeerPairBinding never renews a pair, claim, or installation. callers hold
 // service admission and the run/pair lock, then recheck its deadlines before commit.
 func (d *Database) connectorPeerPairBinding(ctx context.Context, tx pgx.Tx, run controlstatedb.ControlServiceRun, pair controlstatedb.ControlConnectorPeerPair, now time.Time) (b connectorPeerBinding, err error) {
-	started := time.Now()
-	checkedNow := func() time.Time { return now.Add(time.Since(started)) }
-	subject, _, sessionUntil, err := d.connectorPeerSessionAuthority(ctx, tx, run, pair, now)
+	publication, err := d.connectorPairPublication(ctx, tx, ConnectorPeerPairRequest{ServiceID: run.ServiceID, ServiceRunID: run.ID,
+		RunNumber: run.RunNumber, PublisherIdentityID: run.PublisherIdentityID, Action: "renew"}, now)
 	if err != nil {
 		return b, err
 	}
-	if run.State != "ready" {
+	return d.connectorPeerPublicationBinding(ctx, tx, publication, pair, now)
+}
+
+func (d *Database) connectorPeerPublicationBinding(ctx context.Context, tx pgx.Tx, publication connectorPeerPublication, pair controlstatedb.ControlConnectorPeerPair, now time.Time) (b connectorPeerBinding, err error) {
+	started := time.Now()
+	checkedNow := func() time.Time { return now.Add(time.Since(started)) }
+	subject, _, sessionUntil, err := d.connectorPeerPublicationAuthority(ctx, tx, publication, pair, now)
+	if err != nil {
+		return b, err
+	}
+	if publication.state != "ready" {
 		return b, ErrServiceAccess
 	}
 	b.subject = subject
-	ready, err := connectorPairReadySelection(ctx, tx, run.ID, run.ServiceID, run.RunNumber, now)
+	ready, leaseUntil, err := publication.readyRelays(ctx, tx, now, false)
 	if err != nil {
 		return b, err
 	}
-	if ready == nil || ready.PublisherIdentityID != run.PublisherIdentityID || json.Unmarshal(pair.Slots, &b.relays) != nil || b.relays != ready.Relays {
+	if ready == nil || ready.PublisherIdentityID != publication.publisherID || json.Unmarshal(pair.Slots, &b.relays) != nil || b.relays != ready.Relays {
 		return b, ErrServiceAccess
 	}
 	q := controlstatedb.New(tx)
-	leases, err := q.ReadConnectorPeerObservationRelayBounds(ctx, controlstatedb.ReadConnectorPeerObservationRelayBoundsParams{
-		ServiceRunID: run.ID, ServiceID: run.ServiceID, Now: timestamptz(now),
-	})
-	if err != nil {
-		return b, err
-	}
-	if len(leases) != 2 || leases[0].ConnectionSlot != 0 || leases[1].ConnectionSlot != 1 {
-		return b, ErrServiceAccess
-	}
-	for i, lease := range leases {
-		if lease.RelayAddress != b.relays[i].RelayAddress || lease.TlsServerName != b.relays[i].TLSServerName {
-			return b, ErrServiceAccess
-		}
-	}
 	b.expiresAt = sessionUntil
-	b.recheckAt = minTime(b.expiresAt, minTime(leases[0].LeaseExpiresAt.Time, leases[1].LeaseExpiresAt.Time))
+	b.recheckAt = minTime(b.expiresAt, leaseUntil)
 	claims, err := q.ReadConnectorPeerBindingClaims(ctx, controlstatedb.ReadConnectorPeerBindingClaimsParams{PairID: pair.ID, DeliveryGeneration: pair.DeliveryGeneration})
 	if err != nil {
 		return b, err
@@ -83,9 +78,13 @@ func (d *Database) connectorPeerPairBinding(ctx context.Context, tx pgx.Tx, run 
 		claimUntil = minTime(claimUntil, claim.ConfirmedUntil.Time)
 	}
 	if b.source.IsValid() {
-		if err := d.serviceHTTPSourceAllowed(ctx, q, run.ServiceID, b.source); err != nil {
+		sourceUntil, err := d.connectorPeerSourceDeadline(ctx, tx, publication, b.source, checkedNow())
+		if err != nil {
 			return connectorPeerBinding{}, err
 		}
+		b.expiresAt = minTime(b.expiresAt, sourceUntil)
+		b.recheckAt = minTime(b.recheckAt, sourceUntil)
+		claimUntil = minTime(claimUntil, sourceUntil)
 	}
 	if b.claimsCurrent {
 		b.expiresAt = claimUntil
