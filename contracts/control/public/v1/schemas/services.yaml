@@ -1,4 +1,15 @@
 schemas:
+  ReleaseServiceEndpointRequest:
+    type: object
+    additionalProperties: false
+    required: [expected_trust_revision, expected_port]
+    properties:
+      expected_trust_revision:
+        type: string
+        pattern: "^[0-9]+$"
+        x-go-type: int64
+        x-oapi-codegen-extra-tags: { json: "expected_trust_revision,string" }
+      expected_port: { type: integer, minimum: 1024, maximum: 65535 }
   UpdateServiceRequest:
     type: object
     additionalProperties: false

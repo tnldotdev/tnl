@@ -1401,13 +1401,15 @@ type ControlServiceNamespaceClaim struct {
 }
 
 type ControlServicePortClaim struct {
-	ID            int64
-	ServiceID     string
-	IngressPoolID string
-	Port          int32
-	State         string
-	ClaimedAt     pgtype.Timestamptz
-	ReusableAfter pgtype.Timestamptz
+	ID               int64
+	ServiceID        string
+	IngressPoolID    string
+	Port             int32
+	State            string
+	ClaimedAt        pgtype.Timestamptz
+	ReusableAfter    pgtype.Timestamptz
+	RetiredRunNumber pgtype.Int8
+	DnsClearedAt     pgtype.Timestamptz
 }
 
 type ControlServiceRun struct {

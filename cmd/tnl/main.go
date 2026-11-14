@@ -46,6 +46,7 @@ type cli struct {
 	Connect     connectCommand    `cmd:"" help:"Make an approved service available locally using the current identity." group:"start"`
 	Publisher   publisherCommand  `cmd:"" help:"Enroll publishers and manage their scoped grants." group:"manage"`
 	Service     serviceCommand    `cmd:"" help:"Manage installed publications." group:"operate"`
+	Endpoint    endpointCommand   `cmd:"" help:"Manage saved services' public endpoint reservations." group:"manage"`
 	Detached    detachedCommand   `cmd:"" help:"Inspect and stop detached publications." group:"operate"`
 	Status      statusCommand     `cmd:"" help:"Show local snapshots and fresh signed-in server facts; --all includes other projects." group:"start"`
 	Ping        pingCommand       `cmd:"" help:"Check a public URL from this machine as an unauthenticated visitor." group:"start"`
@@ -821,6 +822,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 		return runURLUpdate(ctx, flags.URL.Update, stdout, stderr)
 	case "url delete <public-url-id>":
 		return runURLDelete(ctx, flags.URL.Delete, stdout, stderr)
+	case "endpoint release <service-id>":
+		return runEndpointRelease(ctx, flags.Endpoint.Release, stdout, stderr)
 	case "share":
 		return runShareCheckout(ctx, flags.Share.Create, project, stdout, stderr)
 	case "share link create <url>":
