@@ -90,27 +90,6 @@ func TestIngressRotatedRelayDoesNotRetryCommittedByte(t *testing.T) {
 	}
 }
 
-type waitingBackend struct{ entered chan struct{} }
-
-func (waitingBackend) ConnectionSlot() uint8 { return 0 }
-
-type contextBackend struct{ Backend }
-
-func (b contextBackend) Start(ctx context.Context, id string, pending bool, proxy, initial []byte) (net.Conn, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return b.Backend.Start(ctx, id, pending, proxy, initial)
-}
-
-func (b waitingBackend) Start(ctx context.Context, _ string, _ bool, _, _ []byte) (net.Conn, error) {
-	if b.entered != nil {
-		close(b.entered)
-	}
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-
 func TestIngressStalledAttemptLeavesFallbackBudget(t *testing.T) {
 	for _, stage := range []string{"open", "proxy_write", "hello_write"} {
 		t.Run(stage, func(t *testing.T) {

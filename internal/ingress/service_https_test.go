@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/ingress/clienthello"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
@@ -209,5 +210,17 @@ func TestServiceHTTPSRequiresHostnameOnlyOnSharedPort(t *testing.T) {
 		if !errors.Is(err, ErrServiceAdmission) || forwarder.count() != 0 || control.closed != 0 || p.Load() != 0 {
 			t.Fatal("invalid selector acquired admission or forwarded bytes", test, err)
 		}
+	}
+}
+
+func TestServiceHTTPSRejectsUnboundedInitialBytesBeforeAdmission(t *testing.T) {
+	p, control, forwarder, _ := publicServiceTestSetup(t)
+	connection, visitor := net.Pipe()
+	defer connection.Close()
+	defer visitor.Close()
+	err := p.AcceptPublic(t.Context(), connection, netip.MustParseAddrPort("192.0.2.4:42000"),
+		netip.MustParseAddrPort("203.0.113.8:443"), "web.example.test", make([]byte, clienthello.MaxClientHelloBytes+1))
+	if !errors.Is(err, ErrServiceAdmission) || forwarder.count() != 0 || control.closed != 0 || p.Load() != 0 {
+		t.Fatal("unbounded inspected prefix acquired admission or forwarded bytes", err)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/ingress/clienthello"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
@@ -32,7 +33,7 @@ func (p *PublicServices) AcceptPublic(ctx context.Context, connection net.Conn, 
 		defer func() { p.config.Metrics.ObserveVisitor(outcome) }()
 	}
 	control := p.config.Control
-	if control == nil || connection == nil || !validPrivateSocketPair(source, destination) {
+	if control == nil || connection == nil || !validPrivateSocketPair(source, destination) || len(initial) > clienthello.MaxClientHelloBytes {
 		return ErrServiceAdmission
 	}
 	if destination.Port() == 443 {
