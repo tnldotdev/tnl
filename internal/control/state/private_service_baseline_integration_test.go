@@ -16,8 +16,8 @@ func TestIntegrationPrivateServiceBaselinePreservesReservations(t *testing.T) {
 	d, directURL, now := newControlStateIntegrationDatabaseWithURL(t, "private_port_baseline")
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{Public: true}, Services: map[string]ProjectServiceConfiguration{
-		"orders": {Protocol: "postgres", Target: "localhost:5432"},
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
+		"orders": {Protocol: "postgres", Target: "localhost:5432", Public: new(true)},
 	}}
 	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(ctx, r)

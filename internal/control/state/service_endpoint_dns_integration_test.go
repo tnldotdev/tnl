@@ -31,7 +31,9 @@ func TestIntegrationServiceEndpointDNSRevisions(t *testing.T) {
 	private := claim(false, PublicURLDNSPending)
 	r.ExpectedRevision = applied.Revision
 	r.Now = now.Add(time.Second)
-	r.Configuration.Settings = &DeploymentSettings{Public: true}
+	binding := r.Configuration.Services["api"]
+	binding.Public = new(true)
+	r.Configuration.Services["api"] = binding
 	applied, err = d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)
@@ -49,6 +51,8 @@ func TestIntegrationServiceEndpointDNSRevisions(t *testing.T) {
 	r.ExpectedRevision = applied.Revision
 	r.Now = now.Add(2 * time.Second)
 	r.Configuration.Settings = &DeploymentSettings{}
+	binding.Public = new(false)
+	r.Configuration.Services["api"] = binding
 	applied, err = d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)

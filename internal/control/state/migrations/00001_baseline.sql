@@ -2066,7 +2066,6 @@ CREATE TABLE control.deployments (
     description text NOT NULL DEFAULT '',
     domain_id text REFERENCES control.domains(id) ON DELETE RESTRICT,
     namespace text NOT NULL DEFAULT '',
-    public boolean NOT NULL DEFAULT false,
     revision bigint NOT NULL DEFAULT 0 CHECK (revision >= 0),
     configuration_hash text NOT NULL DEFAULT '',
     configuration_ciphertext bytea,

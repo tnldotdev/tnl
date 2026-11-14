@@ -371,7 +371,6 @@ type ControlDeployment struct {
 	Description             string
 	DomainID                pgtype.Text
 	Namespace               string
-	Public                  bool
 	Revision                int64
 	ConfigurationHash       string
 	ConfigurationCiphertext []byte

@@ -23,8 +23,8 @@ func TestProjectMetadataUsesVisitorProjectionWithoutManagerConfiguration(t *test
 		}
 	}
 	deployment := "cloud"
-	project := clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")}, Worktree: clientproject.Worktree{Root: root, IsGit: true}, Declared: &config.Project{Services: map[string]config.ServiceDeclaration{"api": {}, "web": {}}}, Config: config.TNL{Deployment: deployment, DeploymentSettings: config.DeploymentSettings{Public: true}, Services: config.Services{
-		"web": {HTTP: &config.HTTPService{}, Target: &config.ServiceTarget{Type: "address", Address: testTarget("http://production.internal:3000")}},
+	project := clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")}, Worktree: clientproject.Worktree{Root: root, IsGit: true}, Declared: &config.Project{Services: map[string]config.ServiceDeclaration{"api": {}, "web": {}}}, Config: config.TNL{Deployment: deployment, Services: config.Services{
+		"web": {Public: new(true), HTTP: &config.HTTPService{}, Target: &config.ServiceTarget{Type: "address", Address: testTarget("http://production.internal:3000")}},
 	}}}
 	source, err := project.SourceIdentity(t.Context())
 	if err != nil {

@@ -21,9 +21,9 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 	d, now, _, leases := newPublishRunPrerequisites(t)
 	r := appliedProjectRequest(t, d, now)
 	r.ProjectLabel = "storefront"
-	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{Public: true}, Services: map[string]ProjectServiceConfiguration{
-		"orders": {Protocol: "postgres", Target: "orders.internal:5432"},
-		"api":    {Target: "api.internal:3000"},
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
+		"orders": {Protocol: "postgres", Target: "orders.internal:5432", Public: new(true)},
+		"api":    {Target: "api.internal:3000", Public: new(true)},
 	}}
 	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
@@ -33,7 +33,10 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 	// retain the allocated ports while testing private certificate authority;
 	// the direct-admission subtest later re-enables these exact bindings.
 	r.ExpectedRevision = applied.Revision
-	r.Configuration.Settings.Public = false
+	for name, binding := range r.Configuration.Services {
+		binding.Public = new(false)
+		r.Configuration.Services[name] = binding
+	}
 	applied, err = d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)

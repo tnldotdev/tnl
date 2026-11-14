@@ -164,7 +164,7 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 		properties := jsonschema.NewProperties()
 		properties.Set("description", &jsonschema.Schema{Type: "string", MaxLength: integerPointer(1024)})
 		properties.Set("domain", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(253)})
-		properties.Set("public", &jsonschema.Schema{Type: "boolean", Default: false})
+		properties.Set("public", jsonschema.FalseSchema)
 		properties.Set("targets", schemaForType(reflect.TypeOf(map[string]config.DeploymentBinding{})))
 		// preserve rejection through TypeScript's structural assignment of inferred objects.
 		properties.Set("aws", jsonschema.FalseSchema)

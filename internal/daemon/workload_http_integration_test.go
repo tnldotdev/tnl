@@ -90,9 +90,9 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	configuration := controlv1.ProjectConfiguration{Workloads: &policies, Settings: &controlv1.DeploymentSettings{Public: new(true)}, Services: map[string]controlv1.ProjectServiceConfiguration{
-		"api":   {Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
-		"other": {Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
+	configuration := controlv1.ProjectConfiguration{Workloads: &policies, Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{
+		"api":   {Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust, Public: new(true)},
+		"other": {Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust, Public: new(true)},
 	}, Webhooks: map[string]controlv1.ProjectWebhook{}}
 	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: declarations, ExpectedRevision: sibling.Revision, TeamId: f.identity.teamID, Source: &testProjectSource, Configuration: configuration})
 	if err != nil {

@@ -15,8 +15,8 @@ func TestIntegrationPrivateServicePortCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{Public: true}, Services: map[string]ProjectServiceConfiguration{
-		"api": {Target: "localhost:3000"},
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
+		"api": {Target: "localhost:3000", Public: new(true)},
 	}}
 	r = selectedProjectRequest(r, "production")
 	first, err := d.ApplyProjectConfiguration(ctx, r)
@@ -31,7 +31,9 @@ func TestIntegrationPrivateServicePortCapacity(t *testing.T) {
 		t.Fatal("private run captured an ingress reservation", captured, err)
 	}
 	r.ExpectedRevision = first.Revision
-	r.Configuration.Settings.Public = false
+	api := r.Configuration.Services["api"]
+	api.Public = new(false)
+	r.Configuration.Services["api"] = api
 	for name, protocol := range map[string]string{"web": "http", "orders": "postgres"} {
 		r.Configuration.Services[name] = ProjectServiceConfiguration{Protocol: protocol, Target: "localhost:3000"}
 		r.ServiceDeclarations[name] = protocol
@@ -55,12 +57,14 @@ func TestIntegrationPrivateServicePortCapacity(t *testing.T) {
 	}
 	// enabling public access is atomic; no partial configuration survives failure.
 	r.ExpectedRevision = private.Revision
-	r.Configuration.Settings.Public = true
+	web := r.Configuration.Services["web"]
+	web.Public = new(true)
+	r.Configuration.Services["web"] = web
 	if _, err := d.ApplyProjectConfiguration(ctx, r); !errors.Is(err, ErrServicePortsExhausted) {
 		t.Fatal("public enable ignored exhausted capacity", err)
 	}
 	current, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, r.ActorID, "production")
-	if err != nil || current.Revision != private.Revision || current.Configuration.Settings.Public {
+	if err != nil || current.Revision != private.Revision || current.Configuration.Services["web"].Public != nil {
 		t.Fatal("failed public enable partially committed", current, err)
 	}
 }

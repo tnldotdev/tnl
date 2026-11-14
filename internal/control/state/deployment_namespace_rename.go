@@ -113,7 +113,7 @@ func (d *Database) RenameDeploymentNamespace(ctx context.Context, r RenameDeploy
 		if err = d.revokeAppliedServicePublishers(ctx, tx, q, service, r.Now); err != nil {
 			return result, err
 		}
-		if err = d.ensureServiceEndpoint(ctx, tx, service.ServiceID.String, id, projectServicePublic(&snapshot.Settings, snapshot.Services[service.Service]), r.DNSAutomation, r.Now); err != nil {
+		if err = d.ensureServiceEndpoint(ctx, tx, service.ServiceID.String, id, projectServicePublic(snapshot.Services[service.Service]), r.DNSAutomation, r.Now); err != nil {
 			return result, err
 		}
 		if err = d.reconcileAppliedPublisherGrants(ctx, tx, q, service, r.ActorID, r.Now); err != nil {

@@ -31,7 +31,7 @@ export interface TnlConfig {
       | {
           description?: string;
           domain?: string;
-          public?: boolean;
+          public?: never;
           targets?: {
             [k: string]:
               | {

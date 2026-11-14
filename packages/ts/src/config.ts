@@ -101,7 +101,7 @@ type TargetReferences<Config> = { [Key in Exclude<keyof Config, keyof TnlConfig>
           }
         : Deployment extends "local"
           ? never
-          : Property extends "description" | "domain" | "public"
+          : Property extends "description" | "domain"
             ? Config[Key][Deployment][Property]
             : never;
     };

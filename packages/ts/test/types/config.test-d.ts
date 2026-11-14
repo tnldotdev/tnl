@@ -37,6 +37,11 @@ test("deployments select declared bindings and reject infrastructure settings", 
   });
   // @ts-expect-error local is client-side and has no server reachability.
   defineConfig({ deployments: { local: { public: true } } });
+  // @ts-expect-error remote reachability must be explicit on individual service bindings.
+  defineConfig({ deployments: { production: { public: true } } });
+  const globalPrivate = { deployments: { production: { public: false } } } as const;
+  // @ts-expect-error even inferred false is not a supported deployment-wide default.
+  defineConfig(globalPrivate);
   const infrastructure = {
     deployments: { cloud: { description: "db", type: "self-hosted" } },
   } as const;

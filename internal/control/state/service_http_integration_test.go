@@ -30,7 +30,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{Public: true}, Services: map[string]ProjectServiceConfiguration{"a": {Target: "app:3000"}, "b": {Target: "other:3000"}}}
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"a": {Target: "app:3000", Public: new(true)}, "b": {Target: "other:3000", Public: new(true)}}}
 	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {

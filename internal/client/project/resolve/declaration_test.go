@@ -85,7 +85,7 @@ func TestRemoteDeclarationKeepsExposureOnEachService(t *testing.T) {
 		t.Fatal(err)
 	}
 	api, db := declaration.Services["api"], declaration.Services["db"]
-	if api.Public == nil || !*api.Public || db.Public == nil || *db.Public || api.PublicUrl != nil || db.PublicUrl != nil || declaration.Settings == nil || *declaration.Settings.Public {
+	if api.Public == nil || !*api.Public || db.Public == nil || *db.Public || api.PublicUrl != nil || db.PublicUrl != nil || declaration.Settings == nil {
 		t.Fatal("declaration broadened placement, HTTP resource kind, or another service")
 	}
 }

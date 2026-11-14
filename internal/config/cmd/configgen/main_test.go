@@ -104,6 +104,10 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 }
 
 func TestServiceSchemaKeepsServicesSeparateFromPublicURLs(t *testing.T) {
+	deployments := schemaForType(reflect.TypeOf(map[string]config.Deployment{}))
+	if public, found := deployments.AdditionalProperties.Properties.Get("public"); !found || public != jsonschema.FalseSchema {
+		t.Fatal("deployment schema allows reachability outside a service binding")
+	}
 	declaration := servicesSchema().AdditionalProperties
 	for _, field := range []string{"private", "public_url", "target", "tls", "name", "deployment", "http"} {
 		if _, found := declaration.Properties.Get(field); found {

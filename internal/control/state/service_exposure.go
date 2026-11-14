@@ -2,13 +2,9 @@ package state
 
 import "reflect"
 
-// explicit binding reachability overrides the retained deployment default.
-// the latter preserves configurations saved before per-service exposure.
-func projectServicePublic(settings *DeploymentSettings, service ProjectServiceConfiguration) bool {
-	if service.Public != nil {
-		return *service.Public
-	}
-	return settings != nil && settings.Public
+// only an explicit service binding can enable public endpoint access.
+func projectServicePublic(service ProjectServiceConfiguration) bool {
+	return service.Public != nil && *service.Public
 }
 
 // publication mechanics and endpoint reachability have separate lifetimes.

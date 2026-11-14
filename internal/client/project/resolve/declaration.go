@@ -28,7 +28,7 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 	deployment := config.SelectedDeployment(project.Config)
 	if deployment != "local" {
 		settings := project.Config.DeploymentSettings
-		entry := controlv1.DeploymentSettings{Description: settings.Description, Public: &settings.Public}
+		entry := controlv1.DeploymentSettings{Description: settings.Description}
 		if settings.Domain != nil {
 			domain, err := current.ReadyDomain(*settings.Domain)
 			if err != nil {
