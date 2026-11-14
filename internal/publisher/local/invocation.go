@@ -12,11 +12,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -45,7 +47,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		return publisherprotocol.Registration{}, err
 	}
 	file := request.PublisherCredentialFile
-	if file == "" && request.PublisherIdentityId == "" {
+	if file == "" && request.PublisherIdentityId == "" && request.Deployment == nil {
 		file = os.Getenv("TNL_PUBLISHER_CREDENTIAL_FILE")
 	}
 	if file != "" && (!filepath.IsAbs(file) || len(file) > 4096 || strings.ContainsRune(file, 0)) {
@@ -68,63 +70,78 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		}
 		return publisherprotocol.Registration{Version: 1, RegistrationID: service.RegistrationID, Owner: request.Owner, Target: request.Target}, nil
 	}
-	server := valueOrEmpty(a.project.Config.Server)
-	if request.ServerUrl != nil {
-		selected, err := clientstate.CanonicalServer(*request.ServerUrl)
+	var native *publisheridentity.Native
+	var profile *clientstate.Store
+	var publicURL controlv1.PublicURL
+	var credentialExpiry time.Time
+	server := ""
+	if request.Deployment != nil {
+		var selection deploymentInvocation
+		selection, err = a.prepareDeploymentInvocation(ctx, request)
 		if err != nil {
 			return publisherprotocol.Registration{}, err
 		}
-		if server != "" && server != selected {
-			return publisherprotocol.Registration{}, publisheridentity.ErrScope
+		native, profile, publicURL, limits = selection.native, selection.profile, selection.publicURL, selection.limits
+		credentialExpiry = selection.expiresAt
+		server = native.ControlURL()
+	} else {
+		server = valueOrEmpty(a.project.Config.Server)
+		if request.ServerUrl != nil {
+			selected, err := clientstate.CanonicalServer(*request.ServerUrl)
+			if err != nil {
+				return publisherprotocol.Registration{}, err
+			}
+			if server != "" && server != selected {
+				return publisherprotocol.Registration{}, publisheridentity.ErrScope
+			}
+			server = selected
 		}
-		server = selected
-	}
-	server, err = clientserver.Select(ctx, a.state, server)
-	if err != nil {
-		return publisherprotocol.Registration{}, err
-	}
-	profile, err := a.state.Server(ctx, server)
-	if err != nil {
-		return publisherprotocol.Registration{}, err
-	}
-	control, err := clientcontrol.New(server, nil, "")
-	if err != nil {
-		return publisherprotocol.Registration{}, err
-	}
-	authority, err := clientauthority.New(server, nil, "")
-	if err != nil {
-		return publisherprotocol.Registration{}, err
-	}
-	native, err := publisheridentity.ResolveAdHoc(ctx, profile, publisheridentity.NativeControl{PublicURLControl: control}, authority, server, "", "", "", file, "", request.PublisherIdentityId, nil)
-	if err != nil {
-		if file != "" && errors.Is(err, publisheridentity.ErrScope) {
-			return publisherprotocol.Registration{}, credentialfile.ErrInvalid
+		server, err = clientserver.Select(ctx, a.state, server)
+		if err != nil {
+			return publisherprotocol.Registration{}, err
 		}
-		return publisherprotocol.Registration{}, err
+		profile, err = a.state.Server(ctx, server)
+		if err != nil {
+			return publisherprotocol.Registration{}, err
+		}
+		control, err := clientcontrol.New(server, nil, "")
+		if err != nil {
+			return publisherprotocol.Registration{}, err
+		}
+		authority, err := clientauthority.New(server, nil, "")
+		if err != nil {
+			return publisherprotocol.Registration{}, err
+		}
+		native, err = publisheridentity.ResolveAdHoc(ctx, profile, publisheridentity.NativeControl{PublicURLControl: control}, authority, server, "", "", "", file, "", request.PublisherIdentityId, nil)
+		if err != nil {
+			if file != "" && errors.Is(err, publisheridentity.ErrScope) {
+				return publisherprotocol.Registration{}, credentialfile.ErrInvalid
+			}
+			return publisherprotocol.Registration{}, err
+		}
+		allocation := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: request.InvocationId, Target: request.Target, Ip: request.Ip, Limits: request.Limits}
+		allocation.RequirePostQuantum = request.RequirePostQuantum
+		if request.AccessMode != nil {
+			mode := controlv1.VisitorAccessMode(*request.AccessMode)
+			allocation.AccessMode = &mode
+		}
+		publicURL, err = native.Allocate(ctx, allocation)
+		if err != nil {
+			return publisherprotocol.Registration{}, err
+		}
 	}
-	allocation := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: request.InvocationId, Target: request.Target, Ip: request.Ip, Limits: request.Limits}
-	allocation.RequirePostQuantum = request.RequirePostQuantum
-	if request.AccessMode != nil {
-		mode := controlv1.VisitorAccessMode(*request.AccessMode)
-		allocation.AccessMode = &mode
-	}
-	publicURL, err := native.Allocate(ctx, allocation)
-	if err != nil {
-		return publisherprotocol.Registration{}, err
-	}
-	cleanup := sync.OnceValue(func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		return native.DeletePublicURL(ctx, publicURL.Id)
-	})
+	cleanup := invocationCleanup(native, publicURL, credentialExpiry)
 	transferred, id := false, ""
 	defer func() {
 		if !transferred {
 			if id != "" {
-				result = errors.Join(result, a.manager.Unregister(id, request.Owner))
-				a.mu.Lock()
-				delete(a.prepared, id)
-				a.mu.Unlock()
+				err := a.manager.Unregister(id, request.Owner)
+				result = errors.Join(result, err)
+				if err == nil {
+					a.mu.Lock()
+					delete(a.prepared, id)
+					a.mu.Unlock()
+				}
 			}
 			result = errors.Join(result, cleanup())
 		}
@@ -136,14 +153,20 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	if err != nil {
 		return publisherprotocol.Registration{}, err
 	}
+	a.mu.Lock()
+	a.prepared[id] = appPreparation{configuration: publisherapp.Configuration{Cleanup: cleanup}, invocation: &request}
+	a.mu.Unlock()
 	policy, err := config.ResolveInspection(nil, "http")
 	if err != nil {
 		return publisherprotocol.Registration{}, err
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
-	cfg := publisher.Config{Control: native, Identity: native, Audit: native, VisitorControl: native, BrowserControl: native, Shares: native, ControlURL: server, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, ProjectRoot: a.project.Root, Target: request.Target, ServiceProtocol: "http", Limits: limits, Ephemeral: true, AssignedPublicURL: &publicURL, TransportTLS: tlsConfig}
+	cfg := publisher.Config{Control: native, Identity: native, Audit: native, VisitorControl: native, BrowserControl: native, Shares: native, ControlURL: server, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, ProjectRoot: a.project.Root, Target: request.Target, ServiceProtocol: "http", Limits: limits, Ephemeral: publicURL.Ephemeral, AssignedPublicURL: &publicURL, TransportTLS: tlsConfig}
 	cfg.PublisherIdentityID = native.PublisherIdentityID()
 	cfg.RequirePostQuantum = request.RequirePostQuantum
+	if request.Deployment != nil {
+		cfg.RequirePostQuantum = new(publicURL.RequirePostQuantum)
+	}
 	if publicURL.MembershipId != nil {
 		cfg.MembershipID = *publicURL.MembershipId
 	}
@@ -171,6 +194,42 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	}
 	transferred = true
 	return publisherprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: request.Target}, nil
+}
+
+// retain one exact allocation for transient retries. permanent authority loss or
+// the captured grant deadline retires only local ownership, never remote state.
+func invocationCleanup(native *publisheridentity.Native, publicURL controlv1.PublicURL, expiresAt time.Time) func() error {
+	var mu sync.Mutex
+	cleaned := false
+	var permanent error
+	return func() error {
+		mu.Lock()
+		defer mu.Unlock()
+		if cleaned || !publicURL.Ephemeral {
+			return nil
+		}
+		if permanent != nil {
+			return permanent
+		}
+		if !expiresAt.IsZero() && !time.Now().Before(expiresAt) {
+			permanent = errors.Join(publisherapp.ErrCleanupPermanent, auth.ErrDeploymentCredential)
+			return permanent
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		err := native.DeletePublicURL(ctx, publicURL.Id)
+		if err == nil || errors.Is(err, clientcontrol.ErrNotFound) {
+			cleaned = true
+			return nil
+		}
+		reason, _ := failure.ReasonOf(err)
+		if errors.Is(err, clientauthority.ErrUnauthenticated) || errors.Is(err, clientcontrol.ErrUnauthenticated) ||
+			errors.Is(err, publisheridentity.ErrScope) || reason == failure.ServerDenied {
+			permanent = errors.Join(publisherapp.ErrCleanupPermanent, err)
+			return permanent
+		}
+		return err
+	}
 }
 
 func invocationLimits(input *controlv1.PublisherApplicationLimits) (applicationlimits.Limits, error) {

@@ -11,7 +11,14 @@ import pytest
 
 from tnl import _native
 from tnl._native import NativeRuntime
-from tnl._protocol import Endpoint, InvalidResponse, RegistrationLost, TnlError, parse_endpoint
+from tnl._protocol import (
+    Endpoint,
+    InvalidResponse,
+    PublicationCleanupFailed,
+    RegistrationLost,
+    TnlError,
+    parse_endpoint,
+)
 
 
 def test_request_uses_exact_authority_bearer_and_no_origin(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -117,9 +124,49 @@ def test_publisher_selection_failure_is_authored_without_private_details(
         )
         try:
             with pytest.raises(TnlError, match=hint) as caught:
-                await NativeRuntime().request(endpoint, "ad-hoc/register", {})
+                await NativeRuntime().request(endpoint, "publications/register", {})
             assert caught.value.code == code.replace("runtime.", "sdk.")
             assert "secret provider detail" not in str(caught.value)
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["unregister", "publications/register", "status"])
+def test_stopped_cleanup_error_is_only_accepted_for_publication_mutations(operation: str) -> None:
+    async def scenario() -> None:
+        async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            await reader.readuntil(b"\r\n\r\n")
+            body = json.dumps(
+                {
+                    "code": "runtime.publication_cleanup_failed",
+                    "message": "private remote failure",
+                }
+            ).encode()
+            writer.write(
+                b"HTTP/1.1 409 Conflict\r\nContent-Type: application/json\r\n"
+                + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+                + body
+            )
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+        server = await asyncio.start_server(handle, "127.0.0.1", 0)
+        endpoint = Endpoint(
+            f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}",
+            "b" * 64,
+            "a" * 32,
+            "invocation",
+            invocation_id="ivk_" + "A" * 22,
+        )
+        try:
+            expected = InvalidResponse if operation == "status" else PublicationCleanupFailed
+            with pytest.raises(expected) as caught:
+                await NativeRuntime().request(endpoint, operation)
+            assert "private remote failure" not in str(caught.value)
         finally:
             server.close()
             await server.wait_closed()

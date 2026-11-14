@@ -3,9 +3,6 @@ import { serviceMetadata } from "./internal/project/service_metadata.js";
 import { parseRuntimePayload, type ProjectMetadata } from "./internal/project/runtime.js";
 import { TnlError } from "./errors.js";
 import type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
-import type { AdHocTunnel, OpenOptions } from "./internal/publisher/open.js";
-import type { LocalHTTPServer } from "./internal/publisher/register.js";
-import type { FetchHandler } from "./internal/publisher/fetch_types.js";
 import type {
   TnlProjectFromConfig,
   TnlResolvedConfig,
@@ -15,11 +12,10 @@ import type {
 export type * from "./project.js";
 export type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
 export type {
-  AdHocTunnel,
-  OpenOptions,
-  PublisherCredentialFile,
-  PublisherIdentityID,
-} from "./internal/publisher/open.js";
+  Publication,
+  NamedPublicationOptions,
+  TemporaryPublicationOptions,
+} from "./internal/publisher/publication.js";
 export type { FetchHandler } from "./internal/publisher/fetch_types.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
 export {
@@ -52,7 +48,6 @@ export type TnlRuntime = Readonly<
       readonly port: number;
       readonly dev: boolean;
       prepare(options?: PrepareOptions): Promise<PreparedService>;
-      open(server: LocalHTTPServer | FetchHandler, options?: OpenOptions): Promise<AdHocTunnel>;
     }
 >;
 
@@ -89,13 +84,5 @@ export const tnl = Object.freeze({
     if (typeof process === "undefined") throw new TnlError("sdk.configuration_invalid");
     const { prepareService } = await import("./internal/publisher/app.js");
     return prepareService(options, "Bun" in globalThis ? "bun" : "node");
-  },
-  async open(
-    server: LocalHTTPServer | FetchHandler,
-    options: OpenOptions = {},
-  ): Promise<AdHocTunnel> {
-    if (typeof process === "undefined") throw new TnlError("sdk.configuration_invalid");
-    const { openServer, openFetch } = await import("./internal/publisher/open.js");
-    return typeof server === "function" ? openFetch(server, options) : openServer(server, options);
   },
 }) as unknown as TnlRuntime;

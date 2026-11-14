@@ -21,6 +21,15 @@ import (
 const LeaseDuration = 20 * time.Second
 const CleanupGrace = 10 * time.Second
 
+const stoppedOutcomeLifetime = 2 * time.Minute
+const maxStoppedOutcomes = 64
+
+// permanent cleanup failures cannot be repaired with the captured resources.
+// registration stopped is returned only after the worker joins and its local
+// registration is released; neither marker claims remote cleanup succeeded.
+var ErrCleanupPermanent = errors.New("publication cleanup cannot be retried")
+var ErrRegistrationStopped = errors.New("publication stopped with a cleanup failure")
+
 type Run func(context.Context, Service, func(uint64, bool) error) error
 
 type registration struct {
@@ -29,6 +38,18 @@ type registration struct {
 	expires time.Time
 	cancel  context.CancelFunc
 	done    chan struct{}
+	err     error
+	// an unbound preparation can be released with the application's target.
+	// retain that exact cleanup request without claiming a bound listener.
+	cleanupTarget *string
+}
+
+// stopped outcomes contain no worker, key, or cleanup callback. they only let an
+// exact unregister retry recover a lost reply while this owner exists.
+type stoppedOutcome struct {
+	service, owner, target string
+	expires                time.Time
+	err                    error
 }
 
 type Manager struct {
@@ -40,11 +61,17 @@ type Manager struct {
 	registrations map[string]*registration
 	run           Run
 	Alive         func(int) bool
+	// cleanup runs only after the worker joins. a failure retains the
+	// registration and its exact resources for a later unregister attempt unless
+	// the resource owner marks the failure as permanent.
+	Cleanup       func(Service) error
 	idleSince     time.Time
 	preparing     int
 	closed        bool
 	closeOnce     sync.Once
 	writeErr      error
+	retirementErr error
+	stopped       map[string]stoppedOutcome
 }
 
 func New(ctx context.Context, project string, database *clientstate.Database, services []Service, run Run) (*Manager, error) {
@@ -241,6 +268,12 @@ func (m *Manager) Reserve(name, owner string, pid int, publicURL string) (string
 		return "", err
 	}
 	service.reserve(reservedRegistration{id: "reg_" + hex.EncodeToString(bytes), publicURL: publicURL})
+	// a replacement registration invalidates the previous binding's outcomes.
+	for id, outcome := range m.stopped {
+		if outcome.service == name {
+			delete(m.stopped, id)
+		}
+	}
 	m.registrations[name] = &registration{owner: owner, pid: pid, expires: time.Now().Add(LeaseDuration)}
 	m.idleSince = time.Time{}
 	m.emitLocked("service.prepared", service)
@@ -338,6 +371,7 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 	reg.expires = time.Now().Add(LeaseDuration)
 	ctx, cancel := context.WithCancel(observability.LinkContext(m.ctx, scheduling))
 	reg.cancel, reg.done = cancel, make(chan struct{})
+	reg.err = nil
 	copy, done := *service, reg.done
 	m.emitLocked("service.registered", service)
 	if err := m.writeErr; err != nil {
@@ -369,6 +403,7 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 		}
 		current.endPublication()
 		reg.cancel = nil
+		reg.err = independentWorkerFailure(err, ctx.Err() != nil)
 		if err != nil && ctx.Err() == nil {
 			current.Failure = "runtime.publication_failed"
 			if reason, _, ok := failure.Describe(err); ok {
@@ -570,10 +605,18 @@ func (m *Manager) UnregisterTarget(id, owner, target string) error {
 	m.op.Lock()
 	defer m.op.Unlock()
 	m.mu.Lock()
+	if outcome, found := m.stoppedOutcomeLocked(id, owner, target); found {
+		m.mu.Unlock()
+		return outcome.err
+	}
 	service, reg := m.findLocked(id, owner)
-	if reg == nil || service.Registered && service.Target != target {
+	if reg == nil || service.Target != "" && service.Target != target ||
+		reg.cleanupTarget != nil && *reg.cleanupTarget != target {
 		m.mu.Unlock()
 		return ErrRegistrationStale
+	}
+	if reg.cleanupTarget == nil {
+		reg.cleanupTarget = &target
 	}
 	m.mu.Unlock()
 	return m.unregister(id, owner)
@@ -603,9 +646,22 @@ func (m *Manager) unregister(id, owner string) error {
 		reg.cancel()
 	}
 	done := reg.done
+	stopped := *service
 	m.mu.Unlock()
 	if done != nil {
 		<-done
+	}
+	m.mu.Lock()
+	runErr := reg.err
+	reg.err = nil
+	m.retirementErr = errors.Join(m.retirementErr, runErr)
+	m.mu.Unlock()
+	var cleanupErr error
+	if m.Cleanup != nil {
+		cleanupErr = m.Cleanup(stopped)
+		if cleanupErr != nil && !errors.Is(cleanupErr, ErrCleanupPermanent) {
+			return errors.Join(runErr, cleanupErr)
+		}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -614,8 +670,111 @@ func (m *Manager) unregister(id, owner string) error {
 	if len(m.registrations) == 0 {
 		m.idleSince = time.Now()
 	}
+	if cleanupErr != nil {
+		service.Failure = "runtime.publication_cleanup_failed"
+	}
 	m.emitLocked("service.stopped", service)
-	return m.writeErr
+	m.retirementErr = errors.Join(m.retirementErr, cleanupErr, m.writeErr)
+	result := errors.Join(runErr, cleanupErr, m.writeErr)
+	if result != nil {
+		result = errors.Join(ErrRegistrationStopped, result)
+	}
+	target := stopped.Target
+	if reg.cleanupTarget != nil {
+		target = *reg.cleanupTarget
+	}
+	m.rememberStoppedLocked(stopped, owner, target, result)
+	return result
+}
+
+// ServiceForUnregister preserves the capability's service fence for exact lost
+// reply recovery without making a stopped registration current again.
+func (m *Manager) ServiceForUnregister(id, owner, target string) (Service, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, service := range m.snapshot.Services {
+		if service.RegistrationID == id {
+			return service, true
+		}
+	}
+	if outcome, found := m.stoppedOutcomeLocked(id, owner, target); found {
+		return Service{Name: outcome.service}, true
+	}
+	return Service{}, false
+}
+
+func (m *Manager) stoppedOutcomeLocked(id, owner, target string) (stoppedOutcome, bool) {
+	m.pruneStoppedLocked(time.Now())
+	outcome, found := m.stopped[id]
+	if !found || outcome.owner != owner || outcome.target != target {
+		return stoppedOutcome{}, false
+	}
+	service := m.serviceLocked(outcome.service)
+	if service == nil || service.RegistrationID != "" {
+		return stoppedOutcome{}, false
+	}
+	return outcome, true
+}
+
+func (m *Manager) pruneStoppedLocked(now time.Time) {
+	for id, outcome := range m.stopped {
+		if !now.Before(outcome.expires) {
+			delete(m.stopped, id)
+		}
+	}
+}
+
+func (m *Manager) rememberStoppedLocked(service Service, owner, target string, err error) {
+	now := time.Now()
+	m.pruneStoppedLocked(now)
+	if m.stopped == nil {
+		m.stopped = map[string]stoppedOutcome{}
+	}
+	if len(m.stopped) >= maxStoppedOutcomes {
+		var oldest string
+		for id, outcome := range m.stopped {
+			if oldest == "" || outcome.expires.Before(m.stopped[oldest].expires) {
+				oldest = id
+			}
+		}
+		delete(m.stopped, oldest)
+	}
+	m.stopped[service.RegistrationID] = stoppedOutcome{
+		service: service.Name, owner: owner, target: target,
+		expires: now.Add(stoppedOutcomeLifetime), err: err,
+	}
+}
+
+// RetirementError retains failures from background sweeps and joined workers
+// after their registrations have been released.
+func (m *Manager) RetirementError() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.retirementErr
+}
+
+// joined cancellation does not erase an independent worker or cleanup failure.
+func independentWorkerFailure(err error, canceled bool) error {
+	if err == nil || err == context.Canceled || canceled && err == ErrRegistrationStale {
+		return nil
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var failures []error
+		for _, cause := range joined.Unwrap() {
+			failures = append(failures, independentWorkerFailure(cause, canceled))
+		}
+		return errors.Join(failures...)
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		filtered := independentWorkerFailure(cause, canceled)
+		if filtered == nil {
+			return nil
+		}
+		if errors.Is(cause, context.Canceled) || canceled && errors.Is(cause, ErrRegistrationStale) {
+			return filtered
+		}
+	}
+	return err
 }
 
 // TargetChanged invalidates only the current registration's current run. worker
@@ -636,6 +795,7 @@ func (m *Manager) TargetChanged(name, id, target string) {
 // grants ownership. expiration rejects old observations before cleanup.
 func (m *Manager) Sweep(alive func(int) bool) bool {
 	m.mu.Lock()
+	m.pruneStoppedLocked(time.Now())
 	type expired struct{ id, owner string }
 	var entries []expired
 	for name, reg := range m.registrations {
@@ -670,7 +830,11 @@ func (m *Manager) close() {
 	}
 	m.mu.Unlock()
 	for _, entry := range entries {
-		_ = m.Unregister(entry.id, entry.owner)
+		if err := m.Unregister(entry.id, entry.owner); err != nil && !errors.Is(err, ErrRegistrationStopped) {
+			m.mu.Lock()
+			m.retirementErr = errors.Join(m.retirementErr, err)
+			m.mu.Unlock()
+		}
 	}
 	m.mu.Lock()
 	m.emitLocked("runtime.stopped", nil)

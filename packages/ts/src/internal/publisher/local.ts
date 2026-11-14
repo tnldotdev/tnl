@@ -49,6 +49,8 @@ export interface EndpointSelection {
   readonly service?: string | undefined;
   readonly invocationID?: string | undefined;
   readonly stateDir?: string;
+  readonly publications?: boolean;
+  readonly environment?: NodeJS.ProcessEnv;
 }
 
 export function parseEndpoint(value: unknown, selection: EndpointSelection = {}): RuntimeEndpoint {
@@ -131,21 +133,23 @@ export async function startRuntime(
   try {
     signal?.throwIfAborted();
     let endpoint: RuntimeEndpoint;
-    const mounted = process.env.TNL_APP_ENDPOINT;
+    const environment = selection.environment ?? process.env;
+    const mounted = selection.publications ? undefined : environment.TNL_APP_ENDPOINT;
     if (mounted !== undefined) {
       return await waitMountedEndpoint(mounted, selection, signal);
     } else {
       const args = ["--no-telemetry", "runtime", "endpoint", "--directory", directory];
-      const stateDir = selection.stateDir ?? process.env.TNL_STATE_DIR;
+      const stateDir = selection.stateDir ?? environment.TNL_STATE_DIR;
       if (stateDir !== undefined) args.push("--state-dir", stateDir);
       if (selection.service !== undefined) args.push("--service", selection.service);
       if (selection.invocationID !== undefined)
         args.push("--invocation-id", selection.invocationID);
+      if (selection.publications) args.push("--publications");
       const { stdout } = await promisify(execFile)(binary ?? resolveNativeBinary(), args, {
         timeout: 30_000,
         maxBuffer: 64 * 1024,
         encoding: "utf8",
-        env: launchEnvironment(),
+        env: launchEnvironment(environment),
         ...(signal === undefined ? {} : { signal }),
       });
       endpoint = parseEndpoint(JSON.parse(stdout), selection);
@@ -183,9 +187,15 @@ function runtimeRequestUntraced(
       : { invocationID: endpoint.invocation_id },
   );
   if (
-    !["health", "status", "prepare", "register", "renew", "unregister", "ad-hoc/register"].includes(
-      operation,
-    )
+    ![
+      "health",
+      "status",
+      "prepare",
+      "register",
+      "renew",
+      "unregister",
+      "publications/register",
+    ].includes(operation)
   )
     throw new TnlError("sdk.configuration_invalid");
   const get = operation === "health" || operation === "status";
@@ -230,7 +240,10 @@ function runtimeRequestUntraced(
             )
               throw new TnlError("sdk.registration_stale");
             if (response.statusCode === 204) {
-              if (length !== 0 || ["prepare", "status", "ad-hoc/register"].includes(operation))
+              if (
+                length !== 0 ||
+                ["prepare", "status", "publications/register"].includes(operation)
+              )
                 throw new TnlError("sdk.response_invalid");
               resolve(undefined);
               return;
@@ -240,6 +253,11 @@ function runtimeRequestUntraced(
             const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
             if (response.statusCode !== 200) {
               const problem = parseValue(problemSchema, value, "sdk.response_invalid");
+              if (problem.code === "runtime.publication_cleanup_failed") {
+                if (operation !== "unregister" && operation !== "publications/register")
+                  throw new TnlError("sdk.response_invalid");
+                throw new TnlError("sdk.publication_cleanup_failed");
+              }
               throw new TnlError(
                 problem.code === "runtime.owner_conflict"
                   ? "sdk.owner_conflict"
@@ -260,7 +278,7 @@ function runtimeRequestUntraced(
                             : "sdk.request_rejected",
               );
             }
-            if (!["prepare", "status", "ad-hoc/register"].includes(operation))
+            if (!["prepare", "status", "publications/register"].includes(operation))
               throw new TnlError("sdk.response_invalid");
             resolve(value);
           } catch (cause) {

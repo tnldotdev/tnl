@@ -1,8 +1,8 @@
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { assert, expect, test } from "vitest";
 import * as z from "zod";
 import { TnlError } from "../../src/errors.js";
-import { openServer, openFetch } from "../../src/internal/publisher/open.js";
+import { publishServer, publishFetch } from "../../src/internal/publisher/publication.js";
 import { parseStatus } from "../../src/internal/publisher/status.js";
 import { runtimeRequest, type RuntimeEndpoint } from "../../src/internal/publisher/local.js";
 import { invocationIDSchema } from "../../src/internal/values.js";
@@ -32,7 +32,7 @@ function snapshot(service: string, target: string, registration = id, routable =
         ready: false,
         readiness: { path: "/" },
         public_url: publicURL,
-        publish_run_number: run,
+        run_number: run,
       },
     ],
   };
@@ -51,9 +51,157 @@ test("status fences scope, registration, target, and publish run without public 
   ).toThrow(TnlError);
   const item = value.services[0];
   assert(item !== undefined);
-  item.publish_run_number = 0;
+  item.run_number = 0;
   expect(() => parseStatus(value, "invocation", id, "http://127.0.0.1:1234")).toThrow(TnlError);
 });
+
+test.each(["unregister", "publications/register", "status"])(
+  "stopped cleanup outcome is validated for %s without exposing remote details",
+  async (operation) => {
+    const api = createServer((_request, response) => {
+      response.writeHead(409, { "Content-Type": "application/json" }).end(
+        JSON.stringify({
+          code: "runtime.publication_cleanup_failed",
+          message: "private remote failure",
+        }),
+      );
+    });
+    await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
+    const address = api.address();
+    if (address === null || typeof address === "string") throw new Error("missing listener");
+    try {
+      const endpoint: RuntimeEndpoint = {
+        version: 1,
+        url: `http://127.0.0.1:${address.port}`,
+        capability: "b".repeat(64),
+        owner_id: "a".repeat(32),
+        scope: "invocation",
+        invocation_id: invocationIDSchema.parse(`ivk_${"A".repeat(22)}`),
+      };
+      await expect(runtimeRequest(endpoint, operation)).rejects.toMatchObject({
+        code: operation === "status" ? "sdk.response_invalid" : "sdk.publication_cleanup_failed",
+        message: expect.not.stringContaining("private remote failure"),
+      });
+    } finally {
+      await new Promise<void>((resolve) => api.close(() => resolve()));
+    }
+  },
+);
+
+test.each(["terminal", "transient", "forgotten"])(
+  "Fetch recovers a lost %s unregister reply over real IPC before closing its listener",
+  async (outcome) => {
+    let service = "";
+    let target = "";
+    let restored = false;
+    const unregisters: string[] = [];
+    const api = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        const encoded = Buffer.concat(chunks).toString("utf8");
+        response.setHeader("Content-Type", "application/json");
+        if (request.url === "/v1/publications/register") {
+          const body = invocationSchema.parse(JSON.parse(encoded));
+          service = body.invocation_id;
+          target = body.target;
+          response.end(
+            JSON.stringify({ version: 1, registration_id: id, owner: body.owner, target }),
+          );
+        } else if (request.url === "/v1/status") {
+          response.end(JSON.stringify(snapshot(service, target)));
+        } else if (request.url === "/v1/unregister") {
+          unregisters.push(encoded);
+          if (unregisters.length === 1) {
+            // native already joined the worker; lose only its outer reply.
+            request.socket.destroy();
+          } else if (outcome === "forgotten" && !restored) {
+            response.writeHead(401).end(
+              JSON.stringify({
+                code: "runtime.unauthorized",
+                message: "a replacement owner does not recognize the old capability",
+              }),
+            );
+          } else if (outcome === "terminal" || restored) {
+            response.writeHead(409).end(
+              JSON.stringify({
+                code: "runtime.publication_cleanup_failed",
+                message: "the exact registration stopped with failed remote cleanup",
+              }),
+            );
+          } else response.writeHead(204).end();
+        } else response.writeHead(204).end();
+      });
+    });
+    await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
+    const address = api.address();
+    if (address === null || typeof address === "string") throw new Error("missing listener");
+    let publication: Awaited<ReturnType<typeof publishFetch>> | undefined;
+    try {
+      publication = await publishFetch(
+        () => new Response("owned"),
+        {},
+        {
+          start: async (_directory, _binary, selection): Promise<RuntimeEndpoint> => ({
+            version: 1,
+            url: `http://127.0.0.1:${address.port}`,
+            capability: "b".repeat(64),
+            owner_id: "a".repeat(32),
+            scope: "invocation",
+            invocation_id: invocationIDSchema.parse(selection?.invocationID),
+          }),
+          request: runtimeRequest,
+          pause: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+        },
+      );
+      if (outcome === "forgotten") {
+        await expect(publication.close()).rejects.toMatchObject({ code: "sdk.dev_unavailable" });
+        await expect(publication.wait()).rejects.toMatchObject({
+          code: "sdk.cleanup_failed",
+          errors: [{ code: "sdk.dev_unavailable" }, { code: "sdk.dev_unavailable" }],
+        });
+        const body = await new Promise<string>((resolve, reject) => {
+          const request = httpRequest(
+            target,
+            { headers: { Host: "app.example.test" } },
+            (response) => {
+              const chunks: Buffer[] = [];
+              response.on("data", (chunk: Buffer) => chunks.push(chunk));
+              response.on("error", reject);
+              response.on("end", () => resolve(Buffer.concat(chunks).toString()));
+            },
+          );
+          request.on("error", reject);
+          request.end();
+        });
+        expect(body).toBe("owned");
+        // withdraw the simulated restart so the fixture can return its original
+        // exact stopped outcome. no production fallback changes the capability.
+        restored = true;
+        await expect(publication.close()).rejects.toMatchObject({
+          code: "sdk.publication_cleanup_failed",
+        });
+      } else if (outcome === "terminal") {
+        await expect(publication.close()).rejects.toMatchObject({
+          code: "sdk.publication_cleanup_failed",
+        });
+        await expect(publication.wait()).rejects.toMatchObject({
+          code: "sdk.publication_cleanup_failed",
+        });
+      } else {
+        await publication.close();
+        await publication.wait();
+      }
+      if (outcome !== "forgotten") expect(unregisters).toHaveLength(2);
+      expect(unregisters.every((value) => value === unregisters[0])).toBe(true);
+      await expect(fetch(target)).rejects.toThrow();
+    } finally {
+      restored = true;
+      await publication?.close().catch(() => {});
+      await new Promise<void>((resolve) => api.close(() => resolve()));
+    }
+  },
+);
 
 test("real Node port-0 wildcard listener waits for exact native status and joins target-fenced cleanup", async () => {
   const app = createServer((_request, response) => response.end("app"));
@@ -73,7 +221,7 @@ test("real Node port-0 wildcard listener waits for exact native status and joins
         chunks.length === 0 ? undefined : JSON.parse(Buffer.concat(chunks).toString());
       calls.push({ path: request.url, body });
       response.setHeader("Content-Type", "application/json");
-      if (request.url === "/v1/ad-hoc/register") {
+      if (request.url === "/v1/publications/register") {
         const payload = invocationSchema.parse(body);
         service = payload.invocation_id;
         owner = payload.owner;
@@ -101,7 +249,7 @@ test("real Node port-0 wildcard listener waits for exact native status and joins
   const address = api.address();
   if (address === null || typeof address === "string") throw new Error("missing listener");
   try {
-    const handle = await openServer(
+    const handle = await publishServer(
       app,
       { publisherIdentityID: `pub_${"A".repeat(22)}`, requirePostQuantum: true, telemetry: false },
       {
@@ -136,7 +284,7 @@ test("default invocation rediscovery retains automatic publisher selection after
   let target = "";
   let failed = false;
   const ids: string[] = [];
-  const handle = await openFetch(
+  const handle = await publishFetch(
     () => new Response("app"),
     {},
     {
@@ -153,7 +301,7 @@ test("default invocation rediscovery retains automatic publisher selection after
         };
       },
       request: async (_endpoint, operation, body) => {
-        if (operation === "ad-hoc/register") {
+        if (operation === "publications/register") {
           const payload = invocationSchema.parse(body);
           target = payload.target;
           ids.push(payload.invocation_id);
@@ -188,7 +336,7 @@ test("close interrupts status polling and joins unregister without waiting for i
   let service = "";
   let target = "";
   let unregistered = false;
-  const handle = await openFetch(
+  const handle = await publishFetch(
     () => new Response("app"),
     { publisherIdentityID: `pub_${"A".repeat(22)}` },
     {
@@ -204,7 +352,7 @@ test("close interrupts status polling and joins unregister without waiting for i
         };
       },
       request: async (_endpoint, operation, body) => {
-        if (operation === "ad-hoc/register") {
+        if (operation === "publications/register") {
           const payload = invocationSchema.parse(body);
           target = payload.target;
           return { version: 1, registration_id: id, owner: payload.owner, target };
@@ -224,7 +372,7 @@ test("close interrupts status polling and joins unregister without waiting for i
 test("explicit publisher file is passed only to native and never enters status", async () => {
   let service = "";
   let target = "";
-  const handle = await openFetch(
+  const handle = await publishFetch(
     () => new Response("app"),
     { publisherCredentialFile: "/private/publisher.json" },
     {
@@ -240,7 +388,7 @@ test("explicit publisher file is passed only to native and never enters status",
         };
       },
       request: async (_endpoint, operation, body) => {
-        if (operation === "ad-hoc/register") {
+        if (operation === "publications/register") {
           const payload = invocationSchema.parse(body);
           target = payload.target;
           expect(payload.publisher_credential_file).toBe("/private/publisher.json");
@@ -263,7 +411,7 @@ test("publisher file configured after the owner starts reaches the native invoca
   let service = "";
   let target = "";
   try {
-    const handle = await openFetch(
+    const handle = await publishFetch(
       () => new Response("app"),
       {},
       {
@@ -279,7 +427,7 @@ test("publisher file configured after the owner starts reaches the native invoca
           };
         },
         request: async (_endpoint, operation, body) => {
-          if (operation === "ad-hoc/register") {
+          if (operation === "publications/register") {
             const payload = invocationSchema.parse(body);
             target = payload.target;
             expect(payload.publisher_credential_file).toBe("/private/production-publisher.json");
@@ -307,14 +455,14 @@ test("invalid explicit publisher selection fails before contacting native", asyn
       throw new Error("native should not be called");
     };
     await expect(
-      openServer(
+      publishServer(
         app,
         { publisherCredentialFile: "relative/file" },
         { start, request: async () => undefined, pause: async () => {} },
       ),
     ).rejects.toMatchObject({ code: "sdk.configuration_invalid" });
     await expect(
-      openServer(
+      publishServer(
         app,
         {
           publisherCredentialFile: "/private/file",

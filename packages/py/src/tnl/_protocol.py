@@ -31,6 +31,17 @@ class InvalidResponse(TnlError):
         super().__init__("sdk.response_invalid", "the local publisher returned an invalid response")
 
 
+class PublicationCleanupFailed(TnlError):
+    """native joined the worker and retired its registration, but cleanup failed."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "sdk.publication_cleanup_failed",
+            "the publication stopped, but cleanup failed; the temporary public URL may remain"
+            " until control expires it",
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class Endpoint:
     url: str
@@ -68,6 +79,103 @@ def hostname(value: object) -> str:
     ):
         raise InvalidResponse()
     return name
+
+
+@dataclass(frozen=True, slots=True)
+class Assignment:
+    registration_id: str
+    service: str
+    hostname: str
+    public_url: str
+
+
+def _service_metadata(name: str, value: object) -> dict[str, object]:
+    item = object_value(
+        value, {"protocol", "namespace", "hostname", "port", "public", "url", "paths"}
+    )
+    hostname(item.get("namespace"))
+    host = hostname(item.get("hostname"))
+    protocol, port = item.get("protocol"), item.get("port")
+    if (
+        protocol not in ("http", "tcp", "postgres", "mysql", "kubernetes")
+        or type(port) is not int
+        or not 1 <= port <= 65535
+        or type(item.get("public")) is not bool
+    ):
+        raise InvalidResponse()
+    url = item.get("url", "")
+    if protocol in ("http", "kubernetes"):
+        if url != f"https://{host}:{port}" and not (port == 443 and url == f"https://{host}"):
+            raise InvalidResponse()
+    elif url != "":
+        raise InvalidResponse()
+    paths = item.get("paths", {})
+    if not isinstance(paths, dict) or len(paths) > 32 or protocol != "http" and paths:
+        raise InvalidResponse()
+    for prefix, raw in paths.items():
+        prefix = text(prefix, 256)
+        mount = object_value(raw, {"service", "url", "stripPrefix"})
+        if (
+            re.fullmatch(r"/(?:[A-Za-z0-9._~-]+/)*[A-Za-z0-9._~-]+", prefix) is None
+            or any(segment in (".", "..") for segment in prefix.split("/"))
+            or prefix == "/__tnl"
+            or prefix.startswith("/__tnl/")
+            or service_name(mount.get("service")) == name
+            or mount.get("url") != f"{url}{prefix}"
+            or type(mount.get("stripPrefix")) is not bool
+        ):
+            raise InvalidResponse()
+    return item
+
+
+def parse_assignment(value: object, endpoint: Endpoint) -> Assignment:
+    assignment = object_value(
+        value, {"version", "registration_id", "service", "hostname", "public_url", "project"}
+    )
+    ident = text(assignment.get("registration_id"), 128)
+    if (
+        type(assignment.get("version")) is not int
+        or assignment["version"] != 1
+        or re.fullmatch(r"reg_[a-f0-9]{32}", ident) is None
+    ):
+        raise InvalidResponse()
+    name = service_name(assignment.get("service"))
+    without_endpoint = assignment.get("hostname") == "" and assignment.get("public_url") == ""
+    host = "" if without_endpoint else hostname(assignment.get("hostname"))
+    url = "" if without_endpoint else text(assignment.get("public_url"))
+    project = object_value(
+        assignment.get("project"),
+        {"namespace", "dev", "services", "oauth", "webhooks", "aliases", "worktree"},
+    )
+    services = project.get("services")
+    if not isinstance(services, dict) or len(services) > 32 or project.get("dev") is not True:
+        raise InvalidResponse()
+    if (
+        project.get("namespace") != ""
+        or services
+        or any(key in project for key in ("oauth", "webhooks", "aliases"))
+    ):
+        hostname(project.get("namespace"))
+    validated = {}
+    for key, raw in services.items():
+        key = service_name(key)
+        validated[key] = _service_metadata(key, raw)
+    own = validated.get(name)
+    if (
+        name != endpoint.service
+        or endpoint.scope != "app"
+        or without_endpoint
+        and own is not None
+        or not without_endpoint
+        and (
+            own is None
+            or own.get("protocol") != "http"
+            or own.get("hostname") != host
+            or own.get("url") != url
+        )
+    ):
+        raise InvalidResponse()
+    return Assignment(ident, name, host, url)
 
 
 def parse_endpoint(
@@ -194,7 +302,16 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
             },
         )
         if (
-            publication.get("service") != service
+            (
+                publication.get("service") != service
+                and not (
+                    re.fullmatch(r"ivk_[A-Za-z0-9]{22}", service) is not None
+                    and "service" not in publication
+                    and services
+                    and isinstance(services[0], dict)
+                    and services[0].get("tunnel_id") == publication.get("tunnel_id")
+                )
+            )
             or type(publication.get("process_id")) is not int
             or publication.get("command") not in ("publish", "dev")
             or publication.get("state")
@@ -234,7 +351,7 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
             "registered",
             "routable",
             "ready",
-            "publish_run_number",
+            "run_number",
             "provisioning_stage",
             "readiness",
             "observation",
@@ -261,7 +378,7 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
     readiness = object_value(item.get("readiness"), {"path"})
     if not text(readiness.get("path")).startswith("/"):
         raise InvalidResponse()
-    number = item.get("publish_run_number")
+    number = item.get("run_number")
     if number is not None and (type(number) is not int or not 1 <= number <= 2**53 - 1):
         raise InvalidResponse()
     public_url = item.get("public_url")
@@ -278,7 +395,7 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
             item["observation"],
             {
                 "registration_id",
-                "publish_run_number",
+                "run_number",
                 "checked_at",
                 "status",
                 "ready",
@@ -296,10 +413,10 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
             raise InvalidResponse() from None
         if (
             type(observation.get("ready")) is not bool
-            or type(observation.get("publish_run_number")) is not int
+            or type(observation.get("run_number")) is not int
         ):
             raise InvalidResponse()
-        observed_run = observation["publish_run_number"]
+        observed_run = observation["run_number"]
         if not isinstance(observed_run, int) or not 1 <= observed_run <= 2**53 - 1:
             raise InvalidResponse()
         if "status" in observation:
@@ -310,7 +427,7 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
             text(observation["reason"])
         if item["ready"] and (
             observation["registration_id"] != registration_id
-            or observation["publish_run_number"] != number
+            or observation["run_number"] != number
             or not observation["ready"]
         ):
             raise InvalidResponse()

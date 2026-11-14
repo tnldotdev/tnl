@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import stat
+from collections.abc import Mapping
 from pathlib import Path
 
 import httpx
@@ -14,6 +15,7 @@ from ._protocol import (
     Endpoint,
     InvalidResponse,
     NativeUnavailable,
+    PublicationCleanupFailed,
     RegistrationLost,
     TnlError,
     parse_endpoint,
@@ -63,9 +65,12 @@ class NativeRuntime:
         service: str | None = None,
         invocation_id: str | None = None,
         state_dir: str | None = None,
+        publications: bool = False,
+        environment: Mapping[str, str] | None = None,
     ) -> Endpoint:
         try:
-            mounted = os.environ.get("TNL_APP_ENDPOINT")
+            captured = os.environ if environment is None else environment
+            mounted = None if publications else captured.get("TNL_APP_ENDPOINT")
             if mounted is not None:
                 # an app can start before its publisher writes the scoped
                 # descriptor. only absence is retried; an unsafe or
@@ -92,7 +97,7 @@ class NativeRuntime:
                     directory,
                 ]
                 selected_state = (
-                    state_dir if state_dir is not None else os.environ.get("TNL_STATE_DIR")
+                    state_dir if state_dir is not None else captured.get("TNL_STATE_DIR")
                 )
                 if selected_state is not None:
                     args.extend(["--state-dir", selected_state])
@@ -100,8 +105,13 @@ class NativeRuntime:
                     args.extend(["--service", service])
                 if invocation_id is not None:
                     args.extend(["--invocation-id", invocation_id])
+                if publications:
+                    args.append("--publications")
                 child = await asyncio.create_subprocess_exec(
-                    *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+                    *args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    env=environment,
                 )
                 assert child.stdout is not None
                 try:
@@ -139,7 +149,7 @@ class NativeRuntime:
             "renew",
             "unregister",
             "status",
-            "ad-hoc/register",
+            "publications/register",
         }:
             raise InvalidResponse()
         data = None if payload is None else json.dumps(payload).encode()
@@ -179,7 +189,7 @@ class NativeRuntime:
                     ):
                         raise RegistrationLost()
                     if response.status_code == 204:
-                        if body or operation in {"prepare", "status", "ad-hoc/register"}:
+                        if body or operation in {"prepare", "status", "publications/register"}:
                             raise InvalidResponse()
                         return None
                     if (
@@ -189,7 +199,7 @@ class NativeRuntime:
                         raise InvalidResponse()
                     value: object = json.loads(body)
                     if response.status_code == 200:
-                        if operation not in {"prepare", "status", "ad-hoc/register"}:
+                        if operation not in {"prepare", "status", "publications/register"}:
                             raise InvalidResponse()
                         return value
                     if (
@@ -201,6 +211,10 @@ class NativeRuntime:
                         raise InvalidResponse()
                     if value["code"] in {"runtime.registration_stale", "runtime.unauthorized"}:
                         raise RegistrationLost()
+                    if value["code"] == "runtime.publication_cleanup_failed":
+                        if operation not in {"unregister", "publications/register"}:
+                            raise InvalidResponse()
+                        raise PublicationCleanupFailed()
                     code = {
                         "runtime.owner_conflict": "sdk.owner_conflict",
                         "runtime.authentication_required": "sdk.authentication_required",
