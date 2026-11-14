@@ -2,6 +2,32 @@
   "schema_version": 1,
   "diagnostics": [
     {
+      "code": "TNL_HTTP_CHALLENGE_UNAVAILABLE",
+      "slug": "http-challenge-unavailable",
+      "category": "HTTP protection",
+      "title": "challenge unavailable",
+      "summary": "tnl cannot prepare or verify the HTTP challenge right now.",
+      "description": "the request was not sent to the application. existing valid clearance still requires current visitor authorization.",
+      "diagram_label": "challenge unavailable",
+      "surfaces": ["browser", "cli"],
+      "http_status": 503,
+      "flow": [
+        { "label": "visitor" },
+        { "label": "tnl", "failure": true },
+        { "label": "local service" }
+      ],
+      "causes": [
+        "control or Siteverify is unavailable",
+        "challenge preparation capacity is occupied"
+      ],
+      "actions": {
+        "visitor": ["open the app again to start a new challenge"],
+        "publisher": [
+          "configure both Turnstile keys on control or disable http.protection.challenge"
+        ]
+      }
+    },
+    {
       "code": "TNL_HTTP_PROTECTION_REJECTED",
       "slug": "http-protection-rejected",
       "category": "HTTP protection",

@@ -9,12 +9,16 @@ import (
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/control/storagekey"
+	"github.com/tnldotdev/tnl/internal/control/turnstile"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 )
 
 func (c Config) validateControl() error {
+	if err := turnstile.ValidateKeys(c.TurnstileSiteKey, c.TurnstileSecretKey); err != nil {
+		return err
+	}
 	if (c.EmailURL == "") != (c.WebhookSecret == "") {
 		setting := failure.SettingWebhookSecret
 		if c.EmailURL == "" {

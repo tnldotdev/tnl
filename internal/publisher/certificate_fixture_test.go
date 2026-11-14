@@ -80,6 +80,14 @@ type certificateTestControl struct {
 	issued         map[string]bool
 }
 
+func (*certificateTestControl) Discovery(context.Context) (controlv1.ControlDiscovery, error) {
+	return controlv1.ControlDiscovery{}, errors.New("unexpected challenge discovery")
+}
+
+func (*certificateTestControl) RedeemHTTPChallenge(context.Context, controlv1.RedeemHTTPChallengeRequest, string) (controlv1.HTTPChallengeClearance, error) {
+	return controlv1.HTTPChallengeClearance{}, errors.New("unexpected challenge handoff")
+}
+
 func newCertificateTestControl(t *testing.T, hostname string, plan controlv1.CertificatePlan) *certificateTestControl {
 	t.Helper()
 	token, _, _, err := credentials.NewPublishRunToken()

@@ -5,6 +5,7 @@
   "custom_domains_enabled": false,
   "dns_automation": true,
   "guest_demo": false,
+  "turnstile": false,
   "authentication": {
     "methods": ["oidc"],
     "oidc": { "issuer": "https://identity.example", "login_flow": "device_code" }

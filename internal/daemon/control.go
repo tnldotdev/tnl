@@ -42,6 +42,8 @@ func controlAPIConfigFrom(cfg daemonconfig.Config, httpClient *http.Client) cont
 		HTTPClient:                        httpClient,
 		DNSAutomation:                     cfg.DNSAutomationEnabled(),
 		GuestDemoEnabled:                  cfg.GuestDemoEnabled,
+		TurnstileSiteKey:                  cfg.TurnstileSiteKey,
+		TurnstileSecretKey:                cfg.TurnstileSecretKey,
 	}
 }
 

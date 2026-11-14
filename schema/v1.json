@@ -688,6 +688,18 @@
                           "temporary_blocks": {
                             "type": "boolean"
                           },
+                          "challenge": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "const": "turnstile"
+                              },
+                              {
+                                "type": "boolean",
+                                "const": false
+                              }
+                            ]
+                          },
                           "max_body_bytes": {
                             "type": "integer",
                             "maximum": 2097152,
@@ -1104,6 +1116,18 @@
                           },
                           "temporary_blocks": {
                             "type": "boolean"
+                          },
+                          "challenge": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "const": "turnstile"
+                              },
+                              {
+                                "type": "boolean",
+                                "const": false
+                              }
+                            ]
                           },
                           "max_body_bytes": {
                             "type": "integer",
@@ -3495,6 +3519,14 @@
         "guest_demo_enabled": {
           "type": "boolean",
           "description": "Allow limited anonymous tnl publish --demo runs."
+        },
+        "turnstile_site_key": {
+          "type": "string",
+          "description": "Public site key for control-served HTTP challenges; requires the matching secret key."
+        },
+        "turnstile_secret_key": {
+          "type": "string",
+          "description": "Private Siteverify key for control-served HTTP challenges; requires the matching site key."
         },
         "email_url": {
           "type": "string",

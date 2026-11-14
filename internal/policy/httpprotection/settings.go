@@ -32,6 +32,7 @@ const (
 type Settings struct {
 	WAF             Mode        `json:"waf,omitempty" yaml:"waf,omitempty" jsonschema:"enum=block,enum=detect,enum=off"`
 	TemporaryBlocks bool        `json:"temporary_blocks,omitempty" yaml:"temporary_blocks,omitempty"`
+	Challenge       Challenge   `json:"challenge,omitempty" yaml:"challenge,omitempty"`
 	MaxBodyBytes    *int        `json:"max_body_bytes,omitempty" yaml:"max_body_bytes,omitempty" jsonschema:"minimum=1,maximum=2097152"`
 	Exclusions      []Exclusion `json:"exclusions,omitempty" yaml:"exclusions,omitempty" jsonschema:"maxItems=32"`
 }
@@ -60,6 +61,9 @@ var parameter = regexp.MustCompile(`^[a-zA-Z0-9_.\[\]-]{1,128}$`)
 
 func (s Settings) Validate() error {
 	s = s.Defaults()
+	if s.Challenge != "" && s.Challenge != Turnstile {
+		return errors.New("challenge must be turnstile or false")
+	}
 	if s.WAF != Block && s.WAF != Detect && s.WAF != Off {
 		return errors.New("waf must be block, detect, or off")
 	}

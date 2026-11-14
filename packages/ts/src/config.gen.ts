@@ -158,6 +158,7 @@ export interface TnlConfig {
           http?: {
             protection?: {
               waf?: "block" | "detect" | "off";
+              challenge?: "turnstile" | false;
               /**
                * @maxItems 32
                */
@@ -389,6 +390,7 @@ export interface TnlConfig {
           http?: {
             protection?: {
               waf?: "block" | "detect" | "off";
+              challenge?: "turnstile" | false;
               /**
                * @maxItems 32
                */

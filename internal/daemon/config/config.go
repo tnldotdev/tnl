@@ -85,6 +85,8 @@ type Config struct {
 	AccessTokenLifetime   time.Duration     `name:"access-token-lifetime" env:"TNLD_ACCESS_TOKEN_LIFETIME" default:"1h" help:"Lifetime of newly issued access tokens."`
 	RefreshTokenLifetime  time.Duration     `name:"refresh-token-lifetime" env:"TNLD_REFRESH_TOKEN_LIFETIME" default:"720h" help:"Absolute lifetime of newly issued control sessions."`
 	GuestDemoEnabled      bool              `name:"guest-demo-enabled" env:"TNLD_GUEST_DEMO_ENABLED" help:"Allow limited anonymous tnl publish --demo runs."`
+	TurnstileSiteKey      string            `name:"turnstile-site-key" env:"TNLD_TURNSTILE_SITE_KEY" help:"Public site key for control-served HTTP challenges; requires the matching secret key."`
+	TurnstileSecretKey    string            `name:"turnstile-secret-key" env:"TNLD_TURNSTILE_SECRET_KEY" help:"Private Siteverify key for control-served HTTP challenges; requires the matching site key."`
 
 	EmailURL      string `name:"email-url" env:"TNLD_EMAIL_URL" help:"HTTPS origin of the invitation email receiver."`
 	WebhookSecret string `name:"webhook-secret" env:"TNLD_WEBHOOK_SECRET" help:"Shared secret for invitation email delivery."`
@@ -203,6 +205,9 @@ func (c Config) Validate() (retErr error) {
 			return err
 		}
 	} else {
+		if c.TurnstileSiteKey != "" || c.TurnstileSecretKey != "" {
+			return errors.New("challenge keys are valid only for control and standalone")
+		}
 		if c.CustomDomainsEnabled || c.ManagedDomainMaxMemberChildLabels != 0 {
 			return errors.New("domain policy settings are valid only for control and standalone")
 		}

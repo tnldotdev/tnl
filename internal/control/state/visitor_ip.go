@@ -239,7 +239,10 @@ func (d *Database) ExpireVisitorPermissions(ctx context.Context, now time.Time) 
 		return err
 	}
 	// workload assertion replay fences and history belong to CleanupWorkloads.
-	return q.PruneHTTPTemporaryBlocks(ctx, timestamptz(now.Add(-httpprotection.BlockRetention)))
+	if err := q.PruneHTTPTemporaryBlocks(ctx, timestamptz(now.Add(-httpprotection.BlockRetention))); err != nil {
+		return err
+	}
+	return q.PruneHTTPChallenges(ctx, timestamptz(now))
 }
 
 func (d *Database) visitorIPAllowed(ctx context.Context, q *controlstatedb.Queries, url controlstatedb.ControlPublicUrl, source string, now time.Time) (bool, *time.Time, error) {

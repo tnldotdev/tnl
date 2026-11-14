@@ -139,6 +139,7 @@ internal/
   control/
     api/               public, authority, and private HTTP handlers
     state/             permission checks and updates in PostgreSQL
+    turnstile/         fixed challenge verification, without visitor authority
   ingress/             public visitor acceptance and forwarding
   relay/               publisher connections and visitor streams
   client/              shared auth, API clients, local state, and projects
@@ -205,8 +206,8 @@ publisher/service -------+
 ```
 
 - `httpaccess` refreshes visitor policy and handles browser handoffs, token
-  renewal, cookies, and HTTP authorization. Run owners stop and wait for its
-  workers. It does not own accepted visitor connections.
+  renewal, cookies, HTTP authorization, and separate challenge clearance. Run
+  owners stop and wait for its workers. It does not own accepted visitor connections.
 - `requestlimit` keeps one HTTP request budget per run, shared across that run's
   visitor connections.
 - `httpprotection` prepares request-only Coraza inspection per HTTP run. Both

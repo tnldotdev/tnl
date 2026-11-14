@@ -6,11 +6,13 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/control/turnstile"
 	"github.com/tnldotdev/tnl/internal/control/webhooks"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -45,6 +47,8 @@ type Config struct {
 	ACMEDirectoryURL                  string
 	ServerDomain                      string
 	HTTPClient                        *http.Client
+	TurnstileSiteKey                  string
+	TurnstileSecretKey                string
 	WebhookCatalog                    *webhooks.Catalog
 	DNSAutomation                     bool
 	GuestDemoEnabled                  bool
@@ -166,6 +170,7 @@ type handler struct {
 	readiness         func(context.Context) error
 	authorizer        publicURLAuthorizer
 	webhookCatalog    *webhooks.Catalog
+	challengeVerifier *turnstile.Verifier
 }
 
 var _ controlv1.ServerInterface = (*handler)(nil)
@@ -188,10 +193,24 @@ func NewHandler(
 	}
 	cfg.TrafficDefaults.RatePer = cfg.TrafficDefaults.Period()
 	cfg.TrafficCeiling.RatePer = cfg.TrafficCeiling.Period()
+	if cfg.TurnstileSiteKey != "" || cfg.TurnstileSecretKey != "" {
+		if canonical, err := naming.CanonicalControlURL(cfg.ControlURL); err != nil || canonical != cfg.ControlURL {
+			return nil, turnstile.ErrConfiguration
+		}
+	}
+	origin, err := url.Parse(cfg.ControlURL)
+	if err != nil {
+		return nil, err
+	}
+	verifier, err := turnstile.New(cfg.TurnstileSiteKey, cfg.TurnstileSecretKey, origin.Hostname(), cfg.HTTPClient)
+	if err != nil {
+		return nil, err
+	}
 	h := &handler{dependencies: stores, config: cfg, store: stores.PublicURLs, certificates: stores.Certificates, admin: stores.Admin, readiness: readiness,
 		visitorState: stores.Visitors, previews: stores.Previews, previewTeamAccess: stores.PreviewTeamAccess,
 		browserAccess: stores.BrowserAccess, shares: stores.Shares, shareAccess: stores.ShareAccess,
 		feedback: stores.Feedback, guests: stores.Guests}
+	h.challengeVerifier = verifier
 	h.webhookCatalog = cfg.WebhookCatalog
 	if h.webhookCatalog == nil {
 		h.webhookCatalog = webhooks.New(cfg.HTTPClient)
@@ -314,6 +333,7 @@ func controlDiscovery(cfg Config) controlv1.ControlDiscovery {
 		CustomDomainsEnabled:              cfg.CustomDomainsEnabled,
 		DnsAutomation:                     cfg.DNSAutomation,
 		GuestDemo:                         cfg.GuestDemoEnabled,
+		Turnstile:                         cfg.TurnstileSiteKey != "" && cfg.TurnstileSecretKey != "",
 		BrowserLoginAvailable:             new(cfg.OIDCClientID != ""),
 		Authentication:                    controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{}},
 	}

@@ -515,6 +515,22 @@ type ControlGuestTrial struct {
 	UpdatedAt             pgtype.Timestamptz
 }
 
+type ControlHttpChallenge struct {
+	ID                    string
+	ResourceKind          string
+	ResourceID            string
+	Hostname              string
+	Port                  int32
+	BrowserBindingHash    []byte
+	PublisherBindingHash  []byte
+	ExpiresAt             pgtype.Timestamptz
+	VerificationStartedAt pgtype.Timestamptz
+	VerifiedAt            pgtype.Timestamptz
+	HandoffHash           []byte
+	HandoffExpiresAt      pgtype.Timestamptz
+	RedeemedAt            pgtype.Timestamptz
+}
+
 type ControlHttpTemporaryBlock struct {
 	ResourceKind    string
 	ResourceID      string

@@ -212,6 +212,9 @@ func (d *Database) createPublishRun(
 	if route.ServiceProtocol != "http" && request.HTTPProtection.BlocksSources() {
 		return result, ErrProjectConfigurationInvalid
 	}
+	if request.HTTPProtection.Challenge != "" && (route.ServiceProtocol != "http" || route.Purpose != "app" && route.Purpose != "alias" && route.Purpose != "demo") {
+		return result, ErrProjectConfigurationInvalid
+	}
 	if request.PublisherIdentityID != "" {
 		secret, err := d.authorizePublisherRun(ctx, queries, route, request, now)
 		if err != nil {

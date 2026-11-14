@@ -2,6 +2,7 @@
 package diagnostic
 
 const (
+	HttpChallengeUnavailable          Code = "TNL_HTTP_CHALLENGE_UNAVAILABLE"
 	HttpProtectionRejected            Code = "TNL_HTTP_PROTECTION_REJECTED"
 	HttpProtectionBodyTooLarge        Code = "TNL_HTTP_PROTECTION_BODY_TOO_LARGE"
 	HttpProtectionUnavailable         Code = "TNL_HTTP_PROTECTION_UNAVAILABLE"

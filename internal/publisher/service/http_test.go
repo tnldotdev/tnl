@@ -39,7 +39,7 @@ func serviceHTTPFixture(t *testing.T, target http.Handler) (*http.Client, *visit
 	return serviceHTTPFixtureWithInspector(t, target, nil)
 }
 
-func serviceHTTPFixtureWithInspector(t *testing.T, target http.Handler, inspection *httpprotection.Inspector) (*http.Client, *visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
+func serviceHTTPFixtureWithInspector(t *testing.T, target http.Handler, inspection *httpprotection.Inspector, configure ...func(*HTTP)) (*http.Client, *visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
 	t.Helper()
 	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}
 	policy, update, token := visitorfixture.ScopePolicy(t, scope, "preview.example.test", 25443, false)
@@ -63,6 +63,9 @@ func serviceHTTPFixtureWithInspector(t *testing.T, target http.Handler, inspecti
 		}
 	}
 	frontend.protection = inspection
+	for _, apply := range configure {
+		apply(&frontend)
+	}
 	t.Cleanup(func() {
 		if err := inspection.Close(); err != nil {
 			t.Error(err)
@@ -88,6 +91,94 @@ func serviceHTTPFixtureWithInspector(t *testing.T, target http.Handler, inspecti
 	}}
 	t.Cleanup(transport.CloseIdleConnections)
 	return &http.Client{Transport: transport, Timeout: 5 * time.Second}, policy, update, token
+}
+
+type serviceChallengeControl struct{ HTTPControl }
+
+func (serviceChallengeControl) Discovery(context.Context) (controlv1.ControlDiscovery, error) {
+	return controlv1.ControlDiscovery{Turnstile: true}, nil
+}
+
+func enableServiceChallenge(t *testing.T, f *HTTP) {
+	t.Helper()
+	var err error
+	f.Protection.Challenge = protectionpolicy.Turnstile
+	f.challenge, err = httpaccess.PrepareChallenge(t.Context(), serviceChallengeControl{}, f.Policy, "https://control.example.test", f.Subject, f.RunID, f.Number, "run-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestChallengeSavedHTTPFrontendKeepsAuthorizationSeparate(t *testing.T) {
+	var forwarded atomic.Int32
+	client, _, update, token := serviceHTTPFixtureWithInspector(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		if httpaccess.SuppliedCookieCount(r, httpaccess.ClearanceCookie) != 0 {
+			t.Error("clearance reached target")
+		}
+		w.WriteHeader(204)
+	}), nil, func(f *HTTP) {
+		enableServiceChallenge(t, f)
+	})
+	now := time.Now().UTC().Truncate(time.Second)
+	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("h", 32)))
+	clearance, err := visitortoken.SignClearance(update.View.Issuer, "http", key,
+		visitortoken.Clearance{Scope: update.View.Scope, Hostname: update.View.Hostname, Port: update.View.Port, ExpiresAt: now.Add(30 * time.Minute)}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		access, clearance bool
+		status            int
+	}{{true, false, 403}, {false, true, 403}, {true, true, 204}} {
+		r, _ := http.NewRequestWithContext(t.Context(), "GET", "https://preview.example.test:25443/", nil)
+		if tc.access {
+			r.Header.Set(httpaccess.VisitorTokenHeader, token.Reveal())
+		}
+		if tc.clearance {
+			r.AddCookie(&http.Cookie{Name: httpaccess.ClearanceCookie, Value: clearance.Reveal()})
+		}
+		response, err := client.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != tc.status {
+			t.Fatal("service challenge bypassed authorization or failed to require clearance", response.StatusCode, tc)
+		}
+	}
+	if forwarded.Load() != 1 {
+		t.Fatal("uncleared or unauthorized request reached target")
+	}
+}
+
+func TestChallengeTemporaryBlockPrecedesBrowserPreparation(t *testing.T) {
+	inspection, err := httpprotection.Prepare(t.Context(), protectionpolicy.Settings{TemporaryBlocks: true},
+		func(context.Context, protectionpolicy.Rejections) error {
+			t.Error("a challenge counted toward an attack block")
+			return nil
+		},
+		func(netip.Addr, time.Time) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, _, _, token := serviceHTTPFixtureWithInspector(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("blocked challenge request reached target")
+	}), inspection, func(f *HTTP) { enableServiceChallenge(t, f) })
+	for _, path := range []string{"/", httpaccess.ChallengePath + "?handoff=unused"} {
+		r, _ := http.NewRequestWithContext(t.Context(), "GET", "https://preview.example.test:25443"+path, nil)
+		r.Header.Set(httpaccess.VisitorTokenHeader, token.Reveal())
+		r.Header.Set("Sec-Fetch-Mode", "navigate")
+		r.Header.Set("Sec-Fetch-Dest", "document")
+		response, err := client.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != 403 || response.Header.Get("Location") != "" || len(response.Cookies()) != 0 {
+			t.Fatal("source block was converted to a challenge flow", response.StatusCode)
+		}
+	}
 }
 
 func TestTemporaryBlocksSavedHTTPFrontend(t *testing.T) {

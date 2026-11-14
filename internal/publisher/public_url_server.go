@@ -47,6 +47,7 @@ type PublicURLServerConfig struct {
 	Mounts                []publisherproxy.Mount
 	ShareAccess           *httpaccess.Shares
 	BrowserAccess         *httpaccess.Browser
+	ChallengeAccess       *httpaccess.Challenge
 	BrowserLoginAvailable bool
 	Feedback              *feedbackRuntime
 	Limits                applicationlimits.Limits

@@ -112,7 +112,12 @@ func Sign(issuer, keyID string, private ed25519.PrivateKey, permission Permissio
 	if err != nil {
 		return "", ErrToken
 	}
-	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: private}, (&jose.SignerOptions{}).WithType(Type).WithHeader("kid", keyID))
+	raw, err := signCredential(Type, keyID, private, payload)
+	return Token(raw), err
+}
+
+func signCredential(kind, keyID string, private ed25519.PrivateKey, payload []byte) (string, error) {
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: private}, (&jose.SignerOptions{}).WithType(jose.ContentType(kind)).WithHeader("kid", keyID))
 	if err != nil {
 		return "", ErrToken
 	}
@@ -124,7 +129,7 @@ func Sign(issuer, keyID string, private ed25519.PrivateKey, permission Permissio
 	if err != nil || len(raw) > MaxTokenBytes {
 		return "", ErrToken
 	}
-	return Token(raw), nil
+	return raw, nil
 }
 
 // View is an immutable, authenticated projection supplied by a serving owner.
@@ -216,35 +221,11 @@ func verify(token Token, view View, now time.Time) (Permission, error) {
 }
 
 func verifySignature(token Token, view View, now time.Time) (Permission, error) {
-	if !view.current(now) {
-		return Permission{}, ErrPolicy
+	payload, keyID, err := verifyCredential(token.Reveal(), Type, view, now)
+	if err != nil {
+		return Permission{}, err
 	}
 	authorityNow := view.AuthorityTime(now)
-	raw := token.Reveal()
-	if len(raw) == 0 || len(raw) > MaxTokenBytes {
-		return Permission{}, ErrToken
-	}
-	parts := strings.Split(raw, ".")
-	if len(parts) != 3 {
-		return Permission{}, ErrToken
-	}
-	headerBytes, err := base64.RawURLEncoding.Strict().DecodeString(parts[0])
-	var header protectedHeader
-	if err != nil || decode(headerBytes, &header) != nil || header.Algorithm != string(jose.EdDSA) || header.Type != Type || !validText(header.KeyID, 128) {
-		return Permission{}, ErrToken
-	}
-	public := view.keys[header.KeyID]
-	if len(public) != ed25519.PublicKeySize {
-		return Permission{}, ErrKey
-	}
-	signed, err := jose.ParseSigned(raw, []jose.SignatureAlgorithm{jose.EdDSA})
-	if err != nil || len(signed.Signatures) != 1 {
-		return Permission{}, ErrToken
-	}
-	payload, err := signed.Verify(public)
-	if err != nil {
-		return Permission{}, ErrToken
-	}
 	var value claims
 	if decode(payload, &value) != nil || value.Version != 1 || value.Issuer != view.Issuer || value.Scope != view.Scope || value.Hostname != view.Hostname || value.Port != view.Port ||
 		value.Revision < 1 || value.Issued > authorityNow.Unix() || value.Issued <= 0 || value.Expires <= value.Issued || value.Expires <= authorityNow.Unix() {
@@ -257,8 +238,40 @@ func verifySignature(token Token, view View, now time.Time) (Permission, error) 
 	if err != nil {
 		return Permission{}, err
 	}
-	permission := Permission{SigningKeyID: header.KeyID, Scope: value.Scope, Hostname: value.Hostname, Port: value.Port, VisitorPolicyRevision: value.Revision, Subject: subject, ExpiresAt: time.Unix(value.Expires, 0).UTC()}
+	permission := Permission{SigningKeyID: keyID, Scope: value.Scope, Hostname: value.Hostname, Port: value.Port, VisitorPolicyRevision: value.Revision, Subject: subject, ExpiresAt: time.Unix(value.Expires, 0).UTC()}
 	return permission, nil
+}
+
+// credential purposes share signature mechanics, never claims or authorization.
+func verifyCredential(raw, kind string, view View, now time.Time) ([]byte, string, error) {
+	if !view.current(now) {
+		return nil, "", ErrPolicy
+	}
+	if len(raw) == 0 || len(raw) > MaxTokenBytes {
+		return nil, "", ErrToken
+	}
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 {
+		return nil, "", ErrToken
+	}
+	headerBytes, err := base64.RawURLEncoding.Strict().DecodeString(parts[0])
+	var header protectedHeader
+	if err != nil || decode(headerBytes, &header) != nil || header.Algorithm != string(jose.EdDSA) || header.Type != kind || !validText(header.KeyID, 128) {
+		return nil, "", ErrToken
+	}
+	public := view.keys[header.KeyID]
+	if len(public) != ed25519.PublicKeySize {
+		return nil, "", ErrKey
+	}
+	signed, err := jose.ParseSigned(raw, []jose.SignatureAlgorithm{jose.EdDSA})
+	if err != nil || len(signed.Signatures) != 1 {
+		return nil, "", ErrToken
+	}
+	payload, err := signed.Verify(public)
+	if err != nil {
+		return nil, "", ErrToken
+	}
+	return payload, header.KeyID, nil
 }
 
 // CheckCurrent rechecks an already verified, proof-bound admission. it does not

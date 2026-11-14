@@ -28,9 +28,15 @@ type standalonePublishFixture struct {
 	process                        *integrationProcess
 	identity                       *integrationPublishingIdentity
 	visitor                        *integrationVisitor
+	controlHTTP                    *http.Client
 }
 
 func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart ...func(daemonconfig.Config)) *standalonePublishFixture {
+	t.Helper()
+	return newStandalonePublishFixtureOptions(t, hostnameLabel, nil, nil, beforeStart...)
+}
+
+func newStandalonePublishFixtureOptions(t *testing.T, hostnameLabel string, configure func(*daemonconfig.Config), serviceClient *http.Client, beforeStart ...func(daemonconfig.Config)) *standalonePublishFixture {
 	t.Helper()
 	databaseURL, inspect := standaloneTestDatabase(t)
 	owner := newRuntimeTopology(t)
@@ -46,6 +52,12 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart
 	// belongs to the dedicated automatic relay certificate suite.
 	relayCertificate := ca.issueServer(t, cfg.StandaloneRelayHostname(), owner)
 	cfg.RelayTLSCertificateFile, cfg.RelayTLSPrivateKeyFile = relayCertificate.certificateFile, relayCertificate.privateKeyFile
+	if configure != nil {
+		configure(&cfg)
+	}
+	if serviceClient == nil {
+		serviceClient = &http.Client{Timeout: 10 * time.Second}
+	}
 	relayTLS := &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}
 	controlTLS, err := staticServerTLS(controlCertificate.certificateFile, controlCertificate.privateKeyFile)
 	if err != nil {
@@ -62,7 +74,7 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart
 	}
 	process := startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{
 		dns: dns, listeners: listeners,
-		acmeHTTPClient: pebble.httpClient, serviceHTTPClient: &http.Client{Timeout: 10 * time.Second},
+		acmeHTTPClient: pebble.httpClient, serviceHTTPClient: serviceClient,
 		relayClientTLS: relayTLS, owner: owner,
 	})
 	t.Cleanup(func() {
@@ -75,7 +87,7 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart
 	identity := newIntegrationPublishingIdentity(t, "https://"+cfg.ServerHostname(), controlHTTP, hostnameLabel, owner)
 	return &standalonePublishFixture{relayTransport: owner.quicTransport(t), owner: owner, databaseURL: databaseURL, inspect: inspect, publicAddress: publicAddress,
 		relayUDPAddress: relayUDPAddress, pebble: pebble, relayTLS: relayTLS, process: process, identity: identity,
-		visitor: newIntegrationVisitor(t, pebble.roots, publicAddress, owner)}
+		visitor: newIntegrationVisitor(t, pebble.roots, publicAddress, owner), controlHTTP: controlHTTP}
 }
 
 func standalonePublishConfig(t *testing.T, databaseURL string, publicListener net.Listener, relayUDP net.PacketConn, directoryURL string, owner *runtimeTopology) (daemonconfig.Config, runtimeListeners) {

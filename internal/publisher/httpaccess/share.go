@@ -118,7 +118,7 @@ func StripCookies(request *http.Request) *http.Request {
 			name, _, found := strings.Cut(pair, "=")
 			// net/http trims the name separately from the cookie pair.
 			name = textproto.TrimString(name)
-			if found && name != ShareCookieName && name != FeedbackBrowserCookieName && name != BrowserCookieName && name != LoginAttemptCookieName && name != VisitorTokenCookie && pair != "" {
+			if found && name != ShareCookieName && name != FeedbackBrowserCookieName && name != BrowserCookieName && name != LoginAttemptCookieName && name != VisitorTokenCookie && name != ClearanceCookie && name != ChallengeBindingCookie && pair != "" {
 				clean = append(clean, pair)
 			}
 		}

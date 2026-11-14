@@ -31,3 +31,11 @@ func HTTPProtection(ctx context.Context, mode policy.Mode, status int, rules []i
 		span.AddEvent("http.protection.rejected", trace.WithAttributes(HTTPStatus.Int(status)))
 	}
 }
+
+// HTTPChallenge records only a fixed outcome, never attempt or handoff values.
+func HTTPChallenge(ctx context.Context, outcome string) {
+	switch outcome {
+	case "required", "redirected", "cleared", "redeemed", "verified", "unavailable", "rejected":
+		trace.SpanFromContext(ctx).AddEvent("http.protection.challenge." + outcome)
+	}
+}

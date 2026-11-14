@@ -119,6 +119,14 @@ func runSession(
 		return err
 	}
 	defer policy.Close()
+	var challenge *httpaccess.Challenge
+	if config.Protection.Challenge != "" {
+		challenge, err = httpaccess.PrepareChallenge(ctx, config.VisitorControl, policy.Lease(), config.ControlURL,
+			visitorscope.Scope{Kind: visitorscope.PublicURL, ID: setup.PublicUrl.Id}, setup.PublishRun.Id, int64(version), publishRunToken.String())
+		if err != nil {
+			return err
+		}
+	}
 	if config.Demo && config.Feedback {
 		if config.Previews == nil {
 			return errors.New("publisher: demo feedback requires a preview-capable control client")
@@ -185,6 +193,7 @@ func runSession(
 		Context:               ctx,
 		AuditSink:             auditSink,
 		BrowserAccess:         browser,
+		ChallengeAccess:       challenge,
 		VisitorPolicy:         policy.Lease(),
 		VisitorSourceKey:      policy.SourceKey(),
 		VisitorTokens:         browserRenewal,

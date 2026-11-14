@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/publisher/httpprotection"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
@@ -112,7 +113,16 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if base == nil {
 		base = context.Background()
 	}
+	if config.Protection.Challenge == "" || config.Purpose == controlv1.Oauth || config.Purpose == controlv1.Webhooks {
+		config.ChallengeAccess = nil
+	}
 	if config.Purpose != controlv1.Oauth && config.Purpose != controlv1.Webhooks {
+		if config.Protection.Challenge != "" && !config.ChallengeAccess.Binds(config.VisitorPolicy, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: config.PublicURLID}, config.PublishRunID, int64(config.PublishRunNumber)) {
+			if proxy != nil {
+				_ = proxy.Close()
+			}
+			return nil, httpaccess.ErrChallengePreparation
+		}
 		protection, err = httpprotection.Prepare(base, config.Protection, config.ReportRejections, config.SourceBlocked)
 		if err != nil {
 			if proxy != nil {
@@ -229,6 +239,13 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						return
 					}
 				}
+				if request.URL.Path == httpaccess.ChallengePath {
+					request.RemoteAddr = session.visitor.Source.String()
+					if protection.AllowSource(response, request) {
+						config.ChallengeAccess.Handle(response, request)
+					}
+					return
+				}
 				var shareExpiry time.Time
 				sharePermitted := false
 				if httpaccess.SharePath(request.URL.EscapedPath()) {
@@ -329,7 +346,6 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					}
 					request = config.Feedback.prepareBrowser(response, request)
 				}
-				request = httpaccess.StripCookies(request)
 				request.Header.Del(httpaccess.ShareHeaderName)
 				if proof {
 					select {
@@ -346,7 +362,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached, "")
 						return
 					}
-					handler.ServeHTTP(response, request)
+					handler.ServeHTTP(response, httpaccess.StripCookies(request))
 					return
 				}
 				release, status, retryAfter := admission.Acquire(request.Context())
@@ -383,8 +399,11 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					return
 				}
 				defer release()
+				if config.ChallengeAccess != nil && (!protection.AllowSource(response, request) || !config.ChallengeAccess.Allow(response, request)) {
+					return
+				}
 				emitAudit()
-				application.ServeHTTP(response, request)
+				application.ServeHTTP(response, httpaccess.StripCookies(request))
 			})),
 			ConnContext: func(ctx context.Context, connection net.Conn) context.Context {
 				if secured, ok := connection.(*tls.Conn); ok {

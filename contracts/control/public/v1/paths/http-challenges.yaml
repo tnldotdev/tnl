@@ -1,0 +1,88 @@
+paths:
+  /v1/browser/challenge/start:
+    get:
+      operationId: beginHTTPChallenge
+      tags: [visitor-policy]
+      summary: Start a browser-bound challenge for an approved public origin
+      description: Create a five-minute attempt using a publisher binding digest and a separate control browser cookie. The destination comes only from saved resource state.
+      security: []
+      parameters:
+        - {
+            name: resource_kind,
+            in: query,
+            required: true,
+            schema: { type: string, pattern: "^(public_url|service)$" },
+          }
+        - {
+            name: resource_id,
+            in: query,
+            required: true,
+            schema: { type: string, minLength: 1, maxLength: 64 },
+          }
+        - {
+            name: binding,
+            in: query,
+            required: true,
+            schema: { type: string, minLength: 43, maxLength: 43 },
+          }
+      responses:
+        "303": { description: Browser-bound challenge page }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/browser/challenge/{attempt_id}:
+    parameters:
+      - {
+          name: attempt_id,
+          in: path,
+          required: true,
+          schema: { type: string, minLength: 1, maxLength: 64 },
+        }
+    get:
+      operationId: getHTTPChallenge
+      tags: [visitor-policy]
+      summary: Render the control-served Turnstile page
+      description: Render only an unexpired attempt bound to the current control browser cookie. This page grants no visitor permission and never receives application request bodies.
+      security: []
+      responses:
+        "200":
+          description: Small browser challenge page with no visitor authorization
+          content:
+            text/html: { schema: { type: string } }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    post:
+      operationId: verifyHTTPChallenge
+      tags: [visitor-policy]
+      summary: Verify and consume one browser-bound attempt
+      description: Atomically claim the attempt before Siteverify. Verify the exact control hostname, action, and attempt binding, then issue a one-minute single-use handoff.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [response]
+              properties:
+                response: { type: string, minLength: 1, maxLength: 2048 }
+      responses:
+        "303": { description: Single-use handoff to the approved origin }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/http-protection/challenge-handoffs:
+    post:
+      operationId: redeemHTTPChallenge
+      tags: [visitor-policy]
+      summary: Redeem a browser-bound handoff with exact current publisher authority
+      description: Consume the handoff atomically using the current resource run token and the publisher browser binding. Clearance is separate from authorization and has a fixed thirty-minute expiry.
+      security: [{ publishRunAuth: [] }, { serviceRunAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/RedeemHTTPChallengeRequest" }
+      responses:
+        "200":
+          description: Separate challenge clearance, never visitor permission
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/HTTPChallengeClearance" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

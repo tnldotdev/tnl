@@ -28,6 +28,7 @@ import (
 
 type HTTPControl interface {
 	httpaccess.PolicyClient
+	httpaccess.ChallengeClient
 	httpaccess.TokenClient
 	httpprotection.ReportClient
 	ControlURL() string
@@ -52,6 +53,7 @@ type HTTP struct {
 	Protection protectionpolicy.Settings
 	protection *httpprotection.Inspector
 	browser    *httpaccess.Browser
+	challenge  *httpaccess.Challenge
 }
 
 func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
@@ -61,6 +63,14 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
 	policy, err := httpaccess.PreparePolicy(ctx, f.Control, f.Subject, f.RunID, f.Number, f.Token.String(), nil)
 	if err != nil {
 		return HTTP{}, nil, err
+	}
+	f.challenge = nil
+	if f.Protection.Challenge != "" {
+		f.challenge, err = httpaccess.PrepareChallenge(ctx, f.Control, policy.Lease(), f.Control.ControlURL(), f.Subject, f.RunID, f.Number, f.Token.String())
+		if err != nil {
+			policy.Close()
+			return HTTP{}, nil, err
+		}
 	}
 	protection, err := httpprotection.Prepare(ctx, f.Protection, httpprotection.RunReporter(f.Control, f.Subject, f.RunID, f.Number, f.Token.String()), policy.SourceBlocked)
 	if err != nil {
@@ -82,6 +92,9 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 	h := f.Header
 	if f.Policy == nil || f.protection == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || h.PublicService == nil || h.ServiceID != f.Subject.ID || h.ServiceRunID != f.RunID || h.RunNumber != uint64(f.Number) || h.PublicService.DestinationPort != f.Port || f.Port < 1024 || h.Validate() != nil {
 		return servicestream.ErrEndpoint
+	}
+	if f.Protection.Challenge != "" && !f.challenge.Binds(f.Policy, f.Subject, f.RunID, f.Number) {
+		return httpaccess.ErrChallengePreparation
 	}
 	source, err := netip.ParseAddr(h.SourceIP)
 	if err != nil || source.Zone() != "" {
@@ -109,6 +122,13 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 			if strings.HasPrefix(r.URL.Path, "/__tnl/") {
 				if len(client.ConnectionState().PeerCertificates) != 0 || r.ContentLength != 0 || len(r.TransferEncoding) != 0 || r.Header.Get("Upgrade") != "" {
 					servicestream.DenyHTTP(w, http.StatusForbidden)
+					return
+				}
+				if r.URL.Path == httpaccess.ChallengePath {
+					r.RemoteAddr = netip.AddrPortFrom(source.Unmap(), 1).String()
+					if f.protection.AllowSource(w, r) {
+						f.challenge.Handle(w, r)
+					}
 					return
 				}
 				if f.browser != nil && f.browser.Handle(w, r) {
@@ -144,6 +164,9 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 				return
 			}
 			defer release()
+			if f.challenge != nil && (!f.protection.AllowSource(w, r) || !f.challenge.Allow(w, r)) {
+				return
+			}
 			r = httpaccess.StripCookies(r)
 			r.Header.Del("Tnl-Access-Token")
 			r.Header.Del("Forwarded")

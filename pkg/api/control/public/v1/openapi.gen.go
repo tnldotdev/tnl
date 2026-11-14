@@ -2378,6 +2378,9 @@ type ControlDiscovery struct {
 
 	// ManagedUrlMode Default public URL naming on the server's managed domain.
 	ManagedUrlMode ControlDiscoveryManagedUrlMode `json:"managed_url_mode"`
+
+	// Turnstile Whether control has both keys configured for control-served Turnstile challenges. Provider outages do not change this capability.
+	Turnstile bool `json:"turnstile"`
 }
 
 // ControlDiscoveryManagedUrlMode Default public URL naming on the server's managed domain.
@@ -2768,6 +2771,12 @@ type GuestPublisherIdentity struct {
 	KeyId       string      `json:"key_id"`
 	PublicUrlId PublicURLID `json:"public_url_id"`
 	TeamId      TeamID      `json:"team_id"`
+}
+
+// HTTPChallengeClearance defines model for HTTPChallengeClearance.
+type HTTPChallengeClearance struct {
+	Clearance string    `json:"clearance"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // HTTPProtection defines model for HTTPProtection.
@@ -3598,6 +3607,17 @@ type RealizeLocalProjectServiceRequest struct {
 	TeamId            string                      `json:"team_id"`
 	WorktreeKey       string                      `json:"worktree_key"`
 	WorktreeLabel     *string                     `json:"worktree_label,omitempty"`
+}
+
+// RedeemHTTPChallengeRequest defines model for RedeemHTTPChallengeRequest.
+type RedeemHTTPChallengeRequest struct {
+	Binding string `json:"binding"`
+	Handoff string `json:"handoff"`
+
+	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
+	Resource  VisitorResourceScope `json:"resource"`
+	RunId     string               `json:"run_id"`
+	RunNumber int64                `json:"run_number,string"`
 }
 
 // RedeemPublisherGroupEnrollmentRequest defines model for RedeemPublisherGroupEnrollmentRequest.
@@ -4520,6 +4540,18 @@ type CompletePreviewBrowserLoginParams struct {
 	Code  string `form:"code" json:"code"`
 }
 
+// BeginHTTPChallengeParams defines parameters for BeginHTTPChallenge.
+type BeginHTTPChallengeParams struct {
+	ResourceKind string `form:"resource_kind" json:"resource_kind"`
+	ResourceId   string `form:"resource_id" json:"resource_id"`
+	Binding      string `form:"binding" json:"binding"`
+}
+
+// VerifyHTTPChallengeFormdataBody defines parameters for VerifyHTTPChallenge.
+type VerifyHTTPChallengeFormdataBody struct {
+	Response string `form:"response" json:"response"`
+}
+
 // BeginPreviewBrowserLoginParams defines parameters for BeginPreviewBrowserLogin.
 type BeginPreviewBrowserLoginParams struct {
 	PreviewId     *PreviewID  `form:"preview_id,omitempty" json:"preview_id,omitempty"`
@@ -4805,11 +4837,17 @@ type SetMaintenanceControlJSONRequestBody = SetMaintenanceControlRequest
 // DrainAdminRelayJSONRequestBody defines body for DrainAdminRelay for application/json ContentType.
 type DrainAdminRelayJSONRequestBody = AdminDrainRelayRequest
 
+// VerifyHTTPChallengeFormdataRequestBody defines body for VerifyHTTPChallenge for application/x-www-form-urlencoded ContentType.
+type VerifyHTTPChallengeFormdataRequestBody VerifyHTTPChallengeFormdataBody
+
 // AppendFeedbackEventJSONRequestBody defines body for AppendFeedbackEvent for application/json ContentType.
 type AppendFeedbackEventJSONRequestBody = AppendFeedbackEventRequest
 
 // EnrollGuestPublisherJSONRequestBody defines body for EnrollGuestPublisher for application/json ContentType.
 type EnrollGuestPublisherJSONRequestBody = EnrollGuestPublisherRequest
+
+// RedeemHTTPChallengeJSONRequestBody defines body for RedeemHTTPChallenge for application/json ContentType.
+type RedeemHTTPChallengeJSONRequestBody = RedeemHTTPChallengeRequest
 
 // ReportHTTPProtectionRejectionsJSONRequestBody defines body for ReportHTTPProtectionRejections for application/json ContentType.
 type ReportHTTPProtectionRejectionsJSONRequestBody = ReportHTTPProtectionRejectionsRequest
@@ -5236,6 +5274,38 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/browser/callback (the `CompletePreviewBrowserLogin` operationId).
 	CompletePreviewBrowserLogin(ctx context.Context, params *CompletePreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// BeginHTTPChallenge Start a browser-bound challenge for an approved public origin
+	//
+	// Create a five-minute attempt using a publisher binding digest and a separate control browser cookie. The destination comes only from saved resource state.
+	//
+	// Corresponds with GET /v1/browser/challenge/start (the `BeginHTTPChallenge` operationId).
+	BeginHTTPChallenge(ctx context.Context, params *BeginHTTPChallengeParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetHTTPChallenge Render the control-served Turnstile page
+	//
+	// Render only an unexpired attempt bound to the current control browser cookie. This page grants no visitor permission and never receives application request bodies.
+	//
+	// Corresponds with GET /v1/browser/challenge/{attempt_id} (the `GetHTTPChallenge` operationId).
+	GetHTTPChallenge(ctx context.Context, attemptId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// VerifyHTTPChallengeWithBody Verify and consume one browser-bound attempt
+	//
+	// Atomically claim the attempt before Siteverify. Verify the exact control hostname, action, and attempt binding, then issue a one-minute single-use handoff.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/browser/challenge/{attempt_id} (the `VerifyHTTPChallenge` operationId).
+	VerifyHTTPChallengeWithBody(ctx context.Context, attemptId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// VerifyHTTPChallengeWithFormdataBody Verify and consume one browser-bound attempt
+	//
+	// Atomically claim the attempt before Siteverify. Verify the exact control hostname, action, and attempt binding, then issue a one-minute single-use handoff.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type.
+	//
+	// Corresponds with POST /v1/browser/challenge/{attempt_id} (the `VerifyHTTPChallenge` operationId).
+	VerifyHTTPChallengeWithFormdataBody(ctx context.Context, attemptId string, body VerifyHTTPChallengeFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// BeginPreviewBrowserLogin Start sign-in for a preview visitor
 	//
 	// Start browser sign-in for a public URL, optionally within a preview. Navigate to this URL rather than fetching JSON. Current visitor permission is checked before issuing a browser credential.
@@ -5355,6 +5425,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/health (the `GetHealth` operationId).
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RedeemHTTPChallengeWithBody Redeem a browser-bound handoff with exact current publisher authority
+	//
+	// Consume the handoff atomically using the current resource run token and the publisher browser binding. Clearance is separate from authorization and has a fixed thirty-minute expiry.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/http-protection/challenge-handoffs (the `RedeemHTTPChallenge` operationId).
+	RedeemHTTPChallengeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RedeemHTTPChallenge Redeem a browser-bound handoff with exact current publisher authority
+	//
+	// Consume the handoff atomically using the current resource run token and the publisher browser binding. Clearance is separate from authorization and has a fixed thirty-minute expiry.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/http-protection/challenge-handoffs (the `RedeemHTTPChallenge` operationId).
+	RedeemHTTPChallenge(ctx context.Context, body RedeemHTTPChallengeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReportHTTPProtectionRejectionsWithBody Request a short resource-scoped source block
 	//
@@ -7204,6 +7292,78 @@ func (c *Client) CompletePreviewBrowserLogin(ctx context.Context, params *Comple
 	return c.Client.Do(req)
 }
 
+// BeginHTTPChallenge Start a browser-bound challenge for an approved public origin
+//
+// Create a five-minute attempt using a publisher binding digest and a separate control browser cookie. The destination comes only from saved resource state.
+//
+// Corresponds with GET /v1/browser/challenge/start (the `BeginHTTPChallenge` operationId).
+func (c *Client) BeginHTTPChallenge(ctx context.Context, params *BeginHTTPChallengeParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBeginHTTPChallengeRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetHTTPChallenge Render the control-served Turnstile page
+//
+// Render only an unexpired attempt bound to the current control browser cookie. This page grants no visitor permission and never receives application request bodies.
+//
+// Corresponds with GET /v1/browser/challenge/{attempt_id} (the `GetHTTPChallenge` operationId).
+func (c *Client) GetHTTPChallenge(ctx context.Context, attemptId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetHTTPChallengeRequest(c.Server, attemptId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// VerifyHTTPChallengeWithBody Verify and consume one browser-bound attempt
+//
+// Atomically claim the attempt before Siteverify. Verify the exact control hostname, action, and attempt binding, then issue a one-minute single-use handoff.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/browser/challenge/{attempt_id} (the `VerifyHTTPChallenge` operationId).
+func (c *Client) VerifyHTTPChallengeWithBody(ctx context.Context, attemptId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewVerifyHTTPChallengeRequestWithBody(c.Server, attemptId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// VerifyHTTPChallengeWithFormdataBody Verify and consume one browser-bound attempt
+//
+// Atomically claim the attempt before Siteverify. Verify the exact control hostname, action, and attempt binding, then issue a one-minute single-use handoff.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type.
+//
+// Corresponds with POST /v1/browser/challenge/{attempt_id} (the `VerifyHTTPChallenge` operationId).
+func (c *Client) VerifyHTTPChallengeWithFormdataBody(ctx context.Context, attemptId string, body VerifyHTTPChallengeFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewVerifyHTTPChallengeRequestWithFormdataBody(c.Server, attemptId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // BeginPreviewBrowserLogin Start sign-in for a preview visitor
 //
 // Start browser sign-in for a public URL, optionally within a preview. Navigate to this URL rather than fetching JSON. Current visitor permission is checked before issuing a browser credential.
@@ -7474,6 +7634,44 @@ func (c *Client) EnrollGuestPublisher(ctx context.Context, body EnrollGuestPubli
 // Corresponds with GET /v1/health (the `GetHealth` operationId).
 func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetHealthRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RedeemHTTPChallengeWithBody Redeem a browser-bound handoff with exact current publisher authority
+//
+// Consume the handoff atomically using the current resource run token and the publisher browser binding. Clearance is separate from authorization and has a fixed thirty-minute expiry.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/http-protection/challenge-handoffs (the `RedeemHTTPChallenge` operationId).
+func (c *Client) RedeemHTTPChallengeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemHTTPChallengeRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RedeemHTTPChallenge Redeem a browser-bound handoff with exact current publisher authority
+//
+// Consume the handoff atomically using the current resource run token and the publisher browser binding. Clearance is separate from authorization and has a fixed thirty-minute expiry.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/http-protection/challenge-handoffs (the `RedeemHTTPChallenge` operationId).
+func (c *Client) RedeemHTTPChallenge(ctx context.Context, body RedeemHTTPChallengeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemHTTPChallengeRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11437,6 +11635,153 @@ func NewCompletePreviewBrowserLoginRequest(server string, params *CompletePrevie
 	return req, nil
 }
 
+// NewBeginHTTPChallengeRequest constructs an http.Request for the BeginHTTPChallenge method
+func NewBeginHTTPChallengeRequest(server string, params *BeginHTTPChallengeParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/challenge/start")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "resource_kind", params.ResourceKind, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "resource_id", params.ResourceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "binding", params.Binding, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetHTTPChallengeRequest constructs an http.Request for the GetHTTPChallenge method
+func NewGetHTTPChallengeRequest(server string, attemptId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "attempt_id", attemptId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/challenge/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewVerifyHTTPChallengeRequestWithFormdataBody calls the generic VerifyHTTPChallenge builder with application/x-www-form-urlencoded body
+func NewVerifyHTTPChallengeRequestWithFormdataBody(server string, attemptId string, body VerifyHTTPChallengeFormdataRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	bodyStr, err := runtime.MarshalForm(body, nil)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = strings.NewReader(bodyStr.Encode())
+	return NewVerifyHTTPChallengeRequestWithBody(server, attemptId, "application/x-www-form-urlencoded", bodyReader)
+}
+
+// NewVerifyHTTPChallengeRequestWithBody constructs an http.Request for the VerifyHTTPChallenge method, with any body, and a specified content type
+func NewVerifyHTTPChallengeRequestWithBody(server string, attemptId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "attempt_id", attemptId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/challenge/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewBeginPreviewBrowserLoginRequest constructs an http.Request for the BeginPreviewBrowserLogin method
 func NewBeginPreviewBrowserLoginRequest(server string, params *BeginPreviewBrowserLoginParams) (*http.Request, error) {
 	var err error
@@ -12073,6 +12418,46 @@ func NewGetHealthRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewRedeemHTTPChallengeRequest calls the generic RedeemHTTPChallenge builder with application/json body
+func NewRedeemHTTPChallengeRequest(server string, body RedeemHTTPChallengeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRedeemHTTPChallengeRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRedeemHTTPChallengeRequestWithBody constructs an http.Request for the RedeemHTTPChallenge method, with any body, and a specified content type
+func NewRedeemHTTPChallengeRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/http-protection/challenge-handoffs")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -18334,6 +18719,42 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/browser/callback (the `CompletePreviewBrowserLogin` operationId).
 	CompletePreviewBrowserLoginWithResponse(ctx context.Context, params *CompletePreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*CompletePreviewBrowserLoginResponse, error)
 
+	// BeginHTTPChallengeWithResponse Start a browser-bound challenge for an approved public origin
+	//
+	// Create a five-minute attempt using a publisher binding digest and a separate control browser cookie. The destination comes only from saved resource state.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/browser/challenge/start (the `BeginHTTPChallenge` operationId).
+	BeginHTTPChallengeWithResponse(ctx context.Context, params *BeginHTTPChallengeParams, reqEditors ...RequestEditorFn) (*BeginHTTPChallengeResponse, error)
+
+	// GetHTTPChallengeWithResponse Render the control-served Turnstile page
+	//
+	// Render only an unexpired attempt bound to the current control browser cookie. This page grants no visitor permission and never receives application request bodies.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/browser/challenge/{attempt_id} (the `GetHTTPChallenge` operationId).
+	GetHTTPChallengeWithResponse(ctx context.Context, attemptId string, reqEditors ...RequestEditorFn) (*GetHTTPChallengeResponse, error)
+
+	// VerifyHTTPChallengeWithBodyWithResponse Verify and consume one browser-bound attempt
+	//
+	// Atomically claim the attempt before Siteverify. Verify the exact control hostname, action, and attempt binding, then issue a one-minute single-use handoff.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/browser/challenge/{attempt_id} (the `VerifyHTTPChallenge` operationId).
+	VerifyHTTPChallengeWithBodyWithResponse(ctx context.Context, attemptId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyHTTPChallengeResponse, error)
+
+	// VerifyHTTPChallengeWithFormdataBodyWithResponse Verify and consume one browser-bound attempt
+	//
+	// Atomically claim the attempt before Siteverify. Verify the exact control hostname, action, and attempt binding, then issue a one-minute single-use handoff.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/browser/challenge/{attempt_id} (the `VerifyHTTPChallenge` operationId).
+	VerifyHTTPChallengeWithFormdataBodyWithResponse(ctx context.Context, attemptId string, body VerifyHTTPChallengeFormdataRequestBody, reqEditors ...RequestEditorFn) (*VerifyHTTPChallengeResponse, error)
+
 	// BeginPreviewBrowserLoginWithResponse Start sign-in for a preview visitor
 	//
 	// Start browser sign-in for a public URL, optionally within a preview. Navigate to this URL rather than fetching JSON. Current visitor permission is checked before issuing a browser credential.
@@ -18477,6 +18898,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/health (the `GetHealth` operationId).
 	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
+
+	// RedeemHTTPChallengeWithBodyWithResponse Redeem a browser-bound handoff with exact current publisher authority
+	//
+	// Consume the handoff atomically using the current resource run token and the publisher browser binding. Clearance is separate from authorization and has a fixed thirty-minute expiry.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/http-protection/challenge-handoffs (the `RedeemHTTPChallenge` operationId).
+	RedeemHTTPChallengeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemHTTPChallengeResponse, error)
+
+	// RedeemHTTPChallengeWithResponse Redeem a browser-bound handoff with exact current publisher authority
+	//
+	// Consume the handoff atomically using the current resource run token and the publisher browser binding. Clearance is separate from authorization and has a fixed thirty-minute expiry.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/http-protection/challenge-handoffs (the `RedeemHTTPChallenge` operationId).
+	RedeemHTTPChallengeWithResponse(ctx context.Context, body RedeemHTTPChallengeJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemHTTPChallengeResponse, error)
 
 	// ReportHTTPProtectionRejectionsWithBodyWithResponse Request a short resource-scoped source block
 	//
@@ -20561,6 +21000,129 @@ func (r CompletePreviewBrowserLoginResponse) ContentType() string {
 	return ""
 }
 
+type BeginHTTPChallengeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r BeginHTTPChallengeResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r BeginHTTPChallengeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r BeginHTTPChallengeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BeginHTTPChallengeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r BeginHTTPChallengeResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetHTTPChallengeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetHTTPChallengeResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetHTTPChallengeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetHTTPChallengeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetHTTPChallengeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetHTTPChallengeResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type VerifyHTTPChallengeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r VerifyHTTPChallengeResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r VerifyHTTPChallengeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r VerifyHTTPChallengeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r VerifyHTTPChallengeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r VerifyHTTPChallengeResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type BeginPreviewBrowserLoginResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -21213,6 +21775,54 @@ func (r GetHealthResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetHealthResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RedeemHTTPChallengeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *HTTPChallengeClearance
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RedeemHTTPChallengeResponse) GetJSON200() *HTTPChallengeClearance {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RedeemHTTPChallengeResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RedeemHTTPChallengeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RedeemHTTPChallengeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RedeemHTTPChallengeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RedeemHTTPChallengeResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -27187,6 +27797,66 @@ func (c *ClientWithResponses) CompletePreviewBrowserLoginWithResponse(ctx contex
 	return ParseCompletePreviewBrowserLoginResponse(rsp)
 }
 
+// BeginHTTPChallengeWithResponse Start a browser-bound challenge for an approved public origin
+//
+// Create a five-minute attempt using a publisher binding digest and a separate control browser cookie. The destination comes only from saved resource state.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/browser/challenge/start (the `BeginHTTPChallenge` operationId).
+func (c *ClientWithResponses) BeginHTTPChallengeWithResponse(ctx context.Context, params *BeginHTTPChallengeParams, reqEditors ...RequestEditorFn) (*BeginHTTPChallengeResponse, error) {
+	rsp, err := c.BeginHTTPChallenge(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBeginHTTPChallengeResponse(rsp)
+}
+
+// GetHTTPChallengeWithResponse Render the control-served Turnstile page
+//
+// Render only an unexpired attempt bound to the current control browser cookie. This page grants no visitor permission and never receives application request bodies.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/browser/challenge/{attempt_id} (the `GetHTTPChallenge` operationId).
+func (c *ClientWithResponses) GetHTTPChallengeWithResponse(ctx context.Context, attemptId string, reqEditors ...RequestEditorFn) (*GetHTTPChallengeResponse, error) {
+	rsp, err := c.GetHTTPChallenge(ctx, attemptId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetHTTPChallengeResponse(rsp)
+}
+
+// VerifyHTTPChallengeWithBodyWithResponse Verify and consume one browser-bound attempt
+//
+// Atomically claim the attempt before Siteverify. Verify the exact control hostname, action, and attempt binding, then issue a one-minute single-use handoff.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/browser/challenge/{attempt_id} (the `VerifyHTTPChallenge` operationId).
+func (c *ClientWithResponses) VerifyHTTPChallengeWithBodyWithResponse(ctx context.Context, attemptId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyHTTPChallengeResponse, error) {
+	rsp, err := c.VerifyHTTPChallengeWithBody(ctx, attemptId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseVerifyHTTPChallengeResponse(rsp)
+}
+
+// VerifyHTTPChallengeWithFormdataBodyWithResponse Verify and consume one browser-bound attempt
+//
+// Atomically claim the attempt before Siteverify. Verify the exact control hostname, action, and attempt binding, then issue a one-minute single-use handoff.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/browser/challenge/{attempt_id} (the `VerifyHTTPChallenge` operationId).
+func (c *ClientWithResponses) VerifyHTTPChallengeWithFormdataBodyWithResponse(ctx context.Context, attemptId string, body VerifyHTTPChallengeFormdataRequestBody, reqEditors ...RequestEditorFn) (*VerifyHTTPChallengeResponse, error) {
+	rsp, err := c.VerifyHTTPChallengeWithFormdataBody(ctx, attemptId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseVerifyHTTPChallengeResponse(rsp)
+}
+
 // BeginPreviewBrowserLoginWithResponse Start sign-in for a preview visitor
 //
 // Start browser sign-in for a public URL, optionally within a preview. Navigate to this URL rather than fetching JSON. Current visitor permission is checked before issuing a browser credential.
@@ -27425,6 +28095,36 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 		return nil, err
 	}
 	return ParseGetHealthResponse(rsp)
+}
+
+// RedeemHTTPChallengeWithBodyWithResponse Redeem a browser-bound handoff with exact current publisher authority
+//
+// Consume the handoff atomically using the current resource run token and the publisher browser binding. Clearance is separate from authorization and has a fixed thirty-minute expiry.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/http-protection/challenge-handoffs (the `RedeemHTTPChallenge` operationId).
+func (c *ClientWithResponses) RedeemHTTPChallengeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemHTTPChallengeResponse, error) {
+	rsp, err := c.RedeemHTTPChallengeWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemHTTPChallengeResponse(rsp)
+}
+
+// RedeemHTTPChallengeWithResponse Redeem a browser-bound handoff with exact current publisher authority
+//
+// Consume the handoff atomically using the current resource run token and the publisher browser binding. Clearance is separate from authorization and has a fixed thirty-minute expiry.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/http-protection/challenge-handoffs (the `RedeemHTTPChallenge` operationId).
+func (c *ClientWithResponses) RedeemHTTPChallengeWithResponse(ctx context.Context, body RedeemHTTPChallengeJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemHTTPChallengeResponse, error) {
+	rsp, err := c.RedeemHTTPChallenge(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemHTTPChallengeResponse(rsp)
 }
 
 // ReportHTTPProtectionRejectionsWithBodyWithResponse Request a short resource-scoped source block
@@ -30616,6 +31316,90 @@ func ParseCompletePreviewBrowserLoginResponse(rsp *http.Response) (*CompletePrev
 	return response, nil
 }
 
+// ParseBeginHTTPChallengeResponse parses an HTTP response from a BeginHTTPChallengeWithResponse call
+func ParseBeginHTTPChallengeResponse(rsp *http.Response) (*BeginHTTPChallengeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BeginHTTPChallengeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 303:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetHTTPChallengeResponse parses an HTTP response from a GetHTTPChallengeWithResponse call
+func ParseGetHTTPChallengeResponse(rsp *http.Response) (*GetHTTPChallengeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetHTTPChallengeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseVerifyHTTPChallengeResponse parses an HTTP response from a VerifyHTTPChallengeWithResponse call
+func ParseVerifyHTTPChallengeResponse(rsp *http.Response) (*VerifyHTTPChallengeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &VerifyHTTPChallengeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 303:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseBeginPreviewBrowserLoginResponse parses an HTTP response from a BeginPreviewBrowserLoginWithResponse call
 func ParseBeginPreviewBrowserLoginResponse(rsp *http.Response) (*BeginPreviewBrowserLoginResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -31053,6 +31837,39 @@ func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest HealthResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRedeemHTTPChallengeResponse parses an HTTP response from a RedeemHTTPChallengeWithResponse call
+func ParseRedeemHTTPChallengeResponse(rsp *http.Response) (*RedeemHTTPChallengeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RedeemHTTPChallengeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest HTTPChallengeClearance
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -35156,6 +35973,15 @@ type ServerInterface interface {
 	// CompletePreviewBrowserLogin Return a signed-in visitor to the preview
 	// (GET /v1/browser/callback)
 	CompletePreviewBrowserLogin(w http.ResponseWriter, r *http.Request, params CompletePreviewBrowserLoginParams)
+	// BeginHTTPChallenge Start a browser-bound challenge for an approved public origin
+	// (GET /v1/browser/challenge/start)
+	BeginHTTPChallenge(w http.ResponseWriter, r *http.Request, params BeginHTTPChallengeParams)
+	// GetHTTPChallenge Render the control-served Turnstile page
+	// (GET /v1/browser/challenge/{attempt_id})
+	GetHTTPChallenge(w http.ResponseWriter, r *http.Request, attemptId string)
+	// VerifyHTTPChallenge Verify and consume one browser-bound attempt
+	// (POST /v1/browser/challenge/{attempt_id})
+	VerifyHTTPChallenge(w http.ResponseWriter, r *http.Request, attemptId string)
 	// BeginPreviewBrowserLogin Start sign-in for a preview visitor
 	// (GET /v1/browser/login)
 	BeginPreviewBrowserLogin(w http.ResponseWriter, r *http.Request, params BeginPreviewBrowserLoginParams)
@@ -35198,6 +36024,9 @@ type ServerInterface interface {
 	// GetHealth Confirm that the control HTTP server is serving
 	// (GET /v1/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// RedeemHTTPChallenge Redeem a browser-bound handoff with exact current publisher authority
+	// (POST /v1/http-protection/challenge-handoffs)
+	RedeemHTTPChallenge(w http.ResponseWriter, r *http.Request)
 	// ReportHTTPProtectionRejections Request a short resource-scoped source block
 	// (POST /v1/http-protection/rejections)
 	ReportHTTPProtectionRejections(w http.ResponseWriter, r *http.Request)
@@ -35740,6 +36569,117 @@ func (siw *ServerInterfaceWrapper) CompletePreviewBrowserLogin(w http.ResponseWr
 	handler.ServeHTTP(w, r)
 }
 
+// BeginHTTPChallenge operation middleware
+func (siw *ServerInterfaceWrapper) BeginHTTPChallenge(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params BeginHTTPChallengeParams
+
+	// ------------- Required query parameter "resource_kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "resource_kind", r.URL.Query(), &params.ResourceKind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "resource_kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "resource_kind", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "resource_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "resource_id", r.URL.Query(), &params.ResourceId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "resource_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "resource_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "binding" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "binding", r.URL.Query(), &params.Binding, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "binding"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "binding", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BeginHTTPChallenge(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetHTTPChallenge operation middleware
+func (siw *ServerInterfaceWrapper) GetHTTPChallenge(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "attempt_id" -------------
+	var attemptId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "attempt_id", r.PathValue("attempt_id"), &attemptId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "attempt_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetHTTPChallenge(w, r, attemptId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// VerifyHTTPChallenge operation middleware
+func (siw *ServerInterfaceWrapper) VerifyHTTPChallenge(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "attempt_id" -------------
+	var attemptId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "attempt_id", r.PathValue("attempt_id"), &attemptId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "attempt_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.VerifyHTTPChallenge(w, r, attemptId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // BeginPreviewBrowserLogin operation middleware
 func (siw *ServerInterfaceWrapper) BeginPreviewBrowserLogin(w http.ResponseWriter, r *http.Request) {
 
@@ -36186,6 +37126,20 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RedeemHTTPChallenge operation middleware
+func (siw *ServerInterfaceWrapper) RedeemHTTPChallenge(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RedeemHTTPChallenge(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -40554,6 +41508,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/challenge/start", wrapper.BeginHTTPChallenge)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/challenge/{attempt_id}", wrapper.GetHTTPChallenge)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/browser/challenge/{attempt_id}", wrapper.VerifyHTTPChallenge)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/http-protection/challenge-handoffs", wrapper.RedeemHTTPChallenge)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/http-protection/rejections", wrapper.ReportHTTPProtectionRejections)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/retire", wrapper.RetireProject)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/status", wrapper.GetProjectStatus)

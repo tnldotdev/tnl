@@ -13,3 +13,9 @@ func (c *Client) ReportHTTPProtectionRejections(ctx context.Context, body contro
 	})
 	return err
 }
+
+func (c *Client) RedeemHTTPChallenge(ctx context.Context, body controlv1.RedeemHTTPChallengeRequest, token string) (controlv1.HTTPChallengeClearance, error) {
+	return request[controlv1.HTTPChallengeClearance](ctx, c, token, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RedeemHTTPChallenge(ctx, body, editors...)
+	})
+}

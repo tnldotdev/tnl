@@ -1,4 +1,25 @@
 schemas:
+  RedeemHTTPChallengeRequest:
+    type: object
+    additionalProperties: false
+    required: [resource, run_id, run_number, handoff, binding]
+    properties:
+      resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
+      run_id: { type: string, minLength: 1, maxLength: 64 }
+      run_number:
+        type: string
+        pattern: "^[1-9][0-9]*$"
+        x-go-type: int64
+        x-oapi-codegen-extra-tags: { json: "run_number,string" }
+      handoff: { type: string, minLength: 1, maxLength: 128 }
+      binding: { type: string, minLength: 43, maxLength: 43 }
+  HTTPChallengeClearance:
+    type: object
+    additionalProperties: false
+    required: [clearance, expires_at]
+    properties:
+      clearance: { type: string, maxLength: 2048 }
+      expires_at: { type: string, format: date-time }
   HTTPTemporaryBlock:
     type: object
     additionalProperties: false
