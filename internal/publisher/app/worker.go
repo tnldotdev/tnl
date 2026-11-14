@@ -107,7 +107,7 @@ type Workers struct {
 	proofs          map[string]*proofEntry
 }
 
-func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64, bool) error) (result error) {
+func (w *Workers) Run(ctx context.Context, service Service, observe func(PublicationUpdate) error) (result error) {
 	configuration, err := w.Configure(ctx, service)
 	if err != nil {
 		return err
@@ -310,12 +310,12 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64,
 			if err := tunnel.SetProvisioning(ctx, event.PublishRunNumber); err != nil {
 				return err
 			}
-			return observe(event.PublishRunNumber, false)
+			return observe(PublicationUpdate{RunNumber: event.PublishRunNumber, TunnelID: tunnel.ID(), Target: service.Target})
 		case publisher.EventReady:
 			if err := tunnel.SetReady(ctx, event.PublicURL, event.PublishRunNumber); err != nil {
 				return err
 			}
-			if err := observe(event.PublishRunNumber, true); err != nil {
+			if err := observe(PublicationUpdate{RunNumber: event.PublishRunNumber, Routable: true, TunnelID: tunnel.ID(), Target: service.Target, PublicURL: event.PublicURL}); err != nil {
 				return err
 			}
 			if w.AutomaticReadiness && event.PublishRunNumber > lastReadinessRun {
@@ -328,7 +328,7 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64,
 			if err := tunnel.SetDraining(ctx); err != nil {
 				return err
 			}
-			return observe(event.PublishRunNumber, false)
+			return observe(PublicationUpdate{RunNumber: event.PublishRunNumber, TunnelID: tunnel.ID(), Target: service.Target})
 		case publisher.EventProvisioningStep:
 			w.Manager.SetProvisioningStage(service.Name, service.RegistrationID, event.PublishRunNumber, event.ProvisioningStage)
 		}

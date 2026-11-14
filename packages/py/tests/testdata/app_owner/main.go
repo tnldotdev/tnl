@@ -88,7 +88,7 @@ func run() error {
 		return err
 	}
 	defer database.Close()
-	manager, err := publisherapp.New(ctx, root, database, []publisherapp.Service{{Name: "web", Directory: root, ServiceProtocol: "http"}}, func(ctx context.Context, _ publisherapp.Service, _ func(uint64, bool) error) error {
+	manager, err := publisherapp.New(ctx, root, database, []publisherapp.Service{{Name: "web", Directory: root, ServiceProtocol: "http"}}, func(ctx context.Context, _ publisherapp.Service, _ func(publisherapp.PublicationUpdate) error) error {
 		<-ctx.Done()
 		return ctx.Err()
 	})

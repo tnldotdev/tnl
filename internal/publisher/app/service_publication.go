@@ -13,7 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 )
 
-func (w *Workers) runService(ctx context.Context, service Service, publication *ServicePublication, journal *publicationJournal, observe func(uint64, bool) error) error {
+func (w *Workers) runService(ctx context.Context, service Service, publication *ServicePublication, journal *publicationJournal, observe func(PublicationUpdate) error) error {
 	var entry *proofEntry
 	var observations sync.Mutex
 	defer func() {
@@ -42,7 +42,7 @@ func (w *Workers) runService(ctx context.Context, service Service, publication *
 		} else if err := journal.tunnel.SetProvisioning(ctx, run); err != nil {
 			return err
 		}
-		if err := observe(run, routable); err != nil {
+		if err := observe(PublicationUpdate{RunNumber: run, Routable: routable, TunnelID: journal.tunnel.ID(), Target: service.Target, PublicURL: publication.URL}); err != nil {
 			return err
 		}
 		entry = &proofEntry{service: service, run: publisher.PublishRunIdentity{Number: run}, serviceCheck: publication.Check}

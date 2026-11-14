@@ -13,9 +13,14 @@ type boundListener struct {
 	target, framework string
 }
 
-type publicationUpdate struct {
-	runNumber uint64
-	routable  bool
+// PublicationUpdate carries completed worker facts to the existing publication
+// transition. the manager's callback supplies the registration and worker fence.
+type PublicationUpdate struct {
+	RunNumber uint64
+	Routable  bool
+	TunnelID  string
+	Target    string
+	PublicURL string
 }
 
 func (s *Service) reserve(registration reservedRegistration) {
@@ -55,20 +60,22 @@ func (s *Service) endPublication() {
 	s.invalidateReadiness()
 }
 
-func (s *Service) publish(update publicationUpdate) (becameRoutable bool, err error) {
-	if !s.Registered || update.runNumber == 0 || update.runNumber < s.RunNumber {
+func (s *Service) publish(update PublicationUpdate) (becameRoutable bool, err error) {
+	if !s.Registered || update.RunNumber == 0 || update.RunNumber < s.RunNumber ||
+		update.TunnelID != s.TunnelID || update.Target != s.Target {
 		return false, ErrRegistrationStale
 	}
-	newRun := update.runNumber != s.RunNumber
-	if newRun || !update.routable {
+	newRun := update.RunNumber != s.RunNumber
+	if newRun || !update.Routable {
 		s.invalidateReadiness()
 		if newRun {
 			s.ProvisioningStage = ""
 		}
 	}
-	becameRoutable = update.routable && (!s.Routable || newRun)
-	s.RunNumber, s.Routable = update.runNumber, update.routable
-	if update.routable {
+	becameRoutable = update.Routable && (!s.Routable || newRun)
+	s.RunNumber, s.Routable = update.RunNumber, update.Routable
+	if update.Routable {
+		s.PublicURL = update.PublicURL
 		s.Failure, s.ProvisioningStage = "", ""
 	}
 	return becameRoutable, nil

@@ -21,9 +21,9 @@ func TestRegistrationObservationsAreTransitionsAndWorkerKeepsOwner(t *testing.T)
 	}
 	defer database.Close()
 	started := make(chan context.Context, 1)
-	manager, err := New(observability.WithMetrics(t.Context(), m), t.TempDir(), database, []Service{{Name: "api"}}, func(ctx context.Context, _ Service, observe func(uint64, bool) error) error {
+	manager, err := New(observability.WithMetrics(t.Context(), m), t.TempDir(), database, []Service{{Name: "api"}}, func(ctx context.Context, service Service, observe func(PublicationUpdate) error) error {
 		for range 2 {
-			if err := observe(1, true); err != nil {
+			if err := observe(PublicationUpdate{RunNumber: 1, Routable: true, Target: service.Target, TunnelID: service.TunnelID, PublicURL: service.PublicURL}); err != nil {
 				return err
 			}
 		}
