@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
@@ -39,6 +40,8 @@ type Prepared struct {
 	clock               func() time.Time
 	target              string
 	handler             http.Handler
+	inspectionMode      inspection.Mode
+	observeSummary      inspection.Observer
 	targetResolver      TargetResolver
 	managedHostname     string
 	managedProtocol     config.ProtocolName
@@ -548,6 +551,7 @@ func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor ser
 		return err
 	}
 	managed := servicestream.Stream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, Handler: b.prepared.handler, HTTPRequests: b.prepared.serviceHTTPRequests,
+		InspectionMode: b.prepared.inspectionMode, ObserveSummary: b.prepared.observeSummary,
 		Authority: authority,
 		TLS:       &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: visitor}
 	return managed.Forward(ctx, stream)

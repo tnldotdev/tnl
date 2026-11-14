@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
 )
 
 var ErrClosed = errors.New("selected HTTP upstream connection is closed")
@@ -79,6 +80,7 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 			request.SetURL(target)
 			request.Out.Host = target.Host
 		}, ModifyResponse: func(response *http.Response) error {
+			inspection.ApplicationResponse(response.Request)
 			observability.PublisherHTTPResponse(response.Request.Context())
 			observability.PublisherHTTPUpgrade(response)
 			if response.StatusCode != http.StatusSwitchingProtocols && response.Close {

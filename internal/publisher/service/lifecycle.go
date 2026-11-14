@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 	"github.com/tnldotdev/tnl/internal/region"
@@ -55,6 +56,8 @@ type RunConfig struct {
 	ServiceID         string
 	Target            string
 	Handler           http.Handler
+	InspectionMode    inspection.Mode
+	ObserveSummary    inspection.Observer
 	TargetResolver    TargetResolver
 	resolvedTargetTLS *tls.Config
 	HeartbeatInterval time.Duration
@@ -93,7 +96,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	telemetry := config.Telemetry.BeginScope("publisher")
 	defer telemetry.Close()
-	if config.Control == nil || config.Access == nil || !config.Metadata.Protocol.Valid() || config.Identity.ServiceId == nil ||
+	if config.Control == nil || config.Access == nil || !config.Metadata.Protocol.Valid() || !config.InspectionMode.Valid() || config.Identity.ServiceId == nil ||
 		config.Identity.Kind != authorityv1.Service || *config.Identity.ServiceId != config.ServiceID {
 		return ErrPrivateStream
 	}

@@ -59,6 +59,7 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 		}
 	}
 	prepared := &Prepared{Preparation: preparation, target: target, handler: cfg.Handler, managedHostname: approved.Endpoint.Hostname, servicePort: uint16(approved.Endpoint.Port), managedProtocol: serviceconfig.ProtocolName(approved.Protocol), clock: time.Now, preparedCertificate: &preparedCertificate{}}
+	prepared.inspectionMode, prepared.observeSummary = cfg.InspectionMode, cfg.ObserveSummary
 	prepared.managedPublic = approved.Endpoint.Public
 	prepared.metadataRevision = approved.TrustRevision
 	prepared.targetResolver = cfg.TargetResolver
@@ -127,8 +128,9 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 	if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
 		var err error
 		httpFrontend, closeHTTP, err = PrepareHTTP(ctx, HTTP{
-			AuditSink: audit,
-			Control:   control, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
+			AuditSink:      audit,
+			InspectionMode: config.InspectionMode, ObserveSummary: config.ObserveSummary,
+			Control: control, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
 			RunID: setup.ServiceRunId, Number: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken),
 			Hostname: prepared.managedHostname, Port: prepared.servicePort, Requests: prepared.serviceHTTPRequests,
 		})
