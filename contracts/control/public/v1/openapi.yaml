@@ -55,6 +55,8 @@ tags:
   - name: service-audit
     description: Read the team's bounded service access and lifecycle audit history.
 paths:
+  /v1/http-protection/rejections:
+    $ref: "./paths/http-protection.yaml#/paths/~1v1~1http-protection~1rejections"
   /v1/projects/{project_key}/retire:
     $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1{project_key}~1retire"
   /v1/projects/{project_key}/status:
@@ -482,6 +484,12 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/ProjectServiceHTTP"
     HTTPProtection:
       $ref: "./schemas/projects.yaml#/schemas/HTTPProtection"
+    HTTPTemporaryBlock:
+      $ref: "./schemas/http-protection.yaml#/schemas/HTTPTemporaryBlock"
+    HTTPProtectionRejections:
+      $ref: "./schemas/http-protection.yaml#/schemas/HTTPProtectionRejections"
+    ReportHTTPProtectionRejectionsRequest:
+      $ref: "./schemas/http-protection.yaml#/schemas/ReportHTTPProtectionRejectionsRequest"
     ProjectServicePublicURL:
       $ref: "./schemas/projects.yaml#/schemas/ProjectServicePublicURL"
     ProjectPublicAccess:

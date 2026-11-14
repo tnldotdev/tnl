@@ -56,7 +56,7 @@ func (s *guestEnrollmentStub) ExchangePublisherAssertion(_ context.Context, clie
 	return "guest-publisher-access", nil
 }
 
-func (s *guestEnrollmentStub) CreatePublisherRun(_ context.Context, id, retry, token, proof string, selection *trafficlimits.Selection, _ ...string) (controlv1.PublishRunSetup, error) {
+func (s *guestEnrollmentStub) CreatePublisherRun(_ context.Context, id, retry, token, proof string, selection *trafficlimits.Selection, _ controlv1.HTTPProtection, _ ...string) (controlv1.PublishRunSetup, error) {
 	if selection != nil {
 		if err := selection.Validate(); err != nil {
 			return controlv1.PublishRunSetup{}, err
@@ -106,7 +106,7 @@ func TestGuestPublicationRetriesEnrollmentWithItsDurableKeyAndUsesSignedRuns(t *
 		if cfg.Management != nil || cfg.AccessManagement != nil {
 			t.Fatal("guest publication retained management authority")
 		}
-		if _, err := cfg.Control.CreatePublishRun(t.Context(), publicURL.Id, newID(opaqueid.IdempotencyPrefix)); err != nil {
+		if _, err := cfg.Control.CreatePublishRun(t.Context(), publicURL.Id, newID(opaqueid.IdempotencyPrefix), cfg.Protection); err != nil {
 			t.Fatal(err)
 		}
 		if _, ok := any(native).(publisher.PublicURLManagementClient); ok {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
@@ -195,6 +196,9 @@ func validateRoutingTableEvent(event ingressv1.IngressRoutingTableEvent) error {
 		return ErrRoutingTableEvent
 	}
 	entry := event.Entry
+	if _, err := httpprotection.DecodeBlocks(entry.TemporaryBlocks); err != nil {
+		return ErrRoutingTableEvent
+	}
 	if entry.Traffic != nil {
 		if _, err := routingTraffic(*entry.Traffic); err != nil {
 			return ErrRoutingTableEvent
@@ -279,6 +283,7 @@ func routingEntryForEvent(event ingressv1.IngressRoutingTableEvent) routingTable
 
 func cloneRoutingTableEntry(source ingressv1.IngressRoutingTableEntry) ingressv1.IngressRoutingTableEntry {
 	result := source
+	result.TemporaryBlocks = slices.Clone(source.TemporaryBlocks)
 	if source.PublishRunReadyAt != nil {
 		readyAt := *source.PublishRunReadyAt
 		result.PublishRunReadyAt = &readyAt

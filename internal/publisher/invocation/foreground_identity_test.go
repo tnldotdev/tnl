@@ -139,7 +139,7 @@ func TestForegroundPublicationReusesItsIdentityAndNeverCreatesRunsWithTheSession
 		if !cfg.PreserveSavedPublicURLTarget || cfg.Target != "http://127.0.0.1:3000" {
 			t.Fatalf("private foreground target = %+v", cfg)
 		}
-		if _, err := cfg.Control.CreatePublishRun(t.Context(), publicURL.Id, newID(opaqueid.IdempotencyPrefix)); !errors.Is(err, clientcontrol.ErrUnavailable) {
+		if _, err := cfg.Control.CreatePublishRun(t.Context(), publicURL.Id, newID(opaqueid.IdempotencyPrefix), cfg.Protection); !errors.Is(err, clientcontrol.ErrUnavailable) {
 			t.Fatalf("signed run request = %v", err)
 		}
 		if err := cleanup(); err != nil {

@@ -17,6 +17,7 @@ func TestIntegrationMigrationRejectsPreRenewalWorkloadBaseline(t *testing.T) {
 	// literal: using baselineID would hide the next incompatible baseline edit.
 	const previous = "tnl-control-fresh-v1-connector-rebinding"
 	for _, query := range []string{
+		`DELETE FROM control.goose_db_version WHERE version_id > 1`,
 		`ALTER TABLE control.workload_sessions DROP COLUMN renewal_sequence`,
 		`ALTER TABLE control.schema_identity DROP CONSTRAINT schema_identity_baseline_id_check`,
 		`UPDATE control.schema_identity SET baseline_id='tnl-control-fresh-v1-connector-rebinding' WHERE id=1`,

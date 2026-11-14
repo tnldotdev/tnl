@@ -562,7 +562,7 @@ func (s *publisherControlStub) DeletePublicURL(_ context.Context, publicURLID st
 	return nil
 }
 
-func (s *publisherControlStub) CreatePublishRun(context.Context, string, string, ...string) (controlv1.PublishRunSetup, error) {
+func (s *publisherControlStub) CreatePublishRun(context.Context, string, string, controlv1.HTTPProtection, ...string) (controlv1.PublishRunSetup, error) {
 	s.record("create_session")
 	if s.publishRunErr != nil {
 		return controlv1.PublishRunSetup{}, s.publishRunErr

@@ -29,6 +29,7 @@ import (
 type HTTPControl interface {
 	httpaccess.PolicyClient
 	httpaccess.TokenClient
+	httpprotection.ReportClient
 	ControlURL() string
 	RedeemServiceBrowserHandoff(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) (controlv1.BrowserHandoffResponse, error)
 	CheckServiceBrowserSession(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) (controlv1.BrowserAccessResponse, error)
@@ -57,15 +58,16 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
 	if f.Control == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() {
 		return HTTP{}, nil, servicestream.ErrEndpoint
 	}
-	protection, err := httpprotection.New(f.Protection)
+	policy, err := httpaccess.PreparePolicy(ctx, f.Control, f.Subject, f.RunID, f.Number, f.Token.String(), nil)
 	if err != nil {
 		return HTTP{}, nil, err
 	}
-	f.protection = protection
-	policy, err := httpaccess.PreparePolicy(ctx, f.Control, f.Subject, f.RunID, f.Number, f.Token.String(), nil)
+	protection, err := httpprotection.Prepare(ctx, f.Protection, httpprotection.RunReporter(f.Control, f.Subject, f.RunID, f.Number, f.Token.String()), policy.SourceBlocked)
 	if err != nil {
-		return HTTP{}, nil, errors.Join(err, protection.Close())
+		policy.Close()
+		return HTTP{}, nil, err
 	}
+	f.protection = protection
 	tokens, err := httpaccess.StartTokens(ctx, f.Control, policy.Lease(), nil)
 	if err != nil {
 		policy.Close()

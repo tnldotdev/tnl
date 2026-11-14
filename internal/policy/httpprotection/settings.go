@@ -30,9 +30,14 @@ const (
 
 // Settings uses zero values for default blocking and the default body ceiling.
 type Settings struct {
-	WAF          Mode        `json:"waf,omitempty" yaml:"waf,omitempty" jsonschema:"enum=block,enum=detect,enum=off"`
-	MaxBodyBytes *int        `json:"max_body_bytes,omitempty" yaml:"max_body_bytes,omitempty" jsonschema:"minimum=1,maximum=2097152"`
-	Exclusions   []Exclusion `json:"exclusions,omitempty" yaml:"exclusions,omitempty" jsonschema:"maxItems=32"`
+	WAF             Mode        `json:"waf,omitempty" yaml:"waf,omitempty" jsonschema:"enum=block,enum=detect,enum=off"`
+	TemporaryBlocks bool        `json:"temporary_blocks,omitempty" yaml:"temporary_blocks,omitempty"`
+	MaxBodyBytes    *int        `json:"max_body_bytes,omitempty" yaml:"max_body_bytes,omitempty" jsonschema:"minimum=1,maximum=2097152"`
+	Exclusions      []Exclusion `json:"exclusions,omitempty" yaml:"exclusions,omitempty" jsonschema:"maxItems=32"`
+}
+
+func (s Settings) BlocksSources() bool {
+	return s.TemporaryBlocks && (s.WAF == "" || s.WAF == Block)
 }
 
 type Exclusion struct {

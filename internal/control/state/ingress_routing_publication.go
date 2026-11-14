@@ -11,12 +11,15 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 )
 
 // IngressRoutingTableProjection is the stored public URL view used by ingress.
 type IngressRoutingTableProjection struct {
+	TemporaryBlocks      []httpprotection.TemporaryBlock          `json:"temporary_blocks,omitempty"`
 	PublishRunReadyAt    *time.Time                               `json:"publish_run_ready_at,omitempty"`
 	PublishRunID         string                                   `json:"publish_run_id"`
 	PublishRunClosed     bool                                     `json:"publish_run_closed,omitempty"`
@@ -163,6 +166,18 @@ func (pending *pendingIngressRoutingTableEvents) addEvent(
 	if session.ReadyAt.Valid {
 		readyAt := session.ReadyAt.Time
 		projection.PublishRunReadyAt = &readyAt
+	}
+	var protection httpprotection.Settings
+	if eventKind != IngressPublicURLTombstone && len(session.HttpProtection) != 0 {
+		if err := json.Unmarshal(session.HttpProtection, &protection); err != nil || protection.Validate() != nil {
+			return nil, ErrVisitorPolicy
+		}
+		if protection.BlocksSources() {
+			projection.TemporaryBlocks, err = readHTTPTemporaryBlocks(ctx, queries, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: route.ID}, now)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	var policyCiphertext []byte
 	policyStorageKeyID := ""

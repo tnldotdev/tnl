@@ -23,7 +23,7 @@ import (
 
 const (
 	// the coordinated baseline requires the exact migration and identity.
-	schemaVersion       int64 = 1
+	schemaVersion       int64 = 2
 	baselineID                = "v1"
 	versionTable              = "control.goose_db_version"
 	bootstrapRetryDelay       = 25 * time.Millisecond
@@ -216,12 +216,12 @@ func checkSchemaVersion(ctx context.Context, database schemaVersionQuerier) erro
 	if err != nil {
 		return err
 	}
-	if version != schemaVersion {
-		return fmt.Errorf("controlstate: incompatible database schema version %d; required version is %d", version, schemaVersion)
-	}
 	var stored string
 	if err := database.QueryRow(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id = 1`).Scan(&stored); err != nil || stored != baselineID {
 		return errors.New("controlstate: incompatible database baseline; use a fresh PostgreSQL database")
+	}
+	if version != schemaVersion {
+		return fmt.Errorf("controlstate: incompatible database schema version %d; required version is %d", version, schemaVersion)
 	}
 	return nil
 }

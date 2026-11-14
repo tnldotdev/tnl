@@ -1,0 +1,17 @@
+paths:
+  /v1/http-protection/rejections:
+    post:
+      operationId: reportHTTPProtectionRejections
+      tags: [visitor-policy]
+      summary: Request a short resource-scoped source block
+      description: Best-effort mitigation requested by the current publisher run. Requires explicit temporary-block settings and eligible fresh rejections. Retries cannot extend a block.
+      security: [{ publishRunAuth: [] }, { serviceRunAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ReportHTTPProtectionRejectionsRequest"
+      responses:
+        "204": { description: Report accepted or already applied }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

@@ -8,7 +8,7 @@ import (
 )
 
 // the policy includes up to 64 keys, 4096 workloads, 2048 IP prefixes and
-// 256 events. their bounded strings and control's RFC3339Nano timestamps fit
+// 256 events and temporary blocks. their bounded strings and control's timestamps fit
 // within 2 MiB; unrelated operations retain the 1 MiB response limit.
 const maxVisitorPolicyResponseBytes = 2 << 20
 

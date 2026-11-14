@@ -299,6 +299,7 @@ type IngressRoutingTableEntry struct {
 	PublisherConnections []IngressRoutingPublisherConnection      `json:"publisher_connections"`
 	RecoveryEpisodeId    *int64                                   `json:"recovery_episode_id,omitempty"`
 	ServiceProtocol      *IngressRoutingTableEntryServiceProtocol `json:"service_protocol,omitempty"`
+	TemporaryBlocks      []externalRef0.HTTPTemporaryBlock        `json:"temporary_blocks,omitempty"`
 
 	// Traffic Resolved per-public-URL publish-run budgets, enforced independently on each ingress process. Byte rates count encrypted visitor bytes per second. Omitted totals are unlimited.
 	Traffic *IngressTrafficLimits `json:"traffic,omitempty"`

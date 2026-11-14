@@ -10,6 +10,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 )
 
@@ -238,7 +239,7 @@ func (d *Database) ExpireVisitorPermissions(ctx context.Context, now time.Time) 
 		return err
 	}
 	// workload assertion replay fences and history belong to CleanupWorkloads.
-	return nil
+	return q.PruneHTTPTemporaryBlocks(ctx, timestamptz(now.Add(-httpprotection.BlockRetention)))
 }
 
 func (d *Database) visitorIPAllowed(ctx context.Context, q *controlstatedb.Queries, url controlstatedb.ControlPublicUrl, source string, now time.Time) (bool, *time.Time, error) {

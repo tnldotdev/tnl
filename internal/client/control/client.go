@@ -314,12 +314,16 @@ func (c *Client) DeletePublicURL(ctx context.Context, publicURLID string) error 
 	return err
 }
 
-func (c *Client) CreatePublishRun(ctx context.Context, publicURLID, idempotencyKey string, preferred ...string) (controlv1.PublishRunSetup, error) {
+func (c *Client) CreatePublishRun(ctx context.Context, publicURLID, idempotencyKey string, protection controlv1.HTTPProtection, preferred ...string) (controlv1.PublishRunSetup, error) {
+	if err := protection.Validate(); err != nil {
+		return controlv1.PublishRunSetup{}, err
+	}
 	body, err := publishRunRequest(nil, preferred)
 	if err != nil {
 		return controlv1.PublishRunSetup{}, err
 	}
 	params := &controlv1.CreatePublishRunParams{IdempotencyKey: idempotencyKey}
+	body.HttpProtection = &protection
 	return requestWithAccess[controlv1.PublishRunSetup](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.CreatePublishRun(ctx, publicURLID, params, body, editors...)
 	})

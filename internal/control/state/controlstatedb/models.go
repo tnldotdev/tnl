@@ -515,6 +515,14 @@ type ControlGuestTrial struct {
 	UpdatedAt             pgtype.Timestamptz
 }
 
+type ControlHttpTemporaryBlock struct {
+	ResourceKind    string
+	ResourceID      string
+	SourceIp        string
+	ExpiresAt       pgtype.Timestamptz
+	EvidenceEndedAt pgtype.Timestamptz
+}
+
 type ControlIdentity struct {
 	ID              string
 	Kind            string
@@ -828,6 +836,7 @@ type ControlPublishRun struct {
 	ClosedAt                   pgtype.Timestamptz
 	CloseReason                pgtype.Text
 	AssignmentsOpen            pgtype.Bool
+	HttpProtection             []byte
 }
 
 type ControlPublishRunConnectionSlot struct {

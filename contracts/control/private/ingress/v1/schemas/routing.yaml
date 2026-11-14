@@ -61,6 +61,12 @@ schemas:
       - public_url_expires_at
       - publisher_connections
     properties:
+      temporary_blocks:
+        type: array
+        maxItems: 256
+        x-go-type-skip-optional-pointer: true
+        items:
+          $ref: "../../../../public/v1/schemas/http-protection.yaml#/schemas/HTTPTemporaryBlock"
       public_url_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
       publish_run_id:

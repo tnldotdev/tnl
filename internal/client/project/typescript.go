@@ -275,6 +275,7 @@ var typeScriptKeyMappings = map[string]string{
 	"publisher_pool":       "publisherPool",
 	"max_duration":         "maxDuration",
 	"max_body_bytes":       "maxBodyBytes",
+	"temporary_blocks":     "temporaryBlocks",
 	"rule_id":              "ruleId",
 	"team_id":              "teamId",
 	"project_id":           "projectId",

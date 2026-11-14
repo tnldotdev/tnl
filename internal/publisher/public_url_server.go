@@ -51,6 +51,8 @@ type PublicURLServerConfig struct {
 	Feedback              *feedbackRuntime
 	Limits                applicationlimits.Limits
 	Protection            protectionpolicy.Settings
+	ReportRejections      httpprotection.Reporter
+	SourceBlocked         func(netip.Addr, time.Time) bool
 	VisitorPolicy         *visitorlease.Lease
 	VisitorTokens         *httpaccess.Tokens
 	VisitorSourceKey      [32]byte

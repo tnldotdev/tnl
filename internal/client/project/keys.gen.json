@@ -19,6 +19,7 @@
   "service_account": "serviceAccount",
   "source_ips": "sourceIPs",
   "strip_prefix": "stripPrefix",
+  "temporary_blocks": "temporaryBlocks",
   "total_connections": "totalConnections",
   "total_download_bytes": "totalDownloadBytes",
   "total_upload_bytes": "totalUploadBytes",

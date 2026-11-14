@@ -32,13 +32,13 @@ func TestPublisherRunTrafficUsesTypedBodyAndProofHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	selection := &trafficlimits.Selection{Connections: new(48), Rate: new(40), RatePer: new("2s"), Burst: new(50), UploadBytes: new(int64(4 << 20)), DownloadBytes: new(int64(8 << 20)), TotalConnections: new(int64(0)), TotalUploadBytes: new(int64(1 << 30)), TotalDownloadBytes: new(int64(2 << 30))}
-	if _, err := client.CreatePublisherRun(t.Context(), "url", "retry", "publisher-access", "signed-proof", selection); err != nil {
+	if _, err := client.CreatePublisherRun(t.Context(), "url", "retry", "publisher-access", "signed-proof", selection, controlv1.HTTPProtection{TemporaryBlocks: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CreatePublisherRun(t.Context(), "url", "retry", "publisher-access", "signed-proof", nil); err != nil {
+	if _, err := client.CreatePublisherRun(t.Context(), "url", "retry", "publisher-access", "signed-proof", nil, controlv1.HTTPProtection{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CreatePublisherRun(t.Context(), "url", "retry", "publisher-access", "signed-proof", &trafficlimits.Selection{Connections: new(24)}, "AWS:US-WEST-1", "fly:sjc"); err != nil {
+	if _, err := client.CreatePublisherRun(t.Context(), "url", "retry", "publisher-access", "signed-proof", &trafficlimits.Selection{Connections: new(24)}, controlv1.HTTPProtection{}, "AWS:US-WEST-1", "fly:sjc"); err != nil {
 		t.Fatal(err)
 	}
 	want := &controlv1.TrafficSelection{
@@ -49,10 +49,13 @@ func TestPublisherRunTrafficUsesTypedBodyAndProofHeaders(t *testing.T) {
 	if len(bodies) != 3 || !reflect.DeepEqual(bodies[0].Traffic, want) || bodies[1].Traffic != nil || !reflect.DeepEqual(bodies[2].Traffic, &controlv1.TrafficSelection{Connections: new(24)}) {
 		t.Fatalf("typed traffic selections: %+v", bodies)
 	}
+	if bodies[0].HttpProtection == nil || !bodies[0].HttpProtection.BlocksSources() {
+		t.Fatal("typed publish-run body lost effective HTTP protection")
+	}
 	if bodies[2].PreferredRegions == nil || !reflect.DeepEqual(*bodies[2].PreferredRegions, []string{"aws:us-west-1", "fly:sjc"}) {
 		t.Fatal("provider-qualified preference was lost")
 	}
-	if _, err := client.CreatePublisherRun(t.Context(), "url", "retry", "publisher-access", "signed-proof", nil, "sjc"); err == nil || len(bodies) != 3 {
+	if _, err := client.CreatePublisherRun(t.Context(), "url", "retry", "publisher-access", "signed-proof", nil, controlv1.HTTPProtection{}, "sjc"); err == nil || len(bodies) != 3 {
 		t.Fatal("generic location reached the server")
 	}
 	for _, invalid := range []*trafficlimits.Selection{
@@ -61,7 +64,7 @@ func TestPublisherRunTrafficUsesTypedBodyAndProofHeaders(t *testing.T) {
 		{RatePer: new("invalid")},
 		{TotalUploadBytes: new(int64(-1))},
 	} {
-		if _, err := client.CreatePublisherRun(t.Context(), "url", "retry", "publisher-access", "signed-proof", invalid); err == nil || len(bodies) != 3 {
+		if _, err := client.CreatePublisherRun(t.Context(), "url", "retry", "publisher-access", "signed-proof", invalid, controlv1.HTTPProtection{}); err == nil || len(bodies) != 3 {
 			t.Fatal("invalid selection reached the server")
 		}
 	}

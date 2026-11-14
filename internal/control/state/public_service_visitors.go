@@ -44,6 +44,11 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 	if err != nil || !service.Public || service.IngressPoolID != pool || int(service.ServicePort.Int32) != port {
 		return result, errors.Join(ErrServiceAccess, err)
 	}
+	if service.Protocol == "http" {
+		if err := d.publicHTTPSourceAllowed(ctx, q, service.ID, source, now); err != nil {
+			return result, err
+		}
+	}
 	current, err := lockCurrentIngressLease(ctx, q, lease, now)
 	if err != nil || current.Draining {
 		return result, errors.Join(ErrServiceAccess, err)

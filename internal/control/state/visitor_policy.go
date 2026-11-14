@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -246,7 +247,37 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 	}
 	defer rollback(ctx, tx, "read publisher visitor policy", &retErr)()
 	q := controlstatedb.New(tx)
-	var sourceKey []byte
+	authority, err := d.authorizePublisherVisitorRun(ctx, tx, q, scope, run, number, token, now)
+	if err != nil {
+		return result, err
+	}
+	result, err = d.readVisitorPolicy(ctx, tx, scope, after, now)
+	if err != nil {
+		return result, err
+	}
+	if authority.sourceKey != nil {
+		result.VisitorSourceKey = &authority.sourceKey
+	}
+	if authority.protection.BlocksSources() {
+		result.TemporaryBlocks, err = readHTTPTemporaryBlocks(ctx, q, scope, now)
+		if err != nil {
+			return result, err
+		}
+	}
+	return result, tx.Commit(ctx)
+}
+
+type publisherVisitorRun struct {
+	sourceKey  []byte
+	protection httpprotection.Settings
+}
+
+// policy reads and mitigation reports share the exact run and grant checks.
+// callers own the transaction and retain these locks through their operation.
+func (d *Database) authorizePublisherVisitorRun(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, scope visitorscope.Scope, run string, number int64, token string, now time.Time) (result publisherVisitorRun, err error) {
+	if !scope.Valid() || run == "" || number < 1 {
+		return result, ErrVisitorPolicy
+	}
 	switch scope.Kind {
 	case visitorscope.PublicURL:
 		// policy refresh does not mutate team authority. share the same guard
@@ -281,7 +312,10 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 		if err != nil {
 			return result, err
 		}
-		sourceKey = key[:]
+		result.sourceKey = key[:]
+		if err := json.Unmarshal(row.HttpProtection, &result.protection); err != nil || result.protection.Validate() != nil {
+			return result, ErrVisitorPolicy
+		}
 	case visitorscope.Service:
 		row, err := serviceRunAuthorization(ctx, tx, q, scope.ID, run, token, now)
 		if err != nil {
@@ -290,15 +324,15 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 		if row.RunNumber != number {
 			return result, ErrServiceAccess
 		}
+		settings, err := d.serviceHTTPSettings(ctx, q, scope.ID)
+		if err != nil {
+			return result, err
+		}
+		if settings != nil && settings.Protection != nil {
+			result.protection = *settings.Protection
+		}
 	default:
 		return result, ErrVisitorPolicy
 	}
-	result, err = d.readVisitorPolicy(ctx, tx, scope, after, now)
-	if err != nil {
-		return result, err
-	}
-	if sourceKey != nil {
-		result.VisitorSourceKey = &sourceKey
-	}
-	return result, tx.Commit(ctx)
+	return result, nil
 }

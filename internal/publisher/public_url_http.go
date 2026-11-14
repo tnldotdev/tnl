@@ -108,8 +108,12 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	}
 	// integration URLs retain their protocol-specific validation.
 	var protection *httpprotection.Inspector
+	base := config.Context
+	if base == nil {
+		base = context.Background()
+	}
 	if config.Purpose != controlv1.Oauth && config.Purpose != controlv1.Webhooks {
-		protection, err = httpprotection.New(config.Protection)
+		protection, err = httpprotection.Prepare(base, config.Protection, config.ReportRejections, config.SourceBlocked)
 		if err != nil {
 			if proxy != nil {
 				_ = proxy.Close()
@@ -121,10 +125,6 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	queue := newRouteListener()
 	shareSlots := make(chan struct{}, 16)
 	probeSlots := make(chan struct{}, 4)
-	base := config.Context
-	if base == nil {
-		base = context.Background()
-	}
 	base = observability.NarrowIdentity(base, observability.Identity{PublicURLID: config.PublicURLID})
 	base = observability.WithFields(base, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "public_endpoint", Exposure: "public"})
 	base = observability.WithPublisherRecovery(base)

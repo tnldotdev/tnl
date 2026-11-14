@@ -24,6 +24,7 @@ func TestIntegrationMigrationRejectsCompatibilityViewBaseline(t *testing.T) {
 	// silently turn this into a test of the current baseline.
 	const previous = "tnl-control-fresh-v1-workload-gitlab"
 	for _, query := range []string{
+		`DELETE FROM control.goose_db_version WHERE version_id > 1`,
 		`CREATE VIEW control.publish_run_publisher_grants AS
 		 SELECT id AS publish_run_id, COALESCE(publisher_identity_id,'')::text AS publisher_identity_id,
 		 COALESCE(publisher_grant_id,'')::text AS publisher_grant_id

@@ -120,6 +120,11 @@ Keep the released baseline intact. Future schema changes need ordered migrations
 and an explicit compatibility plan, not a new feature-specific baseline identity.
 A publisher restart does not restore its application sockets.
 
+The HTTP temporary-block migration advances the server schema to version `2`
+without changing baseline identity `v1`. Stop the server roles, run `tnld migrate`
+against the direct database URL, then restart matching server binaries together.
+Old server binaries reject the new schema; do not overlap the two versions.
+
 The client telemetry baseline also requires a fresh client state directory. Use
 `TNL_STATE_DIR` to select a new directory and sign in again; do not copy an older
 `v1.db` or its publisher credentials into it.

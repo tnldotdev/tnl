@@ -3,8 +3,11 @@ package httpaccess
 import (
 	"context"
 	"errors"
+	"net/netip"
+	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -23,6 +26,8 @@ type Policy struct {
 	cancel    context.CancelFunc
 	done      chan struct{}
 	gate      chan struct{}
+	mu        sync.RWMutex
+	blocks    httpprotection.Blocks
 }
 
 // PreparePolicy starts one run-bound policy owner. close joins refresh before
@@ -65,6 +70,12 @@ func (p *Policy) Lease() *visitorlease.Lease { return p.lease }
 // SourceKey is fixed by the initial policy snapshot before the owner is shared.
 func (p *Policy) SourceKey() [32]byte { return p.sourceKey }
 
+func (p *Policy) SourceBlocked(source netip.Addr, now time.Time) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.blocks.Blocked(source, now)
+}
+
 // Refresh shares the same bounded fetch-through-apply operation between explicit
 // credential preparation and the background owner; ordinary requests never call it.
 func (p *Policy) Refresh(ctx context.Context) error {
@@ -99,6 +110,10 @@ func (p *Policy) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	blocks, err := httpprotection.DecodeBlocks(response.TemporaryBlocks)
+	if err != nil {
+		return err
+	}
 	key := p.sourceKey
 	if p.request.Resource.Kind == "public_url" {
 		if response.VisitorSourceKey == nil || len(*response.VisitorSourceKey) != 32 || response.VisitorSourceAuthority != nil {
@@ -112,6 +127,9 @@ func (p *Policy) Refresh(ctx context.Context) error {
 	if err := p.lease.Apply(request, update); err != nil {
 		return err
 	}
+	p.mu.Lock()
+	p.blocks = blocks
+	p.mu.Unlock()
 	// services have no source key; keep their zero value immutable too.
 	if key != ([32]byte{}) && p.sourceKey == ([32]byte{}) {
 		p.sourceKey = key

@@ -22,7 +22,7 @@ func createPublishRun(ctx context.Context, config Config, publicURL controlv1.Pu
 		return controlv1.PublishRunSetup{}, err
 	}
 	for {
-		setup, err := config.Control.CreatePublishRun(ctx, publicURL.Id, idempotencyKey, config.PreferredRegions...)
+		setup, err := config.Control.CreatePublishRun(ctx, publicURL.Id, idempotencyKey, config.Protection, config.PreferredRegions...)
 		if err == nil {
 			return setup, nil
 		}

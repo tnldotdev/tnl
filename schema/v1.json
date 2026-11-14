@@ -685,6 +685,9 @@
                             "type": "string",
                             "enum": ["block", "detect", "off"]
                           },
+                          "temporary_blocks": {
+                            "type": "boolean"
+                          },
                           "max_body_bytes": {
                             "type": "integer",
                             "maximum": 2097152,
@@ -1098,6 +1101,9 @@
                           "waf": {
                             "type": "string",
                             "enum": ["block", "detect", "off"]
+                          },
+                          "temporary_blocks": {
+                            "type": "boolean"
                           },
                           "max_body_bytes": {
                             "type": "integer",
