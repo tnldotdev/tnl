@@ -66,16 +66,17 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration, local bool) 
 			if config.ValidateRemoteHTTP(s.HTTP) != nil {
 				return ErrProjectConfigurationInvalid
 			}
-			if s.HTTP.Access != nil {
-				s.HTTP.Access.Mode = s.HTTP.Access.VisitorMode()
-				prefixes, err := authorization.CanonicalizeIPPrefixes(s.HTTP.Access.IP)
-				if err != nil {
-					return ErrProjectConfigurationInvalid
-				}
-				s.HTTP.Access.IP = prefixes
-			}
-		} else if s.HTTP.Access != nil || s.HTTP.Limits != nil {
+		}
+		if config.ValidateServiceHTTP(s.HTTP) != nil || s.PublicURL != nil && (s.HTTP.Access != nil || s.HTTP.Limits != nil) {
 			return ErrProjectConfigurationInvalid
+		}
+		if s.HTTP.Access != nil {
+			s.HTTP.Access.Mode = s.HTTP.Access.VisitorMode()
+			prefixes, err := authorization.CanonicalizeIPPrefixes(s.HTTP.Access.IP)
+			if err != nil {
+				return ErrProjectConfigurationInvalid
+			}
+			s.HTTP.Access.IP = prefixes
 		}
 		if r := s.HTTP.Readiness; r != nil && r.Path != "/" && !targetsyntax.ValidMountPrefix(r.Path) {
 			return ErrProjectConfigurationInvalid

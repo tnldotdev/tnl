@@ -68,6 +68,9 @@ type BindingReferences<
           readonly http?: { readiness?: never; paths?: never; open?: never };
         }
     : { readonly publicURL?: never; readonly http?: never }) &
+  (Binding extends { readonly publicURL: object }
+    ? { readonly http?: { readonly access?: never; readonly limits?: never } }
+    : unknown) &
   (Deployment extends "local"
     ? Binding extends { readonly publicURL: object }
       ? { readonly public?: never }
@@ -76,7 +79,6 @@ type BindingReferences<
       ? {
           readonly type?: "app" | "address";
           readonly publicURL?: { readonly ephemeral?: false };
-          readonly http?: { readonly access?: never; readonly limits?: never };
         }
       : ({ readonly address: string | number } | { readonly type: "eks" | "rds" }) & {
           readonly type?: "address" | "eks" | "rds";

@@ -33,6 +33,13 @@ func (d *Database) serviceHTTPSourceAllowed(ctx context.Context, q *controlstate
 }
 
 func (d *Database) serviceHTTPSettings(ctx context.Context, q *controlstatedb.Queries, service string) (*config.HTTPService, error) {
+	local, err := q.GetLocalServiceHTTPConfiguration(ctx, text(service))
+	if err == nil {
+		return d.openLocalServiceHTTP(service, local.HttpStorageKeyID.String, local.HttpConfigurationCiphertext)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
 	row, err := q.GetDeploymentServiceConfiguration(ctx, text(service))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil

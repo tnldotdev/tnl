@@ -739,15 +739,17 @@ type ControlIngressServicePortRange struct {
 }
 
 type ControlLocalProjectService struct {
-	TeamID              string
-	ProjectKey          string
-	SourceFingerprint   string
-	Service             string
-	WorktreeKey         string
-	ServiceID           pgtype.Text
-	PublicURLID         pgtype.Text
-	VisitorGrantID      pgtype.Text
-	CreatedByIdentityID string
+	TeamID                      string
+	ProjectKey                  string
+	SourceFingerprint           string
+	Service                     string
+	WorktreeKey                 string
+	ServiceID                   pgtype.Text
+	PublicURLID                 pgtype.Text
+	VisitorGrantID              pgtype.Text
+	HttpConfigurationCiphertext []byte
+	HttpStorageKeyID            pgtype.Text
+	CreatedByIdentityID         string
 }
 
 type ControlMaintenanceControl struct {

@@ -2248,9 +2248,13 @@ CREATE TABLE control.local_project_services (
     service_id text UNIQUE REFERENCES control.services(id) ON DELETE RESTRICT,
     public_url_id text UNIQUE REFERENCES control.public_urls(id) ON DELETE RESTRICT,
     visitor_grant_id text,
+    http_configuration_ciphertext bytea,
+    http_storage_key_id text,
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     PRIMARY KEY (team_id, project_key, service, worktree_key),
-    CHECK ((service_id IS NULL) <> (public_url_id IS NULL))
+    CHECK ((service_id IS NULL) <> (public_url_id IS NULL)),
+    CHECK ((http_configuration_ciphertext IS NULL) = (http_storage_key_id IS NULL)),
+    CHECK (http_configuration_ciphertext IS NULL OR service_id IS NOT NULL)
 );
 CREATE TABLE control.deployment_publisher_enrollments (
     id text PRIMARY KEY,

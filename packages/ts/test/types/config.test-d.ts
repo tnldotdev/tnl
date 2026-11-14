@@ -247,6 +247,35 @@ test("configuration context and arbitrary service lookups preserve absence", () 
 
 test("configuration enforces service ownership and references for literals and factories", () => {
   defineConfig({
+    services: { web: {} },
+    deployments: {
+      local: {
+        targets: {
+          web: {
+            public: true,
+            http: { access: { mode: "restricted", ip: ["192.0.2.1"] }, limits: { total: 100 } },
+          },
+        },
+      },
+      production: {
+        targets: {
+          web: {
+            address: "http://web.internal:3000",
+            public: true,
+            http: { access: { mode: "restricted", ip: ["192.0.2.1"] }, limits: { total: 100 } },
+          },
+        },
+      },
+    },
+  });
+  defineConfig({
+    services: { web: {} },
+    deployments: {
+      // @ts-expect-error legacy preview URL policy has one owner, in either placement.
+      local: { targets: { web: { publicURL: {}, http: { access: "restricted" } } } },
+    },
+  });
+  defineConfig({
     services: { web: {}, api: {} },
     deployments: {
       production: {

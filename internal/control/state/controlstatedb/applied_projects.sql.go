@@ -130,6 +130,23 @@ func (q *Queries) GetLocalProjectService(ctx context.Context, arg GetLocalProjec
 	return i, err
 }
 
+const getLocalServiceHTTPConfiguration = `-- name: GetLocalServiceHTTPConfiguration :one
+SELECT http_configuration_ciphertext,http_storage_key_id
+FROM control.local_project_services WHERE service_id=$1
+`
+
+type GetLocalServiceHTTPConfigurationRow struct {
+	HttpConfigurationCiphertext []byte
+	HttpStorageKeyID            pgtype.Text
+}
+
+func (q *Queries) GetLocalServiceHTTPConfiguration(ctx context.Context, serviceID pgtype.Text) (GetLocalServiceHTTPConfigurationRow, error) {
+	row := q.db.QueryRow(ctx, getLocalServiceHTTPConfiguration, serviceID)
+	var i GetLocalServiceHTTPConfigurationRow
+	err := row.Scan(&i.HttpConfigurationCiphertext, &i.HttpStorageKeyID)
+	return i, err
+}
+
 const invalidateDeploymentPublisherRuntimeHealth = `-- name: InvalidateDeploymentPublisherRuntimeHealth :exec
 UPDATE control.deployment_publisher_members
 SET healthy=false, acknowledged_at=NULL
@@ -691,4 +708,24 @@ func (q *Queries) ServiceNamespaceOwnsHostname(ctx context.Context, hostname str
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const setLocalServiceHTTPConfiguration = `-- name: SetLocalServiceHTTPConfiguration :execrows
+UPDATE control.local_project_services
+SET http_configuration_ciphertext=$1,http_storage_key_id=$2
+WHERE service_id=$3
+`
+
+type SetLocalServiceHTTPConfigurationParams struct {
+	Ciphertext   []byte
+	StorageKeyID pgtype.Text
+	ServiceID    pgtype.Text
+}
+
+func (q *Queries) SetLocalServiceHTTPConfiguration(ctx context.Context, arg SetLocalServiceHTTPConfigurationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setLocalServiceHTTPConfiguration, arg.Ciphertext, arg.StorageKeyID, arg.ServiceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

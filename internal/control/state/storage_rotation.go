@@ -82,6 +82,7 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.connector_peer_pending_bindings WHERE storage_key_id = $1) +
 			(SELECT count(*) FROM control.workload_sessions WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.applied_projects WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.local_project_services WHERE http_storage_key_id=$1) +
 			(SELECT count(*) FROM control.deployments WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.deployment_publisher_enrollments WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.service_http_browser_logins WHERE storage_key_id=$1) +
@@ -346,6 +347,9 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		{`SELECT ctid::text, team_id || '/' || project_key, configuration_ciphertext FROM control.applied_projects
 		  WHERE storage_key_id=$1 ORDER BY team_id,project_key FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"configuration_ciphertext", "storage_key_id", "control.applied_projects", func(id string) string { return "applied-project/" + id }},
+		{`SELECT ctid::text,service_id,http_configuration_ciphertext FROM control.local_project_services
+		  WHERE http_storage_key_id=$1 ORDER BY service_id FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"http_configuration_ciphertext", "http_storage_key_id", "control.local_project_services", localServiceHTTPContext},
 		{`SELECT ctid::text,id,configuration_ciphertext FROM control.deployments
 		  WHERE storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"configuration_ciphertext", "storage_key_id", "control.deployments", deploymentConfigurationContext},

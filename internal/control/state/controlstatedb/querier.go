@@ -217,6 +217,7 @@ type Querier interface {
 	GetIngressPool(ctx context.Context, id string) (ControlIngressPool, error)
 	GetInvitationByIdempotency(ctx context.Context, arg GetInvitationByIdempotencyParams) (GetInvitationByIdempotencyRow, error)
 	GetLocalProjectService(ctx context.Context, arg GetLocalProjectServiceParams) (GetLocalProjectServiceRow, error)
+	GetLocalServiceHTTPConfiguration(ctx context.Context, serviceID pgtype.Text) (GetLocalServiceHTTPConfigurationRow, error)
 	GetManagedCertificateDomainKind(ctx context.Context, domainID string) (string, error)
 	GetOpenPublicURLRecoveryEpisode(ctx context.Context, arg GetOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
 	GetOpenPublishRun(ctx context.Context, publicUrlID string) (ControlPublishRun, error)
@@ -634,6 +635,7 @@ type Querier interface {
 	SetDNSReadyDomainDefault(ctx context.Context, arg SetDNSReadyDomainDefaultParams) (int64, error)
 	SetDomainAuthorityRevision(ctx context.Context, arg SetDomainAuthorityRevisionParams) error
 	SetIdentityInitialTeam(ctx context.Context, arg SetIdentityInitialTeamParams) error
+	SetLocalServiceHTTPConfiguration(ctx context.Context, arg SetLocalServiceHTTPConfigurationParams) (int64, error)
 	SetMaintenanceControl(ctx context.Context, arg SetMaintenanceControlParams) (ControlMaintenanceControl, error)
 	SetPersonalTeamDefaultDomain(ctx context.Context, arg SetPersonalTeamDefaultDomainParams) error
 	SetPreviewTeamAccess(ctx context.Context, arg SetPreviewTeamAccessParams) error
