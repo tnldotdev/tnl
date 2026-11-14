@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 )
 
@@ -37,7 +38,9 @@ func testManagedVisitorTLSWithPlaintextHTTPTarget(t *testing.T, h2 bool) {
 		_, _ = io.WriteString(w, "plaintext backend")
 	}))
 	defer target.Close()
+	summaries := make(chan inspection.Summary, 2)
 	server := servicestream.Stream{Protocol: config.ProtocolHTTP, Hostname: host, Target: strings.TrimPrefix(target.URL, "http://"),
+		InspectionMode: inspection.SummaryMode, ObserveSummary: func(summary inspection.Summary) { summaries <- summary },
 		TLS: &tls.Config{Certificates: []tls.Certificate{certificates.server}},
 		Visitor: servicestream.ConnectorVisitor{Admission: servicestream.AdmissionFixture{Check: func(context.Context) (servicestream.Decision, error) {
 			return servicestream.Decision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
@@ -46,7 +49,7 @@ func testManagedVisitorTLSWithPlaintextHTTPTarget(t *testing.T, h2 bool) {
 	transport := &http.Transport{ForceAttemptHTTP2: h2, TLSClientConfig: &tls.Config{RootCAs: certificates.roots, ServerName: host}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
-	response, err := client.Get("https://" + address)
+	response, err := client.Get("https://" + address + "/observed?token=private")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +61,15 @@ func testManagedVisitorTLSWithPlaintextHTTPTarget(t *testing.T, h2 bool) {
 	}
 	if err != nil || string(body) != "plaintext backend" || response.ProtoMajor != wantProtocol {
 		t.Fatalf("verified visitor to plaintext target: %q %v", body, err)
+	}
+	select {
+	case summary := <-summaries:
+		if summary.Protocol != inspection.HTTP || summary.Origin != "local_service" || summary.Path != "/observed" ||
+			summary.Status != http.StatusOK || summary.Result != inspection.ResultOK {
+			t.Fatal("connector HTTP lost the body-free response summary", summary)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("connector HTTP did not emit its request summary")
 	}
 	// omitting target TLS never admits a plaintext visitor.
 	plain, err := net.DialTimeout("tcp", address, time.Second)

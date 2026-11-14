@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
@@ -35,22 +36,24 @@ type HTTPControl interface {
 // http binds each request to one trusted forwarding header. policy and
 // browser credential renewal are prepared once by the service run owner.
 type HTTP struct {
-	AuditSink serviceaudit.Sink
-	Control   HTTPControl
-	Subject   visitorscope.Scope
-	RunID     string
-	Number    int64
-	Token     credentials.ServiceRunToken
-	Hostname  string
-	Port      uint16
-	Header    tunnelv1.ServiceForwardingHeader
-	Requests  *requestlimit.HTTP
-	Policy    *visitorlease.Lease
-	browser   *httpaccess.Browser
+	AuditSink      serviceaudit.Sink
+	InspectionMode inspection.Mode
+	ObserveSummary inspection.Observer
+	Control        HTTPControl
+	Subject        visitorscope.Scope
+	RunID          string
+	Number         int64
+	Token          credentials.ServiceRunToken
+	Hostname       string
+	Port           uint16
+	Header         tunnelv1.ServiceForwardingHeader
+	Requests       *requestlimit.HTTP
+	Policy         *visitorlease.Lease
+	browser        *httpaccess.Browser
 }
 
 func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
-	if f.Control == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() {
+	if f.Control == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || !f.InspectionMode.Valid() {
 		return HTTP{}, nil, servicestream.ErrEndpoint
 	}
 	policy, err := httpaccess.PreparePolicy(ctx, f.Control, f.Subject, f.RunID, f.Number, f.Token.String(), nil)
@@ -86,6 +89,8 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 	}
 	wrap := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w, r, finishInspection := inspection.BeginHTTP(w, r, f.InspectionMode, f.ObserveSummary)
+			defer finishInspection()
 			w.Header().Set("Cache-Control", "no-store")
 			outcome, reason := "denied", "invalid_request"
 			reported := false

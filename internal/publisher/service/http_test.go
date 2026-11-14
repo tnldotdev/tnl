@@ -43,6 +43,15 @@ func serviceHTTPProtocolFixture(t *testing.T, target http.Handler, h2 bool) (*ht
 
 func serviceHTTPApplicationFixture(t *testing.T, target http.Handler, h2, inline bool, audits ...serviceaudit.Sink) (*http.Client, *visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
 	t.Helper()
+	return serviceHTTPConfiguredFixture(t, target, h2, inline, func(frontend *HTTP) {
+		if len(audits) != 0 {
+			frontend.AuditSink = audits[0]
+		}
+	})
+}
+
+func serviceHTTPConfiguredFixture(t *testing.T, target http.Handler, h2, inline bool, configure func(*HTTP)) (*http.Client, *visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
+	t.Helper()
 	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}
 	policy, update, token := visitorfixture.ScopePolicy(t, scope, "preview.example.test", 443, false)
 	application := servicestream.HTTPTarget{Handler: target}
@@ -61,8 +70,8 @@ func serviceHTTPApplicationFixture(t *testing.T, target http.Handler, h2, inline
 		t.Fatal(err)
 	}
 	frontend := HTTP{Subject: scope, RunID: header.ServiceRunID, Number: 1, Hostname: update.View.Hostname, Port: update.View.Port, Header: header, Policy: policy}
-	if len(audits) != 0 {
-		frontend.AuditSink = audits[0]
+	if configure != nil {
+		configure(&frontend)
 	}
 	transport := &http.Transport{ForceAttemptHTTP2: h2, TLSClientConfig: &tls.Config{RootCAs: visitorfixture.Roots(t, certificate)}, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		visitor, raw := net.Pipe()

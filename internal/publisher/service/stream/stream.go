@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
@@ -31,17 +32,19 @@ type Decision struct {
 // selected service owns its certificate name; SNI cannot select another target.
 // target trust is independent of the public WebPKI identity presented to clients.
 type Stream struct {
-	Protocol     config.ProtocolName
-	Public       bool
-	Hostname     string
-	HTTPRequests RequestLimits
-	Kubernetes   KubernetesLimits
-	Authority    string
-	Target       string
-	Handler      http.Handler
-	TLS          *tls.Config
-	TargetTLS    *tls.Config
-	Visitor      Authentication
+	Protocol       config.ProtocolName
+	Public         bool
+	Hostname       string
+	HTTPRequests   RequestLimits
+	Kubernetes     KubernetesLimits
+	Authority      string
+	Target         string
+	Handler        http.Handler
+	InspectionMode inspection.Mode
+	ObserveSummary inspection.Observer
+	TLS            *tls.Config
+	TargetTLS      *tls.Config
+	Visitor        Authentication
 }
 
 func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
@@ -326,6 +329,8 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		target := HTTPTarget{Address: s.Target, Transport: transport, connector: connector, lifetime: ctx, track: trackTarget, enter: enterConnectorWork}
 		wrap := func(next http.Handler) http.Handler {
 			return wrapHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w, r, finishInspection := inspection.BeginHTTP(w, r, s.InspectionMode, s.ObserveSummary)
+				defer finishInspection()
 				// connector admission is the credential, but every HTTP request still
 				// rechecks current policy before any target bytes on the shared socket.
 				check, cancel := context.WithTimeout(r.Context(), 5*time.Second)

@@ -260,6 +260,10 @@ publisher/service -------+
 - `service/http.go` builds the service HTTP frontend. `service/stream` handles
   visitor TLS, protocol negotiation, expiry, target connections, and cleanup.
   The run supplies current admission and a shared request budget.
+- `observability/inspection` records body-free HTTP summaries for public and
+  connector requests. The target transport marks accepted application responses;
+  a denied request or failed target dial remains a tnl response. Inspection
+  observes completion without owning the handler or changing its cancellation.
 
 Neither shared package nor the service tree imports publisher root.
 
