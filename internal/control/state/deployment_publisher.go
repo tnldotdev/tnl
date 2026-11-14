@@ -53,7 +53,7 @@ type DeploymentPublisherServiceAssignment struct {
 	Kind          string                      `json:"service_kind"`
 	GrantID       string                      `json:"grant_id"`
 	Hostname      string                      `json:"hostname,omitempty"`
-	TrustRevision int64                       `json:"trust_revision,string"`
+	TrustRevision int64                       `json:"trust_revision,omitempty,string"`
 	Configuration ProjectServiceConfiguration `json:"configuration"`
 }
 type DeploymentPublisherAssignments struct {
@@ -346,7 +346,9 @@ func (d *Database) GetDeploymentPublisherAssignments(ctx context.Context, token 
 				return result, err
 			}
 		} else {
-			if err = tx.QueryRow(ctx, `SELECT canonical_hostname,mutation_revision FROM control.public_urls WHERE id=$1 AND lifecycle_state='enabled'`, s.PublicURLID.String).Scan(&a.Hostname, &a.TrustRevision); err != nil {
+			// public URLs have no service trust revision. their exact grant and
+			// binding configuration change together, not when a run starts.
+			if err = tx.QueryRow(ctx, `SELECT canonical_hostname FROM control.public_urls WHERE id=$1 AND lifecycle_state='enabled'`, s.PublicURLID.String).Scan(&a.Hostname); err != nil {
 				return result, err
 			}
 		}

@@ -2773,7 +2773,9 @@ type DeploymentPublisherServiceAssignment struct {
 	Service       string                                          `json:"service"`
 	ServiceId     string                                          `json:"service_id"`
 	ServiceKind   DeploymentPublisherServiceAssignmentServiceKind `json:"service_kind"`
-	TrustRevision int64                                           `json:"trust_revision,omitempty,string"`
+
+	// TrustRevision Required only for saved services. Public URL assignments omit this field; their exact grant and binding configuration fence changes without using the publish-run mutation counter.
+	TrustRevision int64 `json:"trust_revision,omitempty,string"`
 }
 
 // DeploymentPublisherServiceAssignmentServiceKind defines model for DeploymentPublisherServiceAssignment.ServiceKind.

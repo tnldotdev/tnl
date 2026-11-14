@@ -60,7 +60,7 @@ func TestPublicURLAssignmentUsesExistingSignedRunAndRetainsSavedURL(t *testing.T
 		t.Fatal(err)
 	}
 	publication := publisherdeployment.AssignmentPublisher{Member: controlv1.DeploymentPublisherIdentity{TeamId: u.TeamId, DeploymentId: "dpl_test", DeploymentName: "production", PublisherIdentityId: identity.ClientId, KeyId: identity.KeyId}, Private: key, State: profile, Control: publisheridentity.NativeControl{PublicURLControl: control}, Authority: authority}
-	assignment := controlv1.DeploymentPublisherServiceAssignment{Service: "web", ServiceId: u.Id, ServiceKind: "public_url", GrantId: identity.GrantId, Hostname: &u.CanonicalHostname, TrustRevision: u.MutationRevision, Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocol("http")), Target: local.URL, PublicUrl: &controlv1.ProjectServicePublicURL{}}}
+	assignment := controlv1.DeploymentPublisherServiceAssignment{Service: "web", ServiceId: u.Id, ServiceKind: "public_url", GrantId: identity.GrantId, Hostname: &u.CanonicalHostname, Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocol("http")), Target: local.URL, PublicUrl: &controlv1.ProjectServicePublicURL{}}}
 	ctx, cancel := context.WithCancel(t.Context())
 	ready, done := make(chan struct{}, 1), make(chan error, 1)
 	go func() {
