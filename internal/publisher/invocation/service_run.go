@@ -11,8 +11,10 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
@@ -20,28 +22,6 @@ import (
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
-
-type privateProjectControl struct {
-	publisherservice.RunControl
-	number   atomic.Uint64
-	prepared func(uint64) error
-}
-
-func (c *privateProjectControl) PrepareServiceRun(ctx context.Context, id, key, access string, declaration controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error) {
-	preparation, err := c.RunControl.PrepareServiceRun(ctx, id, key, access, declaration)
-	if err != nil && privateAppRetry(err) && ctx.Err() == nil {
-		// a lost response must retry the same idempotency key before another
-		// run is considered. this does not issue a second task key or grant.
-		preparation, err = c.RunControl.PrepareServiceRun(ctx, id, key, access, declaration)
-	}
-	if err == nil && preparation.RunNumber > 0 {
-		c.number.Store(uint64(preparation.RunNumber))
-		if c.prepared != nil {
-			err = c.prepared(uint64(preparation.RunNumber))
-		}
-	}
-	return preparation, err
-}
 
 func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publisherapp.Service) (publisherapp.Configuration, error) {
 	project := a.project
@@ -147,14 +127,21 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 		}
 		return observation
 	}
-	return publisherapp.Configuration{CheckPrivate: check, RunPrivate: func(ctx context.Context, observe func(uint64, bool) error) error {
-		control := &privateProjectControl{RunControl: native}
-		control.prepared = func(run uint64) error {
-			pinMu.Lock()
-			pin, pinRun = pending, run
-			pinMu.Unlock()
-			return observe(run, false)
-		}
+	policy, err := config.ResolveInspection(effective.Inspection, config.Protocol(definition))
+	if err != nil {
+		return publisherapp.Configuration{}, err
+	}
+	primary, shared, err := InspectionRoots(ctx, project.Root)
+	if err != nil {
+		return publisherapp.Configuration{}, err
+	}
+	publication := &publisherapp.ServicePublication{Options: clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish,
+		Server: auth.ServerEndpoint, Project: project.Root, Target: service.Target, Service: service.Name, ServiceProtocol: saved.Protocol}, Check: check}
+	if saved.Protocol == controlv1.ServiceProtocolHTTP && saved.Endpoint != nil && saved.Endpoint.Public {
+		publication.URL = "https://" + saved.Endpoint.Hostname
+	}
+	publication.Run = func(ctx context.Context, observe func(uint64, bool) error, summary inspection.Observer) error {
+		var runNumber atomic.Uint64
 		capture := func(target targetplan.TargetSnapshot) error {
 			actual, err := binding.Capture(ctx)
 			if err != nil {
@@ -169,9 +156,18 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 			return nil
 		}
 		publish := func() error {
-			return targetplan.PublishPrivate(ctx, plan, publisherservice.RunConfig{Telemetry: a.Telemetry, Control: control, State: profile, Access: native.Access, Identity: identity, ServiceID: saved.Id, Target: plan.Target, Metadata: publisheridentity.ServiceMetadata(saved),
+			return targetplan.PublishPrivate(ctx, plan, publisherservice.RunConfig{Telemetry: a.Telemetry, Control: native, State: profile, Access: native.Access, Identity: identity, ServiceID: saved.Id, Target: plan.Target, Metadata: publisheridentity.ServiceMetadata(saved),
+				InspectionMode: policy.Mode, ObserveSummary: summary,
+				Prepared: func(preparation controlv1.ServiceRunPreparation) error {
+					run := uint64(preparation.RunNumber)
+					pinMu.Lock()
+					pin, pinRun = pending, run
+					pinMu.Unlock()
+					runNumber.Store(run)
+					return observe(run, false)
+				},
 				AdmitRequest: func(r *http.Request) error {
-					run := control.number.Load()
+					run := runNumber.Load()
 					if ctx.Err() != nil || !a.manager.CurrentRun(service.Name, service.RegistrationID, service.Target, run) {
 						return publisherapp.ErrRegistrationStale
 					}
@@ -190,14 +186,14 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 				}),
 				Healthy: func(probe context.Context) bool {
 					current := service
-					current.RunNumber = control.number.Load()
+					current.RunNumber = runNumber.Load()
 					observation := localCheck(probe, current)
 					if saved.Endpoint == nil || !saved.Endpoint.Public || saved.Protocol != controlv1.ServiceProtocolHTTP {
 						a.manager.Observe(observation)
 					}
 					return observation.Ready
 				}, Ready: func() error {
-					run := control.number.Load()
+					run := runNumber.Load()
 					if err := observe(run, true); err != nil {
 						return err
 					}
@@ -218,7 +214,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 			if err == nil || !privateAppRetry(err) {
 				return err
 			}
-			if run := control.number.Load(); run != 0 {
+			if run := runNumber.Load(); run != 0 {
 				if err := observe(run, false); err != nil {
 					return err
 				}
@@ -235,7 +231,8 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 			}
 		}
 		return nil
-	}}, nil
+	}
+	return publisherapp.Configuration{Service: publication, Inspection: policy, PrimaryRoot: primary, SharedRoot: shared}, nil
 }
 
 func serviceReadinessProof(protocol controlv1.ServiceProtocol, path string, prepared func(httpaccess.ReadinessRun, *httpaccess.ReadinessProof)) func(httpaccess.ReadinessRun) *httpaccess.ReadinessProof {

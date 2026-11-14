@@ -65,11 +65,13 @@ type RunConfig struct {
 	resolvedTargetTLS *tls.Config
 	HeartbeatInterval time.Duration
 	Connect           func(context.Context, *Bound, uint8, ConnectOptions) (SlotSession, error)
-	Ready             func() error
-	TransportTLS      *tls.Config
-	RelayQUIC         muxsession.Connector
-	RelayTCP          muxsession.Connector
-	Connectivity      peer.ConnectivityOptions
+	// prepared observes validated control facts once, before starting that run.
+	Prepared     func(controlv1.ServiceRunPreparation) error
+	Ready        func() error
+	TransportTLS *tls.Config
+	RelayQUIC    muxsession.Connector
+	RelayTCP     muxsession.Connector
+	Connectivity peer.ConnectivityOptions
 	// PeerSocket is borrowed by qualification; the default service run owns one.
 	PeerSocket       *peer.Socket
 	Metadata         controlv1.ServiceMetadata
@@ -245,6 +247,11 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	prepared, err = newManagedPrepared(preparation, approved, config)
 	if err != nil {
 		return err
+	}
+	if config.Prepared != nil {
+		if err := config.Prepared(preparation); err != nil {
+			return err
+		}
 	}
 	// uncertain starts retry the exact prepared run, never a new preparation.
 	var setup controlv1.ServiceRunSetup
