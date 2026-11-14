@@ -88,7 +88,7 @@ type ServiceRunStore interface {
 
 type ServiceClientCertificateStore interface {
 	IssueServiceClientCertificate(context.Context, string, string, string, []byte, time.Time) (controlstate.ServiceClientCertificate, error)
-	AuthorizeServiceClientCertificate(context.Context, string, string, string, string, int64, netip.Addr, []byte, time.Time) (controlstate.ServiceVisitorValidity, error)
+	AuthorizeServiceClientCertificate(context.Context, string, string, string, string, int64, netip.Addr, int, []byte, time.Time) (controlstate.ServiceVisitorValidity, error)
 }
 
 type ServiceHTTPStore interface {

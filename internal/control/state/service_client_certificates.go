@@ -158,8 +158,8 @@ func (d *Database) IssueServiceClientCertificate(ctx context.Context, service, i
 	return result, tx.Commit(ctx)
 }
 
-func (d *Database) AuthorizeServiceClientCertificate(ctx context.Context, service, runID, token, visitor string, number int64, source netip.Addr, der []byte, now time.Time) (result ServiceVisitorValidity, retErr error) {
-	if len(der) == 0 || len(der) > 16<<10 || !source.IsValid() || source.Zone() != "" {
+func (d *Database) AuthorizeServiceClientCertificate(ctx context.Context, service, runID, token, visitor string, number int64, source netip.Addr, port int, der []byte, now time.Time) (result ServiceVisitorValidity, retErr error) {
+	if len(der) == 0 || len(der) > 16<<10 || !source.IsValid() || source.Zone() != "" || port < 1024 || port > 65535 {
 		return result, ErrServiceAccess
 	}
 	issuer, err := d.ServiceClientIssuer(ctx)
@@ -191,6 +191,17 @@ func (d *Database) AuthorizeServiceClientCertificate(ctx context.Context, servic
 		return result, err
 	}
 	if run.RunNumber != number {
+		return result, ErrServiceAccess
+	}
+	// the publisher supplies the destination from the forwarded PROXY metadata.
+	// match the exact control admission rather than a run's preparation-time port.
+	var destinationMatches bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.public_service_visitors
+	    WHERE visitor_connection_id=$1 AND service_id=$2 AND service_run_id=$3 AND destination_port=$4)`,
+		visitor, service, runID, port).Scan(&destinationMatches); err != nil {
+		return result, err
+	}
+	if !destinationMatches {
 		return result, ErrServiceAccess
 	}
 	digest := sha256.Sum256(der)

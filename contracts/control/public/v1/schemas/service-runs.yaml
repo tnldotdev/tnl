@@ -148,7 +148,7 @@ schemas:
   AuthorizeServiceClientCertificateRequest:
     type: object
     additionalProperties: false
-    required: [run_number, visitor_connection_id, source_ip, certificate]
+    required: [run_number, visitor_connection_id, source_ip, destination_port, certificate]
     properties:
       run_number:
         {
@@ -159,6 +159,7 @@ schemas:
         }
       visitor_connection_id: { $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID" }
       source_ip: { type: string, maxLength: 64 }
+      destination_port: { type: integer, minimum: 1024, maximum: 65535 }
       certificate: { type: string, format: byte, maxLength: 21848 }
   CreateServiceCertificateIssuanceRequest:
     type: object

@@ -183,7 +183,7 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	if err != nil || selected.ServiceRunID != runs[1].RunID {
 		t.Fatalf("full run selected: %+v %v", selected, err)
 	}
-	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, active.RunID, runs[0].Token, active.ConnectionID, active.RunNumber, netip.MustParseAddr("192.0.2.11"), certificate.Raw, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, active.RunID, runs[0].Token, active.ConnectionID, active.RunNumber, netip.MustParseAddr("192.0.2.11"), service.Endpoint.Port, certificate.Raw, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("certificate supplied another source: %v", err)
 	}
 	if err = d.ClosePublicServiceVisitor(ctx, ingress, active.ConnectionID, now); err != nil {
@@ -203,7 +203,7 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 			token = run.Token
 		}
 	}
-	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, active.RunID, token, active.ConnectionID, active.RunNumber, source, certificate.Raw, now); err != nil || !decision.Allowed {
+	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, active.RunID, token, active.ConnectionID, active.RunNumber, source, service.Endpoint.Port, certificate.Raw, now); err != nil || !decision.Allowed {
 		t.Fatal("valid direct certificate denied", err)
 	}
 	if err = d.PromotePublicServiceVisitor(ctx, otherIngress, active.ConnectionID, now); err != nil {

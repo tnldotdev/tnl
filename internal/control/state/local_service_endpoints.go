@@ -145,5 +145,5 @@ func (d *Database) setLocalServiceExposure(ctx context.Context, tx pgx.Tx, servi
 	if err = reconcileServiceEndpoint(ctx, tx, endpoint, now); err != nil {
 		return err
 	}
-	return bindServicePort(ctx, tx, service, port, public, now)
+	return bindServicePort(ctx, tx, service, port, public)
 }

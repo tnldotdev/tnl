@@ -85,7 +85,7 @@ func connectorPeerFixture(t *testing.T, target string, lifetime ...time.Duration
 	}
 	control := &connectorDeliveryFixture{delivery: d, policy: controlv1.VisitorPolicySnapshot{
 		Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: p.Preparation.ServiceId},
-		Issuer:   "https://control.example.test", Hostname: p.managedHostname, Port: int(p.servicePort), Enabled: true,
+		Issuer:   "https://control.example.test", Hostname: p.managedHostname, Port: 0, Enabled: true,
 		VisitorPolicyRevision: 1, MetadataRevision: p.metadataRevision, KeyRevision: 1,
 		VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "fixture", PublicKey: controlKey.Public().(ed25519.PublicKey)}},
 	}}
@@ -101,7 +101,7 @@ func connectorPeerFixture(t *testing.T, target string, lifetime ...time.Duration
 		t.Fatal(err)
 	}
 	t.Cleanup(peer.Close)
-	token, err := visitortoken.Sign(control.policy.Issuer, "fixture", controlKey, visitortoken.Permission{Scope: visitorscope.Scope{Kind: visitorscope.Service, ID: p.Preparation.ServiceId}, Hostname: p.managedHostname, Port: p.servicePort, VisitorPolicyRevision: 1, Subject: subject, ExpiresAt: now.Add(time.Minute)}, now)
+	token, err := visitortoken.Sign(control.policy.Issuer, "fixture", controlKey, visitortoken.Permission{Scope: visitorscope.Scope{Kind: visitorscope.Service, ID: p.Preparation.ServiceId}, Hostname: p.managedHostname, Port: 0, VisitorPolicyRevision: 1, Subject: subject, ExpiresAt: now.Add(time.Minute)}, now)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2072,6 +2072,7 @@ type AuthenticationFactsMethods string
 // AuthorizeServiceClientCertificateRequest defines model for AuthorizeServiceClientCertificateRequest.
 type AuthorizeServiceClientCertificateRequest struct {
 	Certificate         []byte              `json:"certificate"`
+	DestinationPort     int                 `json:"destination_port"`
 	RunNumber           int64               `json:"run_number,string"`
 	SourceIp            string              `json:"source_ip"`
 	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
@@ -3882,8 +3883,8 @@ type RelayServiceID = ResourceID
 
 // ReleaseServiceEndpointRequest defines model for ReleaseServiceEndpointRequest.
 type ReleaseServiceEndpointRequest struct {
-	ExpectedPort          int   `json:"expected_port"`
-	ExpectedTrustRevision int64 `json:"expected_trust_revision,string"`
+	ExpectedEndpointRevision int64 `json:"expected_endpoint_revision,string"`
+	ExpectedPort             int   `json:"expected_port"`
 }
 
 // RenameDeploymentNamespaceRequest defines model for RenameDeploymentNamespaceRequest.
@@ -3933,6 +3934,9 @@ type Service struct {
 
 	// Endpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 	Endpoint *ServiceEndpoint `json:"endpoint,omitempty"`
+
+	// EndpointRevision Revision of the hostname, domain, ingress pool, and port reservation. Independent of target trust and connector permission.
+	EndpointRevision int64 `json:"endpoint_revision,string"`
 
 	// HttpLimits Approved run-local HTTP request limits returned to the scoped publisher. Applies after visitor authorization on public and connector admissions.
 	HttpLimits *ProjectHTTPApplicationLimits `json:"http_limits,omitempty"`
@@ -4214,11 +4218,8 @@ type ServiceRunPreparation struct {
 	PublisherKeyId      ResourceID       `json:"publisher_key_id"`
 	RunNumber           int64            `json:"run_number,string"`
 	ServiceId           ServiceID        `json:"service_id"`
-
-	// ServicePort Exact captured public reservation, or zero for a connector-only service without a reservation. Never a local listener port.
-	ServicePort  int          `json:"service_port"`
-	ServiceRunId ServiceRunID `json:"service_run_id"`
-	TeamId       TeamID       `json:"team_id"`
+	ServiceRunId        ServiceRunID     `json:"service_run_id"`
+	TeamId              TeamID           `json:"team_id"`
 }
 
 // ServiceRunSetup defines model for ServiceRunSetup.
@@ -7482,18 +7483,18 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/renew (the `RenewServiceRun` operationId).
 	RenewServiceRun(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body RenewServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReportServiceRunObservationsWithBody Report connector connection observations for a service run
+	// ReportServiceRunObservationsWithBody Report HTTP decisions or connector connections for a service run
 	//
-	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	// Report bounded HTTP request decisions and connector connection facts for this exact publisher run. Control derives connector identity and source from the installed pair. HTTP decisions carry no actor identity. Reporting never authorizes traffic.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId).
 	ReportServiceRunObservationsWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReportServiceRunObservations Report connector connection observations for a service run
+	// ReportServiceRunObservations Report HTTP decisions or connector connections for a service run
 	//
-	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	// Report bounded HTTP request decisions and connector connection facts for this exact publisher run. Control derives connector identity and source from the installed pair. HTTP decisions carry no actor identity. Reporting never authorizes traffic.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -11602,9 +11603,9 @@ func (c *Client) RenewServiceRun(ctx context.Context, serviceId ServiceID, servi
 	return c.Client.Do(req)
 }
 
-// ReportServiceRunObservationsWithBody Report connector connection observations for a service run
+// ReportServiceRunObservationsWithBody Report HTTP decisions or connector connections for a service run
 //
-// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+// Report bounded HTTP request decisions and connector connection facts for this exact publisher run. Control derives connector identity and source from the installed pair. HTTP decisions carry no actor identity. Reporting never authorizes traffic.
 //
 // Takes any type of body and a specified content type.
 //
@@ -11621,9 +11622,9 @@ func (c *Client) ReportServiceRunObservationsWithBody(ctx context.Context, servi
 	return c.Client.Do(req)
 }
 
-// ReportServiceRunObservations Report connector connection observations for a service run
+// ReportServiceRunObservations Report HTTP decisions or connector connections for a service run
 //
-// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+// Report bounded HTTP request decisions and connector connection facts for this exact publisher run. Control derives connector identity and source from the installed pair. HTTP decisions carry no actor identity. Reporting never authorizes traffic.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -22048,18 +22049,18 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/renew (the `RenewServiceRun` operationId).
 	RenewServiceRunWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body RenewServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewServiceRunResponse, error)
 
-	// ReportServiceRunObservationsWithBodyWithResponse Report connector connection observations for a service run
+	// ReportServiceRunObservationsWithBodyWithResponse Report HTTP decisions or connector connections for a service run
 	//
-	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	// Report bounded HTTP request decisions and connector connection facts for this exact publisher run. Control derives connector identity and source from the installed pair. HTTP decisions carry no actor identity. Reporting never authorizes traffic.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId).
 	ReportServiceRunObservationsWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportServiceRunObservationsResponse, error)
 
-	// ReportServiceRunObservationsWithResponse Report connector connection observations for a service run
+	// ReportServiceRunObservationsWithResponse Report HTTP decisions or connector connections for a service run
 	//
-	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	// Report bounded HTTP request decisions and connector connection facts for this exact publisher run. Control derives connector identity and source from the installed pair. HTTP decisions carry no actor identity. Reporting never authorizes traffic.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -32806,9 +32807,9 @@ func (c *ClientWithResponses) RenewServiceRunWithResponse(ctx context.Context, s
 	return ParseRenewServiceRunResponse(rsp)
 }
 
-// ReportServiceRunObservationsWithBodyWithResponse Report connector connection observations for a service run
+// ReportServiceRunObservationsWithBodyWithResponse Report HTTP decisions or connector connections for a service run
 //
-// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+// Report bounded HTTP request decisions and connector connection facts for this exact publisher run. Control derives connector identity and source from the installed pair. HTTP decisions carry no actor identity. Reporting never authorizes traffic.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -32821,9 +32822,9 @@ func (c *ClientWithResponses) ReportServiceRunObservationsWithBodyWithResponse(c
 	return ParseReportServiceRunObservationsResponse(rsp)
 }
 
-// ReportServiceRunObservationsWithResponse Report connector connection observations for a service run
+// ReportServiceRunObservationsWithResponse Report HTTP decisions or connector connections for a service run
 //
-// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+// Report bounded HTTP request decisions and connector connection facts for this exact publisher run. Control derives connector identity and source from the installed pair. HTTP decisions carry no actor identity. Reporting never authorizes traffic.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -38774,7 +38775,7 @@ type ServerInterface interface {
 	// RenewServiceRun Renew a service run and report publisher health and capacity
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/renew)
 	RenewServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
-	// ReportServiceRunObservations Report connector connection observations for a service run
+	// ReportServiceRunObservations Report HTTP decisions or connector connections for a service run
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/service-observations)
 	ReportServiceRunObservations(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
 	// StartServiceRun Start one prepared service run with its publisher grant

@@ -100,7 +100,7 @@ func TestDeploymentKubeconfigIsPrivateToEachOwner(t *testing.T) {
 		t.Cleanup(func() { _ = listener.Close() })
 		connection := connectorruntime.Connection{
 			Schema: 1, Protocol: "kubernetes", Host: "127.0.0.1", Port: listener.Addr().(*net.TCPAddr).Port,
-			URL: "https://" + hostname + ":15443", ExpiresAt: b.deadline,
+			URL: "https://" + hostname, ExpiresAt: b.deadline,
 		}
 		kube, err := b.prepareKube(t.Context(), "cluster", service, connection)
 		if err != nil {

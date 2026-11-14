@@ -52,10 +52,10 @@ func TestIntegrationServiceEndpointReleaseHTTPContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	protocol := controlv1.ServiceProtocolHTTP
+	protocol := controlv1.Tcp
 	body := controlv1.ApplyProjectConfigurationRequest{Deployment: "production", TeamId: session.Identity.Memberships[0].TeamID, Source: &testProjectSource,
 		ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": protocol},
-		Configuration:       controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Target: "http://localhost:3000", Public: new(true)}}, Webhooks: map[string]controlv1.ProjectWebhook{}}}
+		Configuration:       controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Protocol: &protocol, Target: "localhost:3000", Public: new(true)}}, Webhooks: map[string]controlv1.ProjectWebhook{}}}
 	applied, err := owner.ApplyProjectConfiguration(ctx, resolved.ProjectKey, body)
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestIntegrationServiceEndpointReleaseHTTPContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := controlv1.ReleaseServiceEndpointRequest{ExpectedTrustRevision: saved.TrustRevision, ExpectedPort: saved.Endpoint.Port}
+	request := controlv1.ReleaseServiceEndpointRequest{ExpectedEndpointRevision: saved.EndpointRevision, ExpectedPort: saved.Endpoint.Port}
 	if _, err := anonymous.ReleaseServiceEndpoint(ctx, id, request); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("anonymous release", err)
 	}
@@ -80,7 +80,7 @@ func TestIntegrationServiceEndpointReleaseHTTPContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	released, err := owner.ReleaseServiceEndpoint(ctx, id, request)
-	if err != nil || released.Id != id || released.Endpoint.Port != 0 || released.Endpoint.Hostname != saved.Endpoint.Hostname || released.TrustRevision != saved.TrustRevision+1 {
+	if err != nil || released.Id != id || released.Endpoint.Port != 0 || released.Endpoint.Hostname != saved.Endpoint.Hostname || released.TrustRevision != saved.TrustRevision || released.EndpointRevision != saved.EndpointRevision+1 {
 		t.Fatal("native release roundtrip changed surviving identity", released, err)
 	}
 	if _, err := owner.ReleaseServiceEndpoint(ctx, id, request); !errors.Is(err, clientcontrol.ErrStatusConflict) {

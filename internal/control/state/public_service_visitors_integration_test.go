@@ -110,7 +110,7 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 	}
 	block, _ := pem.Decode([]byte(credential.CertificatePEM))
 	authorize := func(ip netip.Addr) (ServiceVisitorValidity, error) {
-		return d.AuthorizeServiceClientCertificate(ctx, run.ServiceID, run.RunID, run.Token, visitor, run.RunNumber, ip, block.Bytes, now)
+		return d.AuthorizeServiceClientCertificate(ctx, run.ServiceID, run.RunID, run.Token, visitor, run.RunNumber, ip, port, block.Bytes, now)
 	}
 	if _, err = authorize(netip.MustParseAddr("192.0.2.45")); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("certificate moved to another source", err)

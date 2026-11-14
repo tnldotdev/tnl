@@ -121,7 +121,7 @@ func managedIngressListener(t *testing.T, managed servicestream.Stream, visitors
 		_ = backend.Close()
 		t.Fatal(err)
 	}
-	server, err := ingress.New(backend, ingress.Config{PublicServicesOnly: true, PublicServices: connector, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 8})
+	server, err := ingress.New(backend, ingress.Config{PublicServices: connector, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 8})
 	if err != nil {
 		t.Fatal(err)
 	}

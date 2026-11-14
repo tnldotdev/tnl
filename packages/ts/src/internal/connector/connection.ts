@@ -211,7 +211,7 @@ function parsePrepared(value: unknown, name: string, file: string) {
     metadata.protocol !== snapshot.protocol ||
     (snapshot.protocol !== "tcp" && metadata.hostname !== snapshot.ssl.servername) ||
     ((snapshot.protocol === "http" || snapshot.protocol === "kubernetes") &&
-      (!("url" in metadata) || metadata.url !== snapshot.url))
+      snapshot.url !== `https://${metadata.hostname}`)
   )
     throw new TnlError("sdk.response_invalid");
   return Object.freeze({

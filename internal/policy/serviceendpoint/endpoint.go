@@ -27,6 +27,15 @@ func Valid(protocol, hostname string, port int, public bool) bool {
 	}
 }
 
+// PermissionPort binds visitor permission to the service, not its optional
+// ingress reservation. HTTP also uses this identity for browser origins.
+func PermissionPort(protocol string) uint16 {
+	if protocol == "http" {
+		return 443
+	}
+	return 0
+}
+
 // HTTPAuthority is the canonical browser authority, not a connector dial address.
 func HTTPAuthority(hostname string, port uint16) string {
 	if port == 443 {

@@ -227,15 +227,15 @@ func (h *handler) DeleteService(w http.ResponseWriter, r *http.Request, id contr
 
 func (h *handler) ReleaseServiceEndpoint(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
 	var body controlv1.ReleaseServiceEndpointRequest
-	if decodeJSON(w, r, &body) != nil || body.ExpectedTrustRevision < 1 || body.ExpectedPort < 1024 || body.ExpectedPort > 65535 {
-		writeProblem(w, 400, controlv1.InvalidRequest, "send the current trust revision and exact reserved port")
+	if decodeJSON(w, r, &body) != nil || body.ExpectedEndpointRevision < 1 || body.ExpectedPort < 1024 || body.ExpectedPort > 65535 {
+		writeProblem(w, 400, controlv1.InvalidRequest, "send the current endpoint revision and exact reserved port")
 		return
 	}
 	store, identity, ok := h.serviceVisitor(w, r)
 	if !ok {
 		return
 	}
-	record, err := store.ReleaseServiceEndpoint(r.Context(), id, identity, body.ExpectedTrustRevision, body.ExpectedPort, time.Now())
+	record, err := store.ReleaseServiceEndpoint(r.Context(), id, identity, body.ExpectedEndpointRevision, body.ExpectedPort, time.Now())
 	if err != nil {
 		serviceVisitorError(r.Context(), w, "release service endpoint", err)
 		return

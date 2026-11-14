@@ -151,7 +151,7 @@ func (o Observation) Validate() error {
 			return ErrInvalid
 		}
 	case "http.decision":
-		if o.ServiceKind != "public_url" || o.Outcome != "allowed" && o.Outcome != "denied" && o.Outcome != "failed" {
+		if o.PairID != "" || o.Outcome != "allowed" && o.Outcome != "denied" && o.Outcome != "failed" {
 			return ErrInvalid
 		}
 	default:

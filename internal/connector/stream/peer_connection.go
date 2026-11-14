@@ -15,6 +15,7 @@ import (
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/security/tlspolicy"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
@@ -315,7 +316,8 @@ func awaitConnectorPaths(ctx context.Context, endpoint *peer.Endpoint) error {
 }
 
 func validateConnectorRun(config Config, run Run) error {
-	if run.ServiceID != config.ServiceID || !opaqueid.Valid(run.ServiceRunID, opaqueid.ServiceRunPrefix) || run.RunNumber == 0 || !run.ValidUntil.After(time.Now()) || run.PairReady != nil && len(run.PairReady.Relays) != 2 {
+	if run.ServiceID != config.ServiceID || !opaqueid.Valid(run.ServiceRunID, opaqueid.ServiceRunPrefix) || run.RunNumber == 0 || !run.ValidUntil.After(time.Now()) || run.PairReady != nil && len(run.PairReady.Relays) != 2 ||
+		run.Endpoint == nil || !serviceendpoint.Valid(run.Protocol, run.Endpoint.Hostname, run.Endpoint.Port, run.Endpoint.Public) {
 		return ErrServiceConnection
 	}
 	if run.Protocol != config.Protocol || run.TrustRevision != config.TrustRevision || !sameEndpoint(run.Endpoint, config.Endpoint) {
@@ -325,7 +327,7 @@ func validateConnectorRun(config Config, run Run) error {
 }
 
 func validConnectorPermission(run Run, permission controlv1.VisitorTokenResponse) bool {
-	return permission.Resource.Kind == controlv1.VisitorResourceScopeKindService && permission.Resource.Id == run.ServiceID && run.Endpoint != nil && permission.Hostname == run.Endpoint.Hostname && permission.Port == run.Endpoint.Port && permission.VisitorToken != "" && permission.ExpiresAt.After(time.Now())
+	return permission.Resource.Kind == controlv1.VisitorResourceScopeKindService && permission.Resource.Id == run.ServiceID && run.Endpoint != nil && permission.Hostname == run.Endpoint.Hostname && permission.Port == int(serviceendpoint.PermissionPort(run.Protocol)) && permission.VisitorToken != "" && permission.ExpiresAt.After(time.Now())
 }
 
 func validateConnectorPermissionMetadata(config Config, permission controlv1.VisitorTokenResponse) error {

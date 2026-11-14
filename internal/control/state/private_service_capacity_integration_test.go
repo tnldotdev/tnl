@@ -27,7 +27,7 @@ func TestIntegrationPrivateServicePortCapacity(t *testing.T) {
 	// not only private declaration. this helper starts an enrolled local run.
 	run := privateClaimRun(t, f)
 	var captured int
-	if err := d.pool.QueryRow(ctx, `SELECT service_port FROM control.service_runs WHERE id=$1`, run.RunID).Scan(&captured); err != nil || captured != 0 {
+	if err := d.pool.QueryRow(ctx, `SELECT count(*) FROM control.service_port_claims WHERE service_id=$1`, run.ServiceID).Scan(&captured); err != nil || captured != 0 {
 		t.Fatal("private run captured an ingress reservation", captured, err)
 	}
 	r.ExpectedRevision = first.Revision
@@ -71,7 +71,7 @@ func TestIntegrationPrivateServicePortCapacity(t *testing.T) {
 	}
 }
 
-func TestIntegrationPrivateServiceFirstPublicBindingFencesOldRun(t *testing.T) {
+func TestIntegrationPrivateServiceFirstPublicBindingRetainsRun(t *testing.T) {
 	d, now, _, _ := newPublishRunPrerequisites(t)
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
@@ -92,8 +92,8 @@ func TestIntegrationPrivateServiceFirstPublicBindingFencesOldRun(t *testing.T) {
 	access := deploymentAssignmentAccess(t, d, replica, assignment, now)
 	metadata := ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}
 	old, err := d.PrepareServiceRun(ctx, assignment.ServiceID, access.PublisherIdentity, "private-binding", now, metadata)
-	if err != nil || old.ServicePort != 0 {
-		t.Fatal("private preparation reserved public capacity", old.ServicePort, err)
+	if err != nil || old.Hostname == "" {
+		t.Fatal("private preparation lost its managed TLS identity", err)
 	}
 	r.ExpectedRevision = private.Revision
 	serviceConfiguration := r.Configuration.Services["api"]
@@ -104,16 +104,20 @@ func TestIntegrationPrivateServiceFirstPublicBindingFencesOldRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := public.Services[0]
-	if service.ServiceID != assignment.ServiceID || service.Port < 1024 || service.TrustRevision != metadata.TrustRevision+1 {
-		t.Fatal("first public binding did not preserve identity and fence old metadata", service)
+	if service.ServiceID != assignment.ServiceID || service.Port < 1024 || service.TrustRevision != metadata.TrustRevision {
+		t.Fatal("first public binding changed service identity or connector trust", service)
 	}
-	if _, err := d.StartServiceRun(ctx, old.ServiceID, old.RunID, old.RunNumber, access.PublisherIdentity, now); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("zero-port preparation acquired public binding authority", err)
+	started, err := d.StartServiceRun(ctx, old.ServiceID, old.RunID, old.RunNumber, access.PublisherIdentity, now)
+	if err != nil {
+		t.Fatal("first public allocation closed a prepared connector run", err)
+	}
+	if err := d.CloseServiceRun(ctx, old.ServiceID, old.RunID, started.Token, now); err != nil {
+		t.Fatal(err)
 	}
 	metadata.TrustRevision = service.TrustRevision
 	next, err := d.PrepareServiceRun(ctx, service.ServiceID, access.PublisherIdentity, "public-binding", now, metadata)
-	if err != nil || next.ServicePort != service.Port {
-		t.Fatal("replacement did not capture allocated binding", next.ServicePort, err)
+	if err != nil || next.Hostname != old.Hostname {
+		t.Fatal("replacement did not retain its TLS identity", err)
 	}
 	// disable/re-enable retains the reservation and does not replace this run.
 	revision := public.Revision

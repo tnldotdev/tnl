@@ -3,8 +3,8 @@ paths:
     post:
       operationId: reportServiceRunObservations
       tags: [observations]
-      summary: Report connector connection observations for a service run
-      description: Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+      summary: Report HTTP decisions or connector connections for a service run
+      description: Report bounded HTTP request decisions and connector connection facts for this exact publisher run. Control derives connector identity and source from the installed pair. HTTP decisions carry no actor identity. Reporting never authorizes traffic.
       security: [{ serviceRunAuth: [] }]
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }

@@ -255,7 +255,7 @@ func (f *cliWorkflow) connectDirectListener(t *testing.T, endpoint *controlv1.Se
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := ingress.New(listener, ingress.Config{PublicServicesOnly: true, PublicServices: f.publicServices, ServicePortRanges: []tcpport.Range{{First: endpoint.Port, Last: endpoint.Port}}, MaxConnections: 16, OnError: func(err error) { t.Logf("direct ingress: %v", err) }})
+	server, err := ingress.New(listener, ingress.Config{PublicServices: f.publicServices, ServicePortRanges: []tcpport.Range{{First: endpoint.Port, Last: endpoint.Port}}, MaxConnections: 16, OnError: func(err error) { t.Logf("direct ingress: %v", err) }})
 	if err != nil {
 		_ = listener.Close()
 		t.Fatal(err)

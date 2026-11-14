@@ -67,7 +67,7 @@ func (d *Database) CreateServiceCertificateIssuance(ctx context.Context, service
 		return result, err
 	}
 	plan, err := serviceCertificatePlan(ctx, tx, row, run.PublisherIdentityID, now)
-	if err != nil || row.DomainID.String != run.CertificateDomainID.String || row.CertificateHostname != run.CertificateHostname || row.ServicePort != run.ServicePort || plan.Scope != run.CertificateScope || plan.CacheKey != run.CertificateCacheKey || !slices.Equal(plan.Identifiers, run.CertificateIdentifiers) {
+	if err != nil || row.DomainID.String != run.CertificateDomainID.String || row.CertificateHostname != run.CertificateHostname || plan.Scope != run.CertificateScope || plan.CacheKey != run.CertificateCacheKey || !slices.Equal(plan.Identifiers, run.CertificateIdentifiers) {
 		return result, errors.Join(ErrServiceAccess, err)
 	}
 	csr, _ := x509.ParseCertificateRequest(der)
@@ -202,7 +202,7 @@ func (d *Database) MarkServiceCertificateInstalled(ctx context.Context, service,
 		return err
 	}
 	plan, err := serviceCertificatePlan(ctx, tx, serviceRow, run.PublisherIdentityID, now)
-	if err != nil || serviceRow.DomainID.String != run.CertificateDomainID.String || serviceRow.CertificateHostname != run.CertificateHostname || serviceRow.ServicePort != run.ServicePort || plan.Scope != run.CertificateScope || !slices.Equal(plan.Identifiers, run.CertificateIdentifiers) {
+	if err != nil || serviceRow.DomainID.String != run.CertificateDomainID.String || serviceRow.CertificateHostname != run.CertificateHostname || plan.Scope != run.CertificateScope || !slices.Equal(plan.Identifiers, run.CertificateIdentifiers) {
 		return errors.Join(ErrServiceAccess, err)
 	}
 	order, err := q.LockACMEOrder(ctx, issuance)

@@ -17,6 +17,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 
@@ -40,7 +41,7 @@ func serviceHTTPProtocolFixture(t *testing.T, target http.Handler, h2 bool) (*ht
 	return serviceHTTPApplicationFixture(t, target, h2, false)
 }
 
-func serviceHTTPApplicationFixture(t *testing.T, target http.Handler, h2, inline bool) (*http.Client, *visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
+func serviceHTTPApplicationFixture(t *testing.T, target http.Handler, h2, inline bool, audits ...serviceaudit.Sink) (*http.Client, *visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
 	t.Helper()
 	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}
 	policy, update, token := visitorfixture.ScopePolicy(t, scope, "preview.example.test", 443, false)
@@ -60,6 +61,9 @@ func serviceHTTPApplicationFixture(t *testing.T, target http.Handler, h2, inline
 		t.Fatal(err)
 	}
 	frontend := HTTP{Subject: scope, RunID: header.ServiceRunID, Number: 1, Hostname: update.View.Hostname, Port: update.View.Port, Header: header, Policy: policy}
+	if len(audits) != 0 {
+		frontend.AuditSink = audits[0]
+	}
 	transport := &http.Transport{ForceAttemptHTTP2: h2, TLSClientConfig: &tls.Config{RootCAs: visitorfixture.Roots(t, certificate)}, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		visitor, raw := net.Pipe()
 		server := tls.Server(raw, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13, NextProtos: []string{"h2", "http/1.1"}})

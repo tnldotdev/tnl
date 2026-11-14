@@ -24,7 +24,6 @@ type ServiceRunPreparation struct {
 	ExpiresAt                                                                                       time.Time
 	CertificatePlan                                                                                 CertificatePlan
 	Hostname, DomainID                                                                              string
-	ServicePort                                                                                     int
 }
 
 type ServiceRunAssignment struct {
@@ -55,7 +54,7 @@ func serviceRunPreparation(r controlstatedb.ControlServiceRun) ServiceRunPrepara
 		PublisherIdentityID: r.PublisherIdentityID, PublisherGrantID: r.PublisherGrantID,
 		PublisherKeyID: r.PublisherKeyID, IdempotencyKey: r.IdempotencyKey,
 		RunNumber: r.RunNumber, ExpiresAt: r.PreparationExpiresAt.Time,
-		Hostname: r.CertificateHostname, DomainID: r.CertificateDomainID.String, ServicePort: int(r.ServicePort.Int32),
+		Hostname: r.CertificateHostname, DomainID: r.CertificateDomainID.String,
 		CertificatePlan: CertificatePlan{CacheKey: r.CertificateCacheKey, Scope: r.CertificateScope, Identifiers: slices.Clone(r.CertificateIdentifiers), ChallengeMethod: certificateidentity.ChallengeDNS01}}
 }
 
@@ -183,7 +182,7 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, PublisherKeyID: p.KeyID, IdempotencyKey: key,
 		RequestDigest: digest[:], PreparationExpiresAt: timestamptz(now.Add(2 * time.Minute)),
 		AssignmentSeedCiphertext: ciphertext, AssignmentSeedStorageKeyID: d.storageKey.CurrentID(),
-		CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers, CertificateDomainID: service.DomainID, CertificateHostname: service.CertificateHostname, ServicePort: service.ServicePort,
+		CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers, CertificateDomainID: service.DomainID, CertificateHostname: service.CertificateHostname,
 		Now: timestamptz(now), PublisherExpiresAt: timestamptz(now.Add(2 * time.Minute)),
 	})
 	if err != nil {

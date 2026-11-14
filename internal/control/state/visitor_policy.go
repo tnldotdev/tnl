@@ -120,7 +120,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		if !row.ServicePort.Valid || !serviceendpoint.Valid(row.Protocol, row.CertificateHostname, int(row.ServicePort.Int32), row.Public) {
 			return result, ErrVisitorPolicy
 		}
-		team, policy.Hostname, policy.Port = row.TeamID, row.CertificateHostname, int(row.ServicePort.Int32)
+		team, policy.Hostname, policy.Port = row.TeamID, row.CertificateHostname, int(serviceendpoint.PermissionPort(row.Protocol))
 		policy.MetadataRevision = row.TrustRevision
 		policy.Enabled = row.Enabled && !row.DeletedAt.Valid
 		settings, err := d.serviceHTTPSettings(ctx, q, scope.ID)

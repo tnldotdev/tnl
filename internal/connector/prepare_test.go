@@ -105,7 +105,7 @@ func TestConnectionPreparationRejectsStalePublication(t *testing.T) {
 				b.services["api"] = service
 			case "endpoint":
 				endpoint := *service.Endpoint
-				endpoint.Port++
+				endpoint.Hostname = "another.example.test"
 				service.Endpoint = &endpoint
 				b.services["api"] = service
 			case "closed":
@@ -306,7 +306,7 @@ func TestConnectionPreparationFailureJoinsResourcesAndReusesListener(t *testing.
 					}
 					endpoint := *service.Endpoint
 					if scenario == "endpoint" {
-						endpoint.Port++
+						endpoint.Hostname = "another.example.test"
 					}
 					return connectorstream.Run{Protocol: "http", Endpoint: &endpoint, TrustRevision: 1}, nil
 				},

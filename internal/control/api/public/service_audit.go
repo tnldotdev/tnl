@@ -22,6 +22,8 @@ func serviceAuditError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service audit request")
 	case errors.Is(err, controlstate.ErrServiceAuditAccess):
 		writeProblem(w, 403, controlv1.Forbidden, "service audit access denied")
+	case errors.Is(err, controlstate.ErrServiceAccess):
+		writeBearerProblem(w)
 	default:
 		writeControlStateProblem(ctx, w, "service audit", err)
 	}

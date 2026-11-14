@@ -11,7 +11,7 @@ import (
 func Service(record controlstate.ServiceRecord) controlv1.Service {
 	result := controlv1.Service{Id: record.ID, TeamId: record.TeamID, Name: record.Name,
 		Enabled: record.Enabled, CreatedAt: record.CreatedAt, Protocol: controlv1.ServiceProtocol(record.Protocol),
-		PublisherPool: record.PublisherPool, TrustRevision: record.TrustRevision}
+		PublisherPool: record.PublisherPool, TrustRevision: record.TrustRevision, EndpointRevision: record.EndpointRevision}
 	if t := record.Endpoint; t != nil {
 		result.Endpoint = &controlv1.ServiceEndpoint{Hostname: t.Hostname, Port: t.Port, Public: t.Public}
 	}

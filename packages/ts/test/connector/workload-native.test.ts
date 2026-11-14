@@ -222,7 +222,7 @@ function response(args: string[], input: unknown): unknown {
         ...(metadata.protocol === "tcp"
           ? {}
           : { ssl: { servername: metadata.hostname, rejectUnauthorized: true } }),
-        ...(metadata.url === undefined ? {} : { url: metadata.url }),
+        ...(metadata.url === undefined ? {} : { url: `https://${metadata.hostname}` }),
         ...(metadata.protocol === "kubernetes"
           ? { kubeconfig: "/fixture/kubeconfig", context: "tnl:cluster" }
           : {}),

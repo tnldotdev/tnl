@@ -57,11 +57,15 @@ func (f *lifecycleControl) ReadPublisherVisitorPolicy(_ context.Context, body co
 	}
 	now := time.Now()
 	revision := int64(1)
+	port := 0
 	if f.approved != nil {
 		revision = f.approved.TrustRevision
+		if f.approved.Protocol == controlv1.ServiceProtocolHTTP {
+			port = 443
+		}
 	}
 	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, SnapshotRequired: body.AfterRevision == 0, Policy: controlv1.VisitorPolicySnapshot{
-		Resource: body.Resource, Issuer: "https://control.example.test", Hostname: f.prep.Hostname, Port: f.prep.ServicePort, Enabled: true,
+		Resource: body.Resource, Issuer: "https://control.example.test", Hostname: f.prep.Hostname, Port: port, Enabled: true,
 		VisitorPolicyRevision: 1, MetadataRevision: revision, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime),
 		VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "lifecycle", PublicKey: ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize)).Public().(ed25519.PublicKey)}},
 	}}, nil
@@ -86,7 +90,7 @@ func (f *lifecycleControl) GetPublisherService(context.Context, string) (control
 	if f.approved != nil {
 		return *f.approved, nil
 	}
-	return controlv1.Service{Id: f.prep.ServiceId, TeamId: f.prep.TeamId, Enabled: true, Protocol: controlv1.ServiceProtocol("tcp"), TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: f.prep.Hostname, Port: f.prep.ServicePort}}, nil
+	return controlv1.Service{Id: f.prep.ServiceId, TeamId: f.prep.TeamId, Enabled: true, Protocol: controlv1.ServiceProtocol("tcp"), TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: f.prep.Hostname, Port: 25443}}, nil
 }
 
 func (f *lifecycleControl) PrepareServiceRun(_ context.Context, id, key, token string, declared controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error) {

@@ -33,7 +33,7 @@ func (d *Database) ReleaseServiceEndpoint(ctx context.Context, service, actor st
 	if err != nil {
 		return result, err
 	}
-	if row.TrustRevision != revision || !row.ServicePort.Valid || int(row.ServicePort.Int32) != port {
+	if row.EndpointRevision != revision || !row.ServicePort.Valid || int(row.ServicePort.Int32) != port {
 		return result, ErrServiceConflict
 	}
 	if row.Public {
@@ -82,10 +82,12 @@ func (d *Database) ReleaseServiceEndpoint(ctx context.Context, service, actor st
 	} else if err = requireTeamSession(ctx, controlstatedb.New(tx), row.TeamID, actor, time.Now()); err != nil {
 		return result, errors.Join(ErrServiceAccess, err)
 	}
-	claim, err := tx.Exec(ctx, `UPDATE control.service_port_claims SET state='quarantined',
+	claim, err := tx.Exec(ctx, `UPDATE control.service_port_claims SET state='quarantined',retired_at=$5,
 	    retired_run_number=$4,dns_cleared_at=$5,
+	    retired_issuance_revision=COALESCE((SELECT max(created_revision) FROM control.acme_orders WHERE service_id=$1),0),
 	    reusable_after=GREATEST($5::timestamptz+interval '7 days',COALESCE(
-	      (SELECT max(not_after) FROM control.acme_orders WHERE certificate_scope=$6),$5::timestamptz))
+	      (SELECT max(not_after) FROM control.acme_orders WHERE certificate_scope=$6),$5::timestamptz),
+	      COALESCE((SELECT max(certificate_expires_at) FROM control.service_runs WHERE service_id=$1),$5::timestamptz))
 	    WHERE service_id=$1 AND ingress_pool_id=$2 AND port=$3 AND state='held'`,
 		service, row.IngressPoolID, port, row.NextRunNumber-1, now, row.CertificateScope)
 	if err != nil {
@@ -94,7 +96,7 @@ func (d *Database) ReleaseServiceEndpoint(ctx context.Context, service, actor st
 	if claim.RowsAffected() != 1 {
 		return result, ErrServiceConflict
 	}
-	if err = bindServicePort(ctx, tx, service, 0, false, now); err != nil {
+	if err = bindServicePort(ctx, tx, service, 0, false); err != nil {
 		return result, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE control.services SET updated_at=$2 WHERE id=$1`, service, now); err != nil {
@@ -104,7 +106,7 @@ func (d *Database) ReleaseServiceEndpoint(ctx context.Context, service, actor st
 	if err != nil {
 		return result, err
 	}
-	if err = auditPrivateMutation(ctx, tx, service, actor, "service.update", "endpoint-release/"+strconv.FormatInt(row.TrustRevision, 10), now); err != nil {
+	if err = auditPrivateMutation(ctx, tx, service, actor, "service.update", "endpoint-release/"+strconv.FormatInt(row.EndpointRevision, 10), now); err != nil {
 		return result, err
 	}
 	result, err = checkedServiceRecord(row)

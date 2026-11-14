@@ -33,13 +33,13 @@ func TestIntegrationServiceHTTPSHasNoExclusiveReservation(t *testing.T) {
 	assertEndpoint(false)
 	publisher := serviceReleasePublisher(t, d, r, now)
 	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "shared-https", now, service.ServiceMetadata)
-	if err != nil || prepared.ServicePort != 443 {
+	if err != nil || prepared.Hostname != service.Endpoint.Hostname {
 		t.Fatal("connector-only HTTP lost its HTTPS transport identity", prepared, err)
 	}
 	for _, public := range []bool{true, false, true} {
 		setReleaseProjectExposure(t, d, &r, &applied, public)
 		assertEndpoint(public)
-		if _, err := d.ReleaseServiceEndpoint(ctx, service.ID, r.ActorID, service.TrustRevision, 443, now); !errors.Is(err, ErrServiceConflict) {
+		if _, err := d.ReleaseServiceEndpoint(ctx, service.ID, r.ActorID, service.EndpointRevision, 443, now); !errors.Is(err, ErrServiceConflict) {
 			t.Fatal("shared HTTPS was treated as an exclusive reservation", err)
 		}
 	}

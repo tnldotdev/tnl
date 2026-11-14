@@ -106,6 +106,15 @@ func (d *Database) ConfigureService(ctx context.Context, serviceID, actorID stri
 		return result, ErrServiceConflict
 	}
 	changed := !serviceMetadataMatches(saved, metadata)
+	if saved.Protocol != metadata.Protocol {
+		var held bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.service_port_claims WHERE service_id=$1 AND state='held')`, serviceID).Scan(&held); err != nil {
+			return result, err
+		}
+		if row.Public || held {
+			return result, ErrServiceConflict
+		}
+	}
 	configurationChanged := changed || saved.PublisherPool != metadata.PublisherPool
 	if configurationChanged {
 		if _, err = nextPrivateRevision(saved.TrustRevision); err != nil {
@@ -129,6 +138,7 @@ func (d *Database) ConfigureService(ctx context.Context, serviceID, actorID stri
 		}
 	}
 	_, err = tx.Exec(ctx, `UPDATE control.services SET protocol=$2, tls_metadata=convert_from($3::bytea,'UTF8')::jsonb, publisher_pool=$4,
+	    service_port=CASE WHEN protocol<>$2 THEN CASE WHEN $2='http' THEN 443 ELSE 0 END ELSE service_port END,
 	    trust_revision=trust_revision+CASE WHEN $5 THEN 1 ELSE 0 END, updated_at=$6 WHERE id=$1`, serviceID, metadata.Protocol, encoded, metadata.PublisherPool, configurationChanged, now)
 	if err != nil {
 		return result, err

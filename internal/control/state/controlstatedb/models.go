@@ -1228,6 +1228,7 @@ type ControlService struct {
 	Protocol               string
 	TlsMetadata            []byte
 	TrustRevision          int64
+	EndpointRevision       int64
 	VisitorRevision        int64
 	PublisherPool          bool
 	DomainID               pgtype.Text
@@ -1403,15 +1404,17 @@ type ControlServiceNamespaceClaim struct {
 }
 
 type ControlServicePortClaim struct {
-	ID               int64
-	ServiceID        string
-	IngressPoolID    string
-	Port             int32
-	State            string
-	ClaimedAt        pgtype.Timestamptz
-	ReusableAfter    pgtype.Timestamptz
-	RetiredRunNumber pgtype.Int8
-	DnsClearedAt     pgtype.Timestamptz
+	ID                      int64
+	ServiceID               string
+	IngressPoolID           string
+	Port                    int32
+	State                   string
+	ClaimedAt               pgtype.Timestamptz
+	RetiredAt               pgtype.Timestamptz
+	ReusableAfter           pgtype.Timestamptz
+	RetiredRunNumber        pgtype.Int8
+	RetiredIssuanceRevision pgtype.Int8
+	DnsClearedAt            pgtype.Timestamptz
 }
 
 type ControlServiceRun struct {
@@ -1439,7 +1442,6 @@ type ControlServiceRun struct {
 	CertificateIdentifiers     []string
 	CertificateDomainID        pgtype.Text
 	CertificateHostname        string
-	ServicePort                pgtype.Int4
 	CertificateIssuanceID      pgtype.Text
 	CertificateExpiresAt       pgtype.Timestamptz
 	CreatedAt                  pgtype.Timestamptz

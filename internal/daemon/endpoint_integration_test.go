@@ -225,7 +225,11 @@ func checkManagedPublicEndpointTLS(t *testing.T, f *privateSeparatedFixture, con
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := ingress.New(listener, ingress.Config{PublicServicesOnly: true, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, PublicServices: connector, ServicePortRanges: []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}, MaxConnections: 64})
+	var ranges []tcpport.Range
+	if service.Endpoint.Port != 443 {
+		ranges = []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}
+	}
+	server, err := ingress.New(listener, ingress.Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, PublicServices: connector, ServicePortRanges: ranges, MaxConnections: 64})
 	if err != nil {
 		_ = listener.Close()
 		t.Fatal(err)

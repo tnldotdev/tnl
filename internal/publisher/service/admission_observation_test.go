@@ -46,7 +46,7 @@ func TestDirectAuthorizationWaitsForAdmissionAndPreservesInfrastructureCause(t *
 			if infrastructureFailure {
 				c.err = cause
 			}
-			_, cancel, err := configureServiceRun(t.Context(), cfg, prepared, control.setup, c, cfg.State)
+			_, cancel, err := configureServiceRun(t.Context(), cfg, prepared, control.setup, c, cfg.State, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

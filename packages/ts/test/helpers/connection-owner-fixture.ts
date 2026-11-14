@@ -123,7 +123,7 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
           protocol,
           host: "127.0.0.1",
           port: address.port,
-          url,
+          url: "https://database.team.example",
           expires_at,
           transport_id: `ctg_${randomBytes(11).toString("hex")}`,
           ssl: { servername: "database.team.example", rejectUnauthorized: true },

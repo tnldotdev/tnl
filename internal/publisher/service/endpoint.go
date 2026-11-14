@@ -15,6 +15,7 @@ import (
 
 	serviceconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
@@ -39,7 +40,7 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 	if approved.Endpoint == nil || !serviceendpoint.Valid(string(approved.Protocol), approved.Endpoint.Hostname, approved.Endpoint.Port, approved.Endpoint.Public) || preparation.CertificatePlan == nil || preparation.ServiceId != approved.Id || preparation.TeamId != approved.TeamId || preparation.PublisherIdentityId != cfg.Identity.ClientId || preparation.PublisherGrantId != cfg.Identity.GrantId || preparation.PublisherKeyId != cfg.Identity.KeyId || preparation.RunNumber < 1 || !preparation.ExpiresAt.After(time.Now()) {
 		return nil, ErrPrivateStream
 	}
-	if preparation.Hostname != approved.Endpoint.Hostname || preparation.ServicePort != approved.Endpoint.Port || preparation.DomainId == "" || approved.DomainId != nil && preparation.DomainId != *approved.DomainId {
+	if preparation.Hostname != approved.Endpoint.Hostname || preparation.DomainId == "" || approved.DomainId != nil && preparation.DomainId != *approved.DomainId {
 		return nil, ErrPrivateStream
 	}
 	plan, err := certificateidentity.CanonicalPlan(*preparation.CertificatePlan)
@@ -117,7 +118,7 @@ func (p *Prepared) installManagedCertificate(certificate tls.Certificate) error 
 	return nil
 }
 
-func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepared, setup controlv1.ServiceRunSetup, control ManagedControl, profile *clientstate.Store) (func() error, func(), error) {
+func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepared, setup controlv1.ServiceRunSetup, control ManagedControl, profile *clientstate.Store, audit serviceaudit.Sink) (func() error, func(), error) {
 	if profile == nil || prepared.Preparation.CertificatePlan == nil {
 		return nil, nil, ErrPrivateStream
 	}
@@ -126,7 +127,8 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 	if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
 		var err error
 		httpFrontend, closeHTTP, err = PrepareHTTP(ctx, HTTP{
-			Control: control, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
+			AuditSink: audit,
+			Control:   control, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
 			RunID: setup.ServiceRunId, Number: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken),
 			Hostname: prepared.managedHostname, Port: prepared.servicePort, Requests: prepared.serviceHTTPRequests,
 		})
@@ -165,7 +167,7 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 			}
 			return servicestream.CertificateVisitor{Check: func(check context.Context, leaf *x509.Certificate) (servicestream.Decision, error) {
 				return awaitAdmission(check, func(ctx context.Context) (controlv1.ServiceClientCertificateDecision, error) {
-					return control.AuthorizeServiceClientCertificate(ctx, setup.ServiceId, setup.ServiceRunId, credentials.ServiceRunToken(setup.RunToken), controlv1.AuthorizeServiceClientCertificateRequest{RunNumber: setup.RunNumber, VisitorConnectionId: header.VisitorConnectionID, SourceIp: header.SourceIP, Certificate: leaf.Raw})
+					return control.AuthorizeServiceClientCertificate(ctx, setup.ServiceId, setup.ServiceRunId, credentials.ServiceRunToken(setup.RunToken), controlv1.AuthorizeServiceClientCertificateRequest{RunNumber: setup.RunNumber, VisitorConnectionId: header.VisitorConnectionID, SourceIp: header.SourceIP, DestinationPort: int(header.PublicService.DestinationPort), Certificate: leaf.Raw})
 				})
 			}}
 		}
