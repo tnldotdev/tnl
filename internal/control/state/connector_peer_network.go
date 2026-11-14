@@ -57,7 +57,7 @@ func (d *Database) connectorPeerSessionAuthority(ctx context.Context, tx pgx.Tx,
 	if err != nil {
 		return VisitorSubject{}, nil, time.Time{}, err
 	}
-	subject, key, subjectUntil, err := connectorPeerPairSubjectKey(ctx, tx, pair, now)
+	subject, key, subjectUntil, err := d.connectorPeerPairSubjectKey(ctx, tx, pair, now)
 	return subject, key, minTime(pair.ExpiresAt.Time, minTime(publisherUntil, subjectUntil)), err
 }
 

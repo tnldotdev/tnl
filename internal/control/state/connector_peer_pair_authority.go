@@ -8,13 +8,15 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 // connectorPeerPairSubjectKey restores only the subject and exact parent saved by
 // authenticated pair creation. relay and publisher contexts are not human proof.
-// callers hold the service admission and pair locks through key delivery.
-func connectorPeerPairSubjectKey(ctx context.Context, tx pgx.Tx, pair controlstatedb.ControlConnectorPeerPair, now time.Time) (VisitorSubject, ed25519.PublicKey, time.Time, error) {
+// callers hold resource admission and pair locks through key delivery.
+func (d *Database) connectorPeerPairSubjectKey(ctx context.Context, tx pgx.Tx, pair controlstatedb.ControlConnectorPeerPair, now time.Time) (VisitorSubject, ed25519.PublicKey, time.Time, error) {
 	subject := VisitorSubject{Kind: pair.SubjectKind}
 	var parentUntil time.Time
 	switch subject.Kind {
@@ -45,6 +47,28 @@ func connectorPeerPairSubjectKey(ctx context.Context, tx pgx.Tx, pair controlsta
 		}
 	default:
 		return VisitorSubject{}, nil, time.Time{}, ErrServiceAccess
+	}
+	if pair.PublicURLID != "" {
+		// public URLs reuse their current native source decision, including
+		// the preview selected by original creation. a relay cannot select a
+		// different preview or substitute a service/workload permission.
+		if subject.Kind != tunnelv1.VisitorHumanDevice {
+			return VisitorSubject{}, nil, time.Time{}, ErrServiceAccess
+		}
+		source := DeviceTokenSource{DeviceID: subject.DeviceID, PreviewID: pair.PreviewID.String}
+		authority, err := d.visitorAuthorityForSource(ctx, tx, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: pair.PublicURLID}, source, newAuthorizationClock(now))
+		if err != nil {
+			return VisitorSubject{}, nil, time.Time{}, err
+		}
+		current, err := visitortoken.ConnectorSubject(authority.Permission.Subject)
+		if err != nil || current != subject {
+			return VisitorSubject{}, nil, time.Time{}, ErrServiceAccess
+		}
+		until := minTime(parentUntil, minTime(authority.Permission.ExpiresAt, authority.ConnectorUntil))
+		if !until.After(now) {
+			return VisitorSubject{}, nil, time.Time{}, ErrServiceAccess
+		}
+		return subject, authority.PublicKey, until, nil
 	}
 	key, until, err := AuthenticateVisitorSubjectKey(ctx, tx, subject, pair.ServiceID, now)
 	if err != nil {

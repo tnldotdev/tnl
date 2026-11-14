@@ -30,6 +30,8 @@ const maxConnectorPeerPairOwners = 64
 type ConnectorPeerPairRequest struct {
 	ServiceID, ServiceRunID, PublisherIdentityID, IdempotencyKey string
 	RunNumber                                                    int64
+	PublicURLID, PublishRunID                                    string
+	PublishRunNumber                                             int64
 	Subject                                                      VisitorSubject
 	Source                                                       VisitorTokenSource
 	Signature                                                    []byte
@@ -52,6 +54,8 @@ type ConnectorPeerPair struct {
 	ID, ServiceID, ServiceRunID, PublisherIdentityID string
 	Subject                                          VisitorSubject
 	RunNumber, DeliveryGeneration                    int64
+	PublicURLID, PublishRunID                        string
+	PublishRunNumber                                 int64
 	Key                                              string
 	DeliveryID                                       [16]byte
 	Relays                                           [2]ConnectorPeerPairRelay
@@ -74,6 +78,7 @@ func (ConnectorPeerPair) GoString() string { return "connector peer pair" }
 // does not define its own proof format or serialize the signature input.
 func (r ConnectorPeerPairRequest) proof() tunnelv1.ConnectorPeerPairProof {
 	p := tunnelv1.ConnectorPeerPairProof{ServiceID: r.ServiceID, ServiceRunID: r.ServiceRunID, RunNumber: r.RunNumber,
+		PublicURLID: r.PublicURLID, PublishRunID: r.PublishRunID, PublishRunNumber: r.PublishRunNumber,
 		PublisherIdentityID: r.PublisherIdentityID, Subject: r.Subject, Action: r.Action, IdempotencyKey: r.IdempotencyKey,
 		RequestedAt: r.RequestedAt, PreviousPairID: r.PreviousPairID, PreviousGeneration: r.PreviousGeneration}
 	for i, relay := range r.ExpectedRelays {
@@ -126,6 +131,9 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 		return result, ErrServiceAccess
 	}
 	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: r.ServiceID}
+	if r.PublicURLID != "" {
+		scope = visitorscope.Scope{Kind: visitorscope.PublicURL, ID: r.PublicURLID}
+	}
 	switch r.Source.(type) {
 	case DeviceTokenSource, WorkloadTokenSource, RegisteredKeyTokenSource:
 	default:
@@ -153,6 +161,10 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	}
 	q := controlstatedb.New(tx)
 	var parentSession pgtype.Text
+	var preview pgtype.Text
+	if source, ok := r.Source.(DeviceTokenSource); ok && source.PreviewID != "" {
+		preview = text(source.PreviewID)
+	}
 	if subject.Kind == tunnelv1.VisitorHumanDevice {
 		principal, _ := ctx.Value(controlPrincipalKey{}).(ControlPrincipal)
 		if principal.SessionID == "" {
@@ -160,42 +172,25 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 		}
 		parentSession = text(principal.SessionID)
 	}
-	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: r.ServiceRunID, ServiceID: r.ServiceID})
-	if err != nil {
-		return result, publisherLookupError(err, ErrServiceAccess)
-	}
-	retainedRun := r.Action == "renew" && run.State == "starting" && run.ReadyAt.Valid
-	if run.RunNumber != r.RunNumber || run.PublisherIdentityID != r.PublisherIdentityID || (run.State != "ready" && !retainedRun) || !run.Healthy ||
-		run.ClosedAt.Valid || !run.PublisherExpiresAt.Time.After(now) || !run.CertificateExpiresAt.Valid || !run.CertificateExpiresAt.Time.After(now) {
-		return result, ErrServiceAccess
-	}
-	publisherUntil, err := connectorPeerPublisherAuthority(ctx, tx, run, now)
+	publication, err := d.connectorPairPublication(ctx, tx, r, now)
 	if err != nil {
 		return result, err
 	}
+	publisherUntil, metadata := publication.publisherUntil, publication.metadata
 	deadline := minTime(publisherUntil, minTime(permission.ExpiresAt, authority.ConnectorUntil))
-	service, err := q.GetService(ctx, r.ServiceID)
-	if err != nil {
-		return result, err
-	}
-	metadata, err := checkedServiceMetadata(service)
-	if err != nil {
-		return result, err
-	}
 	// retain the entry-time serving cap. elapsed time only narrows the time left
 	// to authorize; a slow database must not mint a later deadline.
 	recheckUntil := minTime(deadline, requestAt.Add(5*time.Minute))
 	if r.Action != "renew" {
-		slots, err := q.ListServiceConnectionSlots(ctx, run.ID)
+		slots, err := publication.connections(ctx, q)
 		if err != nil {
 			return result, err
 		}
-		if len(slots) != 2 || slots[0].RelayServiceID == slots[1].RelayServiceID {
+		if len(slots) != 2 || slots[0].relayService == slots[1].relayService {
 			return result, ErrServiceAccess
 		}
 		for i, slot := range slots {
-			if int(slot.ConnectionSlot) != i || slot.ServiceID != r.ServiceID || slot.RunNumber != r.RunNumber || slot.State != "ready" || !slot.SessionOpen ||
-				!opaqueid.Valid(slot.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) || slot.ConnectionAssignmentRevision < 1 || !slot.RelayID.Valid || !slot.RelayRunID.Valid || !slot.RelayLeaseRevision.Valid || slot.RelayLeaseRevision.Int64 < 1 {
+			if !slot.ready(publication, i) {
 				return result, ErrServiceAccess
 			}
 			var lease RelayLeaseIdentity
@@ -205,19 +200,19 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 			err = tx.QueryRow(ctx, `SELECT lease.relay_service_id,lease.relay_id,lease.relay_run_id,lease.relay_lease_revision,service.relay_address,service.tls_server_name,lease.lease_expires_at
 		    FROM control.relay_leases lease JOIN control.relay_services service ON service.relay_service_id=lease.relay_service_id
 		    WHERE lease.relay_id=$1 AND lease.relay_run_id=$2 AND lease.relay_lease_revision=$3 AND lease.relay_service_id=$4
-		    AND lease.lease_expires_at>$5 AND NOT lease.draining AND service.enabled FOR SHARE OF lease,service`, slot.RelayID.String, slot.RelayRunID.String, slot.RelayLeaseRevision.Int64, slot.RelayServiceID, now).
+		    AND lease.lease_expires_at>$5 AND NOT lease.draining AND service.enabled FOR SHARE OF lease,service`, slot.relayID.String, slot.relayRunID.String, slot.leaseRevision.Int64, slot.relayService, now).
 				Scan(&lease.RelayServiceID, &lease.RelayID, &lease.RelayRunID, &leaseRevision, &address, &serverName, &leaseUntil)
 			if err != nil {
 				return result, publisherLookupError(err, ErrServiceAccess)
 			}
-			if slot.RelayAddress != address || slot.TlsServerName != serverName {
+			if slot.address != address || slot.serverName != serverName {
 				return ConnectorPeerPair{}, ErrServiceAccess
 			}
 			lease.RelayLeaseRevision = uint64(leaseRevision)
 			recheckUntil = minTime(recheckUntil, leaseUntil)
 			// a lease is required now and again at relay claim, but its short
 			// renewal interval is not the pair's serving authority deadline.
-			result.Relays[i] = ConnectorPeerPairRelay{PublisherConnectionID: slot.PublisherConnectionID, AssignmentRevision: slot.ConnectionAssignmentRevision,
+			result.Relays[i] = ConnectorPeerPairRelay{PublisherConnectionID: slot.connectionID, AssignmentRevision: slot.assignment,
 				RelayLease: lease, RelayAddress: address, TLSServerName: serverName}
 		}
 		if !recheckUntil.After(checkedNow()) || r.ExpectedRelays != result.Relays {
@@ -230,14 +225,15 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	var row controlstatedb.ControlConnectorPeerPair
 	// the signed key names the owner for every action. pair IDs never select one.
 	row, err = q.GetConnectorPeerPairForOwner(ctx, controlstatedb.GetConnectorPeerPairForOwnerParams{
-		SubjectKind: string(subject.Kind), SubjectID: connectorPairSubjectID(subject), ServiceRunID: run.ID, OwnerKey: ownerKey})
+		SubjectKind: string(subject.Kind), SubjectID: connectorPairSubjectID(subject),
+		ServiceRunID: publication.serviceRunID(), PublishRunID: publication.publishRunID(), OwnerKey: ownerKey})
 	if r.Action == "replace" && errors.Is(err, pgx.ErrNoRows) {
 		return ConnectorPeerPair{}, ErrServiceConflict
 	}
 	if err == nil {
 		checked := checkedNow()
 		var previous [2]ConnectorPeerPairRelay
-		if row.ServiceID != r.ServiceID || row.ServiceRunID != r.ServiceRunID || row.RunNumber != r.RunNumber || row.PublisherIdentityID != r.PublisherIdentityID ||
+		if !publication.matches(row) || row.PreviewID != preview ||
 			json.Unmarshal(row.Slots, &previous) != nil || row.SubjectKind != subject.Kind || row.SubjectID != connectorPairSubjectID(subject) {
 			return ConnectorPeerPair{}, ErrServiceConflict
 		}
@@ -309,7 +305,7 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 			// the run lock serializes fresh owners with replacement and renewal.
 			// retained replay fences consume the same bounded owner budget.
 			count, err := q.CountConnectorPeerPairOwners(ctx, controlstatedb.CountConnectorPeerPairOwnersParams{
-				ServiceRunID: run.ID, Now: timestamptz(now), OwnerLimit: maxConnectorPeerPairOwners})
+				ServiceRunID: publication.serviceRunID(), PublishRunID: publication.publishRunID(), Now: timestamptz(now), OwnerLimit: maxConnectorPeerPairOwners})
 			if err != nil {
 				return ConnectorPeerPair{}, err
 			}
@@ -347,7 +343,8 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 				continue
 			}
 			row, err = q.InsertConnectorPeerPair(ctx, controlstatedb.InsertConnectorPeerPairParams{
-				ID: id, ServiceID: r.ServiceID, ServiceRunID: run.ID, RunNumber: run.RunNumber, PublisherIdentityID: run.PublisherIdentityID,
+				ID: id, ServiceID: r.ServiceID, ServiceRunID: r.ServiceRunID, RunNumber: r.RunNumber, PublisherIdentityID: publication.publisherID,
+				PublicURLID: r.PublicURLID, PublishRunID: r.PublishRunID, PublishRunNumber: r.PublishRunNumber, PreviewID: preview,
 				SubjectKind: string(subject.Kind), SubjectID: connectorPairSubjectID(subject), IdempotencyKey: r.IdempotencyKey,
 				ParentControlSessionID: parentSession, OwnerKey: ownerKey,
 				RequestDigest: requestDigest[:], KeyDigest: digest[:], KeyCiphertext: sealed, DeliveryID: deliveryID[:], StorageKeyID: d.storageKey.CurrentID(),
@@ -387,8 +384,9 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	} else {
 		return ConnectorPeerPair{}, err
 	}
-	result.ID, result.ServiceID, result.ServiceRunID, result.PublisherIdentityID = row.ID, r.ServiceID, run.ID, run.PublisherIdentityID
-	result.Subject, result.RunNumber, result.DeliveryGeneration = subject, run.RunNumber, row.DeliveryGeneration
+	result.ID, result.ServiceID, result.ServiceRunID, result.PublisherIdentityID = row.ID, row.ServiceID, row.ServiceRunID, row.PublisherIdentityID
+	result.Subject, result.RunNumber, result.DeliveryGeneration = subject, row.RunNumber, row.DeliveryGeneration
+	result.PublicURLID, result.PublishRunID, result.PublishRunNumber = row.PublicURLID, row.PublishRunID, row.PublishRunNumber
 	if len(row.DeliveryID) != len(result.DeliveryID) {
 		return ConnectorPeerPair{}, ErrServiceAccess
 	}
@@ -414,14 +412,7 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 		// sign the permission already authenticated under these admission locks,
 		// not a second source read or a later transaction. key retention rolls
 		// back with pair renewal if any final authority deadline is spent.
-		service, err := q.GetService(ctx, r.ServiceID)
-		if err != nil {
-			return ConnectorPeerPair{}, err
-		}
-		result.Metadata, err = checkedServiceMetadata(service)
-		if err != nil {
-			return ConnectorPeerPair{}, err
-		}
+		result.Metadata = metadata
 		if result.Metadata.Endpoint == nil {
 			return ConnectorPeerPair{}, ErrServiceMetadata
 		}
@@ -434,7 +425,10 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 		if err != nil {
 			return ConnectorPeerPair{}, err
 		}
-		result.VisitorPermission = IssuedVisitorToken{Token: token, Permission: permission, ServiceTrustRevision: result.Metadata.TrustRevision}
+		result.VisitorPermission = IssuedVisitorToken{Token: token, Permission: permission}
+		if scope.Kind == visitorscope.Service {
+			result.VisitorPermission.ServiceTrustRevision = result.Metadata.TrustRevision
+		}
 		recheckUntil = minTime(recheckUntil, permission.ExpiresAt)
 	}
 	if err = d.lockRegisteredVisitorAuthority(ctx, tx, r.Source, permission, clock); err != nil {

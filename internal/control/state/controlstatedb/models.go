@@ -864,6 +864,7 @@ type ControlPublicUrl struct {
 	Purpose                     string
 	ServiceProtocol             string
 	PublisherPool               bool
+	TrustRevision               int64
 	PublicURLScope              string
 	PolicyRevision              int64
 	AccessMode                  string
@@ -932,6 +933,7 @@ type ControlPublishRun struct {
 	ActingIdentityID           string
 	PublisherIdentityID        pgtype.Text
 	PublisherGrantID           pgtype.Text
+	PublisherKeyID             pgtype.Text
 	PublishRunNumber           int64
 	IdempotencyKey             string
 	RequestDigestCiphertext    []byte

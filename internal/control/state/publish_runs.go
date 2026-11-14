@@ -331,6 +331,7 @@ func (d *Database) createPublishRun(
 		ID:               publishRunID, PublicURLID: request.PublicURLID, TeamID: request.TeamID, MembershipID: membershipID,
 		ActingIdentityID: request.ActingIdentityID, ExpectedMutationRevision: positive(request.ExpectedMutationRevision),
 		PublisherIdentityID: nullableText(request.PublisherIdentityID), PublisherGrantID: nullableText(request.PublisherGrantID),
+		PublisherKeyID:          nullableText(request.PublisherKeyID),
 		IdempotencyKey:          request.IdempotencyKey,
 		RequestDigestCiphertext: digestCiphertext, RequestDigestStorageKeyID: text(d.storageKey.CurrentID()),
 		PublishRunTokenID: publishRunTokenID.String(), PublishRunTokenDigest: publishRunTokenHash[:],

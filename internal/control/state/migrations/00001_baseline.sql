@@ -513,6 +513,7 @@ CREATE TABLE control.public_urls (
     purpose text NOT NULL CHECK (purpose IN ('app', 'alias', 'demo', 'oauth', 'webhooks')),
     service_protocol text NOT NULL DEFAULT 'http' CHECK (service_protocol = 'http'),
     publisher_pool boolean NOT NULL DEFAULT false,
+    trust_revision bigint NOT NULL DEFAULT 1 CHECK (trust_revision>=1),
     public_url_scope text NOT NULL CHECK (public_url_scope IN ('member', 'shared')),
     policy_revision bigint NOT NULL CHECK (policy_revision >= 1),
     access_mode text NOT NULL DEFAULT 'restricted' CHECK (access_mode IN ('restricted', 'anonymous')),
@@ -583,6 +584,27 @@ CREATE INDEX public_urls_ephemeral_expiration
     ON control.public_urls (expires_at, id)
     WHERE ephemeral AND lifecycle_state <> 'deleted';
 
+-- +goose StatementBegin
+CREATE FUNCTION control.public_url_connector_trust() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    -- endpoint trust is independent of visitor permission and run numbers.
+    -- callers cannot reset or advance it without changing endpoint facts.
+    NEW.trust_revision=OLD.trust_revision;
+    IF (NEW.canonical_hostname,NEW.port,NEW.publisher_pool)
+        IS DISTINCT FROM (OLD.canonical_hostname,OLD.port,OLD.publisher_pool) THEN
+        IF OLD.trust_revision=9223372036854775807 THEN
+            RAISE EXCEPTION 'public URL trust revision is exhausted'
+                USING ERRCODE='23514',CONSTRAINT='public_url_trust_revision_exhausted';
+        END IF;
+        NEW.trust_revision=OLD.trust_revision+1;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER public_url_connector_trust BEFORE UPDATE ON control.public_urls
+    FOR EACH ROW EXECUTE FUNCTION control.public_url_connector_trust();
+
 CREATE TABLE control.publish_runs (
     preferred_regions text[] NOT NULL DEFAULT '{}' CHECK (cardinality(preferred_regions)<=8 AND array_position(preferred_regions, NULL) IS NULL),
     id text PRIMARY KEY CHECK (id <> ''),
@@ -592,6 +614,7 @@ CREATE TABLE control.publish_runs (
     acting_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     publisher_identity_id text,
     publisher_grant_id text,
+    publisher_key_id text,
     publish_run_number bigint NOT NULL CHECK (publish_run_number >= 1),
     idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
     request_digest_ciphertext bytea,
@@ -623,6 +646,7 @@ CREATE TABLE control.publish_runs (
     FOREIGN KEY (public_url_id, team_id) REFERENCES control.public_urls(id, team_id) ON DELETE RESTRICT,
     CONSTRAINT publish_runs_private_digest_check CHECK ((request_digest_ciphertext IS NULL) = (request_digest_storage_key_id IS NULL) AND (closed_at IS NOT NULL OR request_digest_ciphertext IS NOT NULL)),
     CHECK ((publisher_identity_id IS NULL) = (publisher_grant_id IS NULL)),
+    CONSTRAINT publish_runs_publisher_key_identity CHECK (publisher_key_id IS NULL OR publisher_identity_id IS NOT NULL),
     CHECK ((certificate_cache_key IS NULL AND certificate_scope IS NULL AND certificate_identifiers IS NULL
             AND certificate_challenge_method IS NULL AND certificate_installed_at IS NULL
             AND certificate_issuance_id IS NULL AND certificate_not_after IS NULL)
@@ -1574,6 +1598,8 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
 $$;
 -- +goose StatementEnd
 CREATE UNIQUE INDEX publisher_identity_keys_current ON control.publisher_identity_keys(publisher_identity_id) WHERE retired_at IS NULL;
+ALTER TABLE control.publish_runs ADD CONSTRAINT publish_runs_publisher_key
+    FOREIGN KEY (publisher_key_id,publisher_identity_id) REFERENCES control.publisher_identity_keys(id,publisher_identity_id) ON DELETE RESTRICT;
 CREATE TABLE control.publisher_grants (
     id text PRIMARY KEY CHECK (id <> ''), publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE CASCADE,
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
@@ -2738,8 +2764,8 @@ $$;
 CREATE TRIGGER visitor_policy_public_created AFTER INSERT OR DELETE ON control.public_urls
     FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('public_resource');
 CREATE TRIGGER visitor_policy_public_changed AFTER UPDATE ON control.public_urls FOR EACH ROW
-    WHEN ((OLD.team_id,OLD.membership_id,OLD.created_by_identity_id,OLD.canonical_hostname,OLD.public_url_scope,OLD.lifecycle_state,OLD.access_mode,OLD.ip_policy,OLD.allowed_ip_hashes,OLD.allowed_ip_hash_key_id,OLD.expires_at)
-        IS DISTINCT FROM (NEW.team_id,NEW.membership_id,NEW.created_by_identity_id,NEW.canonical_hostname,NEW.public_url_scope,NEW.lifecycle_state,NEW.access_mode,NEW.ip_policy,NEW.allowed_ip_hashes,NEW.allowed_ip_hash_key_id,NEW.expires_at))
+    WHEN ((OLD.team_id,OLD.membership_id,OLD.created_by_identity_id,OLD.canonical_hostname,OLD.port,OLD.trust_revision,OLD.public_url_scope,OLD.lifecycle_state,OLD.access_mode,OLD.ip_policy,OLD.allowed_ip_hashes,OLD.allowed_ip_hash_key_id,OLD.expires_at)
+        IS DISTINCT FROM (NEW.team_id,NEW.membership_id,NEW.created_by_identity_id,NEW.canonical_hostname,NEW.port,NEW.trust_revision,NEW.public_url_scope,NEW.lifecycle_state,NEW.access_mode,NEW.ip_policy,NEW.allowed_ip_hashes,NEW.allowed_ip_hash_key_id,NEW.expires_at))
     EXECUTE FUNCTION control.visitor_policy_fact_changed('public_resource');
 CREATE TRIGGER visitor_policy_service_created AFTER INSERT OR DELETE ON control.services
     FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('service_resource');

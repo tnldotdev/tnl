@@ -22,13 +22,47 @@ func connectorPeerPublisherAuthority(ctx context.Context, tx pgx.Tx, run control
 	if run.CertificateExpiresAt.Valid {
 		until = minTime(until, run.CertificateExpiresAt.Time)
 	}
-	var grantExpiry, eligibility pgtype.Timestamptz
+	var grantExpiry pgtype.Timestamptz
 	if err := tx.QueryRow(ctx, `SELECT expires_at FROM control.publisher_grants WHERE id=$1 AND publisher_identity_id=$2 AND kind='service' AND service_id=$3 AND revoked_at IS NULL`, run.PublisherGrantID, run.PublisherIdentityID, run.ServiceID).Scan(&grantExpiry); err != nil {
 		return time.Time{}, publisherLookupError(err, ErrServiceAccess)
 	}
 	if grantExpiry.Valid {
 		until = minTime(until, grantExpiry.Time)
 	}
+	return connectorPublisherEligibility(ctx, tx, run.PublisherIdentityID, until, now)
+}
+
+func (d *Database) connectorPublicURLPublisherAuthority(ctx context.Context, tx pgx.Tx, url controlstatedb.ControlPublicUrl, run controlstatedb.ControlPublishRun, now time.Time) (time.Time, error) {
+	if !run.PublisherIdentityID.Valid || !run.PublisherGrantID.Valid || !run.PublisherKeyID.Valid {
+		return time.Time{}, ErrServiceAccess
+	}
+	q := controlstatedb.New(tx)
+	publisher, grant, err := d.livePublisher(ctx, q, run.PublisherIdentityID.String, run.PublisherGrantID.String, "", now)
+	if err != nil {
+		return time.Time{}, publisherLookupError(err, ErrServiceAccess)
+	}
+	if err := publisherOwnsRun(ctx, q, publisher, url); err != nil {
+		return time.Time{}, err
+	}
+	key, err := q.GetPublisherKey(ctx, controlstatedb.GetPublisherKeyParams{ID: run.PublisherKeyID.String, PublisherIdentityID: publisher.ID})
+	if err != nil || key.RetiredAt.Valid {
+		if err != nil {
+			return time.Time{}, publisherLookupError(err, ErrServiceAccess)
+		}
+		return time.Time{}, ErrServiceAccess
+	}
+	until := minTime(run.PublisherExpiresAt.Time, run.CertificateNotAfter.Time)
+	if grant.ExpiresAt.Valid {
+		until = minTime(until, grant.ExpiresAt.Time)
+	}
+	if url.ExpiresAt.Valid {
+		until = minTime(until, url.ExpiresAt.Time)
+	}
+	return connectorPublisherEligibility(ctx, tx, publisher.ID, until, now)
+}
+
+func connectorPublisherEligibility(ctx context.Context, tx pgx.Tx, publisherID string, until, now time.Time) (time.Time, error) {
+	var eligibility pgtype.Timestamptz
 	// a member-owned publisher's company eligibility can expire before its run.
 	if err := tx.QueryRow(ctx, `SELECT CASE WHEN publisher.ownership='member' AND NOT member.personal_account_exception
 	    AND (team.company_sign_in_required OR member.identity_connection_id IS NOT NULL) THEN
@@ -40,7 +74,7 @@ func connectorPeerPublisherAuthority(ctx context.Context, tx pgx.Tx, run control
 	        ORDER BY eligibility.valid_until LIMIT 1) END
 	    FROM control.publisher_identities publisher JOIN control.teams team ON team.id=publisher.team_id
 	    LEFT JOIN control.team_memberships member ON member.id=publisher.owner_membership_id
-	    WHERE publisher.id=$1`, run.PublisherIdentityID).Scan(&eligibility); err != nil {
+	    WHERE publisher.id=$1`, publisherID).Scan(&eligibility); err != nil {
 		return time.Time{}, publisherLookupError(err, ErrServiceAccess)
 	}
 	if eligibility.Valid {
