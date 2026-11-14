@@ -3337,7 +3337,7 @@ type ProjectServiceConfiguration struct {
 	Name     *string             `json:"name,omitempty"`
 	Protocol *ServiceProtocol    `json:"protocol,omitempty"`
 
-	// Public Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only. Overrides the retained deployment default.
+	// Public Public endpoint access for this service binding, independent of visitor authorization. Local bindings allocate only when realized by an authorized worktree. False keeps connector access only. Overrides the retained deployment default. Mutually exclusive with public_url.
 	Public *bool `json:"public,omitempty"`
 
 	// PublicUrl Enables an HTTP public URL. Local URLs belong to the developer preview; remote saved URLs belong to the team/project/deployment and retain their own visitor policy. Remote declarations cannot mark a named URL ephemeral; unnamed application publication allocates temporary URLs separately.

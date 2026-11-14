@@ -25,7 +25,7 @@ type publishCommand struct {
 	tunnelFlags             `embed:""`
 	backgroundPublishFlags  `embed:""`
 	Target                  string            `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, HTTP origin, or TCP host:port."`
-	Protocol                string            `name:"protocol" env:"TNL_PROTOCOL" help:"Service protocol: http (default), tcp, mysql, or postgres. Configured services need publicURL for public HTTPS."`
+	Protocol                string            `name:"protocol" env:"TNL_PROTOCOL" help:"Service protocol: http (default), tcp, mysql, or postgres. Set public: true on a configured binding for public endpoint access."`
 	TargetTLS               *bool             `name:"target-tls" help:"Verify publisher-to-target TLS using native protocol negotiation. Independent of visitor TLS."`
 	TargetTLSName           string            `name:"target-tls-name" env:"TNL_TARGET_TLS_NAME" help:"Hostname expected in the target's TLS certificate; defaults to the target host."`
 	EnrollmentKey           string            `name:"enroll-key" env:"TNL_ENROLL_KEY" help:"One-use publisher enrollment key; use - to read stdin."`

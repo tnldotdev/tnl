@@ -65,7 +65,7 @@ export interface TnlConfig {
                     team: true;
                   };
                   /**
-                   * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
+                   * Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only.
                    */
                   public?: boolean;
                   inspection?: Inspection;
@@ -205,7 +205,7 @@ export interface TnlConfig {
                     team: true;
                   };
                   /**
-                   * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
+                   * Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only.
                    */
                   public?: boolean;
                   inspection?: Inspection;
@@ -345,7 +345,7 @@ export interface TnlConfig {
                     team: true;
                   };
                   /**
-                   * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
+                   * Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only.
                    */
                   public?: boolean;
                   inspection?: Inspection;
@@ -485,7 +485,7 @@ export interface TnlConfig {
                     team: true;
                   };
                   /**
-                   * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
+                   * Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only.
                    */
                   public?: boolean;
                   inspection?: Inspection;
@@ -613,7 +613,7 @@ export interface TnlConfig {
                     team: true;
                   };
                   /**
-                   * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
+                   * Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only.
                    */
                   public?: boolean;
                   inspection?: Inspection;
@@ -741,7 +741,7 @@ export interface TnlConfig {
                     team: true;
                   };
                   /**
-                   * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
+                   * Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only.
                    */
                   public?: boolean;
                   inspection?: Inspection;
@@ -869,7 +869,7 @@ export interface TnlConfig {
                     team: true;
                   };
                   /**
-                   * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
+                   * Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only.
                    */
                   public?: boolean;
                   inspection?: Inspection;

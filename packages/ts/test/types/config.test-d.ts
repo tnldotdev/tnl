@@ -65,10 +65,17 @@ test("saved services select exposure independently of protocol and placement", (
   });
   expectTypeOf(project.deployments.production.targets.api.public).toEqualTypeOf<true>();
   expectTypeOf(project.deployments.production.targets.db.public).toEqualTypeOf<false>();
+  const app = defineConfig({
+    services: { app: {}, db: { protocol: "postgres" } },
+    deployments: {
+      local: { targets: { app: { public: true }, db: { address: 5432, public: false } } },
+    },
+  });
+  expectTypeOf(app.deployments.local.targets.app.public).toEqualTypeOf<true>();
   defineConfig({
     services: { app: {} },
-    // @ts-expect-error app-owned exposure has not switched to the service endpoint lifecycle yet.
-    deployments: { local: { targets: { app: { public: true } } } },
+    // @ts-expect-error one binding cannot select both service and legacy preview URL lifecycles.
+    deployments: { local: { targets: { app: { public: true, publicURL: {} } } } },
   });
 });
 

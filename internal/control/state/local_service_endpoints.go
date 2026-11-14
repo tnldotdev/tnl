@@ -48,7 +48,7 @@ func localManagedWorktreeLabel(key, label string) (string, error) {
 	return fmt.Sprintf("worktree-%x", digest[:6]), nil
 }
 
-func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, service, actor, name string, placement ServicePlacement, now time.Time) error {
+func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, service, actor, name string, placement ServicePlacement, public bool, now time.Time) error {
 	row, err := controlstatedb.New(tx).LockService(ctx, service)
 	if err != nil {
 		return err
@@ -87,7 +87,7 @@ func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, se
 		if !strings.HasSuffix(row.CertificateHostname, "."+owner) || row.DomainID.String != domainID || row.PlacementWorktreeKey != placement.WorktreeKey || row.PlacementWorktreeLabel != label {
 			return ErrServiceConflict
 		}
-		return nil
+		return d.setLocalServiceExposure(ctx, tx, service, public, now)
 	}
 	sourceKey := placement.SourceKey
 	if sourceKey == "" {
@@ -106,15 +106,44 @@ func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, se
 	if err = tx.QueryRow(ctx, `INSERT INTO control.service_namespace_claims(namespace,local_source_key,membership_id,domain_id,created_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(namespace) DO UPDATE SET local_source_key=EXCLUDED.local_source_key WHERE control.service_namespace_claims.local_source_key=EXCLUDED.local_source_key AND control.service_namespace_claims.membership_id=EXCLUDED.membership_id AND control.service_namespace_claims.domain_id=EXCLUDED.domain_id AND control.service_namespace_claims.retired_at IS NULL RETURNING namespace`, hostname, sourceKey, membership, domainID, now).Scan(&claimed); err != nil {
 		return publisherLookupError(err, ErrServiceConflict)
 	}
-	port, err := allocateServicePort(ctx, tx, service, pool, row.Public, now)
+	port, err := allocateServicePort(ctx, tx, service, pool, public, now)
 	if err != nil {
 		return err
 	}
 	// local publishers receive exact-host plans, never authority over another
 	// service or the member/worktree namespace as a whole.
-	if err = reconcileServiceEndpoint(ctx, tx, serviceEndpoint{ServiceID: service, LocalSourceKey: sourceKey, DomainID: domainID, Hostname: hostname, Namespace: hostname, PoolID: pool, Automation: placement.DNSAutomation}, now); err != nil {
+	if err = reconcileServiceEndpoint(ctx, tx, serviceEndpoint{ServiceID: service, LocalSourceKey: sourceKey, DomainID: domainID, Hostname: hostname, Namespace: hostname, PoolID: pool, Public: public, Automation: placement.DNSAutomation}, now); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.services SET certificate_hostname=$2,certificate_scope=$2,domain_id=$3,service_port=$4,ingress_pool_id=$5,placement_worktree_key=$6,placement_worktree_label=$7 WHERE id=$1`, service, hostname, domainID, port, pool, placement.WorktreeKey, label)
+	_, err = tx.Exec(ctx, `UPDATE control.services SET certificate_hostname=$2,certificate_scope=$2,domain_id=$3,service_port=$4,ingress_pool_id=$5,placement_worktree_key=$6,placement_worktree_label=$7,public=$8 WHERE id=$1`, service, hostname, domainID, port, pool, placement.WorktreeKey, label, public)
 	return projectConstraintError(err)
+}
+
+// exposure updates keep the captured hostname and provenance. applying a project
+// never reconstructs another worktree's name, domain defaults, or DNS ownership.
+func (d *Database) setLocalServiceExposure(ctx context.Context, tx pgx.Tx, service string, public bool, now time.Time) error {
+	row, err := controlstatedb.New(tx).LockService(ctx, service)
+	if err != nil {
+		return err
+	}
+	if row.Public == public {
+		return nil
+	}
+	var endpoint serviceEndpoint
+	var automated bool
+	err = tx.QueryRow(ctx, `SELECT service_id,local_source_key,domain_id,hostname,namespace,ingress_pool_id,dns_state<>'unmanaged'
+	    FROM control.service_endpoints WHERE service_id=$1 AND hostname=$2 AND retired_at IS NULL AND deployment_id IS NULL`,
+		service, row.CertificateHostname).Scan(&endpoint.ServiceID, &endpoint.LocalSourceKey, &endpoint.DomainID, &endpoint.Hostname, &endpoint.Namespace, &endpoint.PoolID, &automated)
+	if err != nil {
+		return err
+	}
+	port, err := allocateServicePort(ctx, tx, service, endpoint.PoolID, public, now)
+	if err != nil {
+		return err
+	}
+	endpoint.Public, endpoint.Automation = public, automated
+	if err = reconcileServiceEndpoint(ctx, tx, endpoint, now); err != nil {
+		return err
+	}
+	return bindServicePort(ctx, tx, service, port, public, now)
 }
