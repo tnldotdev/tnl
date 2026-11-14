@@ -236,6 +236,7 @@ func deploymentBindingSchema() *jsonschema.Schema {
 	access := jsonschema.NewProperties()
 	access.Set("team", &jsonschema.Schema{Type: "boolean", Const: true})
 	properties.Set("access", &jsonschema.Schema{Type: "object", Properties: access, Required: []string{"team"}, AdditionalProperties: jsonschema.FalseSchema})
+	properties.Set("public", &jsonschema.Schema{Type: "boolean", Description: "Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only."})
 	properties.Set("inspection", &jsonschema.Schema{Ref: "#/$defs/Inspection"})
 	tunnel := tunnelSchema()
 	tunnel.Description = "Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present."

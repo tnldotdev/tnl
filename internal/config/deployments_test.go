@@ -153,6 +153,23 @@ func TestResolvedDeploymentOwnsSettings(t *testing.T) {
 	}
 }
 
+func TestSavedDeploymentKeepsPerServiceExposure(t *testing.T) {
+	project := deploymentProjectFixture()
+	deployment := project.Deployments["production"]
+	deployment.Targets["web"] = DeploymentBinding{ServiceTarget: ServiceTarget{Address: new(Target("http://web.internal:3000"))}, Public: new(true)}
+	db := deployment.Targets["db"]
+	db.Public = new(false)
+	deployment.Targets["db"] = db
+	project.Deployments["production"] = deployment
+	selected, err := ResolveDeployment(project, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Services["web"].Public == nil || !*selected.Services["web"].Public || selected.Services["db"].Public == nil || *selected.Services["db"].Public || selected.DeploymentSettings.Public {
+		t.Fatal("service exposure changed another binding or the deployment default")
+	}
+}
+
 func TestWorkloadSelectionIsCheckedAtTheDeploymentBoundary(t *testing.T) {
 	selected := TNL{
 		Services: Services{"db": {Protocol: new("postgres"), Target: &ServiceTarget{Type: "address", Address: new(Target("localhost:5432"))}}},

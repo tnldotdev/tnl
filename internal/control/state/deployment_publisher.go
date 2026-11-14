@@ -339,6 +339,9 @@ func (d *Database) GetDeploymentPublisherAssignments(ctx context.Context, token 
 			}
 			return result, publisherLookupError(err, ErrDeploymentPublisher)
 		}
+		// public reachability belongs to control's endpoint. changing it must
+		// not replace a publisher or an independently authorized connector.
+		configuration.Public = nil
 		a := DeploymentPublisherServiceAssignment{Service: s.Service, ServiceID: s.PublicURLID.String, Kind: "public_url", GrantID: grant, Configuration: configuration}
 		if s.ServiceID.Valid {
 			a.ServiceID, a.Kind = s.ServiceID.String, "service"

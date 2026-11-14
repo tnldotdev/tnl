@@ -11,10 +11,9 @@ import (
 
 // endpoint identity is durable across runs, publisher replicas and deployment-key
 // renames. deployment moves never silently broaden certificate authority.
-func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service, deployment string, automation bool, now time.Time) error {
+func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service, deployment string, public, automation bool, now time.Time) error {
 	var namespace, domain, pool, name, hostname string
-	var public bool
-	err := tx.QueryRow(ctx, `SELECT g.namespace,g.domain_id,t.ingress_pool_id,s.name,s.certificate_hostname,g.public FROM control.deployments g JOIN control.teams t ON t.id=g.team_id JOIN control.services s ON s.id=$1 AND s.team_id=g.team_id WHERE g.id=$2 AND g.deleted_at IS NULL FOR UPDATE OF s`, service, deployment).Scan(&namespace, &domain, &pool, &name, &hostname, &public)
+	err := tx.QueryRow(ctx, `SELECT g.namespace,g.domain_id,t.ingress_pool_id,s.name,s.certificate_hostname FROM control.deployments g JOIN control.teams t ON t.id=g.team_id JOIN control.services s ON s.id=$1 AND s.team_id=g.team_id WHERE g.id=$2 AND g.deleted_at IS NULL FOR UPDATE OF s`, service, deployment).Scan(&namespace, &domain, &pool, &name, &hostname)
 	if err != nil {
 		return err
 	}
