@@ -107,7 +107,7 @@ type Config struct {
 	ObserveSummary               inspection.Observer
 	PromoteVisitor               PromoteVisitor
 	AdmitVisitor                 AdmitVisitor
-	ReadinessProof               func(PublishRunIdentity) *ReadinessProof
+	ReadinessProof               func(PublishRunIdentity) *httpaccess.ReadinessProof
 	OnWarning                    func(string)
 	InspectionMode               inspection.Mode
 	AllowedIPPrefixes            []string

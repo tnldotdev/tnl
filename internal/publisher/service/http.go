@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -39,6 +40,8 @@ type HTTP struct {
 	AuditSink      serviceaudit.Sink
 	InspectionMode inspection.Mode
 	ObserveSummary inspection.Observer
+	AdmitRequest   func(*http.Request) error
+	ReadinessProof *httpaccess.ReadinessProof
 	Control        HTTPControl
 	Subject        visitorscope.Scope
 	RunID          string
@@ -50,11 +53,17 @@ type HTTP struct {
 	Requests       *requestlimit.HTTP
 	Policy         *visitorlease.Lease
 	browser        *httpaccess.Browser
+	probes         *requestlimit.HTTP
 }
 
 func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
 	if f.Control == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || !f.InspectionMode.Valid() {
 		return HTTP{}, nil, servicestream.ErrEndpoint
+	}
+	var err error
+	f.probes, err = requestlimit.NewHTTP(&controlv1.ProjectHTTPApplicationLimits{Concurrency: new(4)})
+	if err != nil {
+		return HTTP{}, nil, err
 	}
 	policy, err := httpaccess.PreparePolicy(ctx, f.Control, f.Subject, f.RunID, f.Number, f.Token.String(), nil)
 	if err != nil {
@@ -72,7 +81,7 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
 
 func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestream.HTTPTarget) error {
 	h := f.Header
-	if f.Policy == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || h.PublicService == nil || h.ServiceID != f.Subject.ID || h.ServiceRunID != f.RunID || h.RunNumber != uint64(f.Number) || h.PublicService.DestinationPort != f.Port || f.Port != 443 || h.Validate() != nil {
+	if f.Policy == nil || f.ReadinessProof != nil && f.probes == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || h.PublicService == nil || h.ServiceID != f.Subject.ID || h.ServiceRunID != f.RunID || h.RunNumber != uint64(f.Number) || h.PublicService.DestinationPort != f.Port || f.Port != 443 || h.Validate() != nil {
 		return servicestream.ErrEndpoint
 	}
 	source, err := netip.ParseAddr(h.SourceIP)
@@ -131,6 +140,33 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 			r.RemoteAddr = netip.AddrPortFrom(source.Unmap(), 1).String()
 			state := client.ConnectionState()
 			r.TLS = &state
+			proof := len(state.PeerCertificates) == 0 && f.ReadinessProof.Consume(r, httpaccess.ReadinessRun{Subject: f.Subject, ID: f.RunID, Number: uint64(f.Number), Hostname: f.Hostname})
+			r.Header.Del(publisherproxy.ReadinessProbeHeader)
+			if f.AdmitRequest != nil {
+				if err := f.AdmitRequest(r); err != nil {
+					outcome, reason = "failed", "unavailable"
+					servicestream.DenyHTTP(w, http.StatusServiceUnavailable)
+					return
+				}
+			}
+			if proof {
+				// an owner probe bypasses visitor login, not current run authority.
+				// its separate bounded budget cannot spend application requests.
+				reported = true
+				if _, enabled, _ := f.Policy.Current(); !enabled {
+					servicestream.DenyHTTP(w, http.StatusServiceUnavailable)
+					return
+				}
+				r = publisherproxy.WithReadinessProbe(r)
+				release, ok := f.probes.Admit(w, r)
+				if !ok {
+					return
+				}
+				defer release()
+				r = serviceApplicationRequest(r)
+				next.ServeHTTP(w, r)
+				return
+			}
 			var tokens *httpaccess.Tokens
 			if f.browser != nil {
 				tokens = f.browser.Tokens
@@ -152,15 +188,7 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 				return
 			}
 			defer release()
-			r = httpaccess.StripCookies(r)
-			r.Header.Del("Tnl-Access-Token")
-			r.Header.Del("Forwarded")
-			r.Header.Del("X-Real-IP")
-			for key := range r.Header {
-				if strings.HasPrefix(strings.ToLower(key), "x-forwarded-") {
-					r.Header.Del(key)
-				}
-			}
+			r = serviceApplicationRequest(r)
 			// report the decision before an upgrade or long-lived response.
 			outcome, reason = "allowed", ""
 			report()
@@ -171,6 +199,20 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 		return httpstream.ServeHandler(ctx, client, wrap(target.Handler))
 	}
 	return httpstream.Serve(ctx, client, &url.URL{Scheme: scheme, Host: target.Address}, target.Dial, wrap)
+}
+
+func serviceApplicationRequest(r *http.Request) *http.Request {
+	r = httpaccess.StripCookies(r)
+	r.Header.Del(httpaccess.VisitorTokenHeader)
+	r.Header.Del("Tnl-Access-Token")
+	r.Header.Del("Forwarded")
+	r.Header.Del("X-Real-IP")
+	for key := range r.Header {
+		if strings.HasPrefix(strings.ToLower(key), "x-forwarded-") {
+			r.Header.Del(key)
+		}
+	}
+	return r
 }
 
 func (f HTTP) share(w http.ResponseWriter, r *http.Request) {

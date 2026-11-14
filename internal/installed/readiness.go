@@ -6,8 +6,10 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 )
 
 // VerifyPublicationReadiness proves that the current run carried a request to
@@ -17,11 +19,11 @@ func VerifyPublicationReadiness(ctx context.Context, cfg *publisher.Config, path
 	if path == "" {
 		path = "/"
 	}
-	var proof *publisher.ReadinessProof
+	var proof *httpaccess.ReadinessProof
 	var run publisher.PublishRunIdentity
-	cfg.ReadinessProof = func(identity publisher.PublishRunIdentity) *publisher.ReadinessProof {
+	cfg.ReadinessProof = func(identity publisher.PublishRunIdentity) *httpaccess.ReadinessProof {
 		run = identity
-		proof, _ = publisher.NewReadinessProof(identity, path)
+		proof, _ = httpaccess.NewReadinessProof(httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: identity.PublicURLID}, ID: identity.PublishRunID, Number: identity.Number, Hostname: identity.Hostname}, path)
 		return proof
 	}
 	observe := cfg.Observe

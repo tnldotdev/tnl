@@ -257,6 +257,10 @@ publisher/service -------+
   workers. It does not own accepted visitor connections.
 - `requestlimit` keeps one HTTP request budget per run, shared across that run's
   visitor connections.
+- `httpaccess.ReadinessProof` accepts one body-free GET at an exact path for one
+  run. Service HTTP strips its secret before forwarding and uses a separate,
+  bounded probe budget. The app owner still checks its current registration and
+  captured target; successful visitor access is not a readiness proof.
 - `service/http.go` builds the service HTTP frontend. `service/stream` handles
   visitor TLS, protocol negotiation, expiry, target connections, and cleanup.
   The run supplies current admission and a shared request budget.

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 )
 
@@ -35,12 +37,22 @@ func testManagedVisitorTLSWithPlaintextHTTPTarget(t *testing.T, h2 bool) {
 		if r.TLS != nil {
 			t.Error("plaintext target unexpectedly used TLS")
 		}
+		if r.Header.Get(publisherproxy.ReadinessProbeHeader) != "" || publisherproxy.IsReadinessProbe(r) {
+			t.Error("connector request supplied an owner readiness proof")
+		}
 		_, _ = io.WriteString(w, "plaintext backend")
 	}))
 	defer target.Close()
 	summaries := make(chan inspection.Summary, 2)
+	var replaced atomic.Bool
 	server := servicestream.Stream{Protocol: config.ProtocolHTTP, Hostname: host, Target: strings.TrimPrefix(target.URL, "http://"),
 		InspectionMode: inspection.SummaryMode, ObserveSummary: func(summary inspection.Summary) { summaries <- summary },
+		AdmitRequest: func(*http.Request) error {
+			if replaced.Load() {
+				return errors.New("app owner replaced")
+			}
+			return nil
+		},
 		TLS: &tls.Config{Certificates: []tls.Certificate{certificates.server}},
 		Visitor: servicestream.ConnectorVisitor{Admission: servicestream.AdmissionFixture{Check: func(context.Context) (servicestream.Decision, error) {
 			return servicestream.Decision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
@@ -49,7 +61,12 @@ func testManagedVisitorTLSWithPlaintextHTTPTarget(t *testing.T, h2 bool) {
 	transport := &http.Transport{ForceAttemptHTTP2: h2, TLSClientConfig: &tls.Config{RootCAs: certificates.roots, ServerName: host}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
-	response, err := client.Get("https://" + address + "/observed?token=private")
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://"+address+"/observed?token=private", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set(publisherproxy.ReadinessProbeHeader, "forged-owner-proof")
+	response, err := client.Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,6 +87,16 @@ func testManagedVisitorTLSWithPlaintextHTTPTarget(t *testing.T, h2 bool) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("connector HTTP did not emit its request summary")
+	}
+	replaced.Store(true)
+	denied, err := client.Get("https://" + address + "/after-replacement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, denied.Body)
+	_ = denied.Body.Close()
+	if denied.StatusCode != http.StatusServiceUnavailable {
+		t.Fatal("connector request crossed application owner replacement", denied.Status)
 	}
 	// omitting target TLS never admits a plaintext visitor.
 	plain, err := net.DialTimeout("tcp", address, time.Second)

@@ -15,6 +15,9 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -26,6 +29,9 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 	startSeparatedPrivateIngress(t, f, 1, "quic", nil)
 	var posts atomic.Int64
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(publisherproxy.ReadinessProbeHeader) != "" {
+			t.Error("owner readiness proof reached the target")
+		}
 		if r.Method == http.MethodPost {
 			posts.Add(1)
 			_, _ = io.Copy(w, r.Body)
@@ -58,8 +64,30 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 	if err != nil || service.Endpoint == nil || !service.Endpoint.Public || service.Endpoint.Port != 443 {
 		t.Fatal("local HTTP did not use shared HTTPS", service, err)
 	}
-	stopPublisher := startPrivateHTTPPublisher(t, f, service, target.Listener.Addr().String())
+	var proof *httpaccess.ReadinessProof
+	prepared := make(chan struct{})
+	stopPublisher := startPrivateHTTPPublisher(t, f, service, target.Listener.Addr().String(), func(cfg *publisherservice.RunConfig) {
+		cfg.ReadinessProof = func(run httpaccess.ReadinessRun) *httpaccess.ReadinessProof {
+			if run.Subject.ID != service.Id || run.ID == "" || run.Number < 1 || run.Hostname != service.Endpoint.Hostname {
+				t.Error("readiness proof lost its service-run binding")
+				return nil
+			}
+			var err error
+			proof, err = httpaccess.NewReadinessProof(run, "/health")
+			if err != nil {
+				t.Error(err)
+				return nil
+			}
+			close(prepared)
+			return proof
+		}
+	})
 	defer stopPublisher()
+	select {
+	case <-prepared:
+	case <-t.Context().Done():
+		t.Fatal("service publisher omitted readiness preparation")
+	}
 	verification := f.visitorRoots.Clone()
 	verification.ServerName = service.Endpoint.Hostname
 	publicTransport := &http.Transport{TLSClientConfig: verification, ForceAttemptHTTP2: true, DialContext: workloadPublicEndpointDialer(t, process.ingresses[0].publicServices, service.Endpoint.Port)}
@@ -67,6 +95,29 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 	publicClient := &http.Client{Transport: publicTransport, Timeout: 5 * time.Second}
 	base := "https://" + service.Endpoint.Hostname
 	awaitServiceHTTPStatus(t, publicClient, base, "", "", http.StatusForbidden)
+	secret := proof.HeaderValue()
+	checkReadiness := func(want int) {
+		t.Helper()
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, base+"/health", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set(publisherproxy.ReadinessProbeHeader, secret)
+		response, err := publicClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+		if err != nil || response.StatusCode != want {
+			t.Fatal("exact service-run readiness request", response.StatusCode, want, err)
+		}
+	}
+	checkReadiness(http.StatusOK)
+	if proof.HeaderValue() != "" {
+		t.Fatal("public readiness was answered by another run")
+	}
+	checkReadiness(http.StatusForbidden)
 	token, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)

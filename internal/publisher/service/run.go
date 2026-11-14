@@ -42,6 +42,7 @@ type Prepared struct {
 	handler             http.Handler
 	inspectionMode      inspection.Mode
 	observeSummary      inspection.Observer
+	admitRequest        func(*http.Request) error
 	targetResolver      TargetResolver
 	managedHostname     string
 	managedProtocol     config.ProtocolName
@@ -552,8 +553,9 @@ func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor ser
 	}
 	managed := servicestream.Stream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, Handler: b.prepared.handler, HTTPRequests: b.prepared.serviceHTTPRequests,
 		InspectionMode: b.prepared.inspectionMode, ObserveSummary: b.prepared.observeSummary,
-		Authority: authority,
-		TLS:       &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: visitor}
+		AdmitRequest: b.prepared.admitRequest,
+		Authority:    authority,
+		TLS:          &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: visitor}
 	return managed.Forward(ctx, stream)
 }
 

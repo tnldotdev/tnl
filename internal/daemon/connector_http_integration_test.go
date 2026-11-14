@@ -28,7 +28,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service controlv1.Service, target string, overrides ...publisherservice.RunControl) func() {
+func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service controlv1.Service, target string, configure ...func(*publisherservice.RunConfig)) func() {
 	t.Helper()
 	enrollment, err := f.identity.routes.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: service.TeamId, ServiceId: &service.Id, Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled, Name: "private-http"})
 	if err != nil {
@@ -48,26 +48,26 @@ func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service
 	if f.defaultTiming {
 		heartbeat = 0
 	}
-	var control publisherservice.RunControl = f.identity.routes
-	if len(overrides) == 1 {
-		control = overrides[0]
+	cfg := publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target,
+		Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: heartbeat,
+		RelayQUIC: quic, RelayTCP: tcp,
+		Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8, options publisherservice.ConnectOptions) (publisherservice.SlotSession, error) {
+			claimed, err := bound.ConnectSlot(ctx, slot, options)
+			if err == nil && f.publisherConnections != nil {
+				select {
+				case f.publisherConnections <- claimed:
+				case <-ctx.Done():
+					_ = claimed.Close()
+					return nil, context.Cause(ctx)
+				}
+			}
+			return claimed, err
+		}}
+	for _, apply := range configure {
+		apply(&cfg)
 	}
 	go func() {
-		done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: control, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target,
-			Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: heartbeat,
-			RelayQUIC: quic, RelayTCP: tcp,
-			Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8, options publisherservice.ConnectOptions) (publisherservice.SlotSession, error) {
-				claimed, err := bound.ConnectSlot(ctx, slot, options)
-				if err == nil && f.publisherConnections != nil {
-					select {
-					case f.publisherConnections <- claimed:
-					case <-ctx.Done():
-						_ = claimed.Close()
-						return nil, context.Cause(ctx)
-					}
-				}
-				return claimed, err
-			}})
+		done <- publisherservice.Publish(ctx, cfg)
 	}()
 	join := sync.OnceValue(func() error {
 		select {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
@@ -99,7 +101,10 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	var pinMu sync.Mutex
 	var pending, pin targetplan.TargetSnapshot
 	var pinRun uint64
-	check := func(ctx context.Context, current publisherapp.Service) publisherapp.Observation {
+	var probe *httpaccess.ReadinessProof
+	var probeRun uint64
+	var probeMu sync.Mutex
+	localCheck := func(ctx context.Context, current publisherapp.Service) publisherapp.Observation {
 		pinMu.Lock()
 		captured, run := pin, pinRun
 		pinMu.Unlock()
@@ -112,6 +117,32 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 		observation = publisherapp.ProbeServiceTarget(ctx, local, transport)
 		observation.Target = current.Target
 		if !binding.Current(ctx, captured) {
+			observation.Ready, observation.Reason = false, "runtime.target_changed"
+		}
+		return observation
+	}
+	check := func(ctx context.Context, current publisherapp.Service) publisherapp.Observation {
+		if saved.Protocol != controlv1.ServiceProtocolHTTP || saved.Endpoint == nil || !saved.Endpoint.Public {
+			return localCheck(ctx, current)
+		}
+		observation := publisherapp.Observation{Target: current.Target, RegistrationID: current.RegistrationID, RunNumber: current.RunNumber, Readiness: current.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"}
+		probeMu.Lock()
+		defer probeMu.Unlock()
+		pinMu.Lock()
+		captured, run, proof, proofNumber := pin, pinRun, probe, probeRun
+		pinMu.Unlock()
+		if run != current.RunNumber || proofNumber != run || proof == nil || captured.Address == "" || !binding.Current(ctx, captured) {
+			return observation
+		}
+		secret, err := proof.Renew()
+		if err != nil {
+			return observation
+		}
+		local := current
+		local.PublicURL = "https://" + saved.Endpoint.Hostname
+		observation = publisherapp.ProbeWithProof(ctx, local, nil, secret)
+		// a successful unrelated responder is not proof that this run served it.
+		if !binding.Current(ctx, captured) || proof.HeaderValue() != "" {
 			observation.Ready, observation.Reason = false, "runtime.target_changed"
 		}
 		return observation
@@ -139,11 +170,31 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 		}
 		publish := func() error {
 			return targetplan.PublishPrivate(ctx, plan, publisherservice.RunConfig{Telemetry: a.Telemetry, Control: control, State: profile, Access: native.Access, Identity: identity, ServiceID: saved.Id, Target: plan.Target, Metadata: publisheridentity.ServiceMetadata(saved),
+				AdmitRequest: func(r *http.Request) error {
+					run := control.number.Load()
+					if ctx.Err() != nil || !a.manager.CurrentRun(service.Name, service.RegistrationID, service.Target, run) {
+						return publisherapp.ErrRegistrationStale
+					}
+					pinMu.Lock()
+					captured, number := pin, pinRun
+					pinMu.Unlock()
+					if number != run || !binding.Current(r.Context(), captured) {
+						return publisherapp.ErrRegistrationStale
+					}
+					return nil
+				},
+				ReadinessProof: serviceReadinessProof(saved.Protocol, service.Readiness.Path, func(run httpaccess.ReadinessRun, proof *httpaccess.ReadinessProof) {
+					pinMu.Lock()
+					probe, probeRun = proof, run.Number
+					pinMu.Unlock()
+				}),
 				Healthy: func(probe context.Context) bool {
 					current := service
 					current.RunNumber = control.number.Load()
-					observation := check(probe, current)
-					a.manager.Observe(observation)
+					observation := localCheck(probe, current)
+					if saved.Endpoint == nil || !saved.Endpoint.Public || saved.Protocol != controlv1.ServiceProtocolHTTP {
+						a.manager.Observe(observation)
+					}
 					return observation.Ready
 				}, Ready: func() error {
 					run := control.number.Load()
@@ -159,7 +210,10 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 		for attempt := 0; ctx.Err() == nil; attempt++ {
 			err := publish()
 			if ctx.Err() != nil {
-				return nil
+				if err == nil || failure.Only(err, context.Canceled) {
+					return nil
+				}
+				return err
 			}
 			if err == nil || !privateAppRetry(err) {
 				return err
@@ -182,6 +236,23 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 		}
 		return nil
 	}}, nil
+}
+
+func serviceReadinessProof(protocol controlv1.ServiceProtocol, path string, prepared func(httpaccess.ReadinessRun, *httpaccess.ReadinessProof)) func(httpaccess.ReadinessRun) *httpaccess.ReadinessProof {
+	if protocol != controlv1.ServiceProtocolHTTP {
+		return nil
+	}
+	if path == "" {
+		path = "/"
+	}
+	return func(run httpaccess.ReadinessRun) *httpaccess.ReadinessProof {
+		proof, err := httpaccess.NewReadinessProof(run, path)
+		if err != nil {
+			return nil
+		}
+		prepared(run, proof)
+		return proof
+	}
 }
 
 func privateAppRetry(err error) bool {

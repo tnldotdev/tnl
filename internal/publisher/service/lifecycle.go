@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
@@ -58,6 +59,8 @@ type RunConfig struct {
 	Handler           http.Handler
 	InspectionMode    inspection.Mode
 	ObserveSummary    inspection.Observer
+	AdmitRequest      func(*http.Request) error
+	ReadinessProof    func(httpaccess.ReadinessRun) *httpaccess.ReadinessProof
 	TargetResolver    TargetResolver
 	resolvedTargetTLS *tls.Config
 	HeartbeatInterval time.Duration
@@ -84,8 +87,8 @@ type RunStatus struct {
 	Connected                                  [2]bool
 }
 
-func (RunConfig) String() string   { return "private publisher configuration" }
-func (RunConfig) GoString() string { return "private publisher configuration" }
+func (RunConfig) String() string   { return "service publisher configuration" }
+func (RunConfig) GoString() string { return "service publisher configuration" }
 
 // Publish keeps the managed certificate lifecycle, two independently claimed
 // relay slots and current control heartbeat together. live bytes are never replayed.
@@ -97,7 +100,8 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	telemetry := config.Telemetry.BeginScope("publisher")
 	defer telemetry.Close()
 	if config.Control == nil || config.Access == nil || !config.Metadata.Protocol.Valid() || !config.InspectionMode.Valid() || config.Identity.ServiceId == nil ||
-		config.Identity.Kind != authorityv1.Service || *config.Identity.ServiceId != config.ServiceID {
+		config.Identity.Kind != authorityv1.Service || *config.Identity.ServiceId != config.ServiceID ||
+		config.ReadinessProof != nil && config.Metadata.Protocol != controlv1.ServiceProtocolHTTP {
 		return ErrPrivateStream
 	}
 	var dialer muxsession.QUICDialer

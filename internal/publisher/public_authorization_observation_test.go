@@ -23,6 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
@@ -292,7 +293,7 @@ func TestPublicHTTPAuthorizationObservationSkipsReadinessAndSeparatesCapacity(t 
 	t.Cleanup(func() { _ = m.Shutdown(context.Background()) })
 	ctx := observability.WithMetrics(t.Context(), m)
 	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
-	proof, err := NewReadinessProof(run, "/health")
+	proof, err := httpaccess.NewReadinessProof(httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: run.PublicURLID}, ID: run.PublishRunID, Number: run.Number, Hostname: run.Hostname}, "/health")
 	if err != nil {
 		t.Fatal(err)
 	}
