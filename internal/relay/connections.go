@@ -14,6 +14,7 @@ import (
 type PublisherConnection struct {
 	ref     tunnelv1.PublisherConnectionRef
 	claimed relayv1.ClaimedPublisherConnection
+	packets *connectorPacketSession
 	*streamLifetime
 }
 
@@ -38,6 +39,27 @@ func NewPublisherConnection(
 }
 
 func (c *PublisherConnection) Ref() tunnelv1.PublisherConnectionRef { return c.ref }
+
+func (c *PublisherConnection) Close() error {
+	c.mu.Lock()
+	c.draining = true
+	c.mu.Unlock()
+	if c.packets != nil {
+		c.packets.Close()
+	}
+	return c.streamLifetime.Close()
+}
+
+func (c *PublisherConnection) Drain(ctx context.Context) error {
+	// stop new ingress and connector admission before joining packet owners.
+	c.mu.Lock()
+	c.draining = true
+	c.mu.Unlock()
+	if c.packets != nil {
+		c.packets.Close()
+	}
+	return c.streamLifetime.Drain(ctx)
+}
 
 func (c *PublisherConnection) OpenVisitor(ctx context.Context, visitorConnectionID string, pending, confirm bool, initial []byte, events tunnel.ReturnEvents) (net.Conn, error) {
 	if err := c.beginOpen(); err != nil {

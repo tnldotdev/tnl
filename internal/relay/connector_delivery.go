@@ -174,7 +174,7 @@ func (d *connectorDelivery) renew(ctx context.Context, a *ConnectorAcceptor, out
 	// the active deadline, admission state, and carrier through installation.
 	invalid := !until.After(time.Now())
 	if err == nil {
-		invalid = invalid || !d.proof.SameLeg(proof) || next.ref != d.claim.ref || next.key != d.claim.key || next.receipt.DeliveryID != d.claim.receipt.DeliveryID || next.receipt.SourceIP != d.claim.receipt.SourceIP ||
+		invalid = invalid || !d.proof.SameLeg(proof) || !next.samePublisher(d.claim) || next.key != d.claim.key || next.receipt.DeliveryID != d.claim.receipt.DeliveryID || next.receipt.SourceIP != d.claim.receipt.SourceIP ||
 			!next.receipt.ExpiresAt.After(time.Now()) || state == tunnelv1.ConnectorPeerLegBindingActive && next.receipt.BindingState != tunnelv1.ConnectorPeerLegBindingActive
 	}
 	if invalid {
@@ -239,8 +239,8 @@ func (p *connectorPacketSession) selectBridge(ctx context.Context, a *ConnectorA
 		return nil, err
 	}
 	lease, valid := a.currentLease(d.proof)
-	connection, present := a.Publishers.connectorCandidate(d.claim.ref, lease)
-	if !valid || !present || connection.packets != p {
+	publisher, present := a.publisherPackets(d.claim, lease)
+	if !valid || !present || publisher != p {
 		return nil, &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 	}
 	if _, replacement := activation.Replacement(); replacement {
@@ -276,8 +276,8 @@ func (p *connectorPacketSession) selectBridge(ctx context.Context, a *ConnectorA
 	// authority may expire while the old registration joins. a new generation
 	// must start a fresh initial activation, never inherit its handoff history.
 	lease, valid = a.currentLease(d.proof)
-	connection, present = a.Publishers.connectorCandidate(d.claim.ref, lease)
-	if !valid || !present || connection.packets != p {
+	publisher, present = a.publisherPackets(d.claim, lease)
+	if !valid || !present || publisher != p {
 		return nil, &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 	}
 	p.mu.Lock()
@@ -318,7 +318,7 @@ func (p *connectorPacketSession) selectBridge(ctx context.Context, a *ConnectorA
 	// commit the stable initial operation before installing its candidate. a
 	// canceled socket or lost acknowledgement must not strand this generation.
 	p.bridges[id] = b
-	go b.serve(p, a, connection, id)
+	go b.serve(p, a, id)
 	p.mu.Unlock()
 	return b.installCarrier(ctx, d, nil)
 }
@@ -327,7 +327,7 @@ func (b *connectorBridge) canRebind(d *connectorDelivery) bool {
 	previousLeg := d.proof
 	previousLeg.DeliveryGeneration = b.proof.DeliveryGeneration
 	return d.proof.DeliveryGeneration > b.proof.DeliveryGeneration && b.proof.SameLeg(previousLeg) &&
-		b.claim.ref == d.claim.ref && b.claim.receipt.DeliveryID == d.claim.receipt.DeliveryID &&
+		b.claim.samePublisher(d.claim) && b.claim.receipt.DeliveryID == d.claim.receipt.DeliveryID &&
 		d.claim.key != [32]byte{} && b.claim.key != d.claim.key
 }
 
@@ -365,7 +365,7 @@ func (b *connectorBridge) replaceCarrier(ctx context.Context, d *connectorDelive
 	b.mu.Lock()
 	if !b.until.After(time.Now()) || !d.claim.receipt.ExpiresAt.After(time.Now()) ||
 		!b.proof.SameLeg(d.proof) ||
-		b.claim.key != d.claim.key || b.claim.ref != d.claim.ref || b.claim.receipt.SourceIP != d.claim.receipt.SourceIP {
+		b.claim.key != d.claim.key || !b.claim.samePublisher(d.claim) || b.claim.receipt.SourceIP != d.claim.receipt.SourceIP {
 		b.mu.Unlock()
 		return nil, denied
 	}
@@ -454,7 +454,7 @@ func (b *connectorBridge) detach(d *connectorDelivery) {
 	}
 }
 
-func (b *connectorBridge) serve(owner *connectorPacketSession, a *ConnectorAcceptor, connection *serviceConnection, id [16]byte) {
+func (b *connectorBridge) serve(owner *connectorPacketSession, a *ConnectorAcceptor, id [16]byte) {
 	defer close(b.done)
 	var workers sync.WaitGroup
 	finished := make(chan error, 2)
@@ -496,7 +496,7 @@ func (b *connectorBridge) serve(owner *connectorPacketSession, a *ConnectorAccep
 		case <-ticker.C:
 			timer.Stop()
 			lease, valid := a.currentLease(b.proof)
-			if c, present := a.Publishers.connectorCandidate(b.claim.ref, lease); !valid || !present || c != connection {
+			if packets, present := a.publisherPackets(b.claim, lease); !valid || !present || packets != owner {
 				return
 			}
 		}

@@ -191,6 +191,17 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 	if err != nil {
 		return err
 	}
+	// public endpoint traffic does not require packet delivery. a QUIC publisher
+	// without negotiated datagrams may still serve ingress, but cannot be selected
+	// for connector packets. never substitute stream framing on that transport.
+	datagrams, quic := transport.(muxsession.DatagramSession)
+	if a.connector != nil && (!quic || datagrams.SupportsDatagrams()) {
+		packets, err := newConnectorPacketSession(ctx, transport)
+		if err != nil {
+			return err
+		}
+		connection.packets = packets
+	}
 	if err := registry.Insert(connection); err != nil {
 		_ = connection.Close()
 		return err

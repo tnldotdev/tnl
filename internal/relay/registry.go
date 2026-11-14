@@ -94,6 +94,24 @@ func (r *Registry) Candidate(
 	return r.candidate(header, lease, now, true)
 }
 
+func (r *Registry) connectorCandidate(ref tunnelv1.PublisherConnectionRef, lease relayv1.RelayLease) (*PublisherConnection, bool) {
+	if ref.Validate() != nil || lease.Draining || !lease.LeaseExpiresAt.After(time.Now()) ||
+		ref.RelayServiceID != lease.RelayServiceId || lease.RelayLeaseRevision <= 0 {
+		return nil, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	connection := r.connections[ref.PublisherConnectionID]
+	if r.closed || r.draining || connection == nil || connection.ref != ref || connection.packets == nil ||
+		connection.claimed.RelayServiceId != lease.RelayServiceId || connection.claimed.RelayId != lease.RelayId ||
+		connection.claimed.RelayRunId != lease.RelayRunId || connection.claimed.RelayLeaseRevision != lease.RelayLeaseRevision {
+		return nil, false
+	}
+	connection.mu.Lock()
+	defer connection.mu.Unlock()
+	return connection, connection.stateErrorLocked() == nil
+}
+
 func (r *Registry) candidate(header tunnelv1.InternalForwardingHeader, lease relayv1.RelayLease, now time.Time, opening bool) (*PublisherConnection, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

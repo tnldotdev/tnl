@@ -299,7 +299,7 @@ func (d *daemon) startRelayRuntime(
 	if !ok {
 		return nil, errors.New("relay connector admission requires the accepted-socket claim client")
 	}
-	runtime.connector = &relay.ConnectorAcceptor{CurrentLease: controller.Lease, SigningKey: privateKey, Claim: claim, Publishers: serviceRegistry}
+	runtime.connector = &relay.ConnectorAcceptor{CurrentLease: controller.Lease, SigningKey: privateKey, Claim: claim, Publishers: serviceRegistry, PublicPublishers: registry}
 	publisherAcceptor, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{
 		Observer: runtimeConfig.metrics,
 		Control:  controller, Registry: registry,

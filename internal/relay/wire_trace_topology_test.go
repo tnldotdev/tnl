@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -317,7 +318,7 @@ func traceMuxServer(t *testing.T, ctx context.Context, transport tunnel.Transpor
 	var accept func() (muxsession.Session, error)
 	var closeListener func() error
 	if transport == tunnel.TransportQUIC {
-		listener, err := muxsession.ListenQUIC("127.0.0.1:0", config, muxsession.QUICConfig{})
+		listener, err := muxsession.ListenQUIC("127.0.0.1:0", config, muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}})
 		if err != nil {
 			t.Fatal(err)
 		}
