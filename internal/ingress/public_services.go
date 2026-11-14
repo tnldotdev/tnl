@@ -24,6 +24,8 @@ type ServiceForwarder interface {
 
 type PublicServicesConfig struct {
 	AuditSink                                                    serviceaudit.Sink
+	Metrics                                                      Metrics
+	Observer                                                     OperationObserver
 	IngressPoolID                                                string
 	Control                                                      PublicServiceControl
 	Forwarder                                                    ServiceForwarder
@@ -39,6 +41,7 @@ type PublicServices struct {
 	config                    PublicServicesConfig
 	mu                        sync.Mutex
 	sessions, pending, active int
+	streams                   int
 	services                  map[string]int
 	sources                   map[netip.Addr]int
 	connections               map[net.Conn]context.CancelFunc

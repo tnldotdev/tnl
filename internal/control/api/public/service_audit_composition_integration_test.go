@@ -277,7 +277,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	forwarded := make(chan error, 1)
 	go func() {
 		defer accepted.Close()
-		forwarded <- connector.AcceptPublic(ctx, accepted, netip.MustParseAddrPort("127.0.0.1:40000"), netip.MustParseAddrPort("203.0.113.1:443"), prepared.Hostname)
+		forwarded <- connector.AcceptPublic(ctx, accepted, netip.MustParseAddrPort("127.0.0.1:40000"), netip.MustParseAddrPort("203.0.113.1:443"), prepared.Hostname, nil)
 	}()
 	secureDirect := tls.Client(valid, clientTLS.Clone())
 	defer secureDirect.Close()

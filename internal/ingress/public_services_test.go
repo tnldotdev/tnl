@@ -100,6 +100,9 @@ func (c *publicServiceControlFixture) PromotePublicServiceVisitor(context.Contex
 		default:
 		}
 	}
+	if c.promoteErr == nil {
+		c.authenticated = false
+	}
 	return c.promoteErr
 }
 
@@ -196,7 +199,7 @@ func publicServiceTestConnect(t *testing.T, p *PublicServices) (net.Conn, <-chan
 	done := make(chan error, 1)
 	go func() {
 		defer connection.Close()
-		done <- p.AcceptPublic(ctx, connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"), "")
+		done <- p.AcceptPublic(ctx, connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"), "", nil)
 		close(done)
 	}()
 	stop := sync.OnceFunc(func() {

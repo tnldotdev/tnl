@@ -81,7 +81,7 @@ func TestPublicServiceVisitorRejectsExpiredOrMalformedClaim(t *testing.T) {
 			connection, visitor := net.Pipe()
 			defer connection.Close()
 			defer visitor.Close()
-			err := p.AcceptPublic(t.Context(), connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"), "")
+			err := p.AcceptPublic(t.Context(), connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"), "", nil)
 			if !errors.Is(err, ErrServiceAdmission) || forwarder.calls != 0 || c.closed != 1 || p.Load() != 0 {
 				t.Fatalf("invalid admission: err=%v forwarded=%d closed=%d sessions=%d", err, forwarder.calls, c.closed, p.Load())
 			}

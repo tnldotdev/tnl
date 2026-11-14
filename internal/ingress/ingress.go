@@ -288,7 +288,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 			return nil
 		}
 		finishInspection()
-		return s.forwardService(&readerConn{Conn: public, reader: reader}, source, destination, "")
+		return s.forwardService(&readerConn{Conn: public, reader: reader}, source, destination, "", nil)
 	}
 	inspected := &readerConn{Conn: public, reader: reader}
 	hello, err := clienthello.InspectClientHello(inspected)
@@ -328,10 +328,10 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	if !canonicalSNI {
 		return ErrServiceAdmission
 	}
-	return s.forwardService(&readerConn{Conn: public, reader: hello.Replay()}, source, destination, hello.ServerName)
+	return s.forwardService(&readerConn{Conn: public, reader: hello.Remainder}, source, destination, hello.ServerName, hello.Prefix)
 }
 
-func (s *Server) forwardService(public net.Conn, source, destination netip.AddrPort, hostname string) error {
+func (s *Server) forwardService(public net.Conn, source, destination netip.AddrPort, hostname string, initial []byte) error {
 	if s.config.PublicServices == nil {
 		return ErrServiceAdmission
 	}
@@ -341,7 +341,7 @@ func (s *Server) forwardService(public net.Conn, source, destination netip.AddrP
 		return nil
 	}
 	defer release()
-	return s.config.PublicServices.AcceptPublic(s.openContext, public, source, destination, hostname)
+	return s.config.PublicServices.AcceptPublic(s.openContext, public, source, destination, hostname, initial)
 }
 
 func (s *Server) handoff(
