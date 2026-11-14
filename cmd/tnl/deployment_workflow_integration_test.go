@@ -138,7 +138,7 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	if serviceID == "" {
 		t.Fatal("apply did not create the private HTTP service")
 	}
-	cliCall(t, t.Context(), []string{"--config", configuration, "generate"})
+	cliCall(t, t.Context(), []string{"--config", configuration, "generate", "--state-dir", person})
 	runtimeCtx, stopRuntime := context.WithCancel(t.Context())
 	runtimeDone := make(chan error, 1)
 	go func() { runtimeDone <- runRuntimeServe(runtimeCtx, runtimeOptions{Directory: root, StateDir: person}) }()
@@ -219,7 +219,7 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 		}
 		return false
 	})
-	cliCall(t, t.Context(), []string{"--config", configuration, "generate"})
+	cliCall(t, t.Context(), []string{"--config", configuration, "generate", "--state-dir", person})
 	metadata, err = os.ReadFile(filepath.Join(root, ".tnl", "local", "project.json"))
 	if err != nil {
 		t.Fatal(err)
