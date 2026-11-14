@@ -2842,9 +2842,19 @@ CREATE TRIGGER visitor_key_changed AFTER UPDATE ON control.visitor_token_keys FO
 CREATE SEQUENCE control.connector_peer_delivery_generation AS bigint;
 CREATE TABLE control.connector_peer_pairs (
     id text PRIMARY KEY CHECK (id ~ '^cpp_[A-Za-z0-9]{22}$'),
-    service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
-    service_run_id text NOT NULL,
-    run_number bigint NOT NULL CHECK (run_number >= 1),
+    -- the inactive family is exactly empty/zero. nullable generated parents
+    -- let each composite FK check only its selected publication family.
+    service_id text NOT NULL DEFAULT '',
+    service_run_id text NOT NULL DEFAULT '',
+    run_number bigint NOT NULL DEFAULT 0 CHECK (run_number >= 0),
+    public_url_id text NOT NULL DEFAULT '',
+    publish_run_id text NOT NULL DEFAULT '',
+    publish_run_number bigint NOT NULL DEFAULT 0 CHECK (publish_run_number >= 0),
+    service_parent_id text GENERATED ALWAYS AS (NULLIF(service_id,'')) STORED,
+    service_run_parent_id text GENERATED ALWAYS AS (NULLIF(service_run_id,'')) STORED,
+    public_url_parent_id text GENERATED ALWAYS AS (NULLIF(public_url_id,'')) STORED,
+    publish_run_parent_id text GENERATED ALWAYS AS (NULLIF(publish_run_id,'')) STORED,
+    preview_id text REFERENCES control.previews(id) ON DELETE RESTRICT,
     publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE RESTRICT,
     subject_kind text NOT NULL CHECK (subject_kind IN ('human_device','workload_session','registered_key')),
     subject_id text NOT NULL,
@@ -2881,10 +2891,17 @@ CREATE TABLE control.connector_peer_pairs (
     rebind_prepare_digest bytea,
     rebind_activate_digest bytea,
     rebind_abort_digest bytea,
-    FOREIGN KEY (service_run_id,service_id,run_number) REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT,
-    CONSTRAINT connector_peer_pairs_owner_key UNIQUE (subject_kind,subject_id,service_run_id,owner_key),
+    CONSTRAINT connector_peer_pairs_publication CHECK (
+        (service_id ~ '^svc_[A-Za-z0-9]{22}$' AND service_run_id ~ '^srun_[A-Za-z0-9]{22}$' AND run_number>=1
+            AND public_url_id='' AND publish_run_id='' AND publish_run_number=0 AND preview_id IS NULL)
+        OR (public_url_id ~ '^url_[A-Za-z0-9]{22}$' AND publish_run_id ~ '^pr_[A-Za-z0-9]{22}$' AND publish_run_number>=1
+            AND service_id='' AND service_run_id='' AND run_number=0)
+    ),
+    CONSTRAINT connector_peer_pairs_service_run FOREIGN KEY (service_run_parent_id,service_parent_id,run_number) REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT,
+    CONSTRAINT connector_peer_pairs_public_run FOREIGN KEY (publish_run_parent_id,public_url_parent_id,publish_run_number) REFERENCES control.publish_runs(id,public_url_id,publish_run_number) ON DELETE RESTRICT,
+    CONSTRAINT connector_peer_pairs_owner_key UNIQUE (subject_kind,subject_id,service_run_id,publish_run_id,owner_key),
     CONSTRAINT connector_peer_pairs_stable_owner_key CHECK (owner_key=idempotency_key),
-    CONSTRAINT connector_peer_pairs_request_key UNIQUE (subject_kind,subject_id,service_run_id,idempotency_key),
+    CONSTRAINT connector_peer_pairs_request_key UNIQUE (subject_kind,subject_id,service_run_id,publish_run_id,idempotency_key),
     CONSTRAINT connector_peer_pairs_delivery_id_key UNIQUE (delivery_id),
     CHECK (last_authorized_at>=created_at AND expires_at>last_authorized_at
         AND expires_at<=last_authorized_at+interval '5 minutes'),
@@ -2896,6 +2913,14 @@ CREATE TABLE control.connector_peer_pairs (
 CREATE FUNCTION control.connector_peer_generation_defaults() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP='UPDATE' THEN
+        -- delivery renewal and rebinding retain the exact publication and
+        -- preview selection; only a new pair can select another owner scope.
+        IF (NEW.service_id,NEW.service_run_id,NEW.run_number,NEW.public_url_id,NEW.publish_run_id,NEW.publish_run_number,NEW.preview_id)
+            IS DISTINCT FROM
+            (OLD.service_id,OLD.service_run_id,OLD.run_number,OLD.public_url_id,OLD.publish_run_id,OLD.publish_run_number,OLD.preview_id) THEN
+            RAISE EXCEPTION 'connector pair publication is immutable'
+                USING ERRCODE='23514',CONSTRAINT='connector_peer_pairs_publication_immutable';
+        END IF;
         NEW.high_water_generation=GREATEST(OLD.high_water_generation,NEW.high_water_generation);
     END IF;
     NEW.high_water_generation=GREATEST(NEW.high_water_generation,NEW.delivery_generation);
@@ -2941,15 +2966,24 @@ CREATE TABLE control.connector_peer_pair_leg_claims (
 
 CREATE INDEX connector_peer_pairs_expiry ON control.connector_peer_pairs(expires_at);
 
-CREATE INDEX connector_peer_pairs_run_inventory ON control.connector_peer_pairs(service_run_id,id COLLATE "C");
+CREATE INDEX connector_peer_pairs_run_inventory ON control.connector_peer_pairs(service_run_id,id COLLATE "C") WHERE service_run_id<>'';
+CREATE INDEX connector_peer_pairs_public_run_inventory ON control.connector_peer_pairs(publish_run_id,id COLLATE "C") WHERE publish_run_id<>'';
 
 -- installed audit scope survives pair replacement without retaining delivery
 -- secrets or serving authority. only publisher installation can create it.
 CREATE TABLE control.connector_peer_audit_bindings (
     pair_id text NOT NULL CHECK (pair_id ~ '^cpp_[A-Za-z0-9]{22}$'),
-    service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
-    service_run_id text NOT NULL,
-    run_number bigint NOT NULL CHECK (run_number>=1),
+    -- retain the same exclusive publication identity without pair secrets.
+    service_id text NOT NULL DEFAULT '',
+    service_run_id text NOT NULL DEFAULT '',
+    run_number bigint NOT NULL DEFAULT 0 CHECK (run_number>=0),
+    public_url_id text NOT NULL DEFAULT '',
+    publish_run_id text NOT NULL DEFAULT '',
+    publish_run_number bigint NOT NULL DEFAULT 0 CHECK (publish_run_number>=0),
+    service_parent_id text GENERATED ALWAYS AS (NULLIF(service_id,'')) STORED,
+    service_run_parent_id text GENERATED ALWAYS AS (NULLIF(service_run_id,'')) STORED,
+    public_url_parent_id text GENERATED ALWAYS AS (NULLIF(public_url_id,'')) STORED,
+    publish_run_parent_id text GENERATED ALWAYS AS (NULLIF(publish_run_id,'')) STORED,
     publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE RESTRICT,
     identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
     device_id text REFERENCES control.visitor_devices(id) ON DELETE RESTRICT,
@@ -2961,7 +2995,14 @@ CREATE TABLE control.connector_peer_audit_bindings (
     PRIMARY KEY(pair_id,delivery_generation),
     CHECK ((identity_id IS NULL)=(device_id IS NULL)),
     CHECK (expires_at>created_at),
-    FOREIGN KEY (service_run_id,service_id,run_number) REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT
+    CONSTRAINT connector_peer_audit_publication CHECK (
+        (service_id ~ '^svc_[A-Za-z0-9]{22}$' AND service_run_id ~ '^srun_[A-Za-z0-9]{22}$' AND run_number>=1
+            AND public_url_id='' AND publish_run_id='' AND publish_run_number=0)
+        OR (public_url_id ~ '^url_[A-Za-z0-9]{22}$' AND publish_run_id ~ '^pr_[A-Za-z0-9]{22}$' AND publish_run_number>=1
+            AND service_id='' AND service_run_id='' AND run_number=0)
+    ),
+    CONSTRAINT connector_peer_audit_service_run FOREIGN KEY (service_run_parent_id,service_parent_id,run_number) REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT,
+    CONSTRAINT connector_peer_audit_public_run FOREIGN KEY (publish_run_parent_id,public_url_parent_id,publish_run_number) REFERENCES control.publish_runs(id,public_url_id,publish_run_number) ON DELETE RESTRICT
 );
 CREATE INDEX connector_peer_audit_expiry ON control.connector_peer_audit_bindings(expires_at);
 

@@ -1,11 +1,13 @@
 -- name: GetConnectorPeerPairForOwner :one
 SELECT * FROM control.connector_peer_pairs WHERE subject_kind=sqlc.arg(subject_kind)
     AND subject_id=sqlc.arg(subject_id) AND service_run_id=sqlc.arg(service_run_id)
+    AND publish_run_id=sqlc.arg(publish_run_id)
     AND owner_key=sqlc.arg(owner_key) FOR UPDATE;
 
 -- name: CountConnectorPeerPairOwners :one
 SELECT count(*) FROM (
     SELECT id FROM control.connector_peer_pairs WHERE service_run_id=sqlc.arg(service_run_id)
+        AND publish_run_id=sqlc.arg(publish_run_id)
         AND (expires_at>sqlc.arg(now) OR replay_fence_until>sqlc.arg(now))
     LIMIT sqlc.arg(owner_limit)
 ) AS retained;
@@ -24,10 +26,10 @@ ORDER BY id COLLATE "C" LIMIT 65;
 DELETE FROM control.connector_peer_pairs WHERE id=sqlc.arg(id);
 
 -- name: InsertConnectorPeerPair :one
-INSERT INTO control.connector_peer_pairs(id,service_id,service_run_id,run_number,publisher_identity_id,
+INSERT INTO control.connector_peer_pairs(id,service_id,service_run_id,run_number,public_url_id,publish_run_id,publish_run_number,preview_id,publisher_identity_id,
     subject_kind,subject_id,parent_control_session_id,owner_key,idempotency_key,request_digest,key_digest,key_ciphertext,delivery_id,storage_key_id,slots,
     delivery_generation,created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at)
-VALUES (sqlc.arg(id),sqlc.arg(service_id),sqlc.arg(service_run_id),sqlc.arg(run_number),sqlc.arg(publisher_identity_id),
+VALUES (sqlc.arg(id),sqlc.arg(service_id),sqlc.arg(service_run_id),sqlc.arg(run_number),sqlc.arg(public_url_id),sqlc.arg(publish_run_id),sqlc.arg(publish_run_number),sqlc.narg(preview_id),sqlc.arg(publisher_identity_id),
     sqlc.arg(subject_kind),sqlc.arg(subject_id),sqlc.narg(parent_control_session_id),sqlc.arg(owner_key),sqlc.arg(idempotency_key),sqlc.arg(request_digest),sqlc.arg(key_digest),sqlc.arg(key_ciphertext),sqlc.arg(delivery_id),
     sqlc.arg(storage_key_id),convert_from(sqlc.arg(slots)::bytea,'UTF8')::jsonb,nextval('control.connector_peer_delivery_generation'),
     sqlc.arg(now),sqlc.arg(now),sqlc.arg(request_at),sqlc.arg(request_at)::timestamptz+interval '5 minutes',sqlc.arg(expires_at))

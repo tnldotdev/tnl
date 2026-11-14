@@ -67,34 +67,43 @@ func (q *Queries) ConfirmConnectorPeerPairPrepared(ctx context.Context, arg Conf
 const countConnectorPeerPairOwners = `-- name: CountConnectorPeerPairOwners :one
 SELECT count(*) FROM (
     SELECT id FROM control.connector_peer_pairs WHERE service_run_id=$1
-        AND (expires_at>$2 OR replay_fence_until>$2)
-    LIMIT $3
+        AND publish_run_id=$2
+        AND (expires_at>$3 OR replay_fence_until>$3)
+    LIMIT $4
 ) AS retained
 `
 
 type CountConnectorPeerPairOwnersParams struct {
 	ServiceRunID string
+	PublishRunID string
 	Now          pgtype.Timestamptz
 	OwnerLimit   int32
 }
 
 func (q *Queries) CountConnectorPeerPairOwners(ctx context.Context, arg CountConnectorPeerPairOwnersParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countConnectorPeerPairOwners, arg.ServiceRunID, arg.Now, arg.OwnerLimit)
+	row := q.db.QueryRow(ctx, countConnectorPeerPairOwners,
+		arg.ServiceRunID,
+		arg.PublishRunID,
+		arg.Now,
+		arg.OwnerLimit,
+	)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const getConnectorPeerPairForOwner = `-- name: GetConnectorPeerPairForOwner :one
-SELECT id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest FROM control.connector_peer_pairs WHERE subject_kind=$1
+SELECT id, service_id, service_run_id, run_number, public_url_id, publish_run_id, publish_run_number, service_parent_id, service_run_parent_id, public_url_parent_id, publish_run_parent_id, preview_id, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest FROM control.connector_peer_pairs WHERE subject_kind=$1
     AND subject_id=$2 AND service_run_id=$3
-    AND owner_key=$4 FOR UPDATE
+    AND publish_run_id=$4
+    AND owner_key=$5 FOR UPDATE
 `
 
 type GetConnectorPeerPairForOwnerParams struct {
 	SubjectKind  string
 	SubjectID    string
 	ServiceRunID string
+	PublishRunID string
 	OwnerKey     string
 }
 
@@ -103,6 +112,7 @@ func (q *Queries) GetConnectorPeerPairForOwner(ctx context.Context, arg GetConne
 		arg.SubjectKind,
 		arg.SubjectID,
 		arg.ServiceRunID,
+		arg.PublishRunID,
 		arg.OwnerKey,
 	)
 	var i ControlConnectorPeerPair
@@ -111,6 +121,14 @@ func (q *Queries) GetConnectorPeerPairForOwner(ctx context.Context, arg GetConne
 		&i.ServiceID,
 		&i.ServiceRunID,
 		&i.RunNumber,
+		&i.PublicURLID,
+		&i.PublishRunID,
+		&i.PublishRunNumber,
+		&i.ServiceParentID,
+		&i.ServiceRunParentID,
+		&i.PublicURLParentID,
+		&i.PublishRunParentID,
+		&i.PreviewID,
 		&i.PublisherIdentityID,
 		&i.SubjectKind,
 		&i.SubjectID,
@@ -178,7 +196,7 @@ func (q *Queries) GetConnectorPeerPendingBinding(ctx context.Context, pairID str
 const initializeConnectorPeerSession = `-- name: InitializeConnectorPeerSession :one
 UPDATE control.connector_peer_pairs SET session_key_ciphertext=$1,session_key_digest=$2,
     session_key_storage_key_id=$3,trust_revision=$4
-WHERE id=$5 AND session_key_ciphertext IS NULL RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest
+WHERE id=$5 AND session_key_ciphertext IS NULL RETURNING id, service_id, service_run_id, run_number, public_url_id, publish_run_id, publish_run_number, service_parent_id, service_run_parent_id, public_url_parent_id, publish_run_parent_id, preview_id, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest
 `
 
 type InitializeConnectorPeerSessionParams struct {
@@ -203,6 +221,14 @@ func (q *Queries) InitializeConnectorPeerSession(ctx context.Context, arg Initia
 		&i.ServiceID,
 		&i.ServiceRunID,
 		&i.RunNumber,
+		&i.PublicURLID,
+		&i.PublishRunID,
+		&i.PublishRunNumber,
+		&i.ServiceParentID,
+		&i.ServiceRunParentID,
+		&i.PublicURLParentID,
+		&i.PublishRunParentID,
+		&i.PreviewID,
 		&i.PublisherIdentityID,
 		&i.SubjectKind,
 		&i.SubjectID,
@@ -243,14 +269,14 @@ func (q *Queries) InitializeConnectorPeerSession(ctx context.Context, arg Initia
 }
 
 const insertConnectorPeerPair = `-- name: InsertConnectorPeerPair :one
-INSERT INTO control.connector_peer_pairs(id,service_id,service_run_id,run_number,publisher_identity_id,
+INSERT INTO control.connector_peer_pairs(id,service_id,service_run_id,run_number,public_url_id,publish_run_id,publish_run_number,preview_id,publisher_identity_id,
     subject_kind,subject_id,parent_control_session_id,owner_key,idempotency_key,request_digest,key_digest,key_ciphertext,delivery_id,storage_key_id,slots,
     delivery_generation,created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at)
-VALUES ($1,$2,$3,$4,$5,
-    $6,$7,$8,$9,$10,$11,$12,$13,$14,
-    $15,convert_from($16::bytea,'UTF8')::jsonb,nextval('control.connector_peer_delivery_generation'),
-    $17,$17,$18,$18::timestamptz+interval '5 minutes',$19)
-ON CONFLICT ON CONSTRAINT connector_peer_pairs_delivery_id_key DO NOTHING RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,
+    $10,$11,$12,$13,$14,$15,$16,$17,$18,
+    $19,convert_from($20::bytea,'UTF8')::jsonb,nextval('control.connector_peer_delivery_generation'),
+    $21,$21,$22,$22::timestamptz+interval '5 minutes',$23)
+ON CONFLICT ON CONSTRAINT connector_peer_pairs_delivery_id_key DO NOTHING RETURNING id, service_id, service_run_id, run_number, public_url_id, publish_run_id, publish_run_number, service_parent_id, service_run_parent_id, public_url_parent_id, publish_run_parent_id, preview_id, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest
 `
 
 type InsertConnectorPeerPairParams struct {
@@ -258,6 +284,10 @@ type InsertConnectorPeerPairParams struct {
 	ServiceID              string
 	ServiceRunID           string
 	RunNumber              int64
+	PublicURLID            string
+	PublishRunID           string
+	PublishRunNumber       int64
+	PreviewID              pgtype.Text
 	PublisherIdentityID    string
 	SubjectKind            string
 	SubjectID              string
@@ -281,6 +311,10 @@ func (q *Queries) InsertConnectorPeerPair(ctx context.Context, arg InsertConnect
 		arg.ServiceID,
 		arg.ServiceRunID,
 		arg.RunNumber,
+		arg.PublicURLID,
+		arg.PublishRunID,
+		arg.PublishRunNumber,
+		arg.PreviewID,
 		arg.PublisherIdentityID,
 		arg.SubjectKind,
 		arg.SubjectID,
@@ -303,6 +337,14 @@ func (q *Queries) InsertConnectorPeerPair(ctx context.Context, arg InsertConnect
 		&i.ServiceID,
 		&i.ServiceRunID,
 		&i.RunNumber,
+		&i.PublicURLID,
+		&i.PublishRunID,
+		&i.PublishRunNumber,
+		&i.ServiceParentID,
+		&i.ServiceRunParentID,
+		&i.PublicURLParentID,
+		&i.PublishRunParentID,
+		&i.PreviewID,
 		&i.PublisherIdentityID,
 		&i.SubjectKind,
 		&i.SubjectID,
@@ -347,7 +389,7 @@ UPDATE control.connector_peer_pairs SET expires_at=LEAST(expires_at,$1),
     publisher_prepared_until=CASE WHEN publisher_prepared_until IS NOT NULL
         THEN LEAST(publisher_prepared_until,expires_at,$1) END
 WHERE id=$2 AND expires_at>$3 AND last_authorized_at<=$3
-    AND $1::timestamptz>$3 RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest
+    AND $1::timestamptz>$3 RETURNING id, service_id, service_run_id, run_number, public_url_id, publish_run_id, publish_run_number, service_parent_id, service_run_parent_id, public_url_parent_id, publish_run_parent_id, preview_id, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest
 `
 
 type LimitConnectorPeerPairParams struct {
@@ -365,6 +407,14 @@ func (q *Queries) LimitConnectorPeerPair(ctx context.Context, arg LimitConnector
 		&i.ServiceID,
 		&i.ServiceRunID,
 		&i.RunNumber,
+		&i.PublicURLID,
+		&i.PublishRunID,
+		&i.PublishRunNumber,
+		&i.ServiceParentID,
+		&i.ServiceRunParentID,
+		&i.PublicURLParentID,
+		&i.PublishRunParentID,
+		&i.PreviewID,
 		&i.PublisherIdentityID,
 		&i.SubjectKind,
 		&i.SubjectID,
@@ -473,7 +523,7 @@ func (q *Queries) ListConnectorPeerPairCandidates(ctx context.Context, arg ListC
 }
 
 const lockConnectorPeerPairForLegClaim = `-- name: LockConnectorPeerPairForLegClaim :one
-SELECT id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest FROM control.connector_peer_pairs WHERE id=$1 FOR UPDATE
+SELECT id, service_id, service_run_id, run_number, public_url_id, publish_run_id, publish_run_number, service_parent_id, service_run_parent_id, public_url_parent_id, publish_run_parent_id, preview_id, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest FROM control.connector_peer_pairs WHERE id=$1 FOR UPDATE
 `
 
 func (q *Queries) LockConnectorPeerPairForLegClaim(ctx context.Context, id string) (ControlConnectorPeerPair, error) {
@@ -484,6 +534,14 @@ func (q *Queries) LockConnectorPeerPairForLegClaim(ctx context.Context, id strin
 		&i.ServiceID,
 		&i.ServiceRunID,
 		&i.RunNumber,
+		&i.PublicURLID,
+		&i.PublishRunID,
+		&i.PublishRunNumber,
+		&i.ServiceParentID,
+		&i.ServiceRunParentID,
+		&i.PublicURLParentID,
+		&i.PublishRunParentID,
+		&i.PreviewID,
 		&i.PublisherIdentityID,
 		&i.SubjectKind,
 		&i.SubjectID,
@@ -668,7 +726,7 @@ UPDATE control.connector_peer_pairs SET expires_at=$1,last_authorized_at=$2,
     last_request_at=$3,replay_fence_until=$3::timestamptz+interval '5 minutes',
     last_renewal_digest=$4
 WHERE id=$5 AND expires_at>$2 AND last_authorized_at<$2
-    AND last_request_at<$3 AND $1::timestamptz>$2 RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest
+    AND last_request_at<$3 AND $1::timestamptz>$2 RETURNING id, service_id, service_run_id, run_number, public_url_id, publish_run_id, publish_run_number, service_parent_id, service_run_parent_id, public_url_parent_id, publish_run_parent_id, preview_id, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest
 `
 
 type RenewConnectorPeerPairParams struct {
@@ -695,6 +753,14 @@ func (q *Queries) RenewConnectorPeerPair(ctx context.Context, arg RenewConnector
 		&i.ServiceID,
 		&i.ServiceRunID,
 		&i.RunNumber,
+		&i.PublicURLID,
+		&i.PublishRunID,
+		&i.PublishRunNumber,
+		&i.ServiceParentID,
+		&i.ServiceRunParentID,
+		&i.PublicURLParentID,
+		&i.PublishRunParentID,
+		&i.PreviewID,
 		&i.PublisherIdentityID,
 		&i.SubjectKind,
 		&i.SubjectID,

@@ -97,6 +97,13 @@ func TestIntegrationConnectorPeerPairShapeCatalog(t *testing.T) {
 			"owner_key": "text NO", "idempotency_key": "text NO", "delivery_id": "bytea NO",
 			"parent_control_session_id": "text YES", "replay_fence_until": "timestamp with time zone NO",
 			"last_renewal_digest": "bytea YES", "publisher_prepared_until": "timestamp with time zone YES",
+			"service_id": "text NO", "service_run_id": "text NO", "run_number": "bigint NO",
+			"public_url_id": "text NO", "publish_run_id": "text NO", "publish_run_number": "bigint NO",
+			"preview_id": "text YES",
+		},
+		"connector_peer_audit_bindings": {
+			"service_id": "text NO", "service_run_id": "text NO", "run_number": "bigint NO",
+			"public_url_id": "text NO", "publish_run_id": "text NO", "publish_run_number": "bigint NO",
 		},
 		"connector_peer_pair_leg_claims": {
 			"pair_id": "text NO", "connection_slot": "smallint NO", "source_ip": "inet NO",
@@ -120,6 +127,12 @@ func TestIntegrationConnectorPeerPairShapeCatalog(t *testing.T) {
 		{"connector_peer_pairs", "connector_peer_pairs_delivery_id_key", "u"},
 		{"connector_peer_pairs", "connector_peer_pairs_stable_owner_key", "c"},
 		{"connector_peer_pairs", "connector_peer_pairs_delivery_id_nonzero", "c"},
+		{"connector_peer_pairs", "connector_peer_pairs_publication", "c"},
+		{"connector_peer_pairs", "connector_peer_pairs_service_run", "f"},
+		{"connector_peer_pairs", "connector_peer_pairs_public_run", "f"},
+		{"connector_peer_audit_bindings", "connector_peer_audit_publication", "c"},
+		{"connector_peer_audit_bindings", "connector_peer_audit_service_run", "f"},
+		{"connector_peer_audit_bindings", "connector_peer_audit_public_run", "f"},
 		{"connector_peer_pair_leg_claims", "connector_peer_pair_leg_claims_pkey", "p"},
 		{"connector_peer_pair_leg_claims", "connector_peer_claim_fixed_bound", "c"},
 	} {
@@ -131,7 +144,7 @@ func TestIntegrationConnectorPeerPairShapeCatalog(t *testing.T) {
 			t.Errorf("%s enforcement = %q/%t/%t/%t, %v", test.constraint, kind, validated, deferred, deferrable, err)
 		}
 	}
-	for _, index := range []string{"connector_peer_pairs_expiry", "connector_peer_pairs_run_inventory", "relay_run_signing_keys_superseded"} {
+	for _, index := range []string{"connector_peer_pairs_expiry", "connector_peer_pairs_run_inventory", "connector_peer_pairs_public_run_inventory", "relay_run_signing_keys_superseded"} {
 		var valid bool
 		if err := d.pool.QueryRow(t.Context(), `SELECT indisvalid AND indisready AND indislive FROM pg_index WHERE indexrelid=('control.' || $1)::regclass`, index).Scan(&valid); err != nil || !valid {
 			t.Errorf("%s is not a usable index: %v", index, err)

@@ -263,6 +263,13 @@ type ControlConnectorPeerAuditBinding struct {
 	ServiceID           string
 	ServiceRunID        string
 	RunNumber           int64
+	PublicURLID         string
+	PublishRunID        string
+	PublishRunNumber    int64
+	ServiceParentID     pgtype.Text
+	ServiceRunParentID  pgtype.Text
+	PublicURLParentID   pgtype.Text
+	PublishRunParentID  pgtype.Text
 	PublisherIdentityID string
 	IdentityID          pgtype.Text
 	DeviceID            pgtype.Text
@@ -278,6 +285,14 @@ type ControlConnectorPeerPair struct {
 	ServiceID              string
 	ServiceRunID           string
 	RunNumber              int64
+	PublicURLID            string
+	PublishRunID           string
+	PublishRunNumber       int64
+	ServiceParentID        pgtype.Text
+	ServiceRunParentID     pgtype.Text
+	PublicURLParentID      pgtype.Text
+	PublishRunParentID     pgtype.Text
+	PreviewID              pgtype.Text
 	PublisherIdentityID    string
 	SubjectKind            string
 	SubjectID              string

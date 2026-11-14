@@ -10,6 +10,7 @@ sql:
         sql_package: "pgx/v5"
         rename:
           public_url_id: PublicURLID
+          public_url_parent_id: PublicURLParentID
           public_url_scope: PublicURLScope
           ssh_host_key: SSHHostKey
           ssh_user: SSHUser
