@@ -19,6 +19,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
@@ -93,6 +94,11 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 		for _, endpoint := range []bool{false, true} {
 			t.Run(fmt.Sprintf("standalone=%t/tnl-tls=%t", standalone, endpoint), func(t *testing.T) {
 				f := newServiceRuntimeFixture(t, standalone, nil)
+				// model unavailable public capacity without relaxing inventory
+				// validation or changing the already-bound runtime listeners.
+				if _, err := f.inspect.ExecContext(t.Context(), `DELETE FROM control.ingress_service_port_ranges WHERE ingress_pool_id=$1`, controlstate.PrimaryIngressPoolID); err != nil {
+					t.Fatal(err)
+				}
 				ca := newTestCertificateAuthority(t)
 				const hostname = "target.private.integration.test"
 				var posts atomic.Int64
@@ -147,6 +153,9 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "private-http", key, metadata)
 				if err != nil {
 					t.Fatal(err)
+				}
+				if service.Endpoint == nil || service.Endpoint.Port != 0 || service.Endpoint.Public {
+					t.Fatal("private HTTP requires a public reservation", service.Endpoint)
 				}
 				startPrivateHTTPPublisher(t, f, service, target.Listener.Addr().String())
 				person, err := f.identity.authority.IdentityContext(t.Context())
@@ -221,6 +230,10 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				var publicURLs int
 				if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.public_urls`).Scan(&publicURLs); err != nil || publicURLs != 0 {
 					t.Fatalf("private HTTP created public URL state: %d %v", publicURLs, err)
+				}
+				var claims int
+				if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.service_port_claims`).Scan(&claims); err != nil || claims != 0 {
+					t.Fatalf("private HTTP consumed public capacity: %d %v", claims, err)
 				}
 			})
 		}
