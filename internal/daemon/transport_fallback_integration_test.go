@@ -89,6 +89,8 @@ func TestIntegrationPublisherFallsBackAfterQUICConnectionFails(t *testing.T) {
 	if first, err := reader.ReadString('\n'); err != nil || first != "first\n" {
 		t.Fatalf("held visitor first chunk = %q, %v", first, err)
 	}
+	originalA := readSplitConnectionState(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, standaloneRelays[0].serviceID)
+	originalB := readSplitConnectionState(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, standaloneRelays[1].serviceID)
 	for range 2 {
 		select {
 		case session := <-quicSessions:
@@ -118,6 +120,17 @@ func TestIntegrationPublisherFallsBackAfterQUICConnectionFails(t *testing.T) {
 			break
 		}
 	}
+	// the first TCP fallback does not prove both old QUIC claims have retired.
+	// count only replacement identities before taking the ingress revision barrier.
+	waitForIntegrationCondition(t, 25*time.Second, func(ctx context.Context) (bool, error) {
+		var readyReplacements int
+		err := fixture.inspect.QueryRowContext(ctx, `
+			SELECT count(*) FROM control.publish_run_connection_slots
+			WHERE public_url_id = $1 AND publish_run_number = $2 AND state = 'ready'
+			  AND publisher_connection_id NOT IN ($3, $4)
+		`, ready.PublicURLID, ready.PublishRunNumber, originalA.publisherConnectionID, originalB.publisherConnectionID).Scan(&readyReplacements)
+		return err == nil && readyReplacements == 2, err
+	})
 	waitForReadyPublisherConnections(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
 	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
 	fixture.visitor.transport.CloseIdleConnections()

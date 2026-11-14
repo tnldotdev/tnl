@@ -57,7 +57,7 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 		"services": map[string]any{"internal": map[string]any{"protocol": "tcp"}, "shell": map[string]any{"protocol": "tcp"}},
 		"deployments": map[string]any{
 			"internal":   map[string]any{"targets": map[string]any{"internal": map[string]any{"address": address}}},
-			"production": map[string]any{"public": true, "targets": map[string]any{"shell": map[string]any{"address": address}}},
+			"production": map[string]any{"targets": map[string]any{"shell": map[string]any{"address": address, "public": true}}},
 		}}})
 	if err != nil {
 		t.Fatal(err)
