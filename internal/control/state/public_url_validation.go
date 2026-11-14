@@ -1,11 +1,15 @@
 package state
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/netip"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -80,6 +84,39 @@ func ephemeralRouteExpiry(ephemeral bool, now time.Time) pgtype.Timestamptz {
 		return pgtype.Timestamptz{}
 	}
 	return timestamptz(now.Add(ephemeralPublicURLGracePeriod))
+}
+
+// ordinary and deployment-owned exact URLs share all membership and reserved
+// namespace checks. callers hold the team guard through insertion.
+func authorizePublicURLCreation(ctx context.Context, queries *controlstatedb.Queries, request CreatePublicURLRequest) (controlstatedb.GetPublicURLCreationContextRow, error) {
+	creation, err := queries.GetPublicURLCreationContext(ctx, controlstatedb.GetPublicURLCreationContextParams{
+		IdentityID: request.ActingIdentityID, DomainID: request.DomainID, TeamID: request.TeamID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return creation, ErrPublicURLAccess
+	}
+	if err != nil {
+		return creation, fmt.Errorf("controlstate: create public_url: read authority context: %w", err)
+	}
+	labels, err := queries.ListTeamNamespaceLabels(ctx, request.TeamID)
+	if err != nil {
+		return creation, fmt.Errorf("controlstate: create public_url: read namespaces: %w", err)
+	}
+	if err := authorizeRouteCreation(request, creation, labels); err != nil {
+		return creation, err
+	}
+	if creation.DomainKind == "custom" && request.PublicURLScope == PublicURLScopeShared && request.CanonicalHostname != creation.CanonicalDomain {
+		relative := strings.TrimSuffix(request.CanonicalHostname, "."+creation.CanonicalDomain)
+		label := relative[strings.LastIndex(relative, ".")+1:]
+		if reserved, err := queries.TeamMemberSlugReserved(ctx, controlstatedb.TeamMemberSlugReservedParams{
+			TeamID: request.TeamID, Label: label,
+		}); err != nil {
+			return creation, fmt.Errorf("controlstate: check reserved member slug: %w", err)
+		} else if reserved {
+			return creation, ErrPublicURLConflict
+		}
+	}
+	return creation, nil
 }
 
 func authorizeRouteCreation(

@@ -216,6 +216,21 @@ func (d *Database) revokeAppliedServicePublishers(ctx context.Context, tx pgx.Tx
 	if err := d.revokeProjectResourcePublishers(ctx, tx, q, s, now); err != nil {
 		return err
 	}
+	if s.PublicURLID.Valid {
+		// project-scoped publication approvals remain reusable, but their runs
+		// still serve the old binding. retire only this URL's runs and slots.
+		u, err := q.LockPublicURLForRun(ctx, s.PublicURLID.String)
+		if err != nil {
+			return err
+		}
+		pending := pendingIngressRoutingTableEvents{}
+		if err := closeOpenPublishRun(ctx, q, &pending, u, now, "configuration_changed"); err != nil {
+			return err
+		}
+		if err := pending.publish(ctx, q); err != nil {
+			return err
+		}
+	}
 	_, err := tx.Exec(ctx, `DELETE FROM control.deployment_publisher_service_grants WHERE team_id=$1 AND project_key=$2 AND service=$3 AND deployment_id=$4`, s.TeamID, s.ProjectKey, s.Service, s.DeploymentID)
 	return err
 }

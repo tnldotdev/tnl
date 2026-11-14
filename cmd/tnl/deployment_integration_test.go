@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -41,7 +43,7 @@ func TestIntegrationCLIDeploymentCRUD(t *testing.T) {
 		t.Fatal(err)
 	}
 	team := session.Identity.Memberships[0].TeamID
-	_, err = database.ApplyProjectConfiguration(t.Context(), controlstate.ApplyProjectConfigurationRequest{
+	applied, err := database.ApplyProjectConfiguration(t.Context(), controlstate.ApplyProjectConfigurationRequest{
 		Deployment: "local", ServiceDeclarations: map[string]string{"db": "postgres", "cache": "tcp"},
 		TeamID: team, ActorID: session.Identity.Identity.ID, ProjectKey: "shop", SourceFingerprint: strings.Repeat("a", 64), Now: now,
 		Configuration: controlstate.ProjectConfiguration{Services: map[string]controlstate.ProjectServiceConfiguration{
@@ -136,5 +138,57 @@ func TestIntegrationCLIDeploymentCRUD(t *testing.T) {
 	}
 	if read("show", other.Id).Id != other.Id {
 		t.Fatal("CLI deletion affected its sibling")
+	}
+	mixed, err := database.ApplyProjectConfiguration(t.Context(), controlstate.ApplyProjectConfigurationRequest{
+		Deployment: "mixed", ServiceDeclarations: map[string]string{"db": "postgres", "cache": "tcp", "web": "http"},
+		TeamID: team, ActorID: session.Identity.Identity.ID, ProjectKey: "shop", SourceFingerprint: strings.Repeat("a", 64), ExpectedRevision: applied.Revision, Now: now,
+		Configuration: controlstate.ProjectConfiguration{Settings: &controlstate.DeploymentSettings{}, Services: map[string]controlstate.ProjectServiceConfiguration{
+			"db": {Protocol: "postgres", Target: "database.internal:5432"}, "web": {Target: "http://app.internal:3000", PublicURL: &controlstate.ProjectServicePublicURL{}},
+		}},
+	})
+	if err != nil || len(mixed.Services) != 2 {
+		t.Fatal("mixed deployment fixture failed", err)
+	}
+	mixedDeployment := read("show", "mixed")
+	if !strings.HasPrefix(mixedDeployment.Services["web"].Id, "url_") || mixedDeployment.Services["web"].PublicUrl == nil {
+		t.Fatal("mixed deployment did not retain its public URL binding")
+	}
+	updated = read("update", "mixed", "--target", "db=replacement.internal:5432")
+	if updated.Services["web"].Id != mixedDeployment.Services["web"].Id {
+		t.Fatal("private target update changed a public URL binding")
+	}
+	if _, err := call("list"); err != nil {
+		t.Fatal("mixed deployment blocked listing", err)
+	}
+	callPublisher := func(operation ...string) []byte {
+		t.Helper()
+		args := append([]string{"--no-config", "--no-telemetry", "publisher"}, operation...)
+		args = append(args, "--deployment", "mixed", "--server", server.URL, "--state-dir", root, "--access-token", session.AccessToken.String(), "--team", team, "--project-key", "shop", "--output", "json")
+		var output, diagnostics bytes.Buffer
+		if err := run(t.Context(), args, &output, &diagnostics); err != nil {
+			t.Fatal("mixed deployment blocked publisher command", operation[0], err)
+		}
+		return output.Bytes()
+	}
+	var enrollment controlv1.DeploymentPublisherEnrollment
+	if err := json.Unmarshal(callPublisher("setup", "--service", "db", "--members", "1", "--expires-in", "5m"), &enrollment); err != nil {
+		t.Fatal(err)
+	}
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := database.RedeemDeploymentPublisherEnrollment(t.Context(), enrollment.EnrollmentKey, publicKey, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(callPublisher("list"), []byte(member.PublisherIdentityID)) {
+		t.Fatal("mixed deployment hid its private service publisher")
+	}
+	if !bytes.Contains(callPublisher("revoke", member.PublisherIdentityID), []byte(`"revoked":true`)) {
+		t.Fatal("mixed deployment blocked publisher revocation")
+	}
+	if _, err := call("delete", "mixed"); err != nil {
+		t.Fatal("mixed deployment blocked deletion", err)
 	}
 }
