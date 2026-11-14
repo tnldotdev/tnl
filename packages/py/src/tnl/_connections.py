@@ -579,8 +579,11 @@ class _FailureObservation:
 
 
 class _Scope:
-    def __init__(self, directory: str, mounted: str | None) -> None:
+    def __init__(
+        self, directory: str, mounted: str | None, *, deployment: dict[str, object] | None = None
+    ) -> None:
         self.directory, self.mounted = directory, mounted
+        self.deployment = deployment
         self.creator_pid = os.getpid()
         self.registry: str | None = None
         self._binary: Path | None = None
@@ -640,6 +643,7 @@ class _Scope:
         private_input = {
             "schema": 1,
             **(selection.private_input() if selection is not None else {}),
+            **({"deployment": self.deployment} if self.deployment is not None else {}),
         }
         selector = (
             "human"
@@ -820,7 +824,13 @@ class _Scope:
                     service,
                     selection.assertion if selection else None,
                     sdk=True,
-                    selection=selection.private_input() if selection else None,
+                    selection=(
+                        {"deployment": self.deployment}
+                        if self.deployment is not None
+                        else selection.private_input()
+                        if selection
+                        else None
+                    ),
                     requested_at=requested_at,
                     request_handle=request_handle,
                 )
@@ -958,6 +968,7 @@ class _Scope:
                 self.entry = None
             with self.lock:
                 self.failure_handles.clear()
+            atexit.unregister(self._cleanup)
 
     def _cleanup(self) -> None:
         if self.creator_pid != os.getpid():
@@ -1031,7 +1042,7 @@ class ConnectionHandle[C: Connection]:
             raise _error("closed")
         unprepared = self._session if self._session.handle is None else None
         selection = None
-        if uses_workload():
+        if self._session.scope.deployment is None and uses_workload():
             selection = await select_workload(self._service, self._session.scope.workload)
         with self._lifetime.changed:
             if self._lifetime.closed:

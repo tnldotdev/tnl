@@ -187,6 +187,11 @@ deploy/                deployment templates
 
 ## how packages fit together
 
+`scripts/generate` has its own private tooling workspace so Hey API resolves the
+TypeScript 6 compiler API it executes. Application and SDK checks stay on
+TypeScript 7. Generated source still belongs to its serving/runtime owner; the
+tooling workspace owns no product runtime or alternate schema authority.
+
 Commands handle arguments, prompts, and output. Reusable operations live below
 them. The packages running processes, runs, or streams start and stop their own
 work:
@@ -269,6 +274,13 @@ control state need not import ingress just to name that pool.
 `security/rdsroots` owns the pinned offline Amazon RDS regional CA catalog used
 by publisher discovery and control target approval. It depends on neither owner;
 control must not import publisher discovery to approve a supplied endpoint.
+
+`client/auth` packages deployment signing credentials and acquires their short-lived
+tokens through the existing publisher proof exchange. `connector` composes that
+registered-key source into its existing owner and stream engine; neither a human
+device nor a provider workload is substituted for the registered key. Language
+bindings give each explicit deployment handle an independent native registry and
+join its driver factories and native cleanup without stopping sibling handles.
 
 For shared behavior, define a small interface where it is used and have the
 caller supply the implementation. Do not copy permission checks or run-management

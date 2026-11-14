@@ -38,7 +38,20 @@ export type DeploymentPublisherEnrollment = {
 /**
  * One publisher in the selected deployment (deployment_id), including its retained last observation after revocation. No enrollment secret, signing key, access token, or target is returned. Healthy reports configuration acknowledgement and a current lease, not database login or SQL readiness.
  */
-export type DeploymentPublisher = DeploymentPublisherStatus & {
+export type DeploymentPublisher = {
+  team_id: string;
+  project_key: string;
+  deployment_id: string;
+  deployment_name: string;
+  publisher_identity_id: string;
+  key_id: string;
+  observed_revision: string;
+  current_revision: string;
+  snapshot_at: string;
+  acknowledged_at?: string;
+  healthy: boolean;
+  lease_expires_at?: string;
+  runtime?: PublisherRuntimeStatus;
   /**
    * Captured service/protocol approval, not a claim of current reachability. Services added later are not approved.
    */
@@ -124,25 +137,6 @@ export type ProjectTargetDiscovery = {
   cluster?: string;
   instance?: string;
   endpoint?: "writer" | "reader";
-};
-
-export type DeploymentPublisherIdentity = {
-  team_id: string;
-  project_key: string;
-  deployment_id: string;
-  deployment_name: string;
-  publisher_identity_id: string;
-  key_id: string;
-};
-
-export type DeploymentPublisherStatus = DeploymentPublisherIdentity & {
-  observed_revision: string;
-  current_revision: string;
-  snapshot_at: string;
-  acknowledged_at?: string;
-  healthy: boolean;
-  lease_expires_at?: string;
-  runtime?: PublisherRuntimeStatus;
 };
 
 /**

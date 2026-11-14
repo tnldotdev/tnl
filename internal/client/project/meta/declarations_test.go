@@ -23,6 +23,32 @@ func TestGeneratedDeclarationsTypecheckSourceUnionsAndStaticShape(t *testing.T) 
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("Node.js is required to check generated declarations")
 	}
+	management := t.TempDir()
+	if err := os.Symlink(filepath.Join(repository, "node_modules"), filepath.Join(management, "node_modules")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(management, "package.json"), []byte(`{"type":"module"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	managementProject := filepath.Join(management, "tsconfig.json")
+	managementOptions := map[string]any{
+		"extends": filepath.Join(repository, "packages/ts/tsconfig.management.json"),
+		"compilerOptions": map[string]string{
+			"outDir":          filepath.Join(management, "dist"),
+			"tsBuildInfoFile": filepath.Join(management, "management.tsbuildinfo"),
+		},
+	}
+	managementData, err := json.Marshal(managementOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managementProject, managementData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	build := exec.CommandContext(t.Context(), "node", compiler, "--build", managementProject)
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build management dependency: %s\n%v", output, err)
+	}
 	for _, format := range []string{"typescript", "yaml", "dynamic"} {
 		t.Run(format, func(t *testing.T) {
 			root := t.TempDir()
@@ -98,7 +124,7 @@ tnl.services.unknown;
 			if err != nil {
 				t.Fatal(err)
 			}
-			options := map[string]any{"compilerOptions": map[string]any{"strict": true, "exactOptionalPropertyTypes": true, "skipLibCheck": false, "noEmit": true, "target": "ESNext", "module": "NodeNext", "moduleResolution": "NodeNext", "types": []string{"node"}, "typeRoots": []string{filepath.Join(repository, "node_modules/@types")}, "paths": map[string][]string{"@tnldotdev/tnl": {filepath.Join(repository, "packages/ts/src/index.ts")}, "@tnldotdev/tnl/config": {filepath.Join(repository, "packages/ts/src/config.ts")}}}, "files": []string{"usage.ts", ".tnl/generated/project.d.ts"}}
+			options := map[string]any{"compilerOptions": map[string]any{"strict": true, "exactOptionalPropertyTypes": true, "skipLibCheck": false, "noEmit": true, "target": "ESNext", "module": "NodeNext", "moduleResolution": "NodeNext", "types": []string{"node"}, "typeRoots": []string{filepath.Join(repository, "node_modules/@types")}, "paths": map[string][]string{"@tnldotdev/tnl": {filepath.Join(repository, "packages/ts/src/index.ts")}, "@tnldotdev/tnl/config": {filepath.Join(repository, "packages/ts/src/config.ts")}}}, "references": []map[string]string{{"path": managementProject}}, "files": []string{"usage.ts", ".tnl/generated/project.d.ts"}}
 			data, _ := json.Marshal(options)
 			for name, content := range map[string][]byte{"tsconfig.json": data, "package.json": []byte(`{"type":"module"}`), "tnl.config.ts": []byte(source), "usage.ts": []byte(usage), ".tnl/generated/project.d.ts": declarations} {
 				if err := os.WriteFile(filepath.Join(root, name), content, 0600); err != nil {

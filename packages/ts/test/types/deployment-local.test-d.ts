@@ -29,7 +29,9 @@ test("local service names and protocol-specific driver settings are inferred", a
   local.client("app", { create: ({ fetch }) => fetch, close: () => {} });
   // @ts-expect-error generated service names are exact.
   await local.connect("missing");
-  // @ts-expect-error remote deployments are not implemented by the local slice.
-  createClient({ services }).deployment("production");
+  const remote = createClient({ project: "acme/shop", token: "private", services }).deployment(
+    "production",
+  );
+  assertType<string>((await remote.connect("app")).url);
   await local.close();
 });
