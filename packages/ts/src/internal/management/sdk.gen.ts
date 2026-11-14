@@ -52,19 +52,22 @@ export type Options<
   TData extends TDataShape = TDataShape,
   ThrowOnError extends boolean = boolean,
   TResponse = unknown,
-> = Options2<TData, ThrowOnError, TResponse> & {
-  /**
-   * You can provide a client instance returned by `createClient()` instead of
-   * individual options. This might be also useful if you want to implement a
-   * custom client.
-   */
-  client: Client;
-  /**
-   * You can pass arbitrary values through the `meta` object. This can be
-   * used to access values that aren't defined as part of the SDK function.
-   */
-  meta?: keyof ClientMeta extends never ? Record<string, unknown> : ClientMeta;
-};
+> = Options2<Omit<TData, "headers">, ThrowOnError, TResponse> &
+  (TData extends { headers: infer THeaders }
+    ? { headers: THeaders | Headers | [string, string][] }
+    : unknown) & {
+    /**
+     * You can provide a client instance returned by `createClient()` instead of
+     * individual options. This might be also useful if you want to implement a
+     * custom client.
+     */
+    client: Client;
+    /**
+     * You can pass arbitrary values through the `meta` object. This can be
+     * used to access values that aren't defined as part of the SDK function.
+     */
+    meta?: keyof ClientMeta extends never ? Record<string, unknown> : ClientMeta;
+  };
 
 export class deployments {
   /**
@@ -86,6 +89,10 @@ export class deployments {
       ],
       url: "/v1/projects/{project_key}/deployments",
       ...options,
+      headers:
+        options.headers instanceof Headers || Array.isArray(options.headers)
+          ? Object.fromEntries(new Headers(options.headers))
+          : options.headers,
     });
   }
 
@@ -110,7 +117,9 @@ export class deployments {
       ...options,
       headers: {
         "Content-Type": "application/json",
-        ...options.headers,
+        ...(options.headers instanceof Headers || Array.isArray(options.headers)
+          ? Object.fromEntries(new Headers(options.headers))
+          : options.headers),
       },
     });
   }
@@ -134,6 +143,10 @@ export class deployments {
       ],
       url: "/v1/projects/{project_key}/deployments/{deployment}",
       ...options,
+      headers:
+        options.headers instanceof Headers || Array.isArray(options.headers)
+          ? Object.fromEntries(new Headers(options.headers))
+          : options.headers,
     });
   }
 
@@ -156,6 +169,10 @@ export class deployments {
       ],
       url: "/v1/projects/{project_key}/deployments/{deployment}",
       ...options,
+      headers:
+        options.headers instanceof Headers || Array.isArray(options.headers)
+          ? Object.fromEntries(new Headers(options.headers))
+          : options.headers,
     });
   }
 
@@ -180,7 +197,9 @@ export class deployments {
       ...options,
       headers: {
         "Content-Type": "application/json",
-        ...options.headers,
+        ...(options.headers instanceof Headers || Array.isArray(options.headers)
+          ? Object.fromEntries(new Headers(options.headers))
+          : options.headers),
       },
     });
   }
@@ -217,7 +236,9 @@ export class publishers {
       ...options,
       headers: {
         "Content-Type": "application/json",
-        ...options.headers,
+        ...(options.headers instanceof Headers || Array.isArray(options.headers)
+          ? Object.fromEntries(new Headers(options.headers))
+          : options.headers),
       },
     });
   }
@@ -250,6 +271,10 @@ export class publishers {
       ],
       url: "/v1/projects/{project_key}/deployments/{deployment}/publishers",
       ...options,
+      headers:
+        options.headers instanceof Headers || Array.isArray(options.headers)
+          ? Object.fromEntries(new Headers(options.headers))
+          : options.headers,
     });
   }
 
@@ -281,6 +306,10 @@ export class publishers {
       ],
       url: "/v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher}",
       ...options,
+      headers:
+        options.headers instanceof Headers || Array.isArray(options.headers)
+          ? Object.fromEntries(new Headers(options.headers))
+          : options.headers,
     });
   }
 
@@ -308,6 +337,10 @@ export class publishers {
       ],
       url: "/v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher}",
       ...options,
+      headers:
+        options.headers instanceof Headers || Array.isArray(options.headers)
+          ? Object.fromEntries(new Headers(options.headers))
+          : options.headers,
     });
   }
 }

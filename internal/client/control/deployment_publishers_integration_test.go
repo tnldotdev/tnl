@@ -86,6 +86,13 @@ func TestIntegrationDeploymentPublisherClient(t *testing.T) {
 	if err != nil || len(page.Publishers) != 1 || page.Publishers[0].PublisherIdentityId != member.PublisherIdentityId || len(page.Publishers[0].Services) != 1 || page.Publishers[0].Services["db"] != controlv1.Postgres {
 		t.Fatal("real publisher observation broadened its captured service scope", err)
 	}
+	publisher, err := client.GetDeploymentPublisher(t.Context(), team, "shop", selected.Id, member.PublisherIdentityId)
+	if err != nil || publisher.KeyId != member.KeyId || publisher.DeploymentId != selected.Id || len(publisher.Services) != 1 || publisher.Services["db"] != controlv1.Postgres || publisher.RevokedAt != nil {
+		t.Fatal("real publisher read changed exact identity or approval", err)
+	}
+	if _, err := client.GetDeploymentPublisher(t.Context(), team, "shop", sibling.Id, member.PublisherIdentityId); !errors.Is(err, clientcontrol.ErrNotFound) {
+		t.Fatal("sibling deployment exposed the selected publisher", err)
+	}
 	if err := client.RevokeDeploymentPublisher(t.Context(), team, "shop", sibling.Id, member.PublisherIdentityId); !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatal("sibling deployment revoked the selected publisher", err)
 	}
@@ -98,6 +105,10 @@ func TestIntegrationDeploymentPublisherClient(t *testing.T) {
 	page, err = client.ListDeploymentPublishers(t.Context(), team, "shop", selected.Id, "", 1)
 	if err != nil || len(page.Publishers) != 1 || page.Publishers[0].RevokedAt == nil {
 		t.Fatal("revocation lost its retained observation", err)
+	}
+	publisher, err = client.GetDeploymentPublisher(t.Context(), team, "shop", selected.Id, member.PublisherIdentityId)
+	if err != nil || publisher.RevokedAt == nil {
+		t.Fatal("publisher read hid revocation", err)
 	}
 	if result, err := client.CreateDeploymentPublisherEnrollment(t.Context(), team, "shop", selected.Id, "original-setup", body); !errors.Is(err, clientcontrol.ErrStatusConflict) || result.EnrollmentKey != "" {
 		t.Fatal("exhausted enrollment replay restored authority or exposed a secret", err)

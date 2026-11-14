@@ -219,6 +219,105 @@ describe("HTTP management entry point", () => {
     },
   );
 
+  it.each(["headers", "tuples", "record"] as const)(
+    "preserves per-request authorization and conditions in %s for every operation",
+    async (form) => {
+      const requests: Request[] = [];
+      const transport = mockTransport(async (input) => {
+        const request = fetchRequest(input);
+        requests.push(request);
+        expect(request.headers.get("authorization")).toBe("Bearer request-token");
+        expect(request.headers.has("0")).toBe(false);
+        if (request.method === "POST" || request.method === "PATCH") {
+          expect(request.headers.get("content-type")).toBe("application/json");
+        }
+        const url = new URL(request.url);
+        if (url.pathname.endsWith("/publisher-enrollments")) {
+          return json(
+            {
+              enrollment_key: "private-enrollment",
+              enrollment_id: "pge_customer",
+              deployment_id: deployment.id,
+              expires_at: "2026-11-13T13:00:00Z",
+              max_members: 1,
+              services: { db: "postgres" },
+            },
+            201,
+          );
+        }
+        if (request.method === "DELETE") return new Response(null, { status: 204 });
+        if (url.pathname.endsWith("/publishers")) return json({ publishers: [member] });
+        if (url.pathname.endsWith("/pub_customer")) return json(member);
+        if (url.pathname.endsWith("/deployments") && request.method === "GET") {
+          return json({ deployments: [deployment] });
+        }
+        return json(deployment, request.method === "POST" ? 201 : 200);
+      });
+      const client = createClient({
+        baseUrl: "https://control.example.test",
+        fetch: transport,
+      });
+      const headers = <T extends Record<string, string>>(values: T) =>
+        form === "headers"
+          ? new Headers(values)
+          : form === "tuples"
+            ? Object.entries(values)
+            : values;
+      const authorization = { Authorization: "Bearer request-token" };
+      const createHeaders = headers({ ...authorization, "Idempotency-Key": "original-create" });
+      const updateHeaders = headers({ ...authorization, "If-Match": '"9007199254740993"' });
+      const enrollmentHeaders = headers({
+        ...authorization,
+        "Idempotency-Key": "original-enrollment",
+      });
+      const readHeaders = headers({ ...authorization, "X-Caller": "read-or-revoke" });
+      const deleteHeaders = headers({ ...authorization, "If-Match": '"9007199254740993"' });
+      const supplied = [
+        createHeaders,
+        updateHeaders,
+        enrollmentHeaders,
+        readHeaders,
+        deleteHeaders,
+      ];
+      const originalHeaders = supplied.map((value) => [...new Headers(value)]);
+      const options = { client, query, throwOnError: true as const };
+      await deployments.create({
+        ...options,
+        path: project,
+        headers: createHeaders,
+        body: { name: "customer", targets: { db: { address: "db.internal:5432" } } },
+      });
+      await deployments.update({
+        ...options,
+        path,
+        headers: updateHeaders,
+        body: { targets: { db: { address: "replacement.internal:5432" } } },
+      });
+      await publishers.createEnrollment({
+        ...options,
+        path,
+        headers: enrollmentHeaders,
+        body: { services: ["db"], max_members: 1, expires_in: 600 },
+      });
+      await deployments.list({ ...options, path: project, headers: readHeaders });
+      await deployments.get({ ...options, path, headers: readHeaders });
+      await publishers.list({ ...options, path, headers: readHeaders });
+      const publisherPath = { ...path, publisher: "pub_customer" };
+      await publishers.get({ ...options, path: publisherPath, headers: readHeaders });
+      await publishers.revoke({ ...options, path: publisherPath, headers: readHeaders });
+      await deployments.delete({ ...options, path, headers: deleteHeaders });
+      expect(requests).toHaveLength(9);
+      expect(requests[0]?.headers.get("idempotency-key")).toBe("original-create");
+      expect(requests[1]?.headers.get("if-match")).toBe('"9007199254740993"');
+      expect(requests[2]?.headers.get("idempotency-key")).toBe("original-enrollment");
+      expect(requests[8]?.headers.get("if-match")).toBe('"9007199254740993"');
+      for (const request of requests.slice(3, 8)) {
+        expect(request.headers.get("x-caller")).toBe("read-or-revoke");
+      }
+      expect(supplied.map((value) => [...new Headers(value)])).toEqual(originalHeaders);
+    },
+  );
+
   it.each([
     { ...deployment, unexpected: "private" },
     { ...deployment, revision: "1" },

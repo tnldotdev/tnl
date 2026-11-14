@@ -20,6 +20,12 @@ const client = createClient({ baseUrl: input.server, auth: input.token });
 const query = { team_id: input.team_id };
 const project = { project_key: input.project_key };
 const options = { client, query, throwOnError: true as const };
+const requestOptions = {
+  ...options,
+  client: createClient({ baseUrl: input.server }),
+  headers: [["Authorization", `Bearer ${input.token}`]] satisfies [string, string][],
+};
+const originalRequestHeaders = structuredClone(requestOptions.headers);
 const original = {
   name: "customer",
   targets: { db: { address: "customer.internal:5432", tls: { ca: "system" } } },
@@ -27,14 +33,17 @@ const original = {
 const creation = {
   ...options,
   path: project,
-  headers: { "Idempotency-Key": "original-customer" },
+  headers: new Headers({
+    Authorization: `Bearer ${input.token}`,
+    "Idempotency-Key": "original-customer",
+  }),
   body: original,
 };
 const result: Record<string, string> = {};
 
 if (input.phase === "create") {
   const production = await deployments.get({
-    ...options,
+    ...requestOptions,
     path: { ...project, deployment: "production" },
   });
   assert.deepEqual(
@@ -55,7 +64,7 @@ if (input.phase === "create") {
   });
   assert.equal(forbidden.response?.status, 403);
   const foreign = await deployments.list({
-    ...options,
+    ...requestOptions,
     path: project,
     query: { team_id: "tm_other" },
     throwOnError: false,
@@ -75,14 +84,14 @@ if (input.phase === "create") {
   const updated = await deployments.update({
     ...options,
     path,
-    headers: { "If-Match": firstETag },
+    headers: new Headers({ Authorization: `Bearer ${input.token}`, "If-Match": firstETag }),
     body: { targets: { db: { address: "changed.internal:5432", tls: { ca: "system" } } } },
   });
   assert.notEqual(updated.response.headers.get("etag"), firstETag);
   const stale = await deployments.update({
     ...options,
     path,
-    headers: { "If-Match": firstETag },
+    headers: [["If-Match", firstETag]],
     body: { targets: { db: { address: "stale:5432" } } },
     throwOnError: false,
   });
@@ -97,11 +106,15 @@ if (input.phase === "create") {
     throwOnError: false,
   });
   assert.equal(changed.response?.status, 409);
-  const page = await deployments.list({ ...options, path: project, query: { ...query, limit: 1 } });
+  const page = await deployments.list({
+    ...requestOptions,
+    path: project,
+    query: { ...query, limit: 1 },
+  });
   assert.equal(page.data.deployments.length, 1);
   assert(page.data.next_cursor, "filtered pagination lost its cursor");
   const next = await deployments.list({
-    ...options,
+    ...requestOptions,
     path: project,
     query: { ...query, limit: 1, after: page.data.next_cursor },
   });
@@ -110,7 +123,10 @@ if (input.phase === "create") {
   const setup = {
     ...options,
     path,
-    headers: { "Idempotency-Key": "original-setup" },
+    headers: new Headers({
+      Authorization: `Bearer ${input.token}`,
+      "Idempotency-Key": "original-setup",
+    }),
     body: { services: ["db"], max_members: 1, expires_in: 600 },
   };
   const enrollment = await publishers.createEnrollment(setup);
@@ -127,31 +143,48 @@ if (input.phase === "create") {
   assert(input.deployment_id && input.publisher_id);
   const path = { ...project, deployment: input.deployment_id };
   const publisherPath = { ...path, publisher: input.publisher_id };
-  const listed = await publishers.list({ ...options, path });
+  const listed = await publishers.list({ ...requestOptions, path });
   assert.equal(listed.data.publishers.length, 1);
-  const read = await publishers.get({ ...options, path: publisherPath });
+  const read = await publishers.get({ ...requestOptions, path: publisherPath });
   assert.equal(read.data.publisher_identity_id, input.publisher_id);
   assert.deepEqual(read.data.services, { db: "postgres" });
   assert.equal(read.data.healthy, false, "enrollment was mistaken for traffic readiness");
-  await publishers.revoke({ ...options, path: publisherPath });
-  await publishers.revoke({ ...options, path: publisherPath });
-  const revoked = await publishers.get({ ...options, path: publisherPath });
+  await publishers.revoke({ ...requestOptions, path: publisherPath });
+  await publishers.revoke({ ...requestOptions, path: publisherPath });
+  const revoked = await publishers.get({ ...requestOptions, path: publisherPath });
   assert(revoked.data.revoked_at, "revocation lost its retained observation");
-  const deployment = await deployments.get({ ...options, path });
+  const deployment = await deployments.get({ ...requestOptions, path });
   const condition = deployment.response.headers.get("etag");
   assert(condition);
-  await deployments.delete({ ...options, path, headers: { "If-Match": condition } });
-  const readDeleted = await deployments.get({ ...options, path, throwOnError: false });
+  const missing = await deployments.delete({ ...requestOptions, path, throwOnError: false });
+  assert.equal(missing.response?.status, 428);
+  const stale = await deployments.delete({
+    ...requestOptions,
+    path,
+    headers: [...requestOptions.headers, ["If-Match", '"9007199254740993"']],
+    throwOnError: false,
+  });
+  assert.equal(stale.response?.status, 412);
+  const deleteHeaders: [string, string][] = [...requestOptions.headers, ["If-Match", condition]];
+  const originalDeleteHeaders = structuredClone(deleteHeaders);
+  await deployments.delete({ ...requestOptions, path, headers: deleteHeaders });
+  assert.deepEqual(deleteHeaders, originalDeleteHeaders, "delete changed the caller's tuples");
+  const readDeleted = await deployments.get({ ...requestOptions, path, throwOnError: false });
   assert.equal(readDeleted.response?.status, 404);
   const replay = await deployments.create({ ...creation, throwOnError: false });
   assert.equal(replay.response?.status, 409);
   const sibling = await deployments.get({
-    ...options,
+    ...requestOptions,
     path: { ...project, deployment: "production" },
   });
   assert.equal(sibling.data.targets.db?.address, "db.internal:5432");
 } else {
-  const denied = await deployments.list({ ...options, path: project, throwOnError: false });
+  const denied = await deployments.list({ ...requestOptions, path: project, throwOnError: false });
   assert.equal(denied.response?.status, 401, "management ignored current grant revocation");
 }
+assert.deepEqual(
+  requestOptions.headers,
+  originalRequestHeaders,
+  "an operation changed the caller's authorization tuples",
+);
 stdout.write(JSON.stringify(result));

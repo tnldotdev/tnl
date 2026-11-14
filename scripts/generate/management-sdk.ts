@@ -1,5 +1,6 @@
 import { createClient } from "@hey-api/openapi-ts";
 import { execFileSync } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { operationInventory, record, repositoryGraph, root } from "./api-contracts.ts";
@@ -97,6 +98,47 @@ export async function generateManagementSDK(): Promise<void> {
     ],
   });
   if (jobs.length !== 1) throw new Error("expected one management SDK generation result");
+  // normalize headers at every operation boundary; keep the stock Fetch runtime
+  // and canonical schema validators untouched.
+  const sdkPath = resolve(output, "sdk.gen.ts");
+  const source = await readFile(sdkPath, "utf8");
+  const headerSpread = /\.\.\.options\.headers\b/g;
+  if ([...source.matchAll(headerSpread)].length !== 3) {
+    throw new Error("management SDK header generation changed");
+  }
+  const jsonNormalized = source.replaceAll(
+    headerSpread,
+    `...(options.headers instanceof Headers || Array.isArray(options.headers)
+        ? Object.fromEntries(new Headers(options.headers))
+        : options.headers)`,
+  );
+  const bareOptions = /\.\.\.options,?(\s*)\}\)/g;
+  if ([...jsonNormalized.matchAll(bareOptions)].length !== operations.length - 3) {
+    throw new Error("management SDK non-JSON operation generation changed");
+  }
+  const normalized = jsonNormalized.replaceAll(
+    bareOptions,
+    `...options,$1headers:
+      options.headers instanceof Headers || Array.isArray(options.headers)
+        ? Object.fromEntries(new Headers(options.headers))
+        : options.headers,$1})`,
+  );
+  // required header records still require their canonical fields; Fetch
+  // containers carry those fields as entries rather than object properties.
+  const optionsType = /Options2<TData,\s*ThrowOnError,\s*TResponse>/g;
+  if ([...normalized.matchAll(optionsType)].length !== 1) {
+    throw new Error("management SDK option generation changed");
+  }
+  await writeFile(
+    sdkPath,
+    normalized.replaceAll(
+      optionsType,
+      `Options2<Omit<TData, "headers">, ThrowOnError, TResponse> &
+      (TData extends { headers: infer THeaders }
+        ? { headers: THeaders | Headers | [string, string][] }
+        : unknown)`,
+    ),
+  );
   execFileSync("pnpm", ["exec", "oxfmt", "--write", output], { cwd: root, stdio: "inherit" });
 }
 
