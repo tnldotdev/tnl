@@ -67,7 +67,10 @@ func TestDeploymentTargetFlagsUseCanonicalVerifiedTLS(t *testing.T) {
 
 func TestDeploymentReadRejectsCrossScopeAndRendersDeterministically(t *testing.T) {
 	deployment := controlv1.Deployment{Id: "dpl_aaaaaaaaaaaaaaaaaaaaaa", TeamId: "team-selected", ProjectKey: "shop", Name: "production", Revision: 7,
-		Services: map[string]controlv1.DeploymentService{"web": {Id: "svc_bbbbbbbbbbbbbbbbbbbbbb", Protocol: "http", TrustRevision: 1}, "db": {Id: "svc_cccccccccccccccccccccc", Protocol: "postgres", TrustRevision: 1}}}
+		Services: map[string]controlv1.DeploymentService{
+			"web": {Id: "url_bbbbbbbbbbbbbbbbbbbbbb", Protocol: "http", TrustRevision: 1, PublicUrl: new("https://web.example.test")},
+			"db":  {Id: "svc_cccccccccccccccccccccc", Protocol: "postgres", TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 5432}},
+		}}
 	if err := validateDeploymentResult(deployment, deployment.TeamId, deployment.ProjectKey); err != nil {
 		t.Fatal(err)
 	}
@@ -93,5 +96,72 @@ func TestDeploymentReadRejectsCrossScopeAndRendersDeterministically(t *testing.T
 		if len(line) > 72 {
 			t.Fatal("deployment output exceeded the shared renderer's width")
 		}
+	}
+}
+
+func TestDeploymentReadValidatesPublicURLAndServiceBindingShapes(t *testing.T) {
+	saved := controlv1.DeploymentService{Id: "url_bbbbbbbbbbbbbbbbbbbbbb", Protocol: "http", TrustRevision: 1, PublicUrl: new("https://web.example.test")}
+	private := controlv1.DeploymentService{Id: "svc_cccccccccccccccccccccc", Protocol: "postgres", TrustRevision: 1}
+	for _, service := range []controlv1.DeploymentService{
+		saved, private,
+		{Id: private.Id, Protocol: "http", TrustRevision: 2},
+		{Id: private.Id, Protocol: "tcp", TrustRevision: 2, Endpoint: &controlv1.ServiceEndpoint{Hostname: "tcp.example.test", Port: 1024}},
+		{Id: private.Id, Protocol: "mysql", TrustRevision: 2, Endpoint: &controlv1.ServiceEndpoint{Hostname: "mysql.example.test", Port: 65535, Public: true}},
+	} {
+		deployment := controlv1.Deployment{Id: "dpl_aaaaaaaaaaaaaaaaaaaaaa", TeamId: "team-selected", ProjectKey: "shop", Name: "production", Revision: 1, Services: map[string]controlv1.DeploymentService{"selected": service}}
+		if err := validateDeploymentResult(deployment, deployment.TeamId, deployment.ProjectKey); err != nil {
+			t.Fatal("canonical binding was rejected", err)
+		}
+	}
+	for name, mutate := range map[string]func(*controlv1.DeploymentService){
+		"url service ID": func(s *controlv1.DeploymentService) { s.Id = private.Id },
+		"url invalid ID": func(s *controlv1.DeploymentService) { s.Id = "url_invalid" },
+		"url not HTTP":   func(s *controlv1.DeploymentService) { s.Protocol = "postgres" },
+		"url endpoint": func(s *controlv1.DeploymentService) {
+			s.Endpoint = &controlv1.ServiceEndpoint{Hostname: "web.example.test", Port: 443}
+		},
+		"url absent":       func(s *controlv1.DeploymentService) { s.PublicUrl = nil },
+		"url revision":     func(s *controlv1.DeploymentService) { s.TrustRevision = 0 },
+		"service URL ID":   func(s *controlv1.DeploymentService) { *s = private; s.Id = saved.Id },
+		"service protocol": func(s *controlv1.DeploymentService) { *s = private; s.Protocol = "invalid" },
+		"service URL":      func(s *controlv1.DeploymentService) { *s = private; s.PublicUrl = saved.PublicUrl },
+		"endpoint empty": func(s *controlv1.DeploymentService) {
+			*s = private
+			s.Endpoint = &controlv1.ServiceEndpoint{Port: 5432}
+		},
+		"endpoint case": func(s *controlv1.DeploymentService) {
+			*s = private
+			s.Endpoint = &controlv1.ServiceEndpoint{Hostname: "DB.example.test", Port: 5432}
+		},
+		"endpoint IP": func(s *controlv1.DeploymentService) {
+			*s = private
+			s.Endpoint = &controlv1.ServiceEndpoint{Hostname: "127.0.0.1", Port: 5432}
+		},
+		"endpoint port": func(s *controlv1.DeploymentService) {
+			*s = private
+			s.Endpoint = &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 1023}
+		},
+		"endpoint bounds": func(s *controlv1.DeploymentService) {
+			*s = private
+			s.Endpoint = &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 65536}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			service := saved
+			mutate(&service)
+			deployment := controlv1.Deployment{Id: "dpl_aaaaaaaaaaaaaaaaaaaaaa", TeamId: "team-selected", ProjectKey: "shop", Name: "production", Revision: 1, Services: map[string]controlv1.DeploymentService{"selected": service}}
+			if reason, ok := failure.ReasonOf(validateDeploymentResult(deployment, deployment.TeamId, deployment.ProjectKey)); !ok || reason != failure.ServerResponseInvalid {
+				t.Fatal("invalid binding escaped its response boundary")
+			}
+		})
+	}
+	for _, value := range []string{"", "web.example.test", "http://web.example.test", "https://WEB.example.test", "https://web.example.test.", "https://web.example.test:443", "https://web.example.test/", "https://web.example.test/path", "https://web.example.test?query", "https://web.example.test#fragment", "https://user@web.example.test", "https://127.0.0.1", "https://*.example.test", "https://web.example.test\nsecret"} {
+		t.Run(value, func(t *testing.T) {
+			service := saved
+			service.PublicUrl = &value
+			if validDeploymentService(service) {
+				t.Fatal("noncanonical public URL was accepted")
+			}
+		})
 	}
 }

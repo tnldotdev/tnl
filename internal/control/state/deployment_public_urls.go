@@ -36,16 +36,7 @@ func (d *Database) createDeploymentPublicURL(ctx context.Context, tx pgx.Tx, r A
 			return "", ErrProjectConfigurationInvalid
 		}
 	} else {
-		// exact hostnames still pass normal shared-URL ownership checks.
-		creation, err := q.GetPublicURLCreationContext(ctx, controlstatedb.GetPublicURLCreationContextParams{IdentityID: r.ActorID, DomainID: p.DomainID, TeamID: r.TeamID})
-		if err != nil {
-			return "", err
-		}
-		labels, err := q.ListTeamNamespaceLabels(ctx, r.TeamID)
-		if err != nil {
-			return "", err
-		}
-		if err := authorizeRouteCreation(CreatePublicURLRequest{TeamID: r.TeamID, DomainID: p.DomainID, ActingIdentityID: r.ActorID, CanonicalHostname: hostname, PublicURLScope: PublicURLScopeShared, ManagedURLMode: d.managedURLMode}, creation, labels); err != nil {
+		if _, err := authorizePublicURLCreation(ctx, q, CreatePublicURLRequest{TeamID: r.TeamID, DomainID: p.DomainID, ActingIdentityID: r.ActorID, CanonicalHostname: hostname, PublicURLScope: PublicURLScopeShared, ManagedURLMode: d.managedURLMode}); err != nil {
 			return "", err
 		}
 	}

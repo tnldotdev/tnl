@@ -13,18 +13,7 @@ import (
 func TestIntegrationDeploymentExactHostnameIsNotAnAllocationNamespace(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "deployment_exact_hostname")
 	r := appliedProjectRequest(t, d, now)
-	domain, err := d.ClaimTeamDomain(t.Context(), ClaimDomainRequest{TeamID: r.TeamID, IdentityID: r.ActorID, Domain: "custom.example.test", IdempotencyKey: "custom", RequestDigest: sha256.Sum256([]byte("custom"))}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	work, found, err := d.ClaimDNSAuthorityWork(t.Context(), "dns-worker", now, time.Minute)
-	if err != nil || !found || work.Reference != domain.DNSAuthorityReference {
-		t.Fatal("custom domain did not retain its DNS authority", err)
-	}
-	work.State, work.ProviderZoneID, work.Nameservers, work.AvailableAt = "ready", "ZDEPLOYMENT", []string{"ns-1.example.test", "ns-2.example.test"}, now
-	if _, err := d.SaveDNSAuthorityWork(t.Context(), work, now); err != nil {
-		t.Fatal(err)
-	}
+	domain := deploymentCustomDomain(t, d, r, now)
 	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{DomainID: domain.ID}, Services: map[string]ProjectServiceConfiguration{
 		"web": {Target: "app", PublicURL: &ProjectServicePublicURL{Hostname: "www.custom.example.test", DomainID: domain.ID}},
 	}}
@@ -47,6 +36,70 @@ func TestIntegrationDeploymentExactHostnameIsNotAnAllocationNamespace(t *testing
 	_, namespace, _ := strings.Cut(u.CanonicalHostname, ".")
 	if namespace != applied.Deployments[0].Namespace || strings.HasSuffix(u.CanonicalHostname, ".www.custom.example.test") || production.Services["web"].PublicURL != "https://www.custom.example.test" {
 		t.Fatal("exact saved hostname became the allocation namespace")
+	}
+}
+
+func deploymentCustomDomain(t *testing.T, d *Database, r ApplyProjectConfigurationRequest, now time.Time) Domain {
+	t.Helper()
+	domain, err := d.ClaimTeamDomain(t.Context(), ClaimDomainRequest{TeamID: r.TeamID, IdentityID: r.ActorID, Domain: "custom.example.test", IdempotencyKey: "custom", RequestDigest: sha256.Sum256([]byte("custom"))}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, found, err := d.ClaimDNSAuthorityWork(t.Context(), "dns-worker", now, time.Minute)
+	if err != nil || !found || work.Reference != domain.DNSAuthorityReference {
+		t.Fatal("custom domain did not retain its DNS authority", err)
+	}
+	work.State, work.ProviderZoneID, work.Nameservers, work.AvailableAt = "ready", "ZDEPLOYMENT", []string{"ns-1.example.test", "ns-2.example.test"}, now
+	if _, err := d.SaveDNSAuthorityWork(t.Context(), work, now); err != nil {
+		t.Fatal(err)
+	}
+	return domain
+}
+
+func TestIntegrationDeploymentExactHostnamePreservesMemberSlugReservations(t *testing.T) {
+	for _, state := range []string{"invited", "quarantined"} {
+		t.Run(state, func(t *testing.T) {
+			d, now := newControlStateIntegrationDatabase(t, "deployment_reserved_hostname")
+			r := appliedProjectRequest(t, d, now)
+			if _, err := d.pool.Exec(t.Context(), `UPDATE control.teams SET kind='organization' WHERE id=$1`, r.TeamID); err != nil {
+				t.Fatal(err)
+			}
+			domain := deploymentCustomDomain(t, d, r, now)
+			var invitation InvitationSecret
+			if state == "invited" {
+				var err error
+				invitation, err = d.CreateTeamInvitation(t.Context(), authorityInvitationRequest(r.ActorID, r.TeamID, "alice", now), now)
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				member := addAuthorityMember(t, d, now, r.ActorID, r.TeamID, "alice", TeamRoleMember)
+				if err := d.RemoveMembership(t.Context(), r.ActorID, r.TeamID, member.ID, now); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, hostname := range []string{"alice.custom.example.test", "app.alice.custom.example.test", "api.app.alice.custom.example.test"} {
+				r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{DomainID: domain.ID}, Services: map[string]ProjectServiceConfiguration{
+					"web": {Target: "app", PublicURL: &ProjectServicePublicURL{Hostname: hostname, DomainID: domain.ID}},
+				}}
+				r = selectedProjectRequest(r, "production")
+				if _, err := d.ApplyProjectConfiguration(t.Context(), r); !errors.Is(err, ErrPublicURLConflict) {
+					t.Fatal("deployment claimed a reserved member namespace", hostname, err)
+				}
+				var count int
+				if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.public_urls WHERE team_id=$1`, r.TeamID).Scan(&count); err != nil || count != 0 {
+					t.Fatal("denied apply saved a public URL", count, err)
+				}
+			}
+			if state == "invited" {
+				if err := d.RevokeTeamInvitation(t.Context(), r.ActorID, r.TeamID, invitation.Invitation.ID, now); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
+					t.Fatal("released invitation still blocked the shared hostname", err)
+				}
+			}
+		})
 	}
 }
 
@@ -187,5 +240,142 @@ func TestIntegrationDeploymentPublicURLChangesDoNotMutateSiblingOrAdoptNamespace
 	staging, err := f.d.GetDeployment(t.Context(), scope, "staging")
 	if err != nil || staging.Services["web"].ID != f.staging.Services["web"].ID || staging.Services["web"].ID == f.production.Services["web"].ID {
 		t.Fatal("failed hostname change was not atomic or deployments share a URL", err)
+	}
+}
+
+func TestIntegrationDeploymentBindingChangesRetireCredentialRunsWithoutRevokingApproval(t *testing.T) {
+	for _, mutation := range []string{"apply-target", "runtime-target", "apply-access", "apply-post-quantum"} {
+		t.Run(mutation, func(t *testing.T) {
+			f := newDeploymentPublicationFixture(t)
+			d, ctx, now := f.d, t.Context(), f.now
+			scope := DeploymentScope{TeamID: f.project.TeamID, ProjectKey: f.project.ProjectKey, ActorID: f.project.ActorID}
+			current, err := d.GetProjectConfiguration(ctx, scope.TeamID, scope.ProjectKey, scope.ActorID, "production")
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := f.project
+			r.ExpectedRevision, r.Configuration = current.Revision, current.Configuration
+			web := r.Configuration.Services["web"]
+			web.Target = "http://original.internal:3000"
+			r.Configuration.Services["web"] = web
+			applied, err := d.ApplyProjectConfiguration(ctx, r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.production, err = d.GetDeployment(ctx, scope, "production")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, _, leases := publishRunPrerequisitesInDatabase(t, d, now, nil)
+			registration, key := managementRegistration(t, scope, now)
+			registration.Permissions = map[string][]string{"publish": {"web", "api"}}
+			registration.TemporaryPublication = "restricted"
+			credential, err := d.RegisterDeploymentCredential(ctx, registration)
+			if err != nil {
+				t.Fatal(err)
+			}
+			access := managementAccess(t, d, credential, key, now)
+			start := func(deployment, service string) publishRunFixture {
+				t.Helper()
+				publication, err := d.GetDeploymentPublication(ctx, f.scope(access), deployment, service, now)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request := reviewRunRequest(t, d, access.PublisherIdentity, key, publication.PublicURL, deployment+"/"+service)
+				run, err := d.CreatePublishRun(ctx, request, now, time.Minute, time.Minute)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return publishRunFixture{database: d, now: now, request: request, setup: run, leases: leases}
+			}
+			old := start("production", "web")
+			claims := readyTestSession(t, old)
+			siblingService, siblingDeployment := start("production", "api"), start("staging", "web")
+			temporaryURL, err := d.AllocateDeploymentPublication(ctx, f.allocation(t, access))
+			if err != nil {
+				t.Fatal(err)
+			}
+			temporaryRequest := reviewRunRequest(t, d, access.PublisherIdentity, key, temporaryURL, "temporary")
+			temporary, err := d.CreatePublishRun(ctx, temporaryRequest, now, time.Minute, time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.ExpectedRevision = applied.Revision
+			if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
+				t.Fatal("unchanged apply failed", err)
+			}
+			if _, err := d.HeartbeatPublishRun(ctx, old.authentication(), now, time.Minute, time.Minute); err != nil {
+				t.Fatal("unchanged apply retired a run", err)
+			}
+			expectedTarget := web.Target
+			switch mutation {
+			case "runtime-target":
+				f.production, err = d.UpdateDeployment(ctx, UpdateDeploymentRequest{DeploymentScope: scope, Selector: f.production.ID, ExpectedRevision: f.production.Revision, Targets: map[string]DeploymentTarget{"web": {Address: "http://replacement.internal:8080"}}, Now: now})
+				expectedTarget = "http://replacement.internal:8080"
+			default:
+				switch mutation {
+				case "apply-target":
+					web.Target = "http://replacement.internal:8080"
+					expectedTarget = web.Target
+				case "apply-access":
+					web.PublicURL.Access.Mode = "restricted"
+				case "apply-post-quantum":
+					web.PublicURL.RequirePostQuantum = new(true)
+				}
+				r.Configuration.Services["web"] = web
+				_, err = d.ApplyProjectConfiguration(ctx, r)
+			}
+			if err != nil {
+				t.Fatal("binding mutation failed", err)
+			}
+			q := controlstatedb.New(d.pool)
+			retired, err := q.GetPublishRun(ctx, old.setup.PublishRunID)
+			if err != nil || !retired.ClosedAt.Valid || retired.State != "closed" || retired.CloseReason.String != "configuration_changed" {
+				t.Fatal("binding mutation retained the old credential run", err)
+			}
+			var openSlots, tombstones int
+			if err := d.pool.QueryRow(ctx, `SELECT count(*) FROM control.publish_run_connection_slots WHERE publish_run_id=$1 AND (state<>'closed' OR closed_at IS NULL)`, old.setup.PublishRunID).Scan(&openSlots); err != nil || openSlots != 0 {
+				t.Fatal("binding mutation retained old assignments", openSlots, err)
+			}
+			if err := d.pool.QueryRow(ctx, `SELECT count(*) FROM control.ingress_routing_table_events WHERE public_url_id=$1 AND publish_run_number=$2 AND event_kind='public_url_tombstone'`, old.setup.PublicURLID, old.setup.PublishRunNumber).Scan(&tombstones); err != nil || tombstones != 1 {
+				t.Fatal("binding mutation did not retire the old ingress entry", tombstones, err)
+			}
+			if _, err := d.HeartbeatPublishRun(ctx, old.authentication(), now, time.Minute, time.Minute); !errors.Is(err, ErrPublishRunStale) {
+				t.Fatal("old run renewed after the binding changed", err)
+			}
+			if _, err := d.MarkPublisherConnectionReady(ctx, claims[0], now); err == nil {
+				t.Fatal("old assignment became ready after the binding changed")
+			}
+			if _, err := d.CreateCertificateIssuance(ctx, newTestIssuanceRequest(t, old), now); !errors.Is(err, ErrPublishRunStale) {
+				t.Fatal("old run retained certificate authority", err)
+			}
+			for _, sibling := range []publishRunFixture{siblingService, siblingDeployment, {setup: temporary}} {
+				if _, err := d.HeartbeatPublishRun(ctx, sibling.authentication(), now, time.Minute, time.Minute); err != nil {
+					t.Fatal("binding mutation retired an unrelated run using the same approval", err)
+				}
+			}
+			var approved bool
+			if err := d.pool.QueryRow(ctx, `SELECT approval.revoked_at IS NULL AND selected.revoked_at IS NULL
+				FROM control.publisher_grants approval JOIN control.deployment_management_services selected ON selected.grant_id=approval.id
+				WHERE approval.id=$1 AND selected.capability='publish' AND selected.service='web'`, credential.GrantID).Scan(&approved); err != nil || !approved {
+				t.Fatal("binding mutation revoked reusable publication approval", err)
+			}
+			publication, err := d.GetDeploymentPublication(ctx, f.scope(access), "production", "web", now)
+			if err != nil || publication.PublicURL.ID != old.setup.PublicURLID || publication.PublicURL.Target != expectedTarget {
+				t.Fatal("named publication did not return the updated binding", err)
+			}
+			if mutation == "apply-access" && publication.PublicURL.AccessMode != VisitorAccessRestricted ||
+				mutation == "apply-post-quantum" && !publication.PublicURL.RequirePostQuantum {
+				t.Fatal("named publication did not retain the new policy")
+			}
+			replacementRequest := reviewRunRequest(t, d, access.PublisherIdentity, key, publication.PublicURL, "replacement")
+			replacement, err := d.CreatePublishRun(ctx, replacementRequest, now, time.Minute, time.Minute)
+			if err != nil || replacement.PublishRunID == old.setup.PublishRunID || replacement.PublishRunNumber != old.setup.PublishRunNumber+1 {
+				t.Fatal("reusable approval could not start a replacement run", err)
+			}
+			if _, err := d.HeartbeatPublishRun(ctx, (publishRunFixture{setup: replacement}).authentication(), now, time.Minute, time.Minute); err != nil {
+				t.Fatal("replacement run was not current", err)
+			}
+		})
 	}
 }

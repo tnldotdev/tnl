@@ -275,11 +275,31 @@ func validateDeploymentResult(deployment controlv1.Deployment, team, project str
 		return failure.Wrap("read deployment", failure.ServerResponseInvalid, errors.New("control returned another or invalid deployment selection"))
 	}
 	for name, service := range deployment.Services {
-		if !naming.ValidServiceName(name) || !opaqueid.Valid(service.Id, opaqueid.ServicePrefix) || !service.Protocol.Valid() || service.TrustRevision < 1 {
+		if !naming.ValidServiceName(name) || !validDeploymentService(service) {
 			return failure.Wrap("read deployment", failure.ServerResponseInvalid, errors.New("control returned an invalid service binding"))
 		}
 	}
 	return nil
+}
+
+func validDeploymentService(service controlv1.DeploymentService) bool {
+	if !service.Protocol.Valid() || service.TrustRevision < 1 {
+		return false
+	}
+	if service.PublicUrl != nil {
+		hostname, err := naming.ParseExactPublicURL(*service.PublicUrl)
+		return err == nil && *service.PublicUrl == "https://"+hostname &&
+			opaqueid.Valid(service.Id, opaqueid.PublicURLPrefix) &&
+			service.Protocol == controlv1.ServiceProtocolHTTP && service.Endpoint == nil
+	}
+	if !opaqueid.Valid(service.Id, opaqueid.ServicePrefix) {
+		return false
+	}
+	if endpoint := service.Endpoint; endpoint != nil {
+		hostname, err := naming.CanonicalizeHostname(endpoint.Hostname)
+		return err == nil && hostname == endpoint.Hostname && endpoint.Port >= 1024 && endpoint.Port <= 65535
+	}
+	return true
 }
 
 func deploymentBlock(deployment controlv1.Deployment) clioutput.Block {

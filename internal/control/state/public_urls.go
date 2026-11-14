@@ -279,20 +279,8 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 			return PublicURL{}, ErrPublicURLAccess
 		}
 	} else if request.GuestID == "" {
-		creation, err := queries.GetPublicURLCreationContext(ctx, controlstatedb.GetPublicURLCreationContextParams{
-			IdentityID: request.ActingIdentityID, DomainID: request.DomainID, TeamID: request.TeamID,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return PublicURL{}, ErrPublicURLAccess
-		}
+		creation, err := authorizePublicURLCreation(ctx, queries, request)
 		if err != nil {
-			return PublicURL{}, fmt.Errorf("controlstate: create public_url: read authority context: %w", err)
-		}
-		labels, err := queries.ListTeamNamespaceLabels(ctx, request.TeamID)
-		if err != nil {
-			return PublicURL{}, fmt.Errorf("controlstate: create public_url: read namespaces: %w", err)
-		}
-		if err := authorizeRouteCreation(request, creation, labels); err != nil {
 			return PublicURL{}, err
 		}
 		ingressPoolID = creation.IngressPoolID
@@ -305,17 +293,6 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 				TeamName: creation.TeamDisplayName, MemberSlug: creation.ActorMemberSlug,
 				ManagedLabel: creation.ActorManagedLabel,
 			})
-		}
-		if creation.DomainKind == "custom" && request.PublicURLScope == PublicURLScopeShared && request.CanonicalHostname != creation.CanonicalDomain {
-			relative := strings.TrimSuffix(request.CanonicalHostname, "."+creation.CanonicalDomain)
-			label := relative[strings.LastIndex(relative, ".")+1:]
-			if reserved, err := queries.TeamMemberSlugReserved(ctx, controlstatedb.TeamMemberSlugReservedParams{
-				TeamID: request.TeamID, Label: label,
-			}); err != nil {
-				return PublicURL{}, fmt.Errorf("controlstate: check reserved member slug: %w", err)
-			} else if reserved {
-				return PublicURL{}, ErrPublicURLConflict
-			}
 		}
 		policyRevision = creation.PolicyRevision
 	}
