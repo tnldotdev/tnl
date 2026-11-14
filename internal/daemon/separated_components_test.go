@@ -387,7 +387,7 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 	}
 	visitors := separatedNames("visitors")
 	index, sources := slices.Index(visitors, component)+1, len(visitors)
-	visitor := benchworkload.Visitor{Roots: separatedRoots(t, "route-roots.pem"), Address: "ingress:443", PayloadBytes: 32768}
+	visitor := benchworkload.Visitor{Roots: separatedRoots(t, "route-roots.pem"), DialHost: "ingress", PayloadBytes: 32768}
 	publicServiceVisitor := benchworkload.Visitor{Roots: separatedRoots(t, "roots.pem"), Address: "publishers:8444", PayloadBytes: 32768}
 	localRate := benchworkload.Assignment(rate, sources, index-1)
 	cohortByURL := make(map[string]string)

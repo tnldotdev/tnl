@@ -138,7 +138,7 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	if serviceID == "" {
 		t.Fatal("apply did not create the private HTTP service")
 	}
-	cliCall(t, t.Context(), []string{"--config", configuration, "generate"})
+	cliCall(t, t.Context(), []string{"--config", configuration, "generate", "--state-dir", person})
 	runtimeCtx, stopRuntime := context.WithCancel(t.Context())
 	runtimeDone := make(chan error, 1)
 	go func() { runtimeDone <- runRuntimeServe(runtimeCtx, runtimeOptions{Directory: root, StateDir: person}) }()
@@ -177,8 +177,8 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	public, err := meta.Parse(metadata)
-	if err != nil || len(public.Services) != 1 || public.Services["web"].URL == "" || bytes.Contains(metadata, []byte(target.URL)) {
-		t.Fatalf("browser metadata lost endpoint scope or leaked a target: %v", err)
+	if err != nil || len(public.Services) != 0 || assignment.PublicURL != "" || bytes.Contains(metadata, []byte(target.URL)) {
+		t.Fatalf("preparation invented an unallocated origin or leaked a target: %v", err)
 	}
 	if _, found := public.Services["internal"]; found {
 		t.Fatal("private app listener received browser metadata")
@@ -205,9 +205,32 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 		}
 	}()
 	defer func() { stopRegistration(); <-registrationDone }()
+	var publicURL string
+	workflowWait(t, 25*time.Second, func() bool {
+		var snapshot publisherapp.Snapshot
+		if err := publisherprotocol.Call(t.Context(), endpoint, "GET", "/v1/status", nil, &snapshot); err != nil {
+			return false
+		}
+		for _, service := range snapshot.Services {
+			if service.Name == web && service.Routable && service.PublicURL != "" {
+				publicURL = service.PublicURL
+				return true
+			}
+		}
+		return false
+	})
+	cliCall(t, t.Context(), []string{"--config", configuration, "generate", "--state-dir", person})
+	metadata, err = os.ReadFile(filepath.Join(root, ".tnl", "local", "project.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, err = meta.Parse(metadata)
+	if err != nil || len(public.Services) != 1 || public.Services[web].URL != publicURL || bytes.Contains(metadata, []byte(target.URL)) {
+		t.Fatalf("browser metadata lost the allocated origin or leaked a target: %v", err)
+	}
 	visitor := &http.Client{Transport: http.DefaultTransport, Timeout: 2 * time.Second}
 	workflowWait(t, 25*time.Second, func() bool {
-		response, err := visitor.Get(assignment.PublicURL)
+		response, err := visitor.Get(publicURL)
 		if err != nil {
 			return false
 		}
@@ -228,10 +251,10 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 		}
 		return false
 	})
-	if len(assignment.Project.Webhooks) != 1 {
+	if len(public.Webhooks) != 1 {
 		t.Fatal("local webhook metadata was not generated")
 	}
-	webhookURL := assignment.Project.Webhooks["review"].URL
+	webhookURL := public.Webhooks["review"].URL
 	lastWebhookState := ""
 	workflowWait(t, 25*time.Second, func() bool {
 		response, err := visitor.Post(webhookURL, "application/octet-stream", strings.NewReader("public webhook delivery"))
