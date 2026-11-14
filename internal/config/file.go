@@ -66,7 +66,7 @@ func LoadDocument(path string) (Document, error) {
 		return Document{}, fmt.Errorf("load config %s: %w", path, err)
 	}
 	if document.TNL != nil {
-		NormalizePublicURLs(document.TNL)
+		NormalizeProjectPublicURLs(document.TNL)
 	}
 	return document, nil
 }
@@ -149,7 +149,7 @@ func ValidateDocument(document Document) error {
 		return fmt.Errorf("unsupported configuration version %d", *document.Version)
 	}
 	if document.TNL != nil {
-		if err := ValidateTNL(*document.TNL); err != nil {
+		if err := ValidateProject(*document.TNL); err != nil {
 			return fmt.Errorf("tnl: %w", err)
 		}
 	}
@@ -157,7 +157,7 @@ func ValidateDocument(document Document) error {
 }
 
 func ValidateTNL(config TNL) error {
-	if err := ValidateWorkloads(config); err != nil {
+	if err := ValidateWorkloads(config.Services, config.Workloads); err != nil {
 		return err
 	}
 	if err := ValidateInspection(config.Inspection); err != nil {
@@ -184,21 +184,27 @@ func ValidateTNL(config TNL) error {
 	if len(config.Services) > 32 {
 		return errors.New("services may contain at most 32 entries")
 	}
-	if len(config.PublisherGroups) > 32 {
-		return errors.New("publishers may contain at most 32 entries")
+	deployment := SelectedDeployment(config)
+	if !naming.ValidServiceName(deployment) {
+		return errors.New("selected deployment must be a lowercase DNS label")
 	}
-	for name, group := range config.PublisherGroups {
-		if name == "local" || !naming.ValidServiceName(name) {
-			return fmt.Errorf("publisher group %q must be a lowercase DNS label other than reserved local", name)
-		}
-		if group.Description != nil && (len(*group.Description) > 1024 || !utf8.ValidString(*group.Description)) {
-			return fmt.Errorf("publisher_groups.%s.description must be valid UTF-8 of at most 1024 bytes", name)
-		}
-		if group.Domain != nil {
-			domain, err := naming.CanonicalizeHostname(*group.Domain)
-			if err != nil || domain != *group.Domain {
-				return fmt.Errorf("publisher_groups.%s.domain must be a canonical team domain", name)
-			}
+	settings := config.DeploymentSettings
+	if deployment == "local" && (settings.Description != nil || settings.Domain != nil || settings.Public) {
+		return errors.New("local selection has no saved deployment settings")
+	}
+	if deployment == "local" && len(config.Workloads) != 0 {
+		return errors.New("workloads require a remote deployment")
+	}
+	if deployment != "local" && (config.OAuth || len(config.Webhooks) != 0 || len(config.Aliases) != 0) {
+		return errors.New("OAuth, webhooks, and aliases require the local deployment selection")
+	}
+	if settings.Description != nil && (len(*settings.Description) > 1024 || !utf8.ValidString(*settings.Description)) {
+		return errors.New("deployment description must be valid UTF-8 of at most 1024 bytes")
+	}
+	if settings.Domain != nil {
+		domain, err := naming.CanonicalizeHostname(*settings.Domain)
+		if err != nil || domain != *settings.Domain {
+			return errors.New("deployment domain must be a canonical team domain")
 		}
 	}
 	if err := ValidateWebhooks(config.Services, config.Webhooks); err != nil {
@@ -225,24 +231,18 @@ func ValidateTNL(config TNL) error {
 		if err := validateTarget(service); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
-		if group := PublisherGroupName(service); group != "local" {
-			if _, found := config.PublisherGroups[group]; !found {
-				return fmt.Errorf("services.%s.publisher_group: group %q is not configured", name, group)
-			}
+		if deployment != "local" {
 			if kind := TargetType(service); kind != "address" && kind != "eks" && kind != "rds" {
 				return fmt.Errorf("services.%s: remote publishers require an address, eks, or rds target", name)
 			}
 			if service.Tunnel != nil {
-				return fmt.Errorf("services.%s.public_url: named groups use http settings and the group's reachability", name)
+				return fmt.Errorf("services.%s.public_url: remote deployments use http settings and deployment reachability", name)
 			}
-			if _, err := ResolveGroupHTTP(config.Tunnel, service.HTTP); err != nil {
+			if _, err := ResolveRemoteHTTP(config.Tunnel, service.HTTP); err != nil {
 				return fmt.Errorf("services.%s.http: %w", name, err)
 			}
 		} else if service.HTTP != nil && (service.HTTP.Access != nil || service.HTTP.Limits != nil) {
-			return fmt.Errorf("services.%s.http: access and limits require a named publisher group; use public_url for local HTTPS", name)
-		}
-		if service.PublisherGroup != nil && *service.PublisherGroup == "" {
-			return fmt.Errorf("services.%s.publisher_group must not be empty", name)
+			return fmt.Errorf("services.%s.http: access and limits require a remote deployment; use public_url for local HTTPS", name)
 		}
 		savedName := ServiceName(name, service)
 		if !naming.ValidServiceName(savedName) {
@@ -307,7 +307,7 @@ func ValidateTNL(config TNL) error {
 			if destination, found := config.Services[mount.Service]; !found || mount.Service == name || Protocol(destination) != "http" {
 				return fmt.Errorf("services.%s.http.paths[%q]: service %q must name another configured HTTP service", name, prefix, mount.Service)
 			}
-			if PublisherGroupName(config.Services[mount.Service]) != "local" {
+			if deployment != "local" {
 				return fmt.Errorf("services.%s.http.paths[%q]: mounted service must use the local publisher", name, prefix)
 			}
 		}
@@ -315,27 +315,27 @@ func ValidateTNL(config TNL) error {
 	return nil
 }
 
-// ValidateGroupHTTP keeps group reachability separate from HTTP access and limits.
-func ValidateGroupHTTP(value *HTTPService) error {
+// remote HTTP policy cannot add local readiness, path mounts, or browser opening.
+func ValidateRemoteHTTP(value *HTTPService) error {
 	if value == nil {
 		return nil
 	}
 	if value.Readiness != nil || len(value.Paths) != 0 || value.Open != nil {
-		return errors.New("named groups do not support readiness, path mounts, or browser opening")
+		return errors.New("remote deployments do not support readiness, path mounts, or browser opening")
 	}
 	if value.Access != nil {
 		if err := value.Access.Validate(); err != nil {
 			return err
 		}
 		if value.Access.VisitorMode() != "restricted" {
-			return errors.New("named groups require restricted HTTP access")
+			return errors.New("remote services require restricted HTTP access")
 		}
 	}
 	return validateLimits(&Limits{HTTP: value.Limits}, nil, "http")
 }
 
-// ResolveGroupHTTP applies explicit HTTP defaults without changing reachability.
-func ResolveGroupHTTP(defaults *Tunnel, value *HTTPService) (*HTTPService, error) {
+// inherited HTTP defaults never change deployment reachability.
+func ResolveRemoteHTTP(defaults *Tunnel, value *HTTPService) (*HTTPService, error) {
 	if value == nil {
 		return nil, nil
 	}
@@ -347,12 +347,12 @@ func ResolveGroupHTTP(defaults *Tunnel, value *HTTPService) (*HTTPService, error
 		limits := MergeLimits(defaults.Limits, &Limits{HTTP: result.Limits})
 		if limits != nil {
 			if limits.Traffic != nil {
-				return nil, errors.New("named groups do not support traffic-limit overrides")
+				return nil, errors.New("remote services do not support traffic-limit overrides")
 			}
 			result.Limits = limits.HTTP
 		}
 	}
-	if err := ValidateGroupHTTP(&result); err != nil {
+	if err := ValidateRemoteHTTP(&result); err != nil {
 		return nil, err
 	}
 	return &result, nil

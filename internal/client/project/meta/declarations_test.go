@@ -31,19 +31,22 @@ func TestGeneratedDeclarationsTypecheckSourceUnionsAndStaticShape(t *testing.T) 
 				t.Fatal(err)
 			}
 			path := filepath.Join(root, "tnl.config.ts")
-			configuration := config.TNL{}
+			configuration := config.Project{}
 			source := `import { defineConfig } from "@tnldotdev/tnl/config";
 export default defineConfig(({worktree}) => ({
-  publisherGroups: { production: {} },
   services: {
-    web: {publicURL: {}, http: {paths: {"/api": "api"}}},
+    web: {},
     api: {},
-    db: worktree.label.checkout ? {publisherGroup: "production" as const, protocol: "postgres", target: {type: "address", address: "db:5432"}} : {publisherGroup: "production" as const, protocol: "mysql", target: {type: "address", address: "db:3306"}},
-    ...(worktree.label.checkout ? {worker: {protocol: "tcp" as const, target: {type: "address" as const, address: "worker:9000"}}} : {}),
+    db: worktree.label.id ? {protocol: "postgres"} : {protocol: "mysql"},
+    ...(worktree.label.id ? {worker: {protocol: "tcp" as const}} : {}),
+  },
+  deployments: {
+    local: {targets: {web: {publicURL: {}, http: {paths: {"/api": "api"}}}, api: {}}},
+    production: {targets: {db: {address: "db:5432"}}},
   },
   aliases: { review: { service: "web" } },
   webhooks: { stripe: { service: "web", path: "/hooks/stripe", provider: "stripe", methods: ["POST"] } },
-  workloads: { deploy: { github: { workflow: ".github/workflows/deploy.yml", branch: "main", events: ["push"] }, services: ["db"] } },
+  workloads: { deploy: { deployment: "production", github: { workflow: ".github/workflows/deploy.yml", branch: "main", events: ["push"] }, services: ["db"] } },
 }));`
 			usage := `import { tnl } from "@tnldotdev/tnl";
 tnl.services.db.protocol satisfies "postgres" | "mysql";
@@ -71,8 +74,11 @@ tnl.services.worker.protocol;
 				path = filepath.Join(root, "tnl.yml")
 				protocol := "postgres"
 				address := config.Target("db.internal:5432")
-				configuration.Services = config.Services{"db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &address}}, "api": {}, "web": {Tunnel: &config.Tunnel{}, HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api"}}}}}
-				if err := config.ValidateTNL(configuration); err != nil {
+				configuration.Services = map[string]config.ServiceDeclaration{"db": {Protocol: &protocol}, "api": {}, "web": {}}
+				configuration.Deployments = map[string]config.Deployment{"local": {Targets: map[string]config.DeploymentBinding{
+					"db": {ServiceTarget: config.ServiceTarget{Address: &address}}, "api": {}, "web": {Tunnel: &config.Tunnel{}, HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api"}}}},
+				}}}
+				if err := config.ValidateProject(configuration); err != nil {
 					t.Fatal(err)
 				}
 				usage = `import { tnl } from "@tnldotdev/tnl";

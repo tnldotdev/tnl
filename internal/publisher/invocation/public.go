@@ -12,7 +12,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/integrations"
-	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 )
 
@@ -73,16 +72,11 @@ func (a *ProjectRuntime) PublicConfiguration(ctx context.Context, service app.Se
 	cfg.ControlURL, cfg.ProjectRoot, cfg.Service = server, project.Root, service.Name
 	cfg.ServiceProtocol = protocolForService(project.Config.Services[service.Name])
 	cfg.PreserveSavedPublicURLTarget = true
-	resolved := config.ServicePublish(project.Config.Services[service.Name])
-	if resolved.TargetTLSName != nil {
-		cfg.TargetTLSName = *resolved.TargetTLSName
+	cfg.TargetOptions, err = configuredTargetOptions(ctx, project.Project, service.Name, cfg.Target)
+	if err != nil {
+		return app.Configuration{}, err
 	}
-	if resolved.TargetCAFile != nil {
-		cfg.TargetOptions, err = publisherproxy.TargetOptionsForCA(*resolved.TargetCAFile, project.Root)
-		if err != nil {
-			return app.Configuration{}, err
-		}
-	}
+	cfg.TargetTLSName = cfg.TargetOptions.ServerName
 	native, err := selectNativeProjectPublisher(ctx, services, cfg)
 	if err != nil {
 		return app.Configuration{}, err
@@ -114,7 +108,7 @@ func (a *ProjectRuntime) PublicConfiguration(ctx context.Context, service app.Se
 			return app.Configuration{}, err
 		}
 	}
-	cfg.Mounts, err = ProjectMounts(project.Project, service.Name, func(name string) string {
+	cfg.Mounts, err = ProjectMounts(ctx, project.Project, service.Name, func(name string) string {
 		for _, candidate := range a.manager.Snapshot().Services {
 			if candidate.Name == name && a.manager.CurrentRegistration(name, candidate.RegistrationID, candidate.Target) {
 				return candidate.Target

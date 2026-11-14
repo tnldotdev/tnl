@@ -16,6 +16,7 @@ func TestIntegrationWorkloadOptionalHardDuration(t *testing.T) {
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
+	r = selectedProjectRequest(r, "production")
 	policy := r.Configuration.Workloads["test"]
 	policy.MaxDurationSeconds = 0
 	r.Configuration.Workloads["test"] = policy
@@ -103,6 +104,7 @@ func TestIntegrationWorkloadOptionalDurationMigration(t *testing.T) {
 	d, url, now := newControlStateIntegrationDatabaseWithURL(t, "workload_duration_migration")
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
+	r = selectedProjectRequest(r, "production")
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
@@ -124,6 +126,7 @@ func TestIntegrationWorkloadUncappedRetention(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_uncapped_retention")
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
+	r = selectedProjectRequest(r, "production")
 	policy := r.Configuration.Workloads["test"]
 	policy.MaxDurationSeconds = 0
 	r.Configuration.Workloads["test"] = policy

@@ -50,7 +50,7 @@ func TestGroupUsesReplicaKeyAndOnlyLatestExactAssignments(t *testing.T) {
 	}
 	groupName := "production"
 	fake := &groupFixtureControl{member: controlv1.PublisherGroupMember{TeamId: native.identity.teamID, ProjectKey: "example", GroupId: "pgrp_example", GroupName: groupName, PublisherIdentityId: native.identity.clientID, KeyId: native.identity.keyID}, public: public}
-	fake.assignment = controlv1.PublisherGroupServiceAssignment{Service: "db", ServiceId: native.identity.serviceID, ServiceKind: "service", GrantId: native.identity.grantID, TrustRevision: 3, Configuration: controlv1.ProjectServiceConfiguration{PublisherGroup: &groupName, Target: "db.internal:5432"}}
+	fake.assignment = controlv1.PublisherGroupServiceAssignment{Service: "db", ServiceId: native.identity.serviceID, ServiceKind: "service", GrantId: native.identity.grantID, TrustRevision: 3, Configuration: controlv1.ProjectServiceConfiguration{Target: "db.internal:5432"}}
 	group, err := NewGroup(NativeControl{PublicURLControl: control, Services: control}, fake, &lostEnrollmentResponse{}, "https://control.example", fake.member, private)
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,11 @@ func TestGroupUsesReplicaKeyAndOnlyLatestExactAssignments(t *testing.T) {
 		t.Fatal("valid lease was not reused", err)
 	}
 	fake.member.GroupName = "other"
+	if _, err = group.Poll(t.Context()); err != nil {
+		t.Fatal("selector rename changed the publisher's authority", err)
+	}
+	fake.member.GroupId = "another-deployment"
 	if _, err = group.Poll(t.Context()); !errors.Is(err, ErrScope) {
-		t.Fatal("server response changed group scope", err)
+		t.Fatal("server response changed deployment scope", err)
 	}
 }

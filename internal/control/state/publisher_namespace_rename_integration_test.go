@@ -13,9 +13,16 @@ func TestIntegrationPublisherNamespaceRenameAtomicAuthority(t *testing.T) {
 	r := appliedProjectRequest(t, d, now)
 	r.ProjectLabel = "storefront"
 	r.DNSAutomation = true
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}, "staging": {}}, Services: map[string]ProjectServiceConfiguration{
-		"api": {PublisherGroup: "production", Target: "api.internal:3000", Access: &ProjectServiceAccess{Team: true}},
+	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{
+		"api": {Target: "api.internal:3000", Access: &ProjectServiceAccess{Team: true}},
 	}}
+	staging := projectServiceSelection(r, "staging")
+	first, err := d.ApplyProjectConfiguration(t.Context(), staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r = projectServiceSelection(r, "production", "api")
+	r.ExpectedRevision = first.Revision
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +50,7 @@ func TestIntegrationPublisherNamespaceRenameAtomicAuthority(t *testing.T) {
 	if _, err := d.RenamePublisherNamespace(t.Context(), request); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("namespace collision accepted", err)
 	}
-	current, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID)
+	current, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID, "production")
 	if err != nil || !reflect.DeepEqual(current, applied) {
 		// enrollment changes member status, not desired state.
 		if err != nil || current.Revision != applied.Revision || !reflect.DeepEqual(current.Services, applied.Services) || !reflect.DeepEqual(current.Groups, applied.Groups) {

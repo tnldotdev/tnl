@@ -28,6 +28,7 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 		"web": {Target: "app", PublicURL: &ProjectServicePublicURL{}, Access: &ProjectServiceAccess{Team: true}},
 	}}
 	r := ApplyProjectConfigurationRequest{TeamID: base.TeamID, ProjectKey: "local-project", SourceFingerprint: strings.Repeat("a", 64), ActorID: base.ActingIdentityID, Configuration: configuration, Now: now}
+	r = selectedProjectRequest(r, "local")
 	local := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "db", WorktreeKey: "checkout-a", ActorID: r.ActorID, Configuration: configuration.Services["db"], Now: now}
 	first, err := d.RealizeLocalProjectService(ctx, local)
 	if err != nil {
@@ -66,7 +67,7 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 	if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.services WHERE team_id=$1 AND deleted_at IS NULL`, r.TeamID).Scan(&count); err != nil || count != 3 {
 		t.Fatal("apply duplicated local service", count, err)
 	}
-	if _, err = d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, member.IdentityID); !errors.Is(err, ErrServiceAccess) {
+	if _, err = d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, member.IdentityID, "local"); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("member read manager configuration", err)
 	}
 	if _, err = d.ConfigureService(ctx, first.ServiceID, r.ActorID, *first.Metadata, now); !errors.Is(err, ErrProjectManaged) {
@@ -169,10 +170,11 @@ func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T
 	d, now := newControlStateIntegrationDatabase(t, "managed_projection")
 	d.managedURLMode = naming.ManagedURLModeSimple
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
-		"public": {PublisherGroup: "production", Target: "http://secret.internal:3000", Access: &ProjectServiceAccess{Team: true}},
-		"db":     {PublisherGroup: "production", Protocol: "postgres", Target: "db.internal:5432"},
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
+		"public": {Target: "http://secret.internal:3000", Access: &ProjectServiceAccess{Team: true}},
+		"db":     {Protocol: "postgres", Target: "db.internal:5432"},
 	}}
+	r = selectedProjectRequest(r, "production")
 	status, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +205,7 @@ func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T
 			t.Fatal("projection leaked manager data", value)
 		}
 	}
-	if _, err = d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, member.IdentityID); !errors.Is(err, ErrServiceAccess) {
+	if _, err = d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, member.IdentityID, "production"); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("visitor read full configuration", err)
 	}
 	outsider := finalVisitorIdentity(t, d, now, "projection-outsider@example.test")
@@ -229,7 +231,7 @@ func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T
 	}
 	r.ExpectedRevision = status.Revision
 	r.Configuration = status.Configuration
-	r.Configuration.PublisherGroups["production"] = ProjectPublisherGroup{Description: "updated description"}
+	r.Configuration.Settings = &DeploymentSettings{Description: "updated description"}
 	if _, err = d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}

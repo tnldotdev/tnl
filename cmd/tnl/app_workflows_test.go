@@ -26,7 +26,19 @@ import (
 
 func TestAppWorkflowWaitSelectsLocalServices(t *testing.T) {
 	project, state, manager, endpoint := observationFixture(t, true)
-	project.Config.Services = config.Services{"web": {}, "remote": {PublisherGroup: new("production")}}
+	project.Config.Services = config.Services{"web": {}}
+	remote := project
+	remote.Config.Deployment = "production"
+	remote.Config.Services = config.Services{"remote": {}}
+	if services := configuredRuntimeServices(remote); len(services) != 0 {
+		t.Fatal("remote selection registered local apps", services)
+	}
+	for _, services := range [][]string{{"remote"}, nil} {
+		err := runAppWait(t.Context(), remote, state.Root(), waitCommand{Service: services, Timeout: time.Second}, &bytes.Buffer{})
+		if reason, _ := failure.ReasonOf(err); reason != failure.AppRemoteService {
+			t.Fatal("wait did not reject the remote selection", err)
+		}
+	}
 	if err := manager.Configure(configuredRuntimeServices(project)); err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +66,7 @@ func TestAppWorkflowWaitSelectsLocalServices(t *testing.T) {
 	}
 	var output bytes.Buffer
 	if err := runAppWait(t.Context(), project, state.Root(), waitCommand{Timeout: 3 * time.Second, Output: "json"}, &output); err != nil {
-		t.Fatalf("mixed local/remote wait failed: %v\n%s", err, &output)
+		t.Fatalf("local selection wait failed: %v\n%s", err, &output)
 	}
 }
 

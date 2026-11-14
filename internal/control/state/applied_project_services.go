@@ -36,7 +36,7 @@ func lockAppliedProjectPublications(ctx context.Context, tx pgx.Tx, team, projec
 	return err
 }
 
-func (d *Database) createAppliedService(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, key, scope string, s ProjectServiceConfiguration) (string, error) {
+func (d *Database) createAppliedService(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, key, scope string, s ProjectServiceConfiguration, publisherPool bool) (string, error) {
 	id, err := opaqueid.New(opaqueid.ServicePrefix)
 	if err != nil {
 		return "", err
@@ -54,7 +54,7 @@ func (d *Database) createAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 	if err != nil {
 		return "", err
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.services SET protocol=$2,tls_metadata=$3::jsonb,publisher_pool=$4 WHERE id=$1`, id, s.Protocol, string(encoded), s.PublisherGroup != "local")
+	_, err = tx.Exec(ctx, `UPDATE control.services SET protocol=$2,tls_metadata=$3::jsonb,publisher_pool=$4 WHERE id=$1`, id, s.Protocol, string(encoded), publisherPool)
 	if err != nil {
 		return "", err
 	}
@@ -66,7 +66,7 @@ func (d *Database) createAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 	return id, err
 }
 
-func (d *Database) updateAppliedService(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, id, scope string, s ProjectServiceConfiguration, now time.Time) error {
+func (d *Database) updateAppliedService(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, id, scope string, s ProjectServiceConfiguration, publisherPool bool, now time.Time) error {
 	row, err := q.LockService(ctx, id)
 	if err != nil {
 		return err
@@ -75,7 +75,7 @@ func (d *Database) updateAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 	if err != nil {
 		return err
 	}
-	metadata := ServiceMetadata{Protocol: s.Protocol, TLS: trust, PublisherPool: s.PublisherGroup != "local"}
+	metadata := ServiceMetadata{Protocol: s.Protocol, TLS: trust, PublisherPool: publisherPool}
 	saved, err := checkedServiceMetadata(row)
 	if err != nil {
 		return err
@@ -98,28 +98,6 @@ func appliedServiceTargetTrust(trust *ProjectTargetTLS) (*ServiceTargetTLS, erro
 		return nil, errors.Join(ErrProjectConfigurationInvalid, err)
 	}
 	return &ServiceTargetTLS{Hostname: snapshot.Hostname, PEM: string(snapshot.PEM), System: snapshot.System, Digest: snapshot.Digest}, nil
-}
-
-// resolve names without evaluating source files. apply repeats this read under
-// its mutation transaction; the HTTP boundary uses it before hostname authorization.
-func (d *Database) ResolveProjectConfiguration(ctx context.Context, team, actor string, input ProjectConfiguration) (result ProjectConfiguration, retErr error) {
-	c, _, err := NormalizeProjectConfiguration(input)
-	if err != nil {
-		return result, err
-	}
-	tx, err := d.pool.Begin(ctx)
-	if err != nil {
-		return result, err
-	}
-	defer rollback(ctx, tx, "resolve project configuration", &retErr)()
-	q := controlstatedb.New(tx)
-	if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
-		return result, publisherLookupError(err, ErrServiceAccess)
-	}
-	if err = serviceManager(ctx, tx, team, actor); err != nil {
-		return result, err
-	}
-	return c, tx.Commit(ctx)
 }
 
 // use the same exact grants, encrypted IP snapshots and routing invalidation as
@@ -191,7 +169,7 @@ func (d *Database) appliedProjectTraffic(ctx context.Context, tx pgx.Tx, url str
 	if err != nil {
 		return nil, err
 	}
-	c, err := d.openAppliedProject(row)
+	c, err := d.openAppliedProject(row, "local")
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +187,7 @@ func (d *Database) revokeAppliedServicePublishers(ctx context.Context, tx pgx.Tx
 	if err := d.revokeProjectResourcePublishers(ctx, tx, q, s, now); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `DELETE FROM control.publisher_group_service_grants WHERE team_id=$1 AND project_key=$2 AND service=$3`, s.TeamID, s.ProjectKey, s.Service)
+	_, err := tx.Exec(ctx, `DELETE FROM control.publisher_group_service_grants WHERE team_id=$1 AND project_key=$2 AND service=$3 AND group_id=$4`, s.TeamID, s.ProjectKey, s.Service, s.GroupID)
 	return err
 }
 
@@ -256,7 +234,7 @@ func (d *Database) removeAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 	if err := d.retireProjectResource(ctx, tx, q, s, now); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `DELETE FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3`, s.TeamID, s.ProjectKey, s.Service)
+	_, err := tx.Exec(ctx, `DELETE FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 AND group_id IS NOT DISTINCT FROM $4`, s.TeamID, s.ProjectKey, s.Service, s.GroupID)
 	return err
 }
 
@@ -298,14 +276,14 @@ func (d *Database) retireProjectResource(ctx context.Context, tx pgx.Tx, q *cont
 
 func (d *Database) reconcileAppliedVisitorGrant(ctx context.Context, tx pgx.Tx, s controlstatedb.ControlAppliedProjectService, actor string, enabled bool, now time.Time) error {
 	var grant string
-	if err := tx.QueryRow(ctx, `SELECT COALESCE(visitor_grant_id,'') FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3`, s.TeamID, s.ProjectKey, s.Service).Scan(&grant); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(visitor_grant_id,'') FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 AND group_id IS NOT DISTINCT FROM $4`, s.TeamID, s.ProjectKey, s.Service, s.GroupID).Scan(&grant); err != nil {
 		return err
 	}
 	grant, err := reconcileProjectVisitorGrant(ctx, tx, s, actor, grant, enabled, now)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.applied_project_services SET visitor_grant_id=$4 WHERE team_id=$1 AND project_key=$2 AND service=$3`, s.TeamID, s.ProjectKey, s.Service, nullableText(grant))
+	_, err = tx.Exec(ctx, `UPDATE control.applied_project_services SET visitor_grant_id=$4 WHERE team_id=$1 AND project_key=$2 AND service=$3 AND group_id IS NOT DISTINCT FROM $5`, s.TeamID, s.ProjectKey, s.Service, nullableText(grant), s.GroupID)
 	return err
 }
 
@@ -375,7 +353,7 @@ func (d *Database) reconcileAppliedPublisherGrants(ctx context.Context, tx pgx.T
 
 func (d *Database) ensureGroupServiceGrant(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, publisher string, s controlstatedb.ControlAppliedProjectService, actor string, now time.Time) error {
 	var existing string
-	err := tx.QueryRow(ctx, `SELECT assignment.grant_id FROM control.publisher_group_service_grants assignment WHERE assignment.publisher_identity_id=$1 AND assignment.team_id=$2 AND assignment.project_key=$3 AND assignment.service=$4`, publisher, s.TeamID, s.ProjectKey, s.Service).Scan(&existing)
+	err := tx.QueryRow(ctx, `SELECT assignment.grant_id FROM control.publisher_group_service_grants assignment WHERE assignment.publisher_identity_id=$1 AND assignment.team_id=$2 AND assignment.project_key=$3 AND assignment.service=$4 AND assignment.group_id=$5`, publisher, s.TeamID, s.ProjectKey, s.Service, s.GroupID).Scan(&existing)
 	if err == nil {
 		return nil
 	}
@@ -387,6 +365,6 @@ func (d *Database) ensureGroupServiceGrant(ctx context.Context, tx pgx.Tx, q *co
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO control.publisher_group_service_grants(publisher_identity_id,team_id,project_key,service,grant_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(publisher_identity_id,team_id,project_key,service) DO UPDATE SET grant_id=EXCLUDED.grant_id`, publisher, s.TeamID, s.ProjectKey, s.Service, g.ID)
+	_, err = tx.Exec(ctx, `INSERT INTO control.publisher_group_service_grants(publisher_identity_id,team_id,project_key,service,grant_id,group_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(publisher_identity_id,team_id,project_key,service) DO UPDATE SET grant_id=EXCLUDED.grant_id`, publisher, s.TeamID, s.ProjectKey, s.Service, g.ID, s.GroupID)
 	return err
 }

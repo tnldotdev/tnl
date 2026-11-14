@@ -35,7 +35,7 @@ func (AssignmentPublisher) String() string   { return "publisher group publicati
 func (AssignmentPublisher) GoString() string { return "publisher group publications" }
 
 func (p AssignmentPublisher) Publish(ctx context.Context, assignment controlv1.PublisherGroupServiceAssignment, health func(bool)) error {
-	if assignment.ServiceKind != "service" || assignment.Configuration.Protocol == nil || assignment.TrustRevision < 1 || assignment.Configuration.PublisherGroup == nil || *assignment.Configuration.PublisherGroup == "" || *assignment.Configuration.PublisherGroup == "local" {
+	if assignment.ServiceKind != "service" || assignment.Configuration.Protocol == nil || assignment.TrustRevision < 1 || p.Member.GroupId == "" || p.Member.GroupName == "" || p.Member.GroupName == "local" {
 		return ErrAssignment
 	}
 	identity := authorityv1.PublisherEnrollmentResult{ClientId: p.Member.PublisherIdentityId, KeyId: p.Member.KeyId, TeamId: p.Member.TeamId, GrantId: assignment.GrantId, Kind: authorityv1.Service, ServiceId: &assignment.ServiceId}

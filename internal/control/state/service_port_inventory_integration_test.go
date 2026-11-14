@@ -35,9 +35,10 @@ func TestIntegrationServicePortInventory(t *testing.T) {
 	}
 	assertCapacity(1, 0, 0, 1)
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
-		"api": {PublisherGroup: "production", Target: "localhost:3000"},
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
+		"api": {Target: "localhost:3000"},
 	}}
+	r = selectedProjectRequest(r, "production")
 	first, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil || first.Services[0].Port != 25443 {
 		t.Fatal("allocation ignored pool inventory", first, err)
@@ -47,11 +48,12 @@ func TestIntegrationServicePortInventory(t *testing.T) {
 		t.Fatal("removed a held port", err)
 	}
 	r.ExpectedRevision = first.Revision
-	r.Configuration.Services["orders"] = ProjectServiceConfiguration{PublisherGroup: "production", Protocol: "postgres", Target: "localhost:5432"}
+	r.Configuration.Services["orders"] = ProjectServiceConfiguration{Protocol: "postgres", Target: "localhost:5432"}
+	r.ServiceDeclarations["orders"] = "postgres"
 	if _, err = d.ApplyProjectConfiguration(ctx, r); !errors.Is(err, ErrServicePortsExhausted) {
 		t.Fatal("exhaustion lost its classification", err)
 	}
-	current, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, r.ActorID)
+	current, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, r.ActorID, "production")
 	if err != nil || current.Revision != first.Revision || len(current.Services) != 1 {
 		t.Fatal("exhausted allocation partially applied", current, err)
 	}

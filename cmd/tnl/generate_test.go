@@ -79,7 +79,7 @@ func TestGenerateOfflineAcrossWorktreesAndReadOnlyCheck(t *testing.T) {
 	t.Setenv("TNL_STATE_DIR", state)
 	t.Setenv("TNL_ACCESS_TOKEN", "do-not-serialize-session")
 	t.Setenv("TNL_SERVER", "https://do-not-contact.invalid")
-	configSource := `export default { publisherGroups: { production: {} } };`
+	configSource := `export default { deployments: { production: {} } };`
 	var expected map[string][]byte
 	for _, directory := range []string{first, second} {
 		if err := os.WriteFile(filepath.Join(directory, "tnl.config.ts"), []byte(configSource), 0644); err != nil {

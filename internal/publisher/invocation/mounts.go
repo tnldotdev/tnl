@@ -16,7 +16,7 @@ import (
 
 // one resolver owns mount trust and target selection for app, named and scoped
 // publishers. only app targets use registrations; static addresses stay static.
-func ProjectMounts(project clientproject.Project, service string, appTarget func(string) string, resolver targetbinding.TargetResolver) ([]publisherproxy.Mount, error) {
+func ProjectMounts(ctx context.Context, project clientproject.Project, service string, appTarget func(string) string, resolver targetbinding.TargetResolver) ([]publisherproxy.Mount, error) {
 	if service == "" {
 		return nil, nil
 	}
@@ -73,16 +73,17 @@ func ProjectMounts(project clientproject.Project, service string, appTarget func
 				return nil, fmt.Errorf("service %q mount %q: %w", service, prefix, err)
 			}
 		}
-		caFile := ""
-		if local.TargetCAFile != nil {
-			caFile = *local.TargetCAFile
+		trustTarget := normalized
+		if trustTarget == "" && definition.Target != nil && definition.Target.TLS != nil && config.TargetType(definition) != "app" && resolve != nil {
+			var err error
+			trustTarget, _, err = resolve(ctx)
+			if err != nil {
+				return nil, err
+			}
 		}
-		options, err := publisherproxy.TargetOptionsForCA(caFile, project.Root)
+		options, err := configuredTargetOptions(ctx, project, mount.Service, trustTarget)
 		if err != nil {
 			return nil, fmt.Errorf("service %q mount %q: %w", service, prefix, err)
-		}
-		if local.TargetTLSName != nil {
-			options.ServerName = *local.TargetTLSName
 		}
 		mounts = append(mounts, publisherproxy.Mount{Prefix: prefix, Target: normalized, StripPrefix: mount.StripPrefix, Options: options, ResolveTarget: resolve})
 	}

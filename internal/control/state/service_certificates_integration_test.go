@@ -21,10 +21,11 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 	d, now, _, leases := newPublishRunPrerequisites(t)
 	r := appliedProjectRequest(t, d, now)
 	r.ProjectLabel = "storefront"
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
-		"orders": {PublisherGroup: "production", Protocol: "postgres", Target: "orders.internal:5432"},
-		"api":    {PublisherGroup: "production", Target: "api.internal:3000"},
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
+		"orders": {Protocol: "postgres", Target: "orders.internal:5432"},
+		"api":    {Target: "api.internal:3000"},
 	}}
+	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
@@ -257,7 +258,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 
 func testServiceNamespaceCertificateRetirement(t *testing.T, d *Database, r ApplyProjectConfigurationRequest, now time.Time, uncertain string) {
 	t.Helper()
-	current, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID)
+	current, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID, "production")
 	if err != nil {
 		t.Fatal(err)
 	}

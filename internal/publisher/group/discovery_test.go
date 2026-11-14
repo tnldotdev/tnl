@@ -10,7 +10,7 @@ import (
 
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	publisherdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
-	"github.com/tnldotdev/tnl/internal/publisher/target/discovery/rdsroots"
+	"github.com/tnldotdev/tnl/internal/security/rdsroots"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -33,7 +33,7 @@ func (p assignmentDiscovery) Discover(_ context.Context, request publisherdiscov
 }
 
 func TestPrepareCloudAssignmentUsesAssignedSelectorAndNormalPrivateHealth(t *testing.T) {
-	request, err := AssignmentDiscovery(controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocol("postgres")), PublisherGroup: new("cloud"), TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Rds, Region: "us-east-1", Instance: new("database")}})
+	request, err := AssignmentDiscovery(controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocol("postgres")), TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Rds, Region: "us-east-1", Instance: new("database")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestAssignmentDiscoveryPreservesTypedSelectorsAndEndpointIntent(t *testing.
 		{"cluster-reader", controlv1.ProjectTargetDiscovery{Type: controlv1.Rds, Region: "us-east-2", Cluster: new("orders"), Endpoint: new(controlv1.Reader)}, "postgres", publisherdiscovery.Request{Type: "rds", Region: "us-east-2", Cluster: "orders", Endpoint: "reader", Protocol: "postgres"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := AssignmentDiscovery(controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocol(tc.protocol)), PublisherGroup: new("cloud"), TargetDiscovery: &tc.descriptor})
+			got, err := AssignmentDiscovery(controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocol(tc.protocol)), TargetDiscovery: &tc.descriptor})
 			if err != nil || got != tc.want {
 				t.Fatalf("descriptor projection = %#v, %v", got, err)
 			}

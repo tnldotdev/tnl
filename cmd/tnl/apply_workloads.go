@@ -22,6 +22,10 @@ func bindProjectWorkloads(ctx context.Context, project projectConfiguration, ser
 	if err != nil {
 		return err
 	}
+	for name, policy := range policies {
+		policy.Deployment = project.Deployment
+		policies[name] = policy
+	}
 	declaration.Workloads = &policies
 	return nil
 }

@@ -73,3 +73,29 @@ func TestPinnedOfficialRegionalRootCatalog(t *testing.T) {
 		t.Fatal("regional roots were combined")
 	}
 }
+
+func TestEndpointSelectsOnlyItsRegionalRoots(t *testing.T) {
+	for _, entry := range []struct{ host, region string }{
+		{"orders.abc123.us-east-1.rds.amazonaws.com", "us-east-1"},
+		{"orders.cluster-ro-abc.us-west-2.rds.amazonaws.com", "us-west-2"},
+		{"orders.abc123.eu-central-1.rds.amazonaws.com", "eu-central-1"},
+	} {
+		bundle, err := BundleForHostname(entry.host)
+		want, _ := Bundle(entry.region)
+		if err != nil || bundle != want {
+			t.Fatal("wrong regional root selection", entry.host, err)
+		}
+	}
+	for _, hostname := range []string{
+		"db.internal", "127.0.0.1", "rds.amazonaws.com", "us-east-1.rds.amazonaws.com",
+		"orders.abc.us-east-1.rds.amazonaws.com.evil.invalid", "orders.abc.unknown.rds.amazonaws.com",
+		"orders.abc.cn-north-1.rds.amazonaws.com", "orders.abc.us-east-1.rds.amazonaws.com.cn",
+		"orders.abc.us-east-1.rds.amazonaws.com.", "ORDERS.abc.us-east-1.rds.amazonaws.com",
+		// the pinned global catalog does not contain China or GovCloud roots.
+		"orders.abc.cn-north-1.rds.amazonaws.com.cn", "orders.abc.us-gov-west-1.rds.amazonaws.com",
+	} {
+		if _, err := BundleForHostname(hostname); err == nil {
+			t.Fatal("unrecognized endpoint accepted", hostname)
+		}
+	}
+}

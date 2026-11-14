@@ -7,9 +7,11 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,10 +22,10 @@ import (
 func TestNormalizeProjectConfiguration(t *testing.T) {
 	input := ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": {Target: "http://localhost:3000"}}}
 	c, hash, err := NormalizeProjectConfiguration(input)
-	if err != nil || c.Services["web"].Protocol != "http" || c.Services["web"].PublisherGroup != "local" || c.Services["web"].PublicURL != nil {
+	if err != nil || c.Services["web"].Protocol != "http" || c.Settings != nil || c.Services["web"].PublicURL != nil {
 		t.Fatalf("private HTTP default: %#v %v", c, err)
 	}
-	_, hash2, err := NormalizeProjectConfiguration(ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{}, Services: map[string]ProjectServiceConfiguration{"web": {Target: "http://localhost:3000", PublisherGroup: "local", Name: "web", Protocol: "http"}}})
+	_, hash2, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": {Target: "http://localhost:3000", Name: "web", Protocol: "http"}}})
 	if err != nil || hash2 != hash {
 		t.Fatal("defaults do not normalize to the same hash", err)
 	}
@@ -31,8 +33,7 @@ func TestNormalizeProjectConfiguration(t *testing.T) {
 		t.Fatal("normalization mutated caller state")
 	}
 	for name, c := range map[string]ProjectConfiguration{
-		"reserved local":      {PublisherGroups: map[string]ProjectPublisherGroup{"local": {}}},
-		"unknown group":       {Services: map[string]ProjectServiceConfiguration{"db": {PublisherGroup: "missing", Target: "localhost:5432", Protocol: "postgres"}}},
+		"invalid settings":    {Settings: &DeploymentSettings{Description: "invalid\rdescription"}},
 		"public tcp":          {Services: map[string]ProjectServiceConfiguration{"db": {Target: "localhost:5432", Protocol: "postgres", PublicURL: &ProjectServicePublicURL{}}}},
 		"target userinfo":     {Services: map[string]ProjectServiceConfiguration{"web": {Target: "http://user:secret@localhost:3000"}}},
 		"invalid port target": {Services: map[string]ProjectServiceConfiguration{"db": {Target: "missing-port", Protocol: "tcp"}}},
@@ -42,6 +43,17 @@ func TestNormalizeProjectConfiguration(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+	for _, retired := range []string{
+		`{"publisher_groups":{"local":{}}}`,
+		`{"services":{"db":{"publisher_group":"missing"}}}`,
+	} {
+		var c ProjectConfiguration
+		decoder := json.NewDecoder(strings.NewReader(retired))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&c); err == nil {
+			t.Fatal("retired group configuration remained readable")
+		}
 	}
 }
 
@@ -64,7 +76,7 @@ func TestNormalizeAppliedHTTPSettingsDoNotDisappear(t *testing.T) {
 		t.Fatal("local HTTP settings lost", err)
 	}
 	for _, s := range []*config.HTTPService{{Readiness: &config.Readiness{Path: "/health"}}, {Paths: map[string]config.PathMount{"/api": {Service: "api"}}}, {Open: new(bool)}} {
-		_, _, err := NormalizeProjectConfiguration(ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"web": {PublisherGroup: "production", Target: "http://app.internal:3000", HTTP: s}}})
+		_, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"web": {Target: "http://app.internal:3000", HTTP: s}}})
 		if !errors.Is(err, ErrProjectConfigurationInvalid) {
 			t.Fatal("unsupported remote HTTP behavior accepted", err)
 		}
@@ -107,19 +119,23 @@ func TestNormalizeAppliedProjectTargetsAndTrustBoundaries(t *testing.T) {
 		"local docker":               {Target: "docker:redis_1:6379", Protocol: "tcp"},
 		"local deferred public":      {Target: "app", PublicURL: &ProjectServicePublicURL{Ephemeral: true}},
 		"public target trust":        {Target: "https://upstream.internal:8443", PublicURL: &ProjectServicePublicURL{}, TargetTLS: trust},
-		"remote literal docker host": {PublisherGroup: "production", Target: "docker:5432", Protocol: "postgres"},
+		"remote literal docker host": {Target: "docker:5432", Protocol: "postgres"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			c, _, err := NormalizeProjectConfiguration(ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"service": s}})
+			input := ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"service": s}}
+			if strings.HasPrefix(name, "remote ") {
+				input.Settings = &DeploymentSettings{}
+			}
+			c, _, err := NormalizeProjectConfiguration(input)
 			if err != nil || c.Services["service"].Target != s.Target {
 				t.Fatalf("target changed or rejected: %v", err)
 			}
 		})
 	}
 	for name, s := range map[string]ProjectServiceConfiguration{
-		"remote app":                {PublisherGroup: "production", Target: "app"},
-		"remote compose":            {PublisherGroup: "production", Protocol: "postgres", Target: "compose:db:5432"},
-		"remote docker":             {PublisherGroup: "production", Protocol: "tcp", Target: "docker:cache:6379"},
+		"remote app":                {Target: "app"},
+		"remote compose":            {Protocol: "postgres", Target: "compose:db:5432"},
+		"remote docker":             {Protocol: "tcp", Target: "docker:cache:6379"},
 		"tcp app":                   {Protocol: "tcp", Target: "app"},
 		"descriptor path":           {Target: "compose:../project:3000"},
 		"descriptor command":        {Target: "docker:$(id):3000"},
@@ -131,7 +147,11 @@ func TestNormalizeAppliedProjectTargetsAndTrustBoundaries(t *testing.T) {
 		"target trust key material": {Target: "https://upstream.internal:8443", PublicURL: &ProjectServicePublicURL{}, TargetTLS: &keyTrust},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, _, err := NormalizeProjectConfiguration(ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"service": s}})
+			input := ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"service": s}}
+			if strings.HasPrefix(name, "remote ") {
+				input.Settings = &DeploymentSettings{}
+			}
+			_, _, err := NormalizeProjectConfiguration(input)
 			if !errors.Is(err, ErrProjectConfigurationInvalid) {
 				t.Fatal("unsafe target accepted", err)
 			}
@@ -151,11 +171,11 @@ func TestNormalizeAppliedPrivateHTTPAddressesRespectTargetTrust(t *testing.T) {
 		{"https://[2001:db8::1]:8443", "[2001:db8::1]:8443", true},
 	} {
 		t.Run(test.target, func(t *testing.T) {
-			service := ProjectServiceConfiguration{PublisherGroup: "production", Protocol: "http", Target: test.target}
+			service := ProjectServiceConfiguration{Protocol: "http", Target: test.target}
 			if test.tls {
 				service.TargetTLS = appliedTargetTrust(t, "upstream.internal")
 			}
-			c, hash, err := NormalizeProjectConfiguration(ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"api": service}})
+			c, hash, err := NormalizeProjectConfiguration(ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"api": service}})
 			if err != nil {
 				t.Fatal(err)
 			}

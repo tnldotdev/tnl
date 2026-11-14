@@ -8,7 +8,7 @@ import (
 )
 
 func TestWorkloadProviderDeclarationsAndLegacyRejection(t *testing.T) {
-	services := Services{"inventory": {PublisherGroup: new("production"), Target: &ServiceTarget{Type: "address", Address: new(Target("localhost:3000"))}}, "models": {PublisherGroup: new("production"), Protocol: new("postgres"), Target: &ServiceTarget{Type: "address", Address: new(Target("localhost:5432"))}}}
+	services := Services{"inventory": {Target: &ServiceTarget{Type: "address", Address: new(Target("localhost:3000"))}}, "models": {Protocol: new("postgres"), Target: &ServiceTarget{Type: "address", Address: new(Target("localhost:5432"))}}}
 	for _, p := range []Workload{
 		{GitHub: &WorkloadGitHub{Workflow: ".github/workflows/test.yml"}, Services: []string{"inventory"}},
 		{Vercel: &WorkloadVercel{Project: "store", Environment: "production"}, Services: []string{"inventory", "models"}},
@@ -16,7 +16,7 @@ func TestWorkloadProviderDeclarationsAndLegacyRejection(t *testing.T) {
 		{OIDC: &WorkloadOIDC{Issuer: "https://issuer.example", Claims: map[string]string{"sub": "store"}}, Services: []string{"models"}, Token: &WorkloadToken{File: new("/run/token")}},
 	} {
 		t.Run(p.Provider(), func(t *testing.T) {
-			configuration := TNL{PublisherGroups: map[string]PublisherGroup{"production": {}}, Services: services, Workloads: map[string]Workload{"storefront": p}}
+			configuration := TNL{Deployment: "production", Services: services, Workloads: map[string]Workload{"storefront": p}}
 			if err := ValidateTNL(configuration); err != nil {
 				t.Fatal("valid provider rejected", err)
 			}
@@ -43,7 +43,11 @@ func TestWorkloadProviderDeclarationsAndLegacyRejection(t *testing.T) {
 				t.Fatal("unknown service accepted")
 			}
 			configuration.Workloads["storefront"] = p
-			document := Document{Version: new(1), TNL: &configuration}
+			declared := Project{Services: map[string]ServiceDeclaration{"inventory": {}, "models": {Protocol: new("postgres")}},
+				Deployments: map[string]Deployment{"production": {Targets: map[string]DeploymentBinding{
+					"inventory": {ServiceTarget: *services["inventory"].Target}, "models": {ServiceTarget: *services["models"].Target},
+				}}}, Workloads: map[string]DeploymentWorkload{"storefront": {Deployment: "production", Workload: p}}}
+			document := Document{Version: new(1), TNL: &declared}
 			b, err := json.Marshal(document)
 			if err != nil {
 				t.Fatal(err)
@@ -65,11 +69,11 @@ func TestWorkloadProviderDeclarationsAndLegacyRejection(t *testing.T) {
 		t.Fatal("legacy ci alias accepted")
 	}
 	for _, policy := range []string{
-		`{"provider":"fly","fly":{"app":"worker"},"services":["db"]}`,
-		`{"fly":{"app":"worker","app_id":"123"},"services":["db"]}`,
-		`{"oidc":{"issuer":"https://issuer.example","claims":{"sub":"worker"}},"token_file":"/run/token","services":["db"]}`,
+		`{"deployment":"production","provider":"fly","fly":{"app":"worker"},"services":["db"]}`,
+		`{"deployment":"production","fly":{"app":"worker","app_id":"123"},"services":["db"]}`,
+		`{"deployment":"production","oidc":{"issuer":"https://issuer.example","claims":{"sub":"worker"}},"token_file":"/run/token","services":["db"]}`,
 	} {
-		data := `{"version":1,"tnl":{"publisher_groups":{"production":{}},"services":{"db":{"publisher_group":"production","protocol":"postgres","target":{"type":"address","address":"localhost:5432"}}},"workloads":{"worker":` + policy + `}}}`
+		data := `{"version":1,"tnl":{"services":{"db":{"protocol":"postgres"}},"deployments":{"production":{"targets":{"db":{"address":"localhost:5432"}}}},"workloads":{"worker":` + policy + `}}}`
 		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -110,7 +114,7 @@ func TestWorkloadSelectorsAndTokenSources(t *testing.T) {
 			p := base
 			p.GitHub = new(*base.GitHub)
 			test.change(&p)
-			err := ValidateWorkloads(TNL{Services: Services{"db": {PublisherGroup: new("production")}}, Workloads: map[string]Workload{"worker": p}})
+			err := ValidateWorkloads(Services{"db": {}}, map[string]Workload{"worker": p})
 			if (err == nil) != test.valid {
 				t.Fatal("unexpected declaration validation", err)
 			}

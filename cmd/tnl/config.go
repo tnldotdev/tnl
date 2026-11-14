@@ -22,7 +22,19 @@ type projectConfiguration struct {
 }
 
 func projectOptions(flags cli) resolve.Options {
-	return resolve.Options{ConfigPath: flags.ConfigPath, EnvironmentPath: os.Getenv("TNL_CONFIG"), NoConfig: flags.NoConfig}
+	deployment := flags.Apply.Deployment
+	if flags.Connect.Start.Deployment != "" {
+		deployment = flags.Connect.Start.Deployment
+	}
+	if flags.Status.Deployment != "" {
+		deployment = flags.Status.Deployment
+	}
+	for _, selection := range []serviceShareSelection{flags.Share.Service.Invite.Create.serviceShareSelection, flags.Share.Service.List.serviceShareSelection, flags.Share.Service.Revoke.serviceShareSelection, flags.Share.Service.Link.Create.serviceShareSelection, flags.Share.Service.Token.Create.serviceShareSelection} {
+		if selection.Deployment != "" {
+			deployment = selection.Deployment
+		}
+	}
+	return resolve.Options{ConfigPath: flags.ConfigPath, EnvironmentPath: os.Getenv("TNL_CONFIG"), NoConfig: flags.NoConfig, Deployment: deployment}
 }
 
 func selectProjectConfiguration(ctx context.Context, flags cli) (clientproject.Selection, string, error) {
@@ -62,7 +74,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		return err
 	}
 	flags.Service = service
-	if service != "" && config.PublisherGroupName(c.Config.Services[service]) != "local" {
+	if service != "" && config.SelectedDeployment(c.Config) != "local" {
 		return publisherCLIError("this service belongs to a remote publisher group; run tnl apply and tnl publisher serve --group NAME")
 	}
 	flags.project = c
@@ -112,9 +124,6 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	}
 	if usingConfiguredTarget && local.Target != nil {
 		flags.Target = string(*local.Target)
-	}
-	if usingConfiguredTarget && flags.TargetCAFile == "" && local.TargetCAFile != nil {
-		flags.TargetCAFile = *local.TargetCAFile
 	}
 	if usingConfiguredTarget && flags.TargetTLSName == "" && local.TargetTLSName != nil {
 		flags.TargetTLSName = *local.TargetTLSName
@@ -173,7 +182,7 @@ func (c projectConfiguration) applyInstalledService(flags *publishCommand) error
 	if !flags.inspectionModeFromCLI {
 		flags.InspectionMode = config.InspectionNone
 	}
-	if config.PublisherGroupName(definition) != "local" {
+	if config.SelectedDeployment(c.Config) != "local" {
 		return publisherCLIError("install the assigned publisher group with tnl publisher serve --group NAME --install")
 	}
 	flags.service = !config.IsPublicService(definition)
@@ -200,9 +209,6 @@ func (c projectConfiguration) applyInstalledService(flags *publishCommand) error
 	if local.Target != nil {
 		flags.Target = string(*local.Target)
 	}
-	if flags.TargetCAFile == "" && local.TargetCAFile != nil {
-		flags.TargetCAFile = *local.TargetCAFile
-	}
 	if flags.TargetTLSName == "" && local.TargetTLSName != nil {
 		flags.TargetTLSName = *local.TargetTLSName
 	}
@@ -214,12 +220,6 @@ func (c projectConfiguration) applyInstalledService(flags *publishCommand) error
 	}
 	if flags.Target == "" {
 		return failure.Wrap("select installed target", failure.InstalledTargetMissing, errors.New("configured service has no stable target"))
-	}
-	if flags.TargetCAFile == "" && local.TargetCAFile != nil {
-		flags.TargetCAFile = *local.TargetCAFile
-	}
-	if flags.TargetTLSName == "" && local.TargetTLSName != nil {
-		flags.TargetTLSName = *local.TargetTLSName
 	}
 	if effective.Tunnel != nil {
 		applyTunnelLimits(&flags.tunnelFlags, effective.Tunnel.Limits)
@@ -241,7 +241,7 @@ func validateConfiguredTargetTrust(flags publishCommand, local *config.Publish) 
 		}
 		return nil
 	}
-	if flags.TargetTLS != nil && !*flags.TargetTLS || flags.TargetTLSName != "" && (local.TargetTLSName == nil || flags.TargetTLSName != *local.TargetTLSName) || flags.TargetCAFile != "" && (local.TargetCAFile == nil || flags.TargetCAFile != *local.TargetCAFile) {
+	if flags.TargetTLS != nil && !*flags.TargetTLS || flags.TargetTLSName != "" && (local.TargetTLSName == nil || flags.TargetTLSName != *local.TargetTLSName) || flags.TargetCAFile != "" {
 		return publisherCLIError("target TLS flags differ from the configured target.tls")
 	}
 	return nil

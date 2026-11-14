@@ -21,11 +21,11 @@ import (
 func TestLocalServiceRealizationKeepsIdentityAcrossGitTransitions(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "development.json")
-	if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"services":{
-		"api":{"target":{"type":"address","address":"http://127.0.0.1:3000"},"access":{"team":true}},
-		"web":{"target":{"type":"address","address":"http://127.0.0.1:3000"},"public_url":{},"access":{"team":true}},
+	if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"services":{"api":{},"web":{},"sdk":{}},"deployments":{"local":{"targets":{
+		"api":{"address":"http://127.0.0.1:3000","access":{"team":true}},
+		"web":{"address":"http://127.0.0.1:3000","public_url":{},"access":{"team":true}},
 		"sdk":{"access":{"team":true}}
-	}}}`), 0600); err != nil {
+	}}}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	type received struct {

@@ -79,11 +79,11 @@ func TestCloudSelectorBoundaryParity(t *testing.T) {
 }
 
 func TestCloudSelectorNormalizedJSONAndHash(t *testing.T) {
-	const expected = `{"publisher_groups":{"production":{}},"services":{"db":{"target_discovery":{"type":"rds","region":"us-east-1","instance":"orders","endpoint":"writer"},"publisher_group":"production","name":"db","protocol":"postgres","target":""}},"oauth":false,"webhooks":{}}`
+	const expected = `{"settings":{},"services":{"db":{"target_discovery":{"type":"rds","region":"us-east-1","instance":"orders","endpoint":"writer"},"name":"db","protocol":"postgres","target":""}},"oauth":false,"webhooks":{}}`
 	digest := sha256.Sum256([]byte(expected))
 	for _, endpoint := range []*string{nil, new("writer")} {
 		descriptor := &controlstate.ProjectTargetDiscovery{Type: "rds", Region: "us-east-1", Instance: new("orders"), Endpoint: endpoint}
-		input := controlstate.ProjectConfiguration{PublisherGroups: map[string]controlstate.ProjectPublisherGroup{"production": {}}, Services: map[string]controlstate.ProjectServiceConfiguration{"db": {PublisherGroup: "production", Protocol: "postgres", TargetDiscovery: descriptor}}}
+		input := controlstate.ProjectConfiguration{Settings: &controlstate.DeploymentSettings{}, Services: map[string]controlstate.ProjectServiceConfiguration{"db": {Protocol: "postgres", TargetDiscovery: descriptor}}}
 		before, _ := json.Marshal(input)
 		normalized, hash, err := controlstate.NormalizeProjectConfiguration(input)
 		if err != nil {

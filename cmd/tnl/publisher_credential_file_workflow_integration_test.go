@@ -62,7 +62,7 @@ func TestIntegrationCLINamedPublisherCredentialFileWithoutPersonSession(t *testi
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "scoped named publisher") }))
 	defer target.Close()
 	configuration := filepath.Join(root, "selected.json")
-	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"services": map[string]any{"api": map[string]any{"name": "portable", "target": map[string]any{"type": "address", "address": target.URL}}}}})
+	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"services": map[string]any{"api": map[string]any{}}, "deployments": map[string]any{"local": map[string]any{"targets": map[string]any{"api": map[string]any{"name": "portable", "address": target.URL}}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,11 @@ func TestIntegrationCLINamedPublisherCredentialFileWithoutPersonSession(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	project := projectConfiguration{Project: clientproject.Project{Selection: clientproject.Selection{Path: configuration, Explicit: true}, Config: *document.TNL, Root: root, Worktree: clientproject.Worktree{Root: root, IsGit: true, Label: clientproject.WorktreeLabel{FullLabel: "portable-worktree"}}}}
+	selected, err := config.ResolveDeployment(*document.TNL, "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := projectConfiguration{Project: clientproject.Project{Selection: clientproject.Selection{Path: configuration, Explicit: true}, Config: selected, Declared: document.TNL, Deployment: "local", Root: root, Worktree: clientproject.Worktree{Root: root, IsGit: true, Label: clientproject.WorktreeLabel{FullLabel: "portable-worktree"}}}}
 	current, err := session.Current(t.Context())
 	if err != nil {
 		t.Fatal(err)

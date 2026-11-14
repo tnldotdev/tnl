@@ -77,7 +77,16 @@ func (d *Database) RenamePublisherNamespace(ctx context.Context, r RenamePublish
 	if err != nil {
 		return result, publisherLookupError(err, ErrPublisherGroup)
 	}
-	c, err := d.openAppliedProject(row)
+	record, err := d.openAppliedProjectRecord(row)
+	if err != nil {
+		return result, err
+	}
+	c := record.Deployments[name]
+	deployment, err := q.LockProjectPublisherGroup(ctx, id)
+	if err != nil {
+		return result, err
+	}
+	snapshot, err := d.openDeploymentConfiguration(deployment)
 	if err != nil {
 		return result, err
 	}
@@ -93,15 +102,15 @@ func (d *Database) RenamePublisherNamespace(ctx context.Context, r RenamePublish
 	if _, err = tx.Exec(ctx, `UPDATE control.project_publisher_groups SET namespace='' WHERE id=$1`, id); err != nil {
 		return result, err
 	}
-	if err = d.ensureGroupNamespace(ctx, tx, ApplyProjectConfigurationRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Now: r.Now}, id, name, c.PublisherGroups[name], r.NamespaceLabel); err != nil {
+	if err = d.ensureDeploymentNamespace(ctx, tx, ApplyProjectConfigurationRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Now: r.Now}, id, name, snapshot.Settings, r.NamespaceLabel); err != nil {
 		return result, err
 	}
-	services, err := q.ListAppliedProjectServices(ctx, controlstatedb.ListAppliedProjectServicesParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
+	services, err := q.ListPublisherGroupServices(ctx, id)
 	if err != nil {
 		return result, err
 	}
 	for _, service := range services {
-		if service.GroupID.String != id || !service.ServiceID.Valid {
+		if !service.ServiceID.Valid {
 			continue
 		}
 		if err = d.revokeAppliedServicePublishers(ctx, tx, q, service, r.Now); err != nil {
@@ -115,7 +124,12 @@ func (d *Database) RenamePublisherNamespace(ctx context.Context, r RenamePublish
 		}
 	}
 	row.Revision++
-	if _, err = tx.Exec(ctx, `UPDATE control.applied_project_services SET desired_revision=$3 WHERE team_id=$1 AND project_key=$2`, r.TeamID, r.ProjectKey, row.Revision); err != nil {
+	deployment, err = q.LockProjectPublisherGroup(ctx, id)
+	if err != nil {
+		return result, err
+	}
+	snapshot.Namespace = deployment.Namespace
+	if err = d.writeDeploymentConfiguration(ctx, tx, deployment, snapshot); err != nil {
 		return result, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE control.applied_projects SET revision=$3,updated_at=$4 WHERE team_id=$1 AND project_key=$2`, r.TeamID, r.ProjectKey, row.Revision, r.Now); err != nil {
@@ -124,7 +138,7 @@ func (d *Database) RenamePublisherNamespace(ctx context.Context, r RenamePublish
 	if err = recordPublisherGroupUpdate(ctx, tx, id, r.ActorID, "", "namespace-rename/"+r.IdempotencyKey, r.Now); err != nil {
 		return result, err
 	}
-	result, err = d.appliedProjectStatus(ctx, tx, row, c)
+	result, err = d.appliedProjectStatus(ctx, tx, row, name, c)
 	if err != nil {
 		return result, err
 	}

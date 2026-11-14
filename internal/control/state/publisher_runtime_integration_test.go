@@ -26,7 +26,8 @@ func TestIntegrationPublisherRuntimeLifecycle(t *testing.T) {
 			var rename func()
 			if kind == "group" {
 				r := appliedProjectRequest(t, d, now)
-				r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"remote": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "remote", Target: "api.internal:3000"}, "db": {PublisherGroup: "remote", Target: "db.internal:5432", Protocol: "postgres"}}}
+				r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"api": {Target: "api.internal:3000"}, "db": {Target: "db.internal:5432", Protocol: "postgres"}}}
+				r = selectedProjectRequest(r, "remote")
 				applied, err := d.ApplyProjectConfiguration(ctx, r)
 				if err != nil {
 					t.Fatal(err)

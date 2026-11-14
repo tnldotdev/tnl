@@ -41,7 +41,11 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	outsider := finalVisitorIdentity(t, d, now, "ownership-outsider@example.test")
 	digest := sha256.Sum256([]byte("tnl-target-tls/v1\x00database.internal\x00"))
 	local := ProjectServiceConfiguration{Name: "database", Protocol: "postgres", Target: "localhost:5432", TargetTLS: &ProjectTargetTLS{Hostname: "database.internal", Digest: hex.EncodeToString(digest[:])}, Access: &ProjectServiceAccess{Team: true}}
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"db": local}}
+	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"db": local}}
+	emptyRemote := projectServiceSelection(r, "production")
+	remoteApplied := applyPrivateOwnershipRevision(t, d, emptyRemote)
+	r = projectServiceSelection(r, "local", "db")
+	r.ExpectedRevision = remoteApplied.Revision
 	initial := applyPrivateOwnershipRevision(t, d, r)
 	assertPrivateOwnershipEntry(t, d, r, initial, "local")
 	var replicas []enrolledGroupReplica
@@ -104,12 +108,20 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	}
 	locals := realize()
 	remote := local
-	remote.PublisherGroup, remote.Target = "production", "database.internal:5432"
+	remote.Target = "database.internal:5432"
 	r.ExpectedRevision = initial.Revision
+	removeLocal := r
+	removeLocal.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{}}
+	rollback := worktrees == 2 && members == 2 && active && extra
+	if rollback {
+		assertPrivateOwnershipRollback(t, d, removeLocal)
+	}
+	removedLocal := applyPrivateOwnershipRevision(t, d, removeLocal)
+	r.Deployment, r.ExpectedRevision = "production", removedLocal.Revision
+	r.Configuration.Settings = &DeploymentSettings{}
 	r.Configuration.Services["db"] = remote
 	// exercise rollback after remote allocation/grants, and after remote retirement
 	// on the reverse transition. the conflicting name belongs to another definition.
-	rollback := worktrees == 2 && members == 2 && active && extra
 	if rollback {
 		assertPrivateOwnershipRollback(t, d, r)
 	}
@@ -148,7 +160,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	if extra {
 		assertPrivateOwnershipInventory(t, d, outsider, []appliedPrivateResource{shared}, active, now)
 	}
-	if _, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, reader.IdentityID); !errors.Is(err, ErrServiceAccess) {
+	if _, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, reader.IdentityID, "local"); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("visitor read manager configuration", err)
 	}
 	projection, err := d.GetProjectPublicMetadata(ctx, r.TeamID, r.ProjectKey, r.ActorID, now)
@@ -160,10 +172,15 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	}
 	applyPrivateOwnershipRevision(t, d, r)
 	r.ExpectedRevision = group.Revision
-	r.Configuration.Services["db"] = local
+	removeRemote := r
+	removeRemote.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{}}
 	if rollback {
-		assertPrivateOwnershipRollback(t, d, r)
+		assertPrivateOwnershipRollback(t, d, removeRemote)
 	}
+	removedRemote := applyPrivateOwnershipRevision(t, d, removeRemote)
+	r.Deployment, r.ExpectedRevision = "local", removedRemote.Revision
+	r.Configuration.Settings = nil
+	r.Configuration.Services["db"] = local
 	deferred := applyPrivateOwnershipRevision(t, d, r)
 	assertPrivateOwnershipEntry(t, d, r, deferred, "local")
 	assertAppliedPrivateRetired(t, d, r, shared)
@@ -186,6 +203,11 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	// repeating either normalized hash preserves grants and realizations too.
 	applyPrivateOwnershipRevision(t, d, r)
 	r.ExpectedRevision = deferred.Revision
+	removeLocal = r
+	removeLocal.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{}}
+	removedLocal = applyPrivateOwnershipRevision(t, d, removeLocal)
+	r.Deployment, r.ExpectedRevision = "production", removedLocal.Revision
+	r.Configuration.Settings = &DeploymentSettings{}
 	r.Configuration.Services["db"] = remote
 	regrouped := applyPrivateOwnershipRevision(t, d, r)
 	assertPrivateOwnershipEntry(t, d, r, regrouped, "production")
@@ -252,7 +274,13 @@ func inspectAppliedPrivateResource(t *testing.T, d *Database, r ApplyProjectConf
 
 func assertPrivateOwnershipEntry(t *testing.T, d *Database, r ApplyProjectConfigurationRequest, status AppliedProjectConfiguration, publisher string) {
 	t.Helper()
-	if len(status.Services) != 1 || status.Services[0].Service != "db" || status.Services[0].PublisherGroup != publisher || status.Services[0].DesiredRevision != status.Revision {
+	wantRevision := status.Revision
+	if publisher != "local" {
+		if err := d.pool.QueryRow(t.Context(), `SELECT revision FROM control.project_publisher_groups WHERE team_id=$1 AND project_key=$2 AND name=$3 AND deleted_at IS NULL`, r.TeamID, r.ProjectKey, publisher).Scan(&wantRevision); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(status.Services) != 1 || status.Services[0].Service != "db" || status.Services[0].PublisherGroup != publisher || status.Services[0].DesiredRevision != wantRevision {
 		t.Fatal("incorrect applied service", status.Services)
 	}
 	s := status.Services[0]
@@ -280,8 +308,13 @@ func assertPrivateOwnershipAssignments(t *testing.T, d *Database, replicas []enr
 		t.Fatal("unexpected exact group grants", count, err)
 	}
 	for _, replica := range replicas {
+		var revision int64
+		var hash string
+		if err := d.pool.QueryRow(t.Context(), `SELECT revision,configuration_hash FROM control.project_publisher_groups WHERE id=$1`, replica.member.GroupID).Scan(&revision, &hash); err != nil {
+			t.Fatal(err)
+		}
 		assignments, err := d.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, now)
-		if err != nil || assignments.Revision != status.Revision || assignments.ConfigurationHash != status.ConfigurationHash {
+		if err != nil || assignments.Revision != revision || assignments.ConfigurationHash != hash {
 			t.Fatal("group lost current configuration", err)
 		}
 		if status.Services[0].Kind == "local" {
@@ -301,7 +334,7 @@ func assertPrivateOwnershipAssignments(t *testing.T, d *Database, replicas []enr
 		if err = d.pool.QueryRow(t.Context(), `SELECT kind='service' AND service_id=$2 AND public_url_id IS NULL AND revoked_at IS NULL FROM control.publisher_grants WHERE id=$1 AND publisher_identity_id=$3`, a.GrantID, a.ServiceID, replica.member.PublisherIdentityID).Scan(&exact); err != nil || !exact {
 			t.Fatal("group grant is not exact", err)
 		}
-		if err = d.AcknowledgePublisherGroupConfiguration(t.Context(), replica.lease.AccessToken, status.Revision, status.ConfigurationHash, true, now); err != nil {
+		if err = d.AcknowledgePublisherGroupConfiguration(t.Context(), replica.lease.AccessToken, assignments.Revision, assignments.ConfigurationHash, true, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -427,15 +460,18 @@ func assertPrivateOwnershipRollback(t *testing.T, d *Database, r ApplyProjectCon
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.Configuration.Services["z-conflict"] = ProjectServiceConfiguration{PublisherGroup: "production", Name: "conflict", Target: "localhost:9000"}
-	r.Configuration.Services["zz-conflict"] = r.Configuration.Services["z-conflict"]
 	before := privateOwnershipSnapshot(t, d)
-	for range 2 {
-		if _, err = d.ApplyProjectConfiguration(t.Context(), r); !errors.Is(err, ErrServiceConflict) {
-			t.Fatal("expected late definition name conflict", err)
-		}
-		if !reflect.DeepEqual(before, privateOwnershipSnapshot(t, d)) {
-			t.Fatal("failed ownership transition changed resources, grants, runs, or desired state")
+	if r.Deployment != "local" {
+		r.Configuration.Services["z-conflict"] = ProjectServiceConfiguration{Name: "conflict", Target: "localhost:9000"}
+		r.Configuration.Services["zz-conflict"] = r.Configuration.Services["z-conflict"]
+		conflict := selectedProjectRequest(r, r.Deployment)
+		for range 2 {
+			if _, err = d.ApplyProjectConfiguration(t.Context(), conflict); !errors.Is(err, ErrServiceConflict) {
+				t.Fatal("expected late definition name conflict", err)
+			}
+			if !reflect.DeepEqual(before, privateOwnershipSnapshot(t, d)) {
+				t.Fatal("failed ownership transition changed resources, grants, runs, or desired state")
+			}
 		}
 	}
 	// force a final revision-write failure, after local realizations have also

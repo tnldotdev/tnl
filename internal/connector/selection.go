@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
@@ -29,8 +30,7 @@ func Select(ctx context.Context, control ServiceReader, project clientproject.Pr
 	}
 	localID := ""
 	if key != "" {
-		definition := project.Config.Services[key]
-		if config.PublisherGroupName(definition) == "local" {
+		if config.SelectedDeployment(project.Config) == "local" {
 			source := project.LocalPublicationIdentity()
 			params := controlv1.GetLocalProjectServiceParams{TeamId: team, SourceFingerprint: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey()}
 			bound, err := control.GetLocalProjectService(ctx, source.Key, key, params)
@@ -49,7 +49,7 @@ func Select(ctx context.Context, control ServiceReader, project clientproject.Pr
 			if err != nil {
 				return controlv1.Service{}, failure.Wrap("identify applied project service", failure.ProjectConfigInvalid, err)
 			}
-			return control.GetProjectService(ctx, source.Key, key, controlv1.GetProjectServiceParams{TeamId: team, SourceFingerprint: source.Fingerprint})
+			return control.GetProjectService(ctx, source.Key, key, controlv1.GetProjectServiceParams{TeamId: team, SourceFingerprint: source.Fingerprint, Deployment: config.SelectedDeployment(project.Config)})
 		}
 	}
 	services, err := control.ListAvailableServices(ctx)
@@ -75,7 +75,7 @@ func ConfiguredService(project clientproject.Project, name string) (string, erro
 		if key != name && config.ServiceName(key, service) != name {
 			continue
 		}
-		if isConnectPublicURL(service) {
+		if isConnectPublicURL(project.Config, service) {
 			publicMatch = true
 			continue
 		}
@@ -86,6 +86,11 @@ func ConfiguredService(project clientproject.Project, name string) (string, erro
 	}
 	if publicMatch {
 		return "", publisherCLIError("configured name selects a public URL service; use its HTTPS URL or --no-config with an exact service ID")
+	}
+	if selected == "" && project.Declared != nil {
+		if _, declared := project.Declared.Services[name]; declared {
+			return "", publisherCLIError(fmt.Sprintf("service %q has no binding in deployment %q", name, config.SelectedDeployment(project.Config)))
+		}
 	}
 	return selected, nil
 }
@@ -121,7 +126,7 @@ func serviceIDSelection(services []controlv1.Service, id, team string) (controlv
 	return controlv1.Service{}, failure.Wrap("select service ID", failure.ServerResourceNotFound, errors.New("service ID is absent from visitor inventory"))
 }
 
-// named publishers' public_url blocks are service HTTP policy, not public URLs.
-func isConnectPublicURL(service config.Service) bool {
-	return config.PublisherGroupName(service) == "local" && config.IsPublicService(service)
+// only local public_url bindings use the app's public URL lifecycle.
+func isConnectPublicURL(configuration config.TNL, service config.Service) bool {
+	return config.SelectedDeployment(configuration) == "local" && config.IsPublicService(service)
 }

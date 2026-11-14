@@ -106,6 +106,24 @@ checks, updates, and lock ordering together, not in separate HTTP handlers.
 certificate caches, project records, and locks. It uses SQLite and private files.
 A cached credential or certificate does not prove current permission to serve.
 
+### project declarations and deployment bindings
+
+Project configuration declares service names and protocols in `services`.
+`deployments.NAME.targets` supplies targets and publication settings for one
+selection. Selecting `local` resolves client-side targets; it does not create a
+saved server deployment.
+
+Apply reconciles the selected deployment and the project's logical declarations.
+It preserves sibling deployments, including those created through the management
+API. A declaration cannot remove or change the protocol of a retained binding.
+Control keeps each deployment's encrypted serving configuration and revision
+separate from the project's desired configuration and apply revision.
+
+Project status includes deployment identity so two bindings called `db` remain
+distinct. Project retirement removes all deployment bindings and local worktree
+realizations in the same transaction, while retaining the project's source
+identity and revision.
+
 ## find the code
 
 ```text
@@ -247,6 +265,10 @@ Use the package that defines a shared value. HTTP limits, for example, use
 `policy/applicationlimits.Limits` directly, not a publisher alias.
 `naming/ingresspool` defines an address pool ID shared by control and ingress;
 control state need not import ingress just to name that pool.
+
+`security/rdsroots` owns the pinned offline Amazon RDS regional CA catalog used
+by publisher discovery and control target approval. It depends on neither owner;
+control must not import publisher discovery to approve a supplied endpoint.
 
 For shared behavior, define a small interface where it is used and have the
 caller supply the implementation. Do not copy permission checks or run-management

@@ -35,7 +35,7 @@ func TestLocalConnectionCommandNeedsNoLoginOrClientState(t *testing.T) {
 	state := filepath.Join(root, "absent-client-state")
 	t.Setenv("TNL_STATE_DIR", state)
 	t.Setenv("TNL_CONFIG", "")
-	configuration := `{"version":1,"tnl":{"services":{"db":{"protocol":"postgres","target":{"type":"address","address":"127.0.0.1:15432"}}}}}`
+	configuration := `{"version":1,"tnl":{"services":{"db":{"protocol":"postgres"}},"deployments":{"local":{"targets":{"db":{"address":"127.0.0.1:15432"}}}}}}`
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), []byte(configuration), 0600); err != nil {
 		t.Fatal(err)
 	}

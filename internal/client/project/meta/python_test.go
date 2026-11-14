@@ -28,7 +28,7 @@ func TestPythonFacadePortableSourceShapeAndStrictMypy(t *testing.T) {
 				t.Fatal(err)
 			}
 			postgres, tcp, mysql, kubernetes := "postgres", "tcp", "mysql", "kubernetes"
-			configuration := config.TNL{Services: config.Services{"database": {Protocol: &postgres}, "web": {}, "stream": {Protocol: &tcp}, "mysql": {Protocol: &mysql}, "cluster": {Protocol: &kubernetes}}}
+			configuration := config.Project{Services: map[string]config.ServiceDeclaration{"database": {Protocol: &postgres}, "web": {}, "stream": {Protocol: &tcp}, "mysql": {Protocol: &mysql}, "cluster": {Protocol: &kubernetes}}}
 			path := "tnl.yml"
 			usage := `from typing import Literal, assert_type
 import tnl as native
@@ -58,7 +58,7 @@ async def use() -> None:
     await result  # type: ignore[misc]
 `
 			if scenario == "single" {
-				configuration.Services = config.Services{"database": {Protocol: &postgres}}
+				configuration.Services = map[string]config.ServiceDeclaration{"database": {Protocol: &postgres}}
 				usage = `from typing import assert_type
 import tnl as native
 from tnl_project import tnl
@@ -67,7 +67,7 @@ tnl.connect("missing")  # type: ignore[arg-type]
 `
 			}
 			if scenario == "empty" {
-				configuration.Services = config.Services{}
+				configuration.Services = map[string]config.ServiceDeclaration{}
 				usage = "from tnl_project import tnl\ntnl.connect(\"missing\")  # type: ignore[arg-type]\n"
 			}
 			if scenario == "factory" {
@@ -122,7 +122,7 @@ async def use_clients() -> None:
 				t.Fatal(err)
 			}
 			if scenario == "factory" {
-				other, err := PythonFacade(config.TNL{}, path)
+				other, err := PythonFacade(config.Project{}, path)
 				if err != nil || !reflect.DeepEqual(files, other) {
 					t.Fatal("factory typing depended on one evaluated checkout", err)
 				}
@@ -145,7 +145,7 @@ func TestPythonFacadeRejectsSymlinks(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			root, _ := filepath.EvalSymlinks(t.TempDir())
 			outside := t.TempDir()
-			files, err := PythonFacade(config.TNL{}, "tnl.yml")
+			files, err := PythonFacade(config.Project{}, "tnl.yml")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -180,7 +180,7 @@ func TestPythonFacadeRejectsSymlinks(t *testing.T) {
 func TestPythonFacadeContainsNamesAndProtocolsOnly(t *testing.T) {
 	protocol := "postgres"
 	address := config.Target("secret-target:5432")
-	configuration := config.TNL{Services: config.Services{"database": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &address}}}}
+	configuration := config.Project{Services: map[string]config.ServiceDeclaration{"database": {Protocol: &protocol}}, Deployments: map[string]config.Deployment{"production": {Targets: map[string]config.DeploymentBinding{"database": {ServiceTarget: config.ServiceTarget{Address: &address}}}}}}
 	files, err := PythonFacade(configuration, "/private/checkout/tnl.yml")
 	if err != nil {
 		t.Fatal(err)

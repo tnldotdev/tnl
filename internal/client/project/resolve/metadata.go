@@ -49,9 +49,10 @@ func (r *MetadataResolver) Seed(server string, client *auth.Client) {
 }
 
 func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) {
-	hasPublic := r.project.Config.OAuth || len(r.project.Config.Webhooks) != 0 || len(r.project.Config.Aliases) != 0
+	deployment := config.SelectedDeployment(r.project.Config)
+	hasPublic := r.project.Config.OAuth || len(r.project.Config.Webhooks) != 0 || len(r.project.Config.Aliases) != 0 || deployment != "local" && len(r.project.Config.Services) != 0
 	for _, service := range r.project.Config.Services {
-		hasPublic = hasPublic || config.IsPublicService(service) || config.PublisherGroupName(service) != "local"
+		hasPublic = hasPublic || config.IsPublicService(service)
 	}
 	if !hasPublic {
 		metadata := meta.Metadata{Version: meta.Version, Services: map[string]meta.Service{}}
@@ -97,7 +98,7 @@ func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) 
 	}
 	names := make([]string, 0, len(r.project.Config.Services))
 	for name := range r.project.Config.Services {
-		if !config.IsPublicService(r.project.Config.Services[name]) && config.PublisherGroupName(r.project.Config.Services[name]) == "local" {
+		if !config.IsPublicService(r.project.Config.Services[name]) && deployment == "local" {
 			continue
 		}
 		names = append(names, name)
@@ -113,7 +114,7 @@ func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) 
 			return meta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
 		}
 		var serviceMetadata meta.Service
-		if config.PublisherGroupName(r.project.Config.Services[name]) != "local" {
+		if deployment != "local" {
 			serviceServer, serverErr := r.server(ctx, effective.Server)
 			if serverErr != nil {
 				return meta.Metadata{}, serverErr
@@ -128,7 +129,7 @@ func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) 
 			}
 			// the source-bound visitor lookup provides the current endpoint and
 			// exposure. never infer managed exposure from protocol or local config.
-			assigned, lookupErr := client.Control.GetProjectService(ctx, source.Key, name, controlv1.GetProjectServiceParams{TeamId: serviceContext.Team().Id, SourceFingerprint: source.Fingerprint})
+			assigned, lookupErr := client.Control.GetProjectService(ctx, source.Key, name, controlv1.GetProjectServiceParams{TeamId: serviceContext.Team().Id, SourceFingerprint: source.Fingerprint, Deployment: deployment})
 			if errors.Is(lookupErr, clientcontrol.ErrNotFound) {
 				// local startup does not apply remote services. include their
 				// endpoints only after control has a current visitor projection.

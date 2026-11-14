@@ -16,7 +16,6 @@ import (
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
-	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -64,7 +63,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	if err != nil {
 		return publisherapp.Configuration{}, err
 	}
-	trust, err := project.CaptureServiceTrust(ctx, targettrust.NewCache(nil), service.Name, target.Address)
+	trust, err := project.CaptureServiceTrust(ctx, service.Name, target.Address)
 	if err != nil {
 		return publisherapp.Configuration{}, err
 	}

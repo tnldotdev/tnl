@@ -5,18 +5,19 @@ SELECT * FROM control.applied_projects WHERE team_id=sqlc.arg(team_id) AND proje
 -- one row per open publication, or one row for an idle/unrealized resource.
 -- worktree bytes are encoded so separators cannot alias another cursor key.
 WITH resources AS (
-    SELECT applied.service,''::text AS worktree_key,applied.service_id,applied.public_url_id
+    SELECT applied.service,COALESCE(deployment.name,'local')::text AS deployment,''::text AS worktree_key,applied.service_id,applied.public_url_id
     FROM control.applied_project_services applied
+    LEFT JOIN control.project_publisher_groups deployment ON deployment.id=applied.group_id
     WHERE applied.team_id=sqlc.arg(team_id) AND applied.project_key=sqlc.arg(project_key)
-      AND (applied.service_id IS NOT NULL OR applied.public_url_id IS NOT NULL OR NOT EXISTS (
+       AND (applied.group_id IS NOT NULL OR applied.service_id IS NOT NULL OR applied.public_url_id IS NOT NULL OR NOT EXISTS (
           SELECT 1 FROM control.local_project_services local
           WHERE local.team_id=applied.team_id AND local.project_key=applied.project_key AND local.service=applied.service))
     UNION ALL
-    SELECT local.service,local.worktree_key,local.service_id,local.public_url_id
+    SELECT local.service,'local'::text AS deployment,local.worktree_key,local.service_id,local.public_url_id
     FROM control.local_project_services local
     WHERE local.team_id=sqlc.arg(team_id) AND local.project_key=sqlc.arg(project_key)
 ), publications AS (
-    SELECT resource.service,resource.worktree_key,resource.service_id,resource.public_url_id,
+    SELECT resource.service,resource.deployment,resource.worktree_key,resource.service_id,resource.public_url_id,
         COALESCE(service.certificate_hostname,url.canonical_hostname,'')::text AS hostname,
         COALESCE(service.service_port,CASE WHEN url.id IS NOT NULL THEN 443 ELSE 0 END)::integer AS port,
         COALESCE(service.enabled AND service.deleted_at IS NULL,url.lifecycle_state='enabled',false)::boolean AS enabled,
@@ -34,7 +35,7 @@ WITH resources AS (
     LEFT JOIN control.publish_runs public_run ON public_run.public_url_id=resource.public_url_id AND public_run.closed_at IS NULL
     LEFT JOIN control.service_runs private_run ON private_run.service_id=resource.service_id AND private_run.closed_at IS NULL
 ), keyed AS (
-    SELECT *,(service||'/'||encode(convert_to(worktree_key,'UTF8'),'hex')||'/'||run_id)::text AS cursor_key FROM publications
+    SELECT *,(deployment||'/'||service||'/'||encode(convert_to(worktree_key,'UTF8'),'hex')||'/'||run_id)::text AS cursor_key FROM publications
 )
 SELECT * FROM keyed WHERE cursor_key COLLATE "C">sqlc.arg(after_key)::text COLLATE "C"
 ORDER BY cursor_key COLLATE "C" LIMIT 101;

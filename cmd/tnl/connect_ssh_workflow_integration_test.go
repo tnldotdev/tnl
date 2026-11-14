@@ -54,10 +54,10 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 	address, clientKey, hostPublic, username := connectWorkflowSSHD(t, root)
 	configuration := filepath.Join(root, "tnl.json")
 	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": session.Identity().PersonalTeamId,
-		"publisher_groups": map[string]any{"internal": map[string]any{}, "production": map[string]any{"public": true}},
-		"services": map[string]any{
-			"internal": map[string]any{"publisher_group": "internal", "protocol": "tcp", "target": map[string]any{"type": "address", "address": address}},
-			"shell":    map[string]any{"publisher_group": "production", "protocol": "tcp", "target": map[string]any{"type": "address", "address": address}},
+		"services": map[string]any{"internal": map[string]any{"protocol": "tcp"}, "shell": map[string]any{"protocol": "tcp"}},
+		"deployments": map[string]any{
+			"internal":   map[string]any{"targets": map[string]any{"internal": map[string]any{"address": address}}},
+			"production": map[string]any{"public": true, "targets": map[string]any{"shell": map[string]any{"address": address}}},
 		}}})
 	if err != nil {
 		t.Fatal(err)
@@ -66,17 +66,13 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 		t.Fatal(err)
 	}
 	var applied controlv1.AppliedProjectConfiguration
-	if err := json.Unmarshal(cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--state-dir", person, "--output=json"}), &applied); err != nil {
-		t.Fatal(err)
-	}
 	for _, group := range []string{"internal", "production"} {
+		if err := json.Unmarshal(cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--deployment", group, "--state-dir", person, "--output=json"}), &applied); err != nil {
+			t.Fatal(err)
+		}
 		bootstrap := strings.TrimSpace(string(cliCall(t, t.Context(), []string{"--config", configuration, "publisher", "enroll", "--group", group, "--members=1", "--expires-in=1h", "--state-dir", person})))
 		ctx, cancel := context.WithCancel(t.Context())
 		f.command(t, ctx, cancel, []string{"--no-config", "publisher", "serve", "--group", group, "--project-key", applied.ProjectKey, "--instance", "one", "--enroll-key", bootstrap, "--server", f.url, "--state-dir", f.state(t, group)})
-	}
-	project, err := loadProjectConfiguration(t.Context(), cli{ConfigPath: configuration}, person)
-	if err != nil {
-		t.Fatal(err)
 	}
 	inspect, err := pgx.Connect(t.Context(), f.databaseURL)
 	if err != nil {
@@ -89,6 +85,14 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 	}
 	for _, name := range []string{"internal", "shell"} {
 		t.Run(name, func(t *testing.T) {
+			deployment := "production"
+			if name == "internal" {
+				deployment = "internal"
+			}
+			project, err := loadProjectConfiguration(t.Context(), cli{ConfigPath: configuration, Connect: connectCommand{Start: connectStartCommand{Deployment: deployment}}}, person)
+			if err != nil {
+				t.Fatal(err)
+			}
 			var service controlv1.Service
 			workflowWait(t, 30*time.Second, func() bool {
 				service, err = connector.Select(t.Context(), session.Authenticated().Control, project.Project, name, session.Identity().PersonalTeamId)
@@ -115,7 +119,9 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 			if err := os.WriteFile(known, []byte(endpoint.Hostname+" "+hostPublic+"\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			proxyArgs := []string{bin, "--no-telemetry", "--config", configuration, "connect", name, "--stdio", "--state-dir", person}
+			// both SSH and signal checks use this exact selected binding.
+			connectArgs := []string{"--no-telemetry", "--config", configuration, "connect", name, "--deployment", deployment, "--stdio", "--state-dir", person}
+			proxyArgs := append([]string{bin}, connectArgs...)
 			for i := range proxyArgs {
 				proxyArgs[i] = "'" + strings.ReplaceAll(proxyArgs[i], "'", "'\\''") + "'"
 			}
@@ -148,7 +154,7 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 				t.Run(signal.String(), func(t *testing.T) {
 					ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 					defer cancel()
-					command := exec.CommandContext(ctx, bin, "--no-telemetry", "--config", configuration, "connect", name, "--stdio", "--state-dir", person)
+					command := exec.CommandContext(ctx, bin, connectArgs...)
 					input, err := command.StdinPipe()
 					if err != nil {
 						t.Fatal(err)

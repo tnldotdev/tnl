@@ -1,0 +1,87 @@
+schemas:
+  DeploymentTargetTLS:
+    type: object
+    additionalProperties: false
+    description: Verified publisher-to-target TLS. CA is system (the default), aws-rds, or PEM-encoded CA certificates; never a path or URL. aws-rds selects only the supplied endpoint's regional roots offline and requires its hostname for verification. Reads return captured CA material, not a discovery credential.
+    properties:
+      ca: { type: string, maxLength: 1048576 }
+      hostname: { type: string, minLength: 1, maxLength: 253 }
+  DeploymentTarget:
+    type: object
+    additionalProperties: false
+    required: [address]
+    properties:
+      address:
+        type: string
+        minLength: 1
+        maxLength: 8192
+        description: Explicit host:port, or an HTTP origin for a declared HTTP service. Does not evaluate local configuration or discover cloud resources.
+      tls: { $ref: "../openapi.yaml#/components/schemas/DeploymentTargetTLS" }
+  DeploymentTargets:
+    type: object
+    minProperties: 1
+    maxProperties: 128
+    propertyNames: { type: string, pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$" }
+    additionalProperties: { $ref: "../openapi.yaml#/components/schemas/DeploymentTarget" }
+  DeploymentTargetStatus:
+    type: object
+    additionalProperties: false
+    description: One saved explicit address/TLS binding or a publisher-side discovery declaration saved by manager apply. Runtime mutations accept explicit addresses only and never evaluate these discovery declarations on control.
+    properties:
+      address: { type: string, minLength: 1, maxLength: 8192 }
+      tls: { $ref: "../openapi.yaml#/components/schemas/DeploymentTargetTLS" }
+      discovery: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetDiscovery" }
+  CreateDeploymentRequest:
+    type: object
+    additionalProperties: false
+    required: [name, targets]
+    properties:
+      name:
+        {
+          type: string,
+          pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$",
+          description: Project-unique name; local is reserved for client-side selection.,
+        }
+      targets: { $ref: "../openapi.yaml#/components/schemas/DeploymentTargets" }
+  UpdateDeploymentRequest:
+    type: object
+    additionalProperties: false
+    required: [targets]
+    properties:
+      targets: { $ref: "../openapi.yaml#/components/schemas/DeploymentTargets" }
+    description: Update addresses and TLS for selected existing bindings. Omitted services, visitor policy, hostname ownership, service names/protocols, and publisher authority remain unchanged. Does not add or remove bindings.
+  DeploymentService:
+    type: object
+    additionalProperties: false
+    required: [id, protocol, trust_revision]
+    properties:
+      id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+      trust_revision: { type: integer, format: int64, minimum: 1 }
+      endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
+  Deployment:
+    type: object
+    additionalProperties: false
+    required: [id, team_id, project_key, name, revision, targets, services]
+    properties:
+      id: { type: string }
+      team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
+      project_key: { type: string }
+      name: { type: string }
+      revision: { type: integer, format: int64, minimum: 1 }
+      targets:
+        type: object
+        additionalProperties: { $ref: "../openapi.yaml#/components/schemas/DeploymentTargetStatus" }
+      services:
+        type: object
+        additionalProperties: { $ref: "../openapi.yaml#/components/schemas/DeploymentService" }
+  DeploymentPage:
+    type: object
+    additionalProperties: false
+    required: [deployments]
+    properties:
+      deployments:
+        type: array
+        maxItems: 100
+        items: { $ref: "../openapi.yaml#/components/schemas/Deployment" }
+      next_cursor: { type: string }

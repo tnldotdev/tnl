@@ -2,147 +2,137 @@ import type { TnlConfig, TnlConfigInput, TnlConfigContext } from "./config.gen.j
 
 export type * from "./config.gen.js";
 
-type HTTPServiceNames<Config> = Config extends { readonly services: infer Services }
-  ? Extract<
-      {
-        [Name in keyof Services]: "protocol" extends keyof Services[Name]
-          ? Services[Name]["protocol"] extends "http" | undefined
-            ? Name
-            : never
-          : Name;
-      }[keyof Services],
-      string
-    >
-  : never;
-
-type ObjectReference<Names extends string> = { readonly service: Names };
-type LocalServiceNames<Config> = Config extends { readonly services: infer Services }
-  ? Extract<
-      {
-        [Name in keyof Services]: Services[Name] extends { readonly publisherGroup: infer Group }
-          ? Group extends "local"
-            ? Name
-            : never
-          : Name;
-      }[keyof Services],
-      string
-    >
-  : never;
-type LocalHTTPServiceNames<Config> = Extract<LocalServiceNames<Config>, HTTPServiceNames<Config>>;
-type NamedPublisherServiceNames<Config> = Config extends { readonly services: infer Services }
-  ? Exclude<Extract<keyof Services, string>, LocalServiceNames<Config>>
-  : never;
-type PublisherNames<Config> =
-  | "local"
-  | (Config extends { readonly publisherGroups: infer Groups }
-      ? Extract<keyof Groups, string>
-      : never);
-type PublisherReference<Config, Service> = Service extends { readonly publisherGroup: infer Group }
-  ? {
-      readonly publisherGroup: Group extends PublisherNames<Config> ? Group : never;
-    } & (Group extends "local"
+type Field<Value, Key extends PropertyKey, Fallback = never> = Key extends keyof Value
+  ? NonNullable<Value[Key]>
+  : Fallback;
+type Services<Config> = Field<Config, "services", {}>;
+type Deployments<Config> = Field<Config, "deployments", {}>;
+type Targets<Config, Deployment extends PropertyKey> = Field<
+  Field<Deployments<Config>, Deployment>,
+  "targets",
+  {}
+>;
+type HTTPNames<Config, Deployment extends PropertyKey> = Extract<
+  {
+    [Name in keyof Targets<Config, Deployment>]: Field<
+      Field<Services<Config>, Name>,
+      "protocol",
+      "http"
+    > extends "http"
+      ? Name
+      : never;
+  }[keyof Targets<Config, Deployment>],
+  string
+>;
+type PublicLocalHTTPNames<Config> = Extract<
+  {
+    [Name in keyof Targets<Config, "local">]: Targets<Config, "local">[Name] extends {
+      readonly publicURL: object;
+    }
+      ? Name
+      : never;
+  }[keyof Targets<Config, "local">],
+  HTTPNames<Config, "local">
+>;
+type Reference<Names extends string> = { readonly service: Names };
+type ProtocolTarget<Protocol> = Protocol extends "http"
+  ? { readonly type?: "app" | "address" | "compose" | "docker" }
+  : Protocol extends "kubernetes"
+    ?
+        | { readonly type: "eks" }
+        | { readonly type?: "address"; readonly address: string | number; readonly tls: object }
+    :
+        | { readonly type?: "address"; readonly address: string | number }
+        | { readonly type: "compose" | "docker" }
+        | (Protocol extends "postgres" | "mysql" ? { readonly type: "rds" } : never);
+type BindingReferences<
+  Config,
+  Deployment extends PropertyKey,
+  Name extends PropertyKey,
+  Binding,
+> = {
+  [Key in keyof Binding as Key extends "http" ? Key : never]: {
+    [HTTP in keyof Binding[Key]]: HTTP extends "paths"
+      ? {
+          [Prefix in keyof Binding[Key][HTTP]]: Binding[Key][HTTP][Prefix] extends string
+            ? Exclude<HTTPNames<Config, Deployment>, Name>
+            : Reference<Exclude<HTTPNames<Config, Deployment>, Name>>;
+        }
+      : Binding[Key][HTTP];
+  };
+} & ProtocolTarget<Field<Field<Services<Config>, Name>, "protocol", "http">> &
+  (Field<Field<Services<Config>, Name>, "protocol", "http"> extends "http"
+    ? Deployment extends "local"
       ? unknown
       : {
-          readonly target: { readonly type: "address" | "eks" | "rds" };
           readonly publicURL?: never;
-          readonly http?: {
-            readonly readiness?: never;
-            readonly paths?: never;
-            readonly open?: never;
-          };
-        })
-  : unknown;
-type PublicLocalHTTPServiceNames<Config> = Config extends { readonly services: infer Services }
-  ? Extract<
-      {
-        [Name in keyof Services]: Services[Name] extends { readonly publicURL: object }
-          ? Name
-          : never;
-      }[keyof Services],
-      LocalHTTPServiceNames<Config>
-    >
-  : never;
+          readonly http?: { readiness?: never; paths?: never; open?: never };
+        }
+    : { readonly publicURL?: never; readonly http?: never }) &
+  (Deployment extends "local"
+    ? unknown
+    : ({ readonly address: string | number } | { readonly type: "eks" | "rds" }) & {
+        readonly type?: "address" | "eks" | "rds";
+      });
 
-type TargetReferences<Config> = {
-  [Field in keyof Config as Field extends "workloads" ? Field : never]: {
-    [Name in keyof Config[Field]]: {
-      services: readonly NamedPublisherServiceNames<Config>[];
+type TargetReferences<Config> = { [Key in Exclude<keyof Config, keyof TnlConfig>]: never } & {
+  [Key in keyof Config as Key extends "services" ? Key : never]: {
+    [Name in keyof Config[Key]]: {
+      [Extra in Exclude<keyof Config[Key][Name], "protocol">]: never;
     };
   };
 } & {
-  [Field in keyof Config as Field extends "aliases" | "webhooks" ? Field : never]: {
-    [Name in keyof Config[Field]]: ObjectReference<PublicLocalHTTPServiceNames<Config>>;
-  };
-} & {
-  [Field in keyof Config as Field extends "services" ? Field : never]: {
-    [Name in keyof Config[Field]]: PublisherReference<Config, Config[Field][Name]> & {
-      [HTTP in keyof Config[Field][Name] as HTTP extends "http" ? HTTP : never]: {
-        [Paths in keyof Config[Field][Name][HTTP] as Paths extends "paths" ? Paths : never]: {
-          [
-            Prefix in keyof Config[Field][Name][HTTP][Paths]
-          ]: Config[Field][Name][HTTP][Paths][Prefix] extends string
-            ? Exclude<LocalHTTPServiceNames<Config>, Name>
-            : ObjectReference<Exclude<LocalHTTPServiceNames<Config>, Name>>;
-        };
-      };
+  [Key in keyof Config as Key extends "deployments" ? Key : never]: {
+    [Deployment in keyof Config[Key]]: {
+      [Property in keyof Config[Key][Deployment]]: Property extends "targets"
+        ? {
+            [Name in keyof Config[Key][Deployment][Property]]: Name extends keyof Services<Config>
+              ? BindingReferences<Config, Deployment, Name, Config[Key][Deployment][Property][Name]>
+              : never;
+          }
+        : Deployment extends "local"
+          ? never
+          : Property extends "description" | "domain" | "public"
+            ? Config[Key][Deployment][Property]
+            : never;
     };
   };
 } & {
-  [Field in keyof Config as Field extends "publisherGroups" ? Field : never]: {
-    [Name in keyof Config[Field]]: Name extends "local"
-      ? never
-      : {
-          [
-            Key in keyof Config[Field][Name] as Key extends "description" | "domain" | "public"
-              ? never
-              : Key
-          ]: never;
-        };
+  [Key in keyof Config as Key extends "workloads" ? Key : never]: {
+    [Name in keyof Config[Key]]: {
+      deployment: Exclude<keyof Deployments<Config>, "local">;
+      services: readonly Extract<
+        keyof Targets<Config, Field<Config[Key][Name], "deployment"> & PropertyKey>,
+        keyof Services<Config> & string
+      >[];
+    };
+  };
+} & {
+  [Key in keyof Config as Key extends "aliases" | "webhooks" ? Key : never]: {
+    [Name in keyof Config[Key]]: Reference<PublicLocalHTTPNames<Config>>;
   };
 };
 
-type Service = NonNullable<NonNullable<TnlConfig["services"]>[string]>;
-export type TnlServiceConfig = Service;
-export type TnlServiceTarget = NonNullable<Service["target"]>;
-export type TnlProtocol = NonNullable<Service["protocol"]>;
+export type TnlServiceConfig = NonNullable<NonNullable<TnlConfig["services"]>[string]>;
+type Deployment = NonNullable<NonNullable<TnlConfig["deployments"]>[string]>;
+export type TnlServiceTarget = NonNullable<NonNullable<Deployment["targets"]>[string]>;
+export type TnlProtocol = NonNullable<TnlServiceConfig["protocol"]>;
 type Alias = NonNullable<NonNullable<TnlConfig["aliases"]>[string]>;
 type Webhook = NonNullable<NonNullable<TnlConfig["webhooks"]>[string]>;
 type WorkloadForNames<Policy, Names extends string> = Policy extends unknown
   ? Omit<Policy, "services"> & { services: NoInfer<Names>[] }
   : never;
-type MemberHTTP<Member> = Member extends { http?: infer HTTP } ? NonNullable<HTTP> : never;
-type MemberPaths<Member, Names extends string, Name extends Names> =
-  MemberHTTP<Member> extends { paths?: infer Paths }
-    ? [NonNullable<Paths>] extends [never]
-      ? never
-      : Record<
-          string,
-          | Exclude<NoInfer<Names>, Name>
-          | { service: Exclude<NoInfer<Names>, Name>; stripPrefix?: boolean }
-        >
-    : never;
-type ServiceForNames<Names extends string, Name extends Names, Member = Service> = Member extends {
-  protocol?: "http";
-}
-  ? Omit<Member, "http"> & {
-      http?: Omit<MemberHTTP<Member>, "paths"> & {
-        paths?: MemberPaths<Member, Names, Name>;
-      };
-    }
-  : Member;
 
-/**
- * project configuration whose service references are restricted to Names.
- * the generated TnlConfig describes the file shape, so its service fields are
- * strings; use defineConfig to infer Names from the configured service keys.
- */
+/** use stable service keys when a factory cannot infer them from a literal. */
 export type TnlConfigForServices<Names extends string> = Omit<
   TnlConfig,
-  "services" | "aliases" | "webhooks" | "workloads"
+  "services" | "deployments" | "aliases" | "webhooks" | "workloads"
 > & {
-  services?: {
-    [Name in Names]: ServiceForNames<Names, Name>;
-  };
+  services?: { [Name in Names]: TnlServiceConfig };
+  deployments?: Record<
+    string,
+    Omit<Deployment, "targets"> & { targets?: Partial<Record<NoInfer<Names>, TnlServiceTarget>> }
+  >;
   aliases?: Record<string, Omit<Alias, "service"> & { service: NoInfer<Names> }>;
   webhooks?: Record<
     string,
@@ -154,16 +144,14 @@ export type TnlConfigForServices<Names extends string> = Omit<
   >;
 };
 
-/** infer config literals and check HTTP references. */
-// check factories after inferring their const return. intersecting the return
-// with its reference constraints widens async discriminants before inference.
-// keep this overload first so zero-argument factories receive the same context.
+/** infer declarations and check references within each captured deployment. */
 export function defineConfig<const Config extends TnlConfig>(
   config: ((context: TnlConfigContext) => Config | Promise<Config>) &
     NoInfer<[Config] extends [TargetReferences<Config>] ? unknown : never>,
 ): (context: TnlConfigContext) => Config | Promise<Config>;
 export function defineConfig<const Config extends TnlConfig>(
-  config: Config & NoInfer<TargetReferences<Config>>,
+  // factories must use the return-shape overload, not infer an empty object.
+  config: Config & NoInfer<TargetReferences<Config>> & { readonly call?: never },
 ): Config;
 export function defineConfig(config: TnlConfigInput): TnlConfigInput {
   return config;

@@ -58,10 +58,6 @@ func (d *Database) GetProjectStatus(ctx context.Context, team, project, actor, c
 	if err != nil {
 		return result, err
 	}
-	c, err := d.openAppliedProject(projectRow)
-	if err != nil {
-		return result, err
-	}
 	rows, err := q.ListProjectPublications(ctx, controlstatedb.ListProjectPublicationsParams{TeamID: team, ProjectKey: project, AfterKey: after})
 	if err != nil {
 		return result, err
@@ -73,7 +69,7 @@ func (d *Database) GetProjectStatus(ctx context.Context, team, project, actor, c
 			result.NextCursor = encodeDiscoveryCursor(discoveryCursor{Kind: kind, Team: team, Actor: actor, After: rows[i-1].CursorKey})
 			break
 		}
-		publication := ProjectPublicationStatus{Service: row.Service, PublisherGroup: c.Services[row.Service].PublisherGroup, Kind: "local", WorktreeKey: row.WorktreeKey, ServiceID: row.ServiceID.String, PublicURLID: row.PublicURLID.String, Hostname: row.Hostname, Port: int(row.Port), RunNumber: row.RunNumber, PublicationState: row.PublicationState, PublisherExpiresAt: optionalTime(row.PublisherExpiresAt), CertificateExpiresAt: optionalTime(row.CertificateExpiresAt)}
+		publication := ProjectPublicationStatus{Service: row.Service, PublisherGroup: row.Deployment, Kind: "local", WorktreeKey: row.WorktreeKey, ServiceID: row.ServiceID.String, PublicURLID: row.PublicURLID.String, Hostname: row.Hostname, Port: int(row.Port), RunNumber: row.RunNumber, PublicationState: row.PublicationState, PublisherExpiresAt: optionalTime(row.PublisherExpiresAt), CertificateExpiresAt: optionalTime(row.CertificateExpiresAt)}
 		if row.ServiceID.Valid {
 			publication.Kind, publication.ServiceRunID = "service", row.RunID
 			if row.RunID != "" {

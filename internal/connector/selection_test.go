@@ -27,7 +27,7 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 	alias, group := "database", "production"
 	project := projectConfiguration{Project: clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")}, Worktree: clientproject.Worktree{Root: root, IsGit: true}, Config: config.TNL{Services: config.Services{
 		"orders": {Name: &alias, Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://do-not-evaluate.internal"))}},
-		"remote": {Name: &group, PublisherGroup: &group},
+		"remote": {Name: &group},
 	}}}}
 	source, err := project.SourceIdentity(t.Context())
 	if err != nil {
@@ -64,7 +64,7 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 				switch r.URL.Path {
 				case "/v1/projects/" + source.Key + "/services/remote":
 					remoteLookup++
-					if r.URL.Query().Get("source_fingerprint") != source.Fingerprint || r.URL.Query().Get("team_id") != test.team || len(r.URL.Query()) != 2 {
+					if r.URL.Query().Get("source_fingerprint") != source.Fingerprint || r.URL.Query().Get("team_id") != test.team || r.URL.Query().Get("deployment") != "production" || len(r.URL.Query()) != 3 {
 						t.Errorf("applied lookup scope = %s", r.URL)
 					}
 					if test.status != 0 {
@@ -112,6 +112,12 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 				t.Fatal(err)
 			}
 			selectedProject := project
+			if test.name == "remote" || test.name == group {
+				selectedProject.Config.Deployment = group
+				selectedProject.Config.Services = config.Services{"remote": project.Config.Services["remote"]}
+			} else {
+				selectedProject.Config.Services = config.Services{"orders": project.Config.Services["orders"]}
+			}
 			if test.noConfig {
 				selectedProject = projectConfiguration{}
 			}
@@ -152,8 +158,8 @@ func TestConnectConfiguredNameCollisionIsRejected(t *testing.T) {
 	if _, err := ConfiguredService(project.Project, name); err == nil {
 		t.Fatal("public service key fell back to another project's friendly name")
 	}
-	group := "production"
-	project.Config.Services["orders"] = config.Service{PublisherGroup: &group, Tunnel: &config.Tunnel{}}
+	project.Config.Deployment = "production"
+	project.Config.Services["orders"] = config.Service{Tunnel: &config.Tunnel{}}
 	if selected, err := ConfiguredService(project.Project, name); err != nil || selected != name {
 		t.Fatal("named service HTTP policy was mistaken for a public URL", err)
 	}

@@ -88,7 +88,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			configuration := controlstate.ProjectConfiguration{PublisherGroups: map[string]controlstate.ProjectPublisherGroup{"production": {}}, Services: map[string]controlstate.ProjectServiceConfiguration{"inventory": {PublisherGroup: "production", Target: "inventory.internal:3000"}, "models": {PublisherGroup: "production", Protocol: "postgres", Target: "models.internal:5432"}}, Workloads: map[string]controlstate.ProjectWorkload{"storefront": {Provider: provider, Trust: trust, Services: []string{"inventory", "models"}, MaxDurationSeconds: 3600}}}
+			configuration := controlstate.ProjectConfiguration{Settings: &controlstate.DeploymentSettings{}, Services: map[string]controlstate.ProjectServiceConfiguration{"inventory": {Target: "inventory.internal:3000"}, "models": {Protocol: "postgres", Target: "models.internal:5432"}}, Workloads: map[string]controlstate.ProjectWorkload{"storefront": {Provider: provider, Trust: trust, Services: []string{"inventory", "models"}, MaxDurationSeconds: 3600}}}
 			if provider == "google" {
 				p := configuration.Workloads["storefront"]
 				p.Google = &controlstate.ProjectWorkloadGoogle{ServiceAccount: "orders@project.iam.gserviceaccount.com"}
@@ -104,12 +104,15 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 				p.GitLab = &controlstate.ProjectWorkloadGitLab{Server: "https://gitlab.example", Project: "shop/storefront", ProjectId: "123", NamespaceId: "456", DefaultBranch: new("trunk")}
 				configuration.Workloads["storefront"] = p
 			}
+			policy := configuration.Workloads["storefront"]
+			policy.Deployment = "production"
+			configuration.Workloads["storefront"] = policy
 			data, _ := json.Marshal(configuration)
 			var wire controlv1.ProjectConfiguration
 			if err = json.Unmarshal(data, &wire); err != nil {
 				t.Fatal(err)
 			}
-			body := controlv1.ApplyProjectConfigurationRequest{TeamId: team, Source: &testProjectSource, Configuration: wire}
+			body := controlv1.ApplyProjectConfigurationRequest{Deployment: "production", ServiceDeclarations: controlv1.ProjectServiceDeclarations{"inventory": "http", "models": "postgres"}, TeamId: team, Source: &testProjectSource, Configuration: wire}
 			applied, err := owner.ApplyProjectConfiguration(ctx, "store", body)
 			if err != nil {
 				t.Fatal(err)

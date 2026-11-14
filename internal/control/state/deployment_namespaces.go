@@ -13,35 +13,34 @@ import (
 
 // domain defaults are captured once. changing the team's default cannot rename
 // an existing endpoint or move certificate authority to another domain.
-func resolveManagedGroupDomains(ctx context.Context, tx pgx.Tx, team, project string, c ProjectConfiguration) (ProjectConfiguration, error) {
+func resolveDeploymentDomain(ctx context.Context, tx pgx.Tx, team, project, name string, c ProjectConfiguration) (ProjectConfiguration, error) {
+	if c.Settings == nil {
+		return c, nil
+	}
 	q := controlstatedb.New(tx)
-	for _, name := range sortedProjectKeys(c.PublisherGroups) {
-		group := c.PublisherGroups[name]
-		if group.DomainID == "" {
-			if err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT domain_id FROM control.project_publisher_groups WHERE team_id=$1 AND project_key=$2 AND name=$3 AND deleted_at IS NULL),default_domain_id) FROM control.teams WHERE id=$1 AND deleted_at IS NULL`, team, project, name).Scan(&group.DomainID); err != nil {
-				return c, publisherLookupError(err, ErrProjectConfigurationInvalid)
-			}
-		}
-		if _, err := q.GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: group.DomainID, TeamID: text(team)}); err != nil {
+	if c.Settings.DomainID == "" {
+		if err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT domain_id FROM control.project_publisher_groups WHERE team_id=$1 AND project_key=$2 AND name=$3 AND deleted_at IS NULL),default_domain_id) FROM control.teams WHERE id=$1 AND deleted_at IS NULL`, team, project, name).Scan(&c.Settings.DomainID); err != nil {
 			return c, publisherLookupError(err, ErrProjectConfigurationInvalid)
 		}
-		c.PublisherGroups[name] = group
+	}
+	if _, err := q.GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: c.Settings.DomainID, TeamID: text(team)}); err != nil {
+		return c, publisherLookupError(err, ErrProjectConfigurationInvalid)
 	}
 	return c, nil
 }
 
-func (d *Database) ensureGroupNamespace(ctx context.Context, tx pgx.Tx, r ApplyProjectConfigurationRequest, groupID, name string, group ProjectPublisherGroup, namespaceLabel ...string) error {
+func (d *Database) ensureDeploymentNamespace(ctx context.Context, tx pgx.Tx, r ApplyProjectConfigurationRequest, deploymentID, name string, settings DeploymentSettings, namespaceLabel string) error {
 	var namespace, domainID, projectLabel string
-	if err := tx.QueryRow(ctx, `SELECT g.namespace,COALESCE(g.domain_id,''),p.project_label FROM control.project_publisher_groups g JOIN control.applied_projects p USING(team_id,project_key) WHERE g.id=$1 FOR UPDATE OF g`, groupID).Scan(&namespace, &domainID, &projectLabel); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT g.namespace,COALESCE(g.domain_id,''),p.project_label FROM control.project_publisher_groups g JOIN control.applied_projects p USING(team_id,project_key) WHERE g.id=$1 FOR UPDATE OF g`, deploymentID).Scan(&namespace, &domainID, &projectLabel); err != nil {
 		return err
 	}
 	if namespace != "" {
-		if domainID != group.DomainID {
+		if domainID != settings.DomainID {
 			return ErrProjectManaged
 		}
 	} else {
 		q := controlstatedb.New(tx)
-		domain, err := q.GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: group.DomainID, TeamID: text(r.TeamID)})
+		domain, err := q.GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: settings.DomainID, TeamID: text(r.TeamID)})
 		if err != nil {
 			return publisherLookupError(err, ErrProjectConfigurationInvalid)
 		}
@@ -56,11 +55,7 @@ func (d *Database) ensureGroupNamespace(ctx context.Context, tx pgx.Tx, r ApplyP
 			}
 			owner = label + "." + owner
 		}
-		namespaceName := name
-		if len(namespaceLabel) != 0 {
-			namespaceName = namespaceLabel[0]
-		}
-		namespace, err = naming.GroupNamespace(namespaceName, projectLabel, owner)
+		namespace, err = naming.DeploymentNamespace(namespaceLabel, projectLabel, owner)
 		if err != nil {
 			return ErrProjectConfigurationInvalid
 		}
@@ -78,7 +73,7 @@ func (d *Database) ensureGroupNamespace(ctx context.Context, tx pgx.Tx, r ApplyP
 		    ON CONFLICT(namespace) DO UPDATE SET group_id=EXCLUDED.group_id,domain_id=EXCLUDED.domain_id,created_at=EXCLUDED.created_at,retired_at=NULL,reusable_after=NULL
 		    WHERE control.service_namespace_claims.group_id=EXCLUDED.group_id AND control.service_namespace_claims.retired_at IS NULL
 		      OR control.service_namespace_reusable(control.service_namespace_claims.namespace,$4)
-		    RETURNING namespace`, namespace, groupID, group.DomainID, r.Now).Scan(&claimed)
+		    RETURNING namespace`, namespace, deploymentID, settings.DomainID, r.Now).Scan(&claimed)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrServiceConflict
 		}
@@ -86,17 +81,17 @@ func (d *Database) ensureGroupNamespace(ctx context.Context, tx pgx.Tx, r ApplyP
 			return err
 		}
 	}
-	_, err := tx.Exec(ctx, `UPDATE control.project_publisher_groups SET namespace=$2,domain_id=$3,public=$4 WHERE id=$1`, groupID, namespace, group.DomainID, group.Public)
+	_, err := tx.Exec(ctx, `UPDATE control.project_publisher_groups SET namespace=$2,domain_id=$3,public=$4 WHERE id=$1`, deploymentID, namespace, settings.DomainID, settings.Public)
 	if err != nil {
 		return err
 	}
-	return claimPublisherGroupName(ctx, tx, r.TeamID, r.ProjectKey, name, groupID, r.Now)
+	return claimDeploymentName(ctx, tx, r.TeamID, r.ProjectKey, name, deploymentID, r.Now)
 }
 
-func claimPublisherGroupName(ctx context.Context, tx pgx.Tx, team, project, name, group string, now time.Time) error {
+func claimDeploymentName(ctx context.Context, tx pgx.Tx, team, project, name, deploymentID string, now time.Time) error {
 	var owner string
 	err := tx.QueryRow(ctx, `INSERT INTO control.publisher_group_names(team_id,project_key,name,group_id) VALUES($1,$2,$3,$4) ON CONFLICT(team_id,project_key,name) DO UPDATE SET group_id=EXCLUDED.group_id
-	    WHERE control.publisher_group_names.group_id=EXCLUDED.group_id RETURNING group_id`, team, project, name, group).Scan(&owner)
+	    WHERE control.publisher_group_names.group_id=EXCLUDED.group_id RETURNING group_id`, team, project, name, deploymentID).Scan(&owner)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrServiceConflict
 	}

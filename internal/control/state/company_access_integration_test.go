@@ -571,7 +571,8 @@ func TestIntegrationCompanyOffboardingClosesMemberPublicAndServiceRuns(t *testin
 	}
 	memberPrivate, memberPrivateKey := servicePublisher("member")
 	teamPrivate, teamPrivateKey := servicePublisher("team")
-	groupRequest := ApplyProjectConfigurationRequest{TeamID: team, ActorID: f.member.IdentityID, ProjectKey: "company-publishers", SourceFingerprint: strings.Repeat("a", 64), Configuration: ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"group-database": {PublisherGroup: "production", Protocol: "postgres", Target: "localhost:5432"}}}, Now: now}
+	groupRequest := ApplyProjectConfigurationRequest{TeamID: team, ActorID: f.member.IdentityID, ProjectKey: "company-publishers", SourceFingerprint: strings.Repeat("a", 64), Configuration: ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"group-database": {Protocol: "postgres", Target: "localhost:5432"}}}, Now: now}
+	groupRequest = selectedProjectRequest(groupRequest, "production")
 	if _, err = d.ApplyProjectConfiguration(t.Context(), groupRequest); err != nil {
 		t.Fatal(err)
 	}
