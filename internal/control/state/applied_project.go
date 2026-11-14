@@ -75,6 +75,7 @@ type ProjectServiceConfiguration struct {
 	Protocol        string                   `json:"protocol,omitempty"`
 	Target          string                   `json:"target"`
 	PublicURL       *ProjectServicePublicURL `json:"public_url,omitempty"`
+	Public          *bool                    `json:"public,omitempty"`
 	TargetTLS       *ProjectTargetTLS        `json:"target_tls,omitempty"`
 	Access          *ProjectServiceAccess    `json:"access,omitempty"`
 	HTTP            *config.HTTPService      `json:"http,omitempty"`
@@ -497,7 +498,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 				return result, err
 			}
 			delete(saved, s.Service)
-		} else if !reflect.DeepEqual(previous, declared) {
+		} else if !sameAppliedPublication(previous, declared) {
 			if err = d.revokeAppliedServicePublishers(ctx, tx, q, s, r.Now); err != nil {
 				return result, err
 			}
@@ -510,7 +511,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		if entry.DeploymentID.Valid {
 			previous = serving[key]
 		}
-		changed := !found || !reflect.DeepEqual(previous, s)
+		changed := !found || !sameAppliedPublication(previous, s)
 		if !found {
 			entry = controlstatedb.ControlAppliedProjectService{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Service: key}
 			if r.Deployment != "local" {
@@ -560,7 +561,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			return result, err
 		}
 		if entry.ServiceID.Valid && entry.DeploymentID.Valid {
-			if err = d.ensureServiceEndpoint(ctx, tx, entry.ServiceID.String, entry.DeploymentID.String, r.DNSAutomation, r.Now); err != nil {
+			if err = d.ensureServiceEndpoint(ctx, tx, entry.ServiceID.String, entry.DeploymentID.String, projectServicePublic(c.Settings, s), r.DNSAutomation, r.Now); err != nil {
 				return result, err
 			}
 		}

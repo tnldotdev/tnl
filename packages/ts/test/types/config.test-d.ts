@@ -51,6 +51,27 @@ test("deployments select declared bindings and reject infrastructure settings", 
   defineConfig({ deployments: { production: { aws: {} } } });
 });
 
+test("saved services select exposure independently of protocol and placement", () => {
+  const project = defineConfig({
+    services: { api: {}, db: { protocol: "postgres" } },
+    deployments: {
+      production: {
+        targets: {
+          api: { address: "http://app.internal:3000", public: true },
+          db: { address: "db.internal:5432", public: false },
+        },
+      },
+    },
+  });
+  expectTypeOf(project.deployments.production.targets.api.public).toEqualTypeOf<true>();
+  expectTypeOf(project.deployments.production.targets.db.public).toEqualTypeOf<false>();
+  // @ts-expect-error app-owned exposure has not switched to the service endpoint lifecycle yet.
+  defineConfig({
+    services: { app: {} },
+    deployments: { local: { targets: { app: { public: true } } } },
+  });
+});
+
 const config = defineConfig({
   inspection: { mode: "summary", retention: "24h", maxBytes: "64MiB" },
   publicURL: {
