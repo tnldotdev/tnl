@@ -47,6 +47,7 @@ type Querier interface {
 	ClaimACMEOrderWork(ctx context.Context, arg ClaimACMEOrderWorkParams) (ControlAcmeOrder, error)
 	ClaimDNSAuthorityWork(ctx context.Context, arg ClaimDNSAuthorityWorkParams) (ControlDnsAuthority, error)
 	ClaimDNSPublicURLWork(ctx context.Context, arg ClaimDNSPublicURLWorkParams) (ControlPublicUrl, error)
+	ClaimHTTPChallenge(ctx context.Context, arg ClaimHTTPChallengeParams) (ControlHttpChallenge, error)
 	ClaimInvitationEmail(ctx context.Context, arg ClaimInvitationEmailParams) (ControlTeamInvitationEmailDelivery, error)
 	ClaimPublisherAssertion(ctx context.Context, arg ClaimPublisherAssertionParams) (int64, error)
 	// require the exact publish run, assignment revision, and relay service. only
@@ -85,6 +86,7 @@ type Querier interface {
 	CompanySessionRefreshValid(ctx context.Context, arg CompanySessionRefreshValidParams) (pgtype.Bool, error)
 	CompanySubjectDeadline(ctx context.Context, arg CompanySubjectDeadlineParams) (pgtype.Timestamptz, error)
 	CompanySubjectSessionAuthorized(ctx context.Context, arg CompanySubjectSessionAuthorizedParams) (bool, error)
+	CompleteHTTPChallenge(ctx context.Context, arg CompleteHTTPChallengeParams) (int64, error)
 	// only a checked publisher report can advance this startup barrier. a retry
 	// retains a newer report, capped by the currently checked delivery authority.
 	ConfirmConnectorPeerPairPrepared(ctx context.Context, arg ConfirmConnectorPeerPairPreparedParams) (int64, error)
@@ -100,6 +102,7 @@ type Querier interface {
 	CountActiveSharesForPublicURL(ctx context.Context, arg CountActiveSharesForPublicURLParams) (int64, error)
 	CountConnectorPeerPairOwners(ctx context.Context, arg CountConnectorPeerPairOwnersParams) (int64, error)
 	CountGuestCurrentPublicURLs(ctx context.Context, guestID string) (int64, error)
+	CountHTTPChallenges(ctx context.Context, arg CountHTTPChallengesParams) (int64, error)
 	CountHTTPTemporaryBlocks(ctx context.Context, arg CountHTTPTemporaryBlocksParams) (int64, error)
 	// diagnostic/test oracle only; placement reads trigger-maintained totals.
 	CountOpenPublishRunAssignmentsByRelayService(ctx context.Context) ([]CountOpenPublishRunAssignmentsByRelayServiceRow, error)
@@ -112,6 +115,7 @@ type Querier interface {
 	CreateCustomDomain(ctx context.Context, arg CreateCustomDomainParams) (ControlDomain, error)
 	CreateFeedbackThread(ctx context.Context, arg CreateFeedbackThreadParams) (ControlFeedbackThread, error)
 	CreateGuestShare(ctx context.Context, arg CreateGuestShareParams) (ControlShare, error)
+	CreateHTTPChallenge(ctx context.Context, arg CreateHTTPChallengeParams) (ControlHttpChallenge, error)
 	CreateInvitationEmail(ctx context.Context, arg CreateInvitationEmailParams) error
 	CreateManagedDomain(ctx context.Context, arg CreateManagedDomainParams) error
 	CreateOIDCIdentity(ctx context.Context, arg CreateOIDCIdentityParams) (ControlIdentity, error)
@@ -200,6 +204,7 @@ type Querier interface {
 	GetFeedbackThread(ctx context.Context, id string) (ControlFeedbackThread, error)
 	GetGuestTrialByCredentialID(ctx context.Context, credentialID pgtype.Text) (ControlGuestTrial, error)
 	GetGuestTrialByID(ctx context.Context, id string) (ControlGuestTrial, error)
+	GetHTTPChallenge(ctx context.Context, id string) (ControlHttpChallenge, error)
 	GetIdentityContextIdentity(ctx context.Context, identityID string) (GetIdentityContextIdentityRow, error)
 	GetIdentityPublicURL(ctx context.Context, arg GetIdentityPublicURLParams) (GetIdentityPublicURLRow, error)
 	GetIdentityTeam(ctx context.Context, arg GetIdentityTeamParams) (GetIdentityTeamRow, error)
@@ -494,7 +499,9 @@ type Querier interface {
 	// a retry with the same idempotency key returns the same prepared row.
 	PrepareServiceRun(ctx context.Context, arg PrepareServiceRunParams) (ControlServiceRun, error)
 	PreviewInvitation(ctx context.Context, arg PreviewInvitationParams) (PreviewInvitationRow, error)
+	PruneHTTPChallenges(ctx context.Context, now pgtype.Timestamptz) error
 	PruneHTTPResourceBlocks(ctx context.Context, arg PruneHTTPResourceBlocksParams) error
+	PruneHTTPResourceChallenges(ctx context.Context, arg PruneHTTPResourceChallengesParams) error
 	PruneHTTPTemporaryBlocks(ctx context.Context, before pgtype.Timestamptz) error
 	// bound candidates scanned, even when an anchor cannot be removed. retain the
 	// latest hostname/category projection, including tombstones and expired rows,
@@ -527,6 +534,7 @@ type Querier interface {
 	ReadyServiceRun(ctx context.Context, arg ReadyServiceRunParams) (ControlServiceRun, error)
 	RecentGuestTrialStats(ctx context.Context, since pgtype.Timestamptz) (RecentGuestTrialStatsRow, error)
 	RecordFeedbackActivity(ctx context.Context, arg RecordFeedbackActivityParams) error
+	RedeemHTTPChallenge(ctx context.Context, arg RedeemHTTPChallengeParams) (ControlHttpChallenge, error)
 	RedeemPublisherEnrollment(ctx context.Context, arg RedeemPublisherEnrollmentParams) error
 	RedeemServiceHTTPBrowserSession(ctx context.Context, arg RedeemServiceHTTPBrowserSessionParams) (RedeemServiceHTTPBrowserSessionRow, error)
 	RegisterIngress(ctx context.Context, arg RegisterIngressParams) (ControlIngressLease, error)

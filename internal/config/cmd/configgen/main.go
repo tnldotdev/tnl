@@ -73,6 +73,8 @@ func repositoryRoot() (string, error) {
 
 func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 	switch valueType {
+	case reflect.TypeOf(httpprotection.Challenge("")):
+		return &jsonschema.Schema{OneOf: []*jsonschema.Schema{{Type: "string", Const: "turnstile"}, {Type: "boolean", Const: false}}}
 	case reflect.TypeOf(config.Target("")):
 		return &jsonschema.Schema{OneOf: []*jsonschema.Schema{
 			{Type: "string", MinLength: integerPointer(1)},
@@ -241,7 +243,7 @@ func serviceSchema(protocol string) *jsonschema.Schema {
 	properties.Set("target", target)
 	properties.Set("tls", jsonschema.FalseSchema)
 	httpProperties := jsonschema.NewProperties()
-	httpProperties.Set("protection", (&jsonschema.Reflector{Anonymous: true, ExpandedStruct: true, DoNotReference: true, RequiredFromJSONSchemaTags: true}).Reflect(httpprotection.Settings{}))
+	httpProperties.Set("protection", (&jsonschema.Reflector{Anonymous: true, ExpandedStruct: true, DoNotReference: true, RequiredFromJSONSchemaTags: true, Mapper: schemaForType}).Reflect(httpprotection.Settings{}))
 	httpProperties.Set("access", accessSchema("restricted"))
 	httpLimits, _ := limits.Properties.Get("http")
 	httpProperties.Set("limits", httpLimits)

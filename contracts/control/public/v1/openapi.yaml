@@ -55,6 +55,12 @@ tags:
   - name: service-audit
     description: Read the team's bounded service access and lifecycle audit history.
 paths:
+  /v1/browser/challenge/start:
+    $ref: "./paths/http-challenges.yaml#/paths/~1v1~1browser~1challenge~1start"
+  /v1/browser/challenge/{attempt_id}:
+    $ref: "./paths/http-challenges.yaml#/paths/~1v1~1browser~1challenge~1{attempt_id}"
+  /v1/http-protection/challenge-handoffs:
+    $ref: "./paths/http-challenges.yaml#/paths/~1v1~1http-protection~1challenge-handoffs"
   /v1/http-protection/rejections:
     $ref: "./paths/http-protection.yaml#/paths/~1v1~1http-protection~1rejections"
   /v1/projects/{project_key}/retire:
@@ -484,6 +490,10 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/ProjectServiceHTTP"
     HTTPProtection:
       $ref: "./schemas/projects.yaml#/schemas/HTTPProtection"
+    RedeemHTTPChallengeRequest:
+      $ref: "./schemas/http-protection.yaml#/schemas/RedeemHTTPChallengeRequest"
+    HTTPChallengeClearance:
+      $ref: "./schemas/http-protection.yaml#/schemas/HTTPChallengeClearance"
     HTTPTemporaryBlock:
       $ref: "./schemas/http-protection.yaml#/schemas/HTTPTemporaryBlock"
     HTTPProtectionRejections:

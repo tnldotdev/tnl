@@ -87,6 +87,7 @@ schemas:
         custom_domains_enabled,
         dns_automation,
         guest_demo,
+        turnstile,
         authentication,
       ]
     properties:
@@ -108,6 +109,9 @@ schemas:
       guest_demo:
         type: boolean
         description: Whether this server accepts limited anonymous demo publishers.
+      turnstile:
+        type: boolean
+        description: Whether control has both keys configured for control-served Turnstile challenges. Provider outages do not change this capability.
       browser_login_available:
         type: boolean
         description: Whether visitors can sign in through a browser OIDC client.

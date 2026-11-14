@@ -20,27 +20,33 @@ type httpProtectionStore interface {
 // database access; they cannot queue behind cluster lease work.
 var httpProtectionReports = make(chan struct{}, 4)
 
-func (h *handler) ReportHTTPProtectionRejections(w http.ResponseWriter, r *http.Request) {
+func admitHTTPProtection(w http.ResponseWriter, r *http.Request) (context.Context, func(), bool) {
 	w.Header().Set("Cache-Control", "no-store")
-	call, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-	defer cancel()
 	select {
 	case httpProtectionReports <- struct{}{}:
-		defer func() { <-httpProtectionReports }()
 	default:
 		w.Header().Set("Retry-After", "1")
-		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "HTTP protection reporting is busy")
+		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "HTTP protection preparation is busy")
+		return nil, nil, false
+	}
+	call, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	deadline, _ := call.Deadline()
+	controller := http.NewResponseController(w)
+	_ = controller.SetReadDeadline(deadline)
+	return call, func() { cancel(); _ = controller.SetReadDeadline(time.Time{}); <-httpProtectionReports }, true
+}
+
+func (h *handler) ReportHTTPProtectionRejections(w http.ResponseWriter, r *http.Request) {
+	call, finish, ok := admitHTTPProtection(w, r)
+	if !ok {
 		return
 	}
+	defer finish()
 	credential, ok := requestBearerToken(r)
 	if !ok {
 		writeBearerProblem(w)
 		return
 	}
-	deadline, _ := call.Deadline()
-	controller := http.NewResponseController(w)
-	_ = controller.SetReadDeadline(deadline)
-	defer controller.SetReadDeadline(time.Time{})
 	var body controlv1.ReportHTTPProtectionRejectionsRequest
 	now := time.Now()
 	if decodeJSONLimited(w, r, &body, 8192) != nil || body.RunId == "" || len(body.RunId) > 64 || body.RunNumber < 1 || body.Evidence.Validate(now) != nil {

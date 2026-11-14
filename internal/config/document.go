@@ -109,7 +109,7 @@ type TargetTLS struct {
 }
 
 type HTTPService struct {
-	Protection *httpprotection.Settings `json:"protection,omitempty" yaml:"protection,omitempty" jsonschema_description:"Managed request inspection. Omitted settings block with OWASP CRS; authorization is unchanged."`
+	Protection *httpprotection.Settings `json:"protection,omitempty" yaml:"protection,omitempty" jsonschema_description:"Managed request inspection with optional source blocks and browser challenges. Omitted settings block with OWASP CRS; authorization is unchanged."`
 	Access     *Access                  `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"Restricted visitor access for a named publisher group. IP rules narrow access; group configuration owns reachability."`
 	Limits     *WorkLimits              `json:"limits,omitempty" yaml:"limits,omitempty" jsonschema_description:"HTTP request limits for a named publisher group."`
 	Readiness  *Readiness               `json:"readiness,omitempty" yaml:"readiness,omitempty" jsonschema_description:"Readiness probe for a local HTTP service. Remote publisher assignments do not support readiness overrides."`

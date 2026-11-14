@@ -8,6 +8,22 @@ import {
 } from "@tnldotdev/tnl/config";
 import { assert, assertType, expectTypeOf, test } from "vitest";
 
+test("HTTP challenges are explicit and independent of WAF mode", () => {
+  const challenged = defineConfig({
+    services: {
+      web: { publicURL: {}, http: { protection: { waf: "off", challenge: "turnstile" } } },
+    },
+  });
+  expectTypeOf(challenged.services.web.http.protection.challenge).toEqualTypeOf<"turnstile">();
+  defineConfig({
+    services: { web: { publicURL: {}, http: { protection: { challenge: false } } } },
+  });
+  // @ts-expect-error true is not an available challenge policy.
+  defineConfig({ services: { web: { http: { protection: { challenge: true } } } } });
+  // @ts-expect-error use false, not an alternate provider or "off".
+  defineConfig({ services: { web: { http: { protection: { challenge: "off" } } } } });
+});
+
 export const grouped = defineConfig({
   publisherGroups: { cloud: { description: "database publisher" } },
   services: {

@@ -125,6 +125,11 @@ without changing baseline identity `v1`. Stop the server roles, run `tnld migrat
 against the direct database URL, then restart matching server binaries together.
 Old server binaries reject the new schema; do not overlap the two versions.
 
+The optional HTTP challenge migration advances the server schema to version `3`
+and retains baseline identity `v1`. Use the same coordinated stop, direct-URL
+migration, and matching-binary restart. Turnstile stays unconfigured unless the
+operator supplies both control keys; ordinary local and staging stacks need none.
+
 The client telemetry baseline also requires a fresh client state directory. Use
 `TNL_STATE_DIR` to select a new directory and sign in again; do not copy an older
 `v1.db` or its publisher credentials into it.

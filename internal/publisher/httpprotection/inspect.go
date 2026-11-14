@@ -323,6 +323,17 @@ func interruptionStatus(i *types.Interruption) int {
 	return http.StatusForbidden
 }
 
+// source blocks also apply before reserved challenge preparation.
+func (p *Inspector) AllowSource(w http.ResponseWriter, r *http.Request) bool {
+	source, err := netip.ParseAddrPort(r.RemoteAddr)
+	if p != nil && p.blocks != nil && (err != nil || p.blocks.blocked(source.Addr(), time.Now())) {
+		w.Header().Set("Cache-Control", "no-store")
+		diagnostic.WriteHTTP(w, r, diagnostic.HttpProtectionRejected, "")
+		return false
+	}
+	return true
+}
+
 // Handler is only for the already authorized application boundary. reserved
 // preparation endpoints must be handled by the caller before entering it.
 func (p *Inspector) Handler(next http.Handler, observe func(Result)) http.Handler {

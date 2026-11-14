@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -35,6 +36,9 @@ func validateYAMLValueTypes(node *yaml.Node, typ reflect.Type, active map[*yaml.
 			return nil
 		}
 		return errors.New("target address must be a string or integer port")
+	}
+	if typ == reflect.TypeOf(httpprotection.Challenge("")) {
+		return new(httpprotection.Challenge).UnmarshalYAML(node)
 	}
 	if typ == reflect.TypeOf(Duration(0)) || typ == reflect.TypeOf(ByteSize(0)) || typ == reflect.TypeOf(time.Duration(0)) {
 		if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {

@@ -65,6 +65,7 @@ type VisitorAccessManagementClient interface {
 
 type VisitorControlClient interface {
 	httpaccess.PolicyClient
+	httpaccess.ChallengeClient
 	publisherprotection.ReportClient
 }
 

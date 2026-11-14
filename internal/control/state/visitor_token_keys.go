@@ -101,6 +101,16 @@ func (d *Database) createVisitorSigningKey(ctx context.Context, q *controlstated
 // authorized the exact scope and capped its deadline in this same transaction.
 // retaining the key and committing the permission are one durable decision.
 func (d *Database) signVisitorPermission(ctx context.Context, tx pgx.Tx, issuer string, permission visitortoken.Permission, now time.Time) (visitortoken.Token, error) {
+	raw, err := d.signVisitorCredential(ctx, tx, issuer, permission.ExpiresAt, now, func(id string, private ed25519.PrivateKey) (string, error) {
+		token, err := visitortoken.Sign(issuer, id, private, permission, now)
+		return token.Reveal(), err
+	})
+	return visitortoken.Token(raw), err
+}
+
+// both credential purposes retain the signing key through their own fixed
+// expiry. the operation authorizes and constructs its purpose-specific claims.
+func (d *Database) signVisitorCredential(ctx context.Context, tx pgx.Tx, issuer string, expires time.Time, now time.Time, sign func(string, ed25519.PrivateKey) (string, error)) (string, error) {
 	if d.storageKey == nil {
 		return "", ErrVisitorSigningKey
 	}
@@ -131,14 +141,14 @@ func (d *Database) signVisitorPermission(ctx context.Context, tx pgx.Tx, issuer 
 	if !bytes.Equal(private.Public().(ed25519.PublicKey), row.PublicKey) {
 		return "", ErrVisitorSigningKey
 	}
-	token, err := visitortoken.Sign(issuer, row.ID, private, permission, now)
+	token, err := sign(row.ID, private)
 	if err != nil {
 		return "", err
 	}
 	// the current key is locked through commit. sufficient retention needs no
 	// write; an extension must still update exactly that current, unrevoked key.
-	if row.RetainUntil.Time.Before(permission.ExpiresAt) {
-		changed, err := q.RetainVisitorTokenSigningKey(ctx, controlstatedb.RetainVisitorTokenSigningKeyParams{ID: row.ID, ExpiresAt: timestamptz(permission.ExpiresAt)})
+	if row.RetainUntil.Time.Before(expires) {
+		changed, err := q.RetainVisitorTokenSigningKey(ctx, controlstatedb.RetainVisitorTokenSigningKeyParams{ID: row.ID, ExpiresAt: timestamptz(expires)})
 		if err != nil {
 			return "", err
 		}

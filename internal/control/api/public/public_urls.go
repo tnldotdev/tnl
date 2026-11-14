@@ -360,6 +360,10 @@ func (h *handler) CreatePublishRun(
 	if !ok {
 		return
 	}
+	if protection.Challenge != "" && h.challengeVerifier == nil {
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "Turnstile is not configured on this server; disable http.protection.challenge or configure both control keys")
+		return
+	}
 	publicURL, err := h.store.GetPublicURLForPublishRunAuthorization(request.Context(), string(publicURLID), idempotencyKey)
 	if err != nil {
 		writeControlStateProblem(request.Context(), response, "read public URL for publish run", err)

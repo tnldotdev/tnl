@@ -43,6 +43,7 @@ type Stores struct {
 	ConnectorPeerPairs        ConnectorPeerPairStore
 	VisitorPolicy             publisherVisitorPolicyStore
 	HTTPProtection            httpProtectionStore
+	HTTPChallenges            httpChallengeStore
 	VisitorTokens             visitorTokenIssuer
 	CompanyBrowser            CompanyBrowserStore
 	BrowserSessions           BrowserSessionStore
@@ -137,6 +138,7 @@ func DatabaseStores(database *controlstate.Database) Stores {
 		ServiceCertificates: database, ServiceClientCertificates: database, ServiceHTTP: database,
 		ServiceAudit: database, ConnectorPeerPairs: database, VisitorPolicy: database,
 		HTTPProtection: database,
+		HTTPChallenges: database,
 		VisitorTokens:  database, CompanyBrowser: database, BrowserSessions: database, Workloads: database,
 	}
 }

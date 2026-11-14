@@ -23,7 +23,7 @@ import (
 
 const (
 	// the coordinated baseline requires the exact migration and identity.
-	schemaVersion       int64 = 2
+	schemaVersion       int64 = 3
 	baselineID                = "v1"
 	versionTable              = "control.goose_db_version"
 	bootstrapRetryDelay       = 25 * time.Millisecond

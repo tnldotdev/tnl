@@ -26,6 +26,7 @@ const (
 	FeedbackPrefix                   = "fb_"
 	DrainPrefix                      = "dr_"
 	GuestPrefix                      = "gst_"
+	HTTPChallengePrefix              = "cha_"
 	IdempotencyPrefix                = "ik_"
 	IdentityPrefix                   = "ident_"
 	IngressRunPrefix                 = "ir_"
