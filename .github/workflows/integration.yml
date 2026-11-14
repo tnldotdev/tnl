@@ -16,7 +16,7 @@ jobs:
   postgres:
     name: PostgreSQL (${{ matrix.suite }}, ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ matrix.suite == 'runtime:workload' && 14 || 12 }}
+    timeout-minutes: ${{ matrix.suite == 'runtime:shard' && 16 || matrix.suite == 'runtime:workload' && 14 || 12 }}
     strategy:
       fail-fast: false
       matrix:

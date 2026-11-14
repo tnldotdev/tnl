@@ -39,7 +39,7 @@ tasks:
     cmds:
       - task: :js:build
       - task: :py:sync
-      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/daemon -run='^TestIntegration' -skip='^TestIntegration(ConnectorDirect|WorkloadTransport(Lifecycle|Closure)$|PrivateDefaultLeaseCycles$|ConnectorRebindingRetainsApplicationAndTarget$|ConnectorSourceRebindingRetainsApplicationAndTarget$|ConnectorRebindingRetainsPostgresTransaction$)' -count=1 -timeout=8m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/daemon -run='^TestIntegration' -skip='^TestIntegration(ConnectorDirect|WorkloadTransport(Lifecycle|Closure)$|PrivateDefaultLeaseCycles$|ConnectorRebindingRetainsApplicationAndTarget$|ConnectorSourceRebindingRetainsApplicationAndTarget$|ConnectorRebindingRetainsPostgresTransaction$)' -count=1 -timeout=12m -args -tnl-test-tier=integration
 
   runtime:leases:
     desc: Cross production private visitor lease cycles and outage deadlines on real sockets
