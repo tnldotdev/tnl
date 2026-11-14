@@ -43,6 +43,7 @@ type DeploymentBinding struct {
 	ServiceTarget `yaml:",inline"`
 	Name          *string        `json:"name,omitempty" yaml:"name,omitempty" jsonschema_description:"Saved endpoint label; defaults to the logical service key."`
 	Access        *ServiceAccess `json:"access,omitempty" yaml:"access,omitempty"`
+	Public        *bool          `json:"public,omitempty" yaml:"public,omitempty" jsonschema_description:"Add public endpoint access for this saved service. Visitor access remains separate; false keeps connector access only."`
 	Inspection    *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty"`
 	Tunnel        *Tunnel        `json:"public_url,omitempty" yaml:"public_url,omitempty"`
 	HTTP          *HTTPService   `json:"http,omitempty" yaml:"http,omitempty"`
@@ -149,7 +150,7 @@ func resolveProjectDeployment(project Project, name string) (TNL, error) {
 			}
 		}
 		protocol := DeclaredProtocol(declaration)
-		resolved.Services[service] = Service{Name: binding.Name, Protocol: &protocol, Target: &target, Access: binding.Access, Inspection: binding.Inspection, Tunnel: binding.Tunnel, HTTP: binding.HTTP}
+		resolved.Services[service] = Service{Name: binding.Name, Protocol: &protocol, Target: &target, Access: binding.Access, Public: binding.Public, Inspection: binding.Inspection, Tunnel: binding.Tunnel, HTTP: binding.HTTP}
 	}
 	for policy, entry := range project.Workloads {
 		if entry.Deployment == name {
