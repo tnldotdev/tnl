@@ -297,7 +297,8 @@ func validDeploymentService(service controlv1.DeploymentService) bool {
 	}
 	if endpoint := service.Endpoint; endpoint != nil {
 		hostname, err := naming.CanonicalizeHostname(endpoint.Hostname)
-		return err == nil && hostname == endpoint.Hostname && endpoint.Port >= 1024 && endpoint.Port <= 65535
+		return err == nil && hostname == endpoint.Hostname &&
+			(endpoint.Port == 0 && !endpoint.Public || endpoint.Port >= 1024 && endpoint.Port <= 65535)
 	}
 	return true
 }

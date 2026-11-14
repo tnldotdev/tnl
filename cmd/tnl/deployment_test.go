@@ -105,6 +105,7 @@ func TestDeploymentReadValidatesPublicURLAndServiceBindingShapes(t *testing.T) {
 	for _, service := range []controlv1.DeploymentService{
 		saved, private,
 		{Id: private.Id, Protocol: "http", TrustRevision: 2},
+		{Id: private.Id, Protocol: "postgres", TrustRevision: 2, Endpoint: &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 0}},
 		{Id: private.Id, Protocol: "tcp", TrustRevision: 2, Endpoint: &controlv1.ServiceEndpoint{Hostname: "tcp.example.test", Port: 1024}},
 		{Id: private.Id, Protocol: "mysql", TrustRevision: 2, Endpoint: &controlv1.ServiceEndpoint{Hostname: "mysql.example.test", Port: 65535, Public: true}},
 	} {
@@ -140,6 +141,14 @@ func TestDeploymentReadValidatesPublicURLAndServiceBindingShapes(t *testing.T) {
 		"endpoint port": func(s *controlv1.DeploymentService) {
 			*s = private
 			s.Endpoint = &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 1023}
+		},
+		"endpoint negative": func(s *controlv1.DeploymentService) {
+			*s = private
+			s.Endpoint = &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: -1}
+		},
+		"endpoint public zero": func(s *controlv1.DeploymentService) {
+			*s = private
+			s.Endpoint = &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 0, Public: true}
 		},
 		"endpoint bounds": func(s *controlv1.DeploymentService) {
 			*s = private
