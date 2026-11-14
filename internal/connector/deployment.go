@@ -29,7 +29,7 @@ func connectionDeployment(options ContextOptions) (projectConfiguration, connect
 		return projectConfiguration{}, connectorruntime.Context{}, err
 	}
 	if credential.SelectProject(r.Project) != nil || options.Manifest != "" || options.Workload != "" ||
-		r.Name == "local" || !(naming.ValidServiceName(r.Name) || opaqueid.Valid(r.Name, "pgrp_")) || options.TeamID != "" && options.TeamID != credential.Approval.TeamId {
+		r.Name == "local" || !(naming.ValidServiceName(r.Name) || opaqueid.Valid(r.Name, "dpl_")) || options.TeamID != "" && options.TeamID != credential.Approval.TeamId {
 		return projectConfiguration{}, connectorruntime.Context{}, connectorruntime.ErrInvalid
 	}
 	if credential.Approval.Permissions.Connect == nil {

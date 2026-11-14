@@ -83,6 +83,34 @@ func TestDeploymentContextNeedsNoProjectFilesAndFencesExactSelection(t *testing.
 	}
 }
 
+func TestDeploymentContextValidatesCanonicalDeploymentSelection(t *testing.T) {
+	c := connectorDeploymentCredential(t, "https://control.example.test")
+	token, err := c.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"production", "dpl_0123456789ABCDEFGHIJKL", "dpl_abcdefghijklmnopqrstuv"} {
+		t.Run(name, func(t *testing.T) {
+			request := connectorruntime.DeploymentRequest{Project: "acme/shop", Name: name, Token: token}
+			project, scope, err := connectionDeployment(ContextOptions{Directory: t.TempDir(), Deployment: &request})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if project.Deployment != name || scope.Deployment != name {
+				t.Fatal("lost selected deployment")
+			}
+		})
+	}
+	for _, name := range []string{"", "dpl_short", "dpl_" + strings.Repeat("a", 23), "dpl_" + strings.Repeat("a", 21) + "-", "dpl_" + strings.Repeat("a", 21) + "é", "dpl_" + strings.Repeat("a", 22) + "\n", "svc_" + strings.Repeat("a", 22)} {
+		t.Run(name, func(t *testing.T) {
+			request := connectorruntime.DeploymentRequest{Project: "acme/shop", Name: name, Token: token}
+			if _, _, err := connectionDeployment(ContextOptions{Directory: t.TempDir(), Deployment: &request}); !errors.Is(err, connectorruntime.ErrInvalid) {
+				t.Fatal("accepted invalid deployment selection", err)
+			}
+		})
+	}
+}
+
 func TestDeploymentConnectorUsesRegisteredSourceAndCurrentRevocation(t *testing.T) {
 	var credential auth.DeploymentCredential
 	var denied atomic.Bool

@@ -29,7 +29,7 @@ func TestNativeManagementUsesExistingGeneratedOperationsAndExplicitConditions(t 
 		if r.Method == http.MethodPost {
 			w.WriteHeader(201)
 		}
-		_, _ = w.Write([]byte(`{"id":"pgrp_selected","team_id":"team","project_key":"shop","name":"selected","revision":3,"targets":{},"services":{}}`))
+		_, _ = w.Write([]byte(`{"id":"dpl_0123456789ABCDEFGHIJKL","team_id":"team","project_key":"shop","name":"selected","revision":3,"targets":{},"services":{}}`))
 	}))
 	defer server.Close()
 	client, err := New(server.URL, server.Client(), "pta_scoped")
@@ -65,7 +65,7 @@ func TestNativeManagementRetainsCanonicalJSONAndRequiresResponseETag(t *testing.
 		t.Run(header, func(t *testing.T) {
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("ETag", header)
-				_, _ = w.Write([]byte(`{"id":"selected","team_id":"team","project_key":"shop","name":"production","revision":3,"targets":{}}`))
+				_, _ = w.Write([]byte(`{"id":"dpl_0123456789ABCDEFGHIJKL","team_id":"team","project_key":"shop","name":"production","revision":3,"targets":{}}`))
 			}))
 			defer server.Close()
 			client, err := New(server.URL, server.Client(), "pta_scoped")
@@ -133,7 +133,7 @@ func TestNativeManagementPublisherOperationsShareGeneratedClient(t *testing.T) {
 				t.Error("publisher enrollment lost original key")
 			}
 			w.WriteHeader(201)
-			_, _ = w.Write([]byte(`{"enrollment_key":"private","enrollment_id":"original","deployment_id":"selected","expires_at":"2026-11-13T10:00:00Z","max_members":1,"services":{"db":"postgres"}}`))
+			_, _ = w.Write([]byte(`{"enrollment_key":"private","enrollment_id":"original","deployment_id":"dpl_0123456789ABCDEFGHIJKL","expires_at":"2026-11-13T10:00:00Z","max_members":1,"services":{"db":"postgres"}}`))
 		case http.MethodDelete:
 			w.WriteHeader(204)
 		default:
@@ -143,7 +143,7 @@ func TestNativeManagementPublisherOperationsShareGeneratedClient(t *testing.T) {
 				}
 				_, _ = w.Write([]byte(`{"publishers":[],"next_cursor":"next"}`))
 			} else {
-				_, _ = w.Write([]byte(`{"team_id":"team","project_key":"shop","deployment_id":"selected"}`))
+				_, _ = w.Write([]byte(`{"team_id":"team","project_key":"shop","deployment_id":"dpl_0123456789ABCDEFGHIJKL"}`))
 			}
 		}
 	}))

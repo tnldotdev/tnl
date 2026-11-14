@@ -196,7 +196,8 @@ func (b *connectorConnectionBackend) Start(ctx context.Context) (meta.PublicMeta
 	b.lifetime = lifetime
 	services := map[string]controlv1.Service{}
 	if b.deployment != nil {
-		b.deadline = b.deployment.source.Credential.Approval.ExpiresAt
+		// the owner renews a finite horizon without moving the credential's cap.
+		b.deadline = minTime(time.Now().Add(time.Hour), b.deployment.source.Credential.Approval.ExpiresAt)
 		for _, name := range b.scope.Services {
 			service, err := b.deployment.selectService(ctx, name)
 			if err != nil {
@@ -301,6 +302,9 @@ func (b *connectorConnectionBackend) Connect(ctx context.Context, name string) (
 		return connectorruntime.Connection{}, err
 	}
 	defer finish()
+	if !slices.Contains(b.scope.Services, name) {
+		return connectorruntime.Connection{}, connectorruntime.ErrInvalid
+	}
 	b.mu.Lock()
 	if b.serviceGates == nil {
 		b.serviceGates = map[string]chan struct{}{}
@@ -327,7 +331,18 @@ func (b *connectorConnectionBackend) Connect(ctx context.Context, name string) (
 	serving := owner.serving(service, client)
 	warm := serving != nil && time.Now().Before(serving.authorizedUntil)
 	b.mu.Unlock()
-	if !found || ValidateService(service) != nil || string(service.Protocol) != config.Protocol(b.project.Config.Services[name]) {
+	if !found {
+		if b.deployment == nil {
+			return connectorruntime.Connection{}, connectorruntime.ErrInvalid
+		}
+		// an approved sibling can become ready after startup. its first explicit
+		// selection establishes the binding ID fenced by every later refresh.
+		service, err = b.refreshService(ctx, name, service, client)
+		if err != nil {
+			return connectorruntime.Connection{}, err
+		}
+	}
+	if ValidateService(service) != nil || string(service.Protocol) != config.Protocol(b.project.Config.Services[name]) {
 		return connectorruntime.Connection{}, connectorruntime.ErrInvalid
 	}
 	if warm {
@@ -351,7 +366,7 @@ func (b *connectorConnectionBackend) Connect(ctx context.Context, name string) (
 	b.mu.Unlock()
 	// refresh approved metadata only at an explicit preparation boundary. the
 	// service ID stays fenced by the current session's immutable authorization.
-	if !warm {
+	if !warm && found {
 		fresh, err := b.refreshService(ctx, name, service, client)
 		if err != nil {
 			return connectorruntime.Connection{}, err
@@ -415,11 +430,14 @@ func (b *connectorConnectionBackend) refreshService(ctx context.Context, name st
 		}
 		service = current
 	} else if b.deployment != nil {
+		if approved.Id == "" && !slices.Contains(b.scope.Services, name) {
+			return service, connectorruntime.ErrUnauthorized
+		}
 		current, err := b.deployment.selectService(ctx, name)
 		if err != nil {
 			return service, err
 		}
-		if current.Id != approved.Id {
+		if approved.Id != "" && current.Id != approved.Id {
 			return service, connectorruntime.ErrUnauthorized
 		}
 		service = current
@@ -519,7 +537,8 @@ func (b *connectorConnectionBackend) healthy() (time.Time, error) {
 }
 
 // authorizationDeadline publishes only accepted native session authority. its
-// proof horizon may advance, but the workload client fences any fixed hard cap.
+// proof horizon may advance, but workload and deployment credentials keep their
+// fixed hard caps.
 func (b *connectorConnectionBackend) AuthorizationDeadline() (time.Time, <-chan struct{}) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -548,7 +567,15 @@ func (b *connectorConnectionBackend) Renew(ctx context.Context) (time.Time, erro
 		if _, err := b.deployment.source.Token(ctx); err != nil {
 			return time.Time{}, err
 		}
-		return b.deployment.source.Credential.Approval.ExpiresAt, nil
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		now := time.Now()
+		if b.closed || !b.deadline.After(now) {
+			return time.Time{}, connectorruntime.ErrExpired
+		}
+		b.deadline = minTime(now.Add(time.Hour), b.deployment.source.Credential.Approval.ExpiresAt)
+		b.publishLocked()
+		return b.deadline, nil
 	}
 	b.mu.Lock()
 	client := b.workload

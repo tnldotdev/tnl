@@ -43,7 +43,7 @@ describe("project-bound deployment handles", () => {
   it("captures independent selections and closes only its own driver factories and native owner", async () => {
     const app = createClient({ project: "acme/shop", token: "portable-private", services });
     const production = app.deployment("production");
-    const customer = app.deployment("pgrp_aaaaaaaaaaaaaaaaaaaaaa");
+    const customer = app.deployment("dpl_0123456789ABCDEFGHIJKL");
     const create = vi.fn((connection) => ({ connection }));
     const close = vi.fn();
     const first = production.client("db", { create, close });
@@ -55,7 +55,7 @@ describe("project-bound deployment handles", () => {
       {
         project: "acme/shop",
         token: "portable-private",
-        name: "pgrp_aaaaaaaaaaaaaaaaaaaaaa",
+        name: "dpl_0123456789ABCDEFGHIJKL",
         services: ["db"],
       },
     ]);
@@ -67,6 +67,22 @@ describe("project-bound deployment handles", () => {
     await expect(production.connect("db")).rejects.toMatchObject({ code: "sdk.client_closed" });
     await customer.close();
     expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    "",
+    "dpl_short",
+    `dpl_${"a".repeat(23)}`,
+    `dpl_${"a".repeat(21)}-`,
+    `dpl_${"a".repeat(21)}é`,
+    `dpl_${"a".repeat(22)}\n`,
+    `svc_${"a".repeat(22)}`,
+  ])("rejects invalid deployment selections before native startup: %j", (name) => {
+    const app = createClient({ project: "acme/shop", token: "private", services });
+    expect(() => app.deployment(name)).toThrow(
+      expect.objectContaining({ code: "sdk.configuration_invalid" }),
+    );
+    expect(native.selections).toHaveLength(0);
   });
 
   it("rejects protocol drift before calling an ordinary driver factory", async () => {
@@ -107,7 +123,7 @@ describe("project-bound deployment handles", () => {
           if (input.method === "DELETE") return new Response(null, { status: 204 });
           return Response.json(
             {
-              id: "pgrp_customer",
+              id: "dpl_abcdefghijklmnopqrstuv",
               team_id: "tm_selected",
               project_key: "shop",
               name: "customer",
