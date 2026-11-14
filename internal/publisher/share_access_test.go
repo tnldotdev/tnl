@@ -99,7 +99,7 @@ func TestShareHeaderUsesCurrentDecisionAndIsRemovedBeforeForwarding(t *testing.T
 	}))
 	defer upstream.Close()
 	route, err := NewPublicURLServer(PublicURLServerConfig{
-		Hostname: "route.example", Target: upstream.URL,
+		Hostname: "route.example", Port: 443, Target: upstream.URL,
 		PublicURLID: certificateTestPublicURLID, VisitorPolicy: authority.policy.Lease(), VisitorTokens: authority.tokens,
 		BrowserAccess: &httpaccess.Browser{Client: client, RunID: "run_test", Number: 1},
 	})
@@ -170,7 +170,7 @@ func TestShareHTTPDenialsRedemptionAndCookieIsolation(t *testing.T) {
 	client.permission = func() controlv1.VisitorTokenResponse { return authority.Permission(t, client.cookie, true) }
 	access := &httpaccess.Shares{Client: client, RunID: "pr_test", Number: 1}
 	decisions := &shareHeaderDecisionClient{shareID: client.shareID, cookieSecret: client.cookie}
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, ShareAccess: access,
+	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Port: 443, Target: upstream.URL, ShareAccess: access,
 		PublicURLID: certificateTestPublicURLID, VisitorPolicy: authority.policy.Lease(), VisitorTokens: authority.tokens,
 		BrowserAccess: &httpaccess.Browser{Client: decisions, RunID: "run_test", Number: 1}})
 	if err != nil {

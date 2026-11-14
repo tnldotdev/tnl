@@ -35,11 +35,17 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart
 	databaseURL, inspect := standaloneTestDatabase(t)
 	owner := newRuntimeTopology(t)
 	publicListener := serviceRuntimeListener(t, owner)
+	ingressListener := serviceRuntimeListener(t, owner)
 	relayUDP := integrationPacketListener(t, owner)
 	publicAddress, relayUDPAddress := publicListener.Addr().String(), relayUDP.LocalAddr().String()
 	dns := newPrivateFixtureDNS(t, owner)
 	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dns.address, owner)
-	cfg, listeners := standalonePublishConfig(t, databaseURL, publicListener, relayUDP, pebble.directoryURL, owner)
+	cfg, listeners := standalonePublishConfig(t, databaseURL, ingressListener, relayUDP, pebble.directoryURL, owner)
+	// the disposable front preserves the advertised visitor port without binding
+	// a privileged local socket. publisher transport uses the same trusted front.
+	cfg.RequireProxyHeader = true
+	cfg.IngressTrustedProxies = []string{"127.0.0.1/32"}
+	startSplitIngressProxy(t, owner, publicListener, ingressListener.Addr().String())
 	ca := newIntegrationTestCA(t)
 	controlCertificate := ca.issueServer(t, cfg.ServerHostname(), owner)
 	// publication fixtures exercise public URL issuance. relay DNS-01 polling

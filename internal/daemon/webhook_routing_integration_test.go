@@ -19,7 +19,7 @@ import (
 
 func TestIntegrationWebhookHandlerReloadsTargetlessPublicURL(t *testing.T) {
 	fixture := newStandalonePublishFixture(t, "webhook-reload")
-	state, err := clientstate.Open(t.Context(), filepath.Join(fixture.owner.directory, "state"))
+	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(fixture.owner.directory, "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		t.Fatal(err)
 	}

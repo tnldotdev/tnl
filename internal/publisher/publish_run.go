@@ -102,5 +102,5 @@ func (r *PublicURLServer) visitorPolicyPrepared() bool {
 		return false
 	}
 	view, enabled, _ := r.policy.Current()
-	return enabled && view.Scope == (visitorscope.Scope{Kind: visitorscope.PublicURL, ID: r.run.PublicURLID}) && view.Hostname == r.hostname && view.Port == 443
+	return enabled && view.Scope == (visitorscope.Scope{Kind: visitorscope.PublicURL, ID: r.run.PublicURLID}) && view.Hostname == r.hostname && int(view.Port) == r.port
 }

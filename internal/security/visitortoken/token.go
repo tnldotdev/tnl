@@ -91,7 +91,8 @@ func validResource(scope visitorscope.Scope, hostname string, port uint16) bool 
 	canonical, err := naming.CanonicalizeHostname(hostname)
 	// service permission binds the immutable service and hostname even when no
 	// ingress port exists. zero is exact signed data, never a wildcard port.
-	return err == nil && canonical == hostname && !strings.Contains(hostname, "*") && scope.Valid() && (scope.Kind != visitorscope.PublicURL || port == 443)
+	// a public url always binds one positive port approved by control.
+	return err == nil && canonical == hostname && !strings.Contains(hostname, "*") && scope.Valid() && (scope.Kind != visitorscope.PublicURL || port != 0)
 }
 
 // Sign receives a decision already authorized by control. the supplied deadline

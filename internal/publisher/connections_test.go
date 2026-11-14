@@ -58,7 +58,7 @@ func TestPublisherConnectionUpdateValidatesBeforeMutation(t *testing.T) {
 	now := time.Now()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: "http://127.0.0.1:8080"})
+	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Port: 443, Target: "http://127.0.0.1:8080"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestTLSFallbackIsPublishedBeforeConnectionReadiness(t *testing.T) {
 	defer cancel()
 	metrics := observability.New("publisher")
 	ctx = observability.WithMetrics(ctx, metrics)
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: "http://127.0.0.1:8080"})
+	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Port: 443, Target: "http://127.0.0.1:8080"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestExpiredAssignmentWaitsForReplacement(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	route, err := NewPublicURLServer(PublicURLServerConfig{
-		Hostname: "route.example", Target: "http://127.0.0.1:8080",
+		Hostname: "route.example", Port: 443, Target: "http://127.0.0.1:8080",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -301,7 +301,7 @@ func testQUICReplacement(t *testing.T, controlReplacedFirst bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	route, err := NewPublicURLServer(PublicURLServerConfig{
-		Hostname: "route.example", Target: "http://127.0.0.1:8080",
+		Hostname: "route.example", Port: 443, Target: "http://127.0.0.1:8080",
 	})
 	if err != nil {
 		t.Fatal(err)

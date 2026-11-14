@@ -33,7 +33,7 @@ func TestPublicURLForwardingPreservesApplicationPaths(t *testing.T) {
 				w.WriteHeader(http.StatusNoContent)
 			}))
 			defer upstream.Close()
-			proxy, err := publisherproxy.New(publisherproxy.Config{Target: upstream.URL, Hostname: "preview.example", MaxConnsPerHost: 1,
+			proxy, err := publisherproxy.New(publisherproxy.Config{Target: upstream.URL, Hostname: "preview.example", Port: 443, MaxConnsPerHost: 1,
 				TargetOptions: publisherproxy.TargetOptions{RootCAs: upstream.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs}})
 			if err != nil {
 				t.Fatal(err)

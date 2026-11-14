@@ -180,6 +180,10 @@ func runSession(
 	if setup.Traffic != nil {
 		streamCapacity = setup.Traffic.Connections
 	}
+	view, enabled, _ := policy.Lease().Current()
+	if !enabled || view.Hostname != setup.PublicUrl.CanonicalHostname {
+		return errors.New("public URL visitor policy has no matching endpoint")
+	}
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		Context:               ctx,
 		AuditSink:             auditSink,
@@ -189,7 +193,7 @@ func runSession(
 		VisitorTokens:         browserRenewal,
 		BrowserLoginAvailable: config.BrowserLoginAvailable,
 		PreviewID:             config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, PublishRunNumber: version,
-		Hostname: setup.PublicUrl.CanonicalHostname, Target: config.Target, ResolveTarget: config.ResolveTarget, TargetOptions: config.TargetOptions, CertificatePlan: plan,
+		Hostname: setup.PublicUrl.CanonicalHostname, Port: int(view.Port), Target: config.Target, ResolveTarget: config.ResolveTarget, TargetOptions: config.TargetOptions, CertificatePlan: plan,
 		ServiceProtocol: setup.PublicUrl.ServiceProtocol, TargetTLSName: config.TargetTLSName,
 		Purpose:            setup.PublicUrl.Purpose,
 		AccessMode:         setup.PublicUrl.AccessMode,

@@ -29,7 +29,7 @@ func TestDynamicTargetFollowsReplacementWithoutReusingOldConnections(t *testing.
 	defer upstream.Close()
 	identity := "container-one"
 	address := upstream.URL
-	proxy, err := New(Config{Target: upstream.URL, Hostname: "route.example", MaxConnsPerHost: 4,
+	proxy, err := New(Config{Target: upstream.URL, Hostname: "route.example", Port: 443, MaxConnsPerHost: 4,
 		ResolveTarget: func(*http.Request) (string, string, error) {
 			return address, identity, nil
 		}})
@@ -97,7 +97,7 @@ func TestDynamicTargetRetiresPoolAfterStreamingRequestFinishes(t *testing.T) {
 	upstream.Start()
 	t.Cleanup(upstream.Close)
 	var replaced atomic.Bool
-	handler, err := New(Config{Target: upstream.URL, Hostname: "route.example", MaxConnsPerHost: 1,
+	handler, err := New(Config{Target: upstream.URL, Hostname: "route.example", Port: 443, MaxConnsPerHost: 1,
 		ResolveTarget: func(*http.Request) (string, string, error) {
 			identity := "one"
 			if replaced.Load() {
@@ -159,7 +159,7 @@ func TestDynamicTargetRejectsUnavailableSelectionWithoutFallingBack(t *testing.T
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var resolutions atomic.Int32
-			handler, err := New(Config{Target: upstream.URL, Hostname: "route.example",
+			handler, err := New(Config{Target: upstream.URL, Hostname: "route.example", Port: 443,
 				Mounts: []Mount{{Prefix: "/api", Target: upstream.URL}},
 				ResolveTarget: func(*http.Request) (string, string, error) {
 					resolutions.Add(1)

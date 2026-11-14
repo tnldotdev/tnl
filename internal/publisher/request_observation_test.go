@@ -104,7 +104,7 @@ func TestRequestObservationNoneRecordsNothing(t *testing.T) {
 	if !strings.Contains(text, "tnl_publisher_http_request_duration_seconds_count") || !strings.Contains(text, `tnl_response_origin="local_service"`) || strings.Contains(text, "token=private") || strings.Contains(text, "/health") {
 		t.Fatal("inspection none must retain safe OTel request measurements", text)
 	}
-	if _, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "app.example", Target: upstream.URL,
+	if _, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "app.example", Port: 443, Target: upstream.URL,
 		InspectionMode: "detailed"}); err == nil {
 		t.Fatal("detailed inspection mode was accepted")
 	}

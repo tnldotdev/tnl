@@ -18,7 +18,7 @@ func TestMountedProxySelectsCompleteLongestPrefixAndPreservesPathsByDefault(t *t
 	defer base.Close()
 	defer api.Close()
 	defer versioned.Close()
-	handler, err := New(Config{Target: base.URL, Hostname: "web.example.test", Mounts: []Mount{
+	handler, err := New(Config{Target: base.URL, Hostname: "web.example.test", Port: 443, Mounts: []Mount{
 		{Prefix: "/api", Target: api.URL},
 		{Prefix: "/api/v1", Target: versioned.URL, StripPrefix: true},
 	}})

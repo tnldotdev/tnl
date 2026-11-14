@@ -103,9 +103,9 @@ func (f *publicCapacityFixture) openFrom(index int, denied bool, source netip.Ad
 	if err == nil {
 		// ingress signs canonical addresses; PROXY v2 requires one address family.
 		source = source.Unmap()
-		destination := netip.MustParseAddrPort("127.0.0.1:443")
+		destination := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), uint16(f.route.port))
 		if source.Is6() {
-			destination = netip.MustParseAddrPort("[::1]:443")
+			destination = netip.AddrPortFrom(netip.IPv6Loopback(), uint16(f.route.port))
 		}
 		metadata, sourceErr := encodeTestPublicMetadata(f.route, header, proxyproto.Header{Source: netip.AddrPortFrom(source, 1234), Destination: destination})
 		if sourceErr != nil {

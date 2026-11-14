@@ -153,7 +153,7 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 		return visitorfixture.HTTPDecision{VisitAllowed: client.member || client.invited, ValidUntil: new(time.Now().Add(5 * time.Minute))}, nil
 	}}
 	prepareLiveHTTPControl(t, authority)
-	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", PublicURLID: access.PublicURLID, Target: upstream.URL,
+	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Port: 443, PublicURLID: access.PublicURLID, Target: upstream.URL,
 		BrowserAccess: access, BrowserLoginAvailable: true, VisitorPolicy: authority.policy.Lease(), VisitorTokens: authority.tokens})
 	if err != nil {
 		t.Fatal(err)

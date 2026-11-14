@@ -45,7 +45,6 @@ type splitPublishFixture struct {
 type splitPublishOptions struct {
 	processContext       func(string) context.Context
 	dns                  *integrationRoute53
-	proxyIngress         bool
 	configureControlHTTP func(*http.Client)
 	configureProcess     func(*daemonconfig.Config)
 }
@@ -68,14 +67,12 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		relayACertificate = certificateAuthority.issueServer(t, "relay-a."+serverDomain, owner)
 		relayBCertificate = certificateAuthority.issueServer(t, "relay-b."+serverDomain, owner)
 	}
-	controlProxyListener, privateControlListener, ingressListener := serviceRuntimeListener(t, owner), serviceRuntimeListener(t, owner), serviceRuntimeListener(t, owner)
+	controlProxyListener, privateControlListener, publicIngressListener := serviceRuntimeListener(t, owner), serviceRuntimeListener(t, owner), serviceRuntimeListener(t, owner)
+	// preserve the advertised destination through a trusted front, while every
+	// actual listener remains unprivileged and reserved through startup.
+	ingressListener := serviceRuntimeListener(t, owner)
 	controlAddress, privateControlAddress, ingressAddress := controlProxyListener.Addr().String(), privateControlListener.Addr().String(), ingressListener.Addr().String()
-	publicIngressAddress := ingressAddress
-	publicIngressListener := ingressListener
-	if options.proxyIngress {
-		ingressListener = serviceRuntimeListener(t, owner)
-		ingressAddress = ingressListener.Addr().String()
-	}
+	publicIngressAddress := publicIngressListener.Addr().String()
 	var dnsAddress string
 	var localDNS *privateFixtureDNS
 	if options.dns != nil {
@@ -127,6 +124,8 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		t.Fatal(err)
 	}
 	ingressConfig := splitPublishConfig(t, daemonconfig.RoleIngress)
+	ingressConfig.RequireProxyHeader = true
+	ingressConfig.IngressTrustedProxies = []string{"127.0.0.1/32"}
 	ingressSockets := runtimeListeners{ingress: ingressListener, metrics: serviceRuntimeListener(t, owner)}
 	ingressConfig.MetricsListen = ingressSockets.metrics.Addr().String()
 	ingressConfig.ServicePortRanges = controlConfig.ServicePortRanges
@@ -158,9 +157,7 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		t.Fatal(err)
 	}
 	serveIntegrationControlProxy(t, owner, controlProxyListener, controlConfig.ControlListen, controlTLS)
-	if options.proxyIngress {
-		startSplitIngressProxy(t, owner, publicIngressListener, ingressAddress)
-	}
+	startSplitIngressProxy(t, owner, publicIngressListener, ingressAddress)
 	controlOptions := integrationProcessOptions{acmeHTTPClient: pebble.httpClient, serviceHTTPClient: serviceHTTP, owner: owner, listeners: controlSockets}
 	if options.processContext != nil {
 		controlOptions.context = options.processContext("control")

@@ -72,7 +72,7 @@ func promotionSessionPair(t *testing.T, ref tunnelv1.PublisherConnectionRef) (*t
 func TestAutomaticPromotionUsesExactCurrentStream(t *testing.T) {
 	ref := tunnelv1.PublisherConnectionRef{PublicURLID: "url-1", PublishRunID: "run-1", PublishRunNumber: 1, PublisherConnectionID: "connection-1", ConnectionAssignmentRevision: 1, RelayServiceID: "relay-1"}
 	publisher, relay := promotionSessionPair(t, ref)
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber, Handler: http.NotFoundHandler()})
+	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Port: 443, PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber, Handler: http.NotFoundHandler()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestAutomaticPromotionUsesExactCurrentStream(t *testing.T) {
 func TestPublisherSessionReplacementCancelsOldLifetime(t *testing.T) {
 	ref := tunnelv1.PublisherConnectionRef{PublicURLID: "url-1", PublishRunID: "run-1", PublishRunNumber: 1, PublisherConnectionID: "connection-1", ConnectionAssignmentRevision: 1, RelayServiceID: "relay-1"}
 	publisher, _ := promotionSessionPair(t, ref)
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Handler: http.NotFoundHandler()})
+	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Port: 443, Handler: http.NotFoundHandler()})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -248,7 +248,7 @@ func TestVisitorSourceCannotSupplyMissingOrDifferentServerRunIdentity(t *testing
 		func(run *PublishRunIdentity) { run.PublishRunID = "different-run" },
 		func(run *PublishRunIdentity) { run.Number++ },
 	} {
-		owner := &PublicURLServer{policy: route.policy, visitorSourceKey: route.visitorSourceKey, run: route.run}
+		owner := &PublicURLServer{hostname: route.hostname, port: route.port, policy: route.policy, visitorSourceKey: route.visitorSourceKey, run: route.run}
 		mutate(&owner.run)
 		if err := owner.authenticateVisitorSource(header, metadata); !errors.Is(err, visitortoken.ErrVisitorSource) {
 			t.Fatal("stream evidence supplied or replaced the server's run identity", err)

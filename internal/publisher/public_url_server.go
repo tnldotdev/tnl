@@ -24,9 +24,11 @@ import (
 
 // PublicURLServerConfig configures publisher TLS termination and local HTTP forwarding.
 type PublicURLServerConfig struct {
-	Context               context.Context
-	AuditSink             serviceaudit.Sink
-	Hostname              string
+	Context   context.Context
+	AuditSink serviceaudit.Sink
+	Hostname  string
+	// the approved public http port, independent of the target listener.
+	Port                  int
 	PreviewID             string
 	PublicURLID           string
 	PublishRunNumber      uint64
@@ -66,6 +68,7 @@ type PublicURLServerConfig struct {
 
 type PublicURLServer struct {
 	hostname           string
+	port               int
 	policy             *visitorlease.Lease
 	visitorSourceKey   [32]byte
 	sourceHistory      map[[32]byte]*visitorSourceHistory

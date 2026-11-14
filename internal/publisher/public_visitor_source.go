@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -109,7 +110,8 @@ func (r *PublicURLServer) authenticateVisitorSource(stream tunnelv1.VisitorStrea
 		return visitortoken.ErrVisitorSource
 	}
 	view, enabled, _ := r.policy.Current()
-	if !enabled || view.Scope.ID != r.run.PublicURLID {
+	if !enabled || view.Scope != (visitorscope.Scope{Kind: visitorscope.PublicURL, ID: r.run.PublicURLID}) ||
+		view.Hostname != r.hostname || int(view.Port) != r.port || int(header.Destination.Port()) != r.port {
 		return visitortoken.ErrVisitorSource
 	}
 	proof, err := tunnelv1.ReadVisitorSourceProof([]byte(header.VisitorSourceProof))

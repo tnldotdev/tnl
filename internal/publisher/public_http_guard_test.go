@@ -62,7 +62,7 @@ func prepareLiveHTTPControl(t *testing.T, control *liveHTTPControl) {
 func startLiveHTTPRoute(t *testing.T, control *liveHTTPControl, handler http.Handler) *PublicURLServer {
 	t.Helper()
 	prepareLiveHTTPControl(t, control)
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: visitorfixture.Certificate(t, "route.example"), Handler: handler,
+	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Port: 443, Certificate: visitorfixture.Certificate(t, "route.example"), Handler: handler,
 		PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", PublishRunNumber: 1, VisitorPolicy: control.policy.Lease(), VisitorTokens: control.tokens,
 		VisitorSourceKey: control.policy.SourceKey(),
 		BrowserAccess:    &httpaccess.Browser{Client: control, RunID: "original-run", Number: 1}})

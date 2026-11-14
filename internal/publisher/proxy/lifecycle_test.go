@@ -13,7 +13,7 @@ func TestMountedTargetRecoversAfterInvalidReplacement(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	t.Cleanup(upstream.Close)
 	target := upstream.URL
-	handler, err := New(Config{Target: upstream.URL, Hostname: "preview.example", Mounts: []Mount{{Prefix: "/api", ResolveTarget: func(context.Context) (string, string, error) { return target, target, nil }}}})
+	handler, err := New(Config{Target: upstream.URL, Hostname: "preview.example", Port: 443, Mounts: []Mount{{Prefix: "/api", ResolveTarget: func(context.Context) (string, string, error) { return target, target, nil }}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestProxyCloseReleasesIdleTargets(t *testing.T) {
 	}
 	upstream.Start()
 	t.Cleanup(upstream.Close)
-	handler, err := New(Config{Target: upstream.URL, Hostname: "preview.example"})
+	handler, err := New(Config{Target: upstream.URL, Hostname: "preview.example", Port: 443})
 	if err != nil {
 		t.Fatal(err)
 	}

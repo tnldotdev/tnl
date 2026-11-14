@@ -93,7 +93,7 @@ func TestAppWorkflowStaticMountPreservesTargetAndTLSName(t *testing.T) {
 	if err := publisherproxy.PreflightWithOptions(t.Context(), resolved, mount.Options); err != nil {
 		t.Fatal(err)
 	}
-	proxy, err := publisherproxy.New(publisherproxy.Config{Target: target, Hostname: "public.example", MaxConnsPerHost: 2, Mounts: mounts, TargetOptions: mount.Options})
+	proxy, err := publisherproxy.New(publisherproxy.Config{Target: target, Hostname: "public.example", Port: 443, MaxConnsPerHost: 2, Mounts: mounts, TargetOptions: mount.Options})
 	if err != nil {
 		t.Fatal(err)
 	}

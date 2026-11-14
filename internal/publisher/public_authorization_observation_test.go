@@ -227,7 +227,7 @@ func TestPublicHTTPAuthorizationObservationRealPermissionAndBind(t *testing.T) {
 			}
 			var parent trace.SpanContext
 			forwarded := 0
-			route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: update.View.Hostname, VisitorPolicy: policy,
+			route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: update.View.Hostname, Port: int(update.View.Port), VisitorPolicy: policy,
 				AdmitRequest: func(r *http.Request) error { parent = trace.SpanContextFromContext(r.Context()); return nil },
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, bound *http.Request) {
 					forwarded++

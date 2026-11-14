@@ -142,6 +142,31 @@ func TestPrivateServiceZeroPortIsExactNotWildcard(t *testing.T) {
 	}
 }
 
+func TestPublicURLPortIsExactNotWildcard(t *testing.T) {
+	key, permission, view, now := tokenFixture(t)
+	for _, port := range []uint16{1, 443, 1024, 25443, 65535} {
+		permission.Port, view.Port = port, port
+		token := issueToken(t, key, permission, view, now)
+		verified, err := VerifyBearer(token, view, now)
+		if err != nil || verified.Facts().Port != port {
+			t.Fatal("approved public URL port could not authorize a visitor", port, err)
+		}
+		for _, other := range []uint16{0, 443, 25443, 25444} {
+			if other == port {
+				continue
+			}
+			changed := view
+			changed.Port = other
+			if _, err := VerifyBearer(token, changed, now); err == nil {
+				t.Fatal("public URL token matched another port", port, other)
+			}
+			if err := CheckCurrent(verified, changed, now); err == nil {
+				t.Fatal("verified public URL permission survived a port change", port, other)
+			}
+		}
+	}
+}
+
 func TestVisitorTokensKeepSeparateIssuancesOfIdenticalPermission(t *testing.T) {
 	key, permission, view, now := tokenFixture(t)
 	first, second := issueToken(t, key, permission, view, now), issueToken(t, key, permission, view, now)

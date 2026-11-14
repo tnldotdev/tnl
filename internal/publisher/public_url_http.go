@@ -15,6 +15,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
@@ -55,6 +56,9 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if err != nil || hostname != config.Hostname {
 		return nil, errors.New("publisher: public URL hostname must be canonical")
 	}
+	if !tcpport.ValidNetwork(config.Port) {
+		return nil, diagnostic.Wrap(diagnostic.PublicURLInvalid, errors.New("public URL port must be between 1 and 65535"))
+	}
 	if config.InspectionMode != "" && !config.InspectionMode.Valid() {
 		return nil, errors.New("publisher: request inspection mode must be none or summary")
 	}
@@ -90,7 +94,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 			}
 		}}
 		proxyConfig := publisherproxy.Config{
-			Target: config.Target, Hostname: hostname, Mounts: config.Mounts,
+			Target: config.Target, Hostname: hostname, Port: config.Port, Mounts: config.Mounts,
 			Hooks: hooks, TargetOptions: config.TargetOptions,
 			MaxConnsPerHost: config.Limits.Concurrency, OnTargetFailure: config.OnTargetFailure,
 		}
@@ -119,6 +123,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	route := &PublicURLServer{
 		proxy:            proxy,
 		hostname:         hostname,
+		port:             config.Port,
 		policy:           config.VisitorPolicy,
 		visitorSourceKey: config.VisitorSourceKey,
 		streamCapacity:   config.StreamCapacity,
@@ -194,7 +199,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						}
 					}()
 				}
-				if code := publisherproxy.ValidateRequest(request, hostname); code != "" {
+				if code := publisherproxy.ValidateRequest(request, hostname, config.Port); code != "" {
 					diagnostic.WriteHTTP(response, request, code, "")
 					return
 				}

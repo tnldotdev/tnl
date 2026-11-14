@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/observability"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
@@ -145,8 +147,10 @@ type ResponseHooks struct {
 // Config selects targets, target trust, response hooks, and transport sizing.
 // the publisher owns application admission for base, mounted, and inline handlers.
 type Config struct {
-	Target        string
-	Hostname      string
+	Target   string
+	Hostname string
+	// the public http authority port, never the publisher-to-target port.
+	Port          int
 	Mounts        []Mount
 	Hooks         ResponseHooks
 	TargetOptions TargetOptions
@@ -215,6 +219,9 @@ func New(config Config) (*Proxy, error) {
 	canonical, err := naming.CanonicalizeHostname(config.Hostname)
 	if err != nil || canonical != config.Hostname {
 		return nil, diagnostic.Wrap(diagnostic.PublicURLInvalid, errors.New("localproxy: hostname must be canonical"))
+	}
+	if !tcpport.ValidNetwork(config.Port) {
+		return nil, diagnostic.Wrap(diagnostic.PublicURLInvalid, errors.New("public URL port must be between 1 and 65535"))
 	}
 	owner := &Proxy{transports: make(map[*http.Transport]struct{})}
 	base, err := owner.newReverseProxy(config.Target, config.MaxConnsPerHost, config.Hooks, config.TargetOptions, config.OnTargetFailure)
@@ -322,7 +329,7 @@ func New(config Config) (*Proxy, error) {
 		return strings.Compare(left.Prefix, right.Prefix)
 	})
 	owner.handler = httpstream.Requests(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if code := ValidateRequest(request, config.Hostname); code != "" {
+		if code := ValidateRequest(request, config.Hostname, config.Port); code != "" {
 			diagnostic.WriteHTTP(response, request, code, "")
 			return
 		}
@@ -460,23 +467,28 @@ func (p *Proxy) newReverseProxy(target string, maxConnsPerHost int, hooks Respon
 	return &targetProxy{ReverseProxy: proxy, transport: transport}, nil
 }
 
-// ValidateRequest binds a visitor HTTP request to its public URL hostname and SNI.
-func ValidateRequest(request *http.Request, hostname string) diagnostic.Code {
+// ValidateRequest binds http authority to the approved hostname and port; sni
+// remains a hostname, not an http authority.
+func ValidateRequest(request *http.Request, hostname string, port int) diagnostic.Code {
 	// bind origin-form authority and TLS SNI to this public URL's hostname.
 	if request.Method == http.MethodConnect || request.URL.IsAbs() || request.URL.Host != "" || strings.HasPrefix(request.RequestURI, "http://") || strings.HasPrefix(request.RequestURI, "https://") {
 		return diagnostic.RequestRejected
 	}
 	authority, err := naming.CanonicalizeAuthority(request.Host)
-	if err != nil || request.TLS == nil {
+	if err != nil || request.TLS == nil || !tcpport.ValidNetwork(port) {
 		return diagnostic.RequestRejected
 	}
 	serverName, err := naming.CanonicalizeHostname(request.TLS.ServerName)
 	if err != nil || serverName != hostname {
 		return diagnostic.RequestRejected
 	}
-	if authority != hostname {
+	requestPort := "443"
+	if strings.Contains(request.Host, ":") {
+		_, requestPort, _ = strings.Cut(request.Host, ":")
+	}
+	if authority != hostname || requestPort != strconv.Itoa(port) {
 		// HTTP/2 clients may reuse a TLS connection for sibling hostnames on
-		// the same wildcard certificate. A 421 asks them to retry on a new
+		// the same wildcard certificate. a 421 asks them to retry on a new
 		// connection with the requested hostname as SNI.
 		if request.ProtoMajor == 2 {
 			return diagnostic.RequestMisdirected

@@ -65,7 +65,7 @@ func TestTargetTLSServerNameMatchesPreflightAndForwarding(t *testing.T) {
 			if (err == nil) != test.valid {
 				t.Fatalf("preflight success=%t, want %t", err == nil, test.valid)
 			}
-			handler, err := New(Config{Target: backend.URL, Hostname: "route.example", MaxConnsPerHost: 1, TargetOptions: test.options})
+			handler, err := New(Config{Target: backend.URL, Hostname: "route.example", Port: 443, MaxConnsPerHost: 1, TargetOptions: test.options})
 			if err != nil {
 				t.Fatal(err)
 			}

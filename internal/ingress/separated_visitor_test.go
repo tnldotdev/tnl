@@ -27,6 +27,7 @@ import (
 func startSeparatedPublisher(t *testing.T, f *admissionTransportFixture, c publisher.PublicURLServerConfig) {
 	t.Helper()
 	c.Hostname = "route.example"
+	c.Port = 443
 	c.PublicURLID = f.entry.PublicUrlId
 	c.PublishRunID = f.entry.PublishRunId
 	c.PublishRunNumber = uint64(f.entry.PublishRunNumber)

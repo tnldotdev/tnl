@@ -169,7 +169,7 @@ func TestFeedbackBrowserAuthorComesFromSessionFactNotVisitorToken(t *testing.T) 
 	policy, _, token := visitorfixture.Policy(t, false)
 	client := &feedbackControlStub{}
 	runtime := &feedbackRuntime{client: client, runID: "pr_0123456789abcdefghijkl", version: 1, previewID: "pv_0123456789abcdefghijkl"}
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "preview.example.test", PublicURLID: "url_" + strings.Repeat("A", 22), VisitorPolicy: policy, Feedback: runtime,
+	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "preview.example.test", Port: 443, PublicURLID: "url_" + strings.Repeat("A", 22), VisitorPolicy: policy, Feedback: runtime,
 		Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("feedback reached the app") })})
 	if err != nil {
 		t.Fatal(err)

@@ -42,7 +42,7 @@ func TestPublicURLHTTPModeRejectsConflictingConfiguration(t *testing.T) {
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			config := PublicURLServerConfig{Hostname: "route.example", Handler: http.NotFoundHandler()}
+			config := PublicURLServerConfig{Hostname: "route.example", Port: 443, Handler: http.NotFoundHandler()}
 			test.configure(&config)
 			_, err := NewPublicURLServer(config)
 			if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.TargetInvalid {

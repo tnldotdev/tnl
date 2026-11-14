@@ -49,7 +49,7 @@ func TestAutomaticRouteAcceptsNamespaceCertificate(t *testing.T) {
 		})
 	}
 	t.Run("uncovered_depth", func(t *testing.T) {
-		route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "deep.app.member.example", Target: "http://127.0.0.1:3000", Certificate: certificate, CertificatePlan: control.setup.CertificatePlan})
+		route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "deep.app.member.example", Port: 443, Target: "http://127.0.0.1:3000", Certificate: certificate, CertificatePlan: control.setup.CertificatePlan})
 		if err == nil {
 			_ = route.Close()
 			t.Fatal("namespace wildcard certificate covered a deeper hostname")

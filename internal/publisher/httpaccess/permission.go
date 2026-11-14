@@ -71,7 +71,7 @@ func localHTTPPermission(request *http.Request, policy *visitorlease.Lease, rene
 	if !enabled {
 		return httpPermission{}, visitortoken.ErrPolicy
 	}
-	validHost := publisherproxy.ValidateRequest(request, view.Hostname) == ""
+	validHost := publisherproxy.ValidateRequest(request, view.Hostname, int(view.Port)) == ""
 	if view.Scope.Kind == visitorscope.Service {
 		validHost = request.Host == net.JoinHostPort(view.Hostname, strconv.Itoa(int(view.Port))) && request.Method != http.MethodConnect && !request.URL.IsAbs() && request.URL.Host == "" && request.TLS != nil && request.TLS.ServerName == view.Hostname
 	}

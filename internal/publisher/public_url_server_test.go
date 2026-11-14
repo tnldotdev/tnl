@@ -52,6 +52,9 @@ func (*testVisitorControl) RevokeBrowserAccess(context.Context, string, uint64, 
 func newTestPublicURLServer(t *testing.T, config PublicURLServerConfig) (*PublicURLServer, error) {
 	t.Helper()
 	config.VisitorSourceKey = testPublicVisitorSourceKey
+	if config.Port == 0 {
+		config.Port = 443
+	}
 	if config.PublicURLID == "" {
 		config.PublicURLID = certificateTestPublicURLID
 	}
@@ -62,7 +65,7 @@ func newTestPublicURLServer(t *testing.T, config PublicURLServerConfig) (*Public
 		config.PublishRunNumber = 1
 	}
 	if config.VisitorPolicy == nil {
-		policy, err := httpaccess.PreparePolicy(t.Context(), testHTTPPolicyClient{hostname: config.Hostname, anonymous: config.AccessMode != "restricted"}, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: config.PublicURLID}, config.PublishRunID, int64(config.PublishRunNumber), "fixture-run-token", nil)
+		policy, err := httpaccess.PreparePolicy(t.Context(), testHTTPPolicyClient{hostname: config.Hostname, port: config.Port, anonymous: config.AccessMode != "restricted"}, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: config.PublicURLID}, config.PublishRunID, int64(config.PublishRunNumber), "fixture-run-token", nil)
 		if err != nil {
 			return nil, err
 		}
@@ -78,15 +81,20 @@ func newTestPublicURLServer(t *testing.T, config PublicURLServerConfig) (*Public
 
 type testHTTPPolicyClient struct {
 	hostname  string
+	port      int
 	anonymous bool
 }
 
 func (f testHTTPPolicyClient) ReadPublisherVisitorPolicy(_ context.Context, body controlv1.PublisherVisitorPolicyRequest, _ string) (controlv1.VisitorPolicyUpdate, error) {
 	now := time.Now()
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("v", 32)))
+	port := f.port
+	if port == 0 {
+		port = 443
+	}
 	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: []int64{}, SnapshotRequired: body.AfterRevision == 0,
 		VisitorSourceKey: testVisitorSourceKeyBytes(),
-		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Issuer: "https://control.example.test", Hostname: f.hostname, Port: 443,
+		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Issuer: "https://control.example.test", Hostname: f.hostname, Port: port,
 			ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true, Anonymous: f.anonymous, VisitorPolicyRevision: 1, KeyRevision: 1,
 			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "fixture", PublicKey: key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}, nil
 }
@@ -237,7 +245,7 @@ func TestRouteServerClosesStreamAfterMalformedProxyHeader(t *testing.T) {
 
 func TestRouteServerRepeatedClosePreservesServeFailure(t *testing.T) {
 	route, err := NewPublicURLServer(PublicURLServerConfig{
-		Hostname: "route.example", Target: "http://127.0.0.1:3000",
+		Hostname: "route.example", Port: 443, Target: "http://127.0.0.1:3000",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -592,7 +600,7 @@ func awaitPublisherTest[T any](t *testing.T, result <-chan T) T {
 
 func TestRouteServerSelectsOnlyInstalledCertificate(t *testing.T) {
 	route, err := NewPublicURLServer(PublicURLServerConfig{
-		Hostname: "route.example", Target: "http://127.0.0.1:3000",
+		Hostname: "route.example", Port: 443, Target: "http://127.0.0.1:3000",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -630,7 +638,7 @@ func TestManualCertificateRetainsStandardTLSCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	certificate := tls.Certificate{Certificate: [][]byte{der}, PrivateKey: privateKey}
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: "http://127.0.0.1:3000", Certificate: certificate})
+	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Port: 443, Target: "http://127.0.0.1:3000", Certificate: certificate})
 	if err != nil {
 		t.Fatalf("manual certificate rejected: %v", err)
 	}
@@ -652,7 +660,7 @@ func TestManualCertificateExpires(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		certificate := visitorfixture.Certificate(t, "route.example")
 		route, err := NewPublicURLServer(PublicURLServerConfig{
-			Hostname: "route.example", Target: "http://127.0.0.1:3000", Certificate: certificate,
+			Hostname: "route.example", Port: 443, Target: "http://127.0.0.1:3000", Certificate: certificate,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -672,7 +680,7 @@ func TestCertificateReplacementAndExpirationAreAtomic(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		first := visitorfixture.CertificateUntil(t, "route.example", time.Now().Add(time.Hour))
 		route, err := NewPublicURLServer(PublicURLServerConfig{
-			Hostname: "route.example", Target: "http://127.0.0.1:3000", Certificate: first,
+			Hostname: "route.example", Port: 443, Target: "http://127.0.0.1:3000", Certificate: first,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -700,7 +708,7 @@ func TestCertificateReplacementAndExpirationAreAtomic(t *testing.T) {
 func TestReadyCallbackIsNotCalledAfterCertificateExpiry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		route, err := NewPublicURLServer(PublicURLServerConfig{
-			Hostname: "route.example", Target: "http://127.0.0.1:3000",
+			Hostname: "route.example", Port: 443, Target: "http://127.0.0.1:3000",
 			Certificate: visitorfixture.Certificate(t, "route.example"),
 		})
 		if err != nil {

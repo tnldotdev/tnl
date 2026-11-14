@@ -13,7 +13,7 @@ import (
 )
 
 func TestConfigRejectsInvalidTransportSizing(t *testing.T) {
-	if _, err := New(Config{Target: "3000", Hostname: "route.example", MaxConnsPerHost: -1}); err == nil {
+	if _, err := New(Config{Target: "3000", Hostname: "route.example", Port: 443, MaxConnsPerHost: -1}); err == nil {
 		t.Fatal("negative transport connection limit accepted")
 	}
 }
@@ -35,7 +35,7 @@ func TestTransportSizingWaitsWithoutApplicationAdmission(t *testing.T) {
 			}))
 			t.Cleanup(upstream.Close)
 			t.Cleanup(unblock)
-			config := Config{Target: upstream.URL, Hostname: "route.example", MaxConnsPerHost: 1}
+			config := Config{Target: upstream.URL, Hostname: "route.example", Port: 443, MaxConnsPerHost: 1}
 			prefix := ""
 			switch kind {
 			case "mounted":

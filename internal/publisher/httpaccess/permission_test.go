@@ -145,6 +145,27 @@ func TestServiceHTTPWorkloadCertificateNeverFallsBackToHumanCredentials(t *testi
 	}
 }
 
+func TestPublicURLHTTPPermissionBindsTheApprovedPort(t *testing.T) {
+	for _, anonymous := range []bool{false, true} {
+		policy, _, token := visitorfixture.ScopePolicy(t, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}, "preview.example.test", 25443, anonymous)
+		for _, host := range []string{"preview.example.test:25443", "preview.example.test", "preview.example.test:443", "preview.example.test:25444"} {
+			r := visitorfixture.Request()
+			r.Host = host
+			if !anonymous {
+				r.Header.Set(VisitorTokenHeader, token.Reveal())
+			}
+			_, err := localHTTPPermission(r, policy, nil)
+			if host == "preview.example.test:25443" {
+				if err != nil {
+					t.Fatal("approved high-port HTTP authority was denied", anonymous, err)
+				}
+			} else if !errors.Is(err, visitortoken.ErrBinding) {
+				t.Fatal("HTTP permission crossed a port boundary", anonymous, host, err)
+			}
+		}
+	}
+}
+
 func TestLocalHTTPPermissionPolicyExpiryStopsSignedAndAnonymousRequests(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		policy, _, token := visitorfixture.Policy(t, true)

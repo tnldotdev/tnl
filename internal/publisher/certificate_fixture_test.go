@@ -170,7 +170,7 @@ func certificateTestStore(t *testing.T, root string) *clientstate.Store {
 
 func certificateTestPublicURL(t *testing.T, hostname string, plan controlv1.CertificatePlan) *PublicURLServer {
 	t.Helper()
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: hostname, Target: "http://127.0.0.1:3000", CertificatePlan: plan})
+	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: hostname, Port: 443, Target: "http://127.0.0.1:3000", CertificatePlan: plan})
 	if err != nil {
 		t.Fatal(err)
 	}
