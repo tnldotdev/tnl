@@ -32,7 +32,8 @@ func TestIntegrationAppliedProjectPersonalSharedLocalRealization(t *testing.T) {
 		}
 	}
 	projection, err := d.GetProjectPublicMetadata(t.Context(), r.TeamID, local.ProjectKey, r.ActingIdentityID, now)
-	if err != nil || projection.SourceFingerprint != local.SourceFingerprint || len(projection.Services) != 1 || projection.Services[0].PublicURLID != u.ID {
+	if err != nil || projection.SourceFingerprint != local.SourceFingerprint || len(projection.Services) != 1 ||
+		projection.Services[0].PublicURLID != u.ID || projection.Services[0].Hostname != u.CanonicalHostname || projection.Services[0].Port != u.Port {
 		t.Fatal("startup metadata before first apply lost the realized URL", projection, err)
 	}
 	if _, err = d.ReplaceVisitorAccess(t.Context(), u.ID, r.ActingIdentityID, VisitorAccessAnonymous, nil, u.MutationRevision, now); !errors.Is(err, ErrProjectManaged) {
@@ -71,6 +72,7 @@ func TestIntegrationAppliedProjectLocalProjectionAndMemberBinding(t *testing.T) 
 	}
 	member := addAuthorityMember(t, d, now, r.ActingIdentityID, r.TeamID, "projection-reader", TeamRoleMember)
 	local := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: "local", SourceFingerprint: strings.Repeat("a", 64), Service: "web", WorktreeKey: "checkout-a", ActorID: r.ActingIdentityID, Configuration: ProjectServiceConfiguration{Target: "app", PublicURL: &ProjectServicePublicURL{}, Access: &ProjectServiceAccess{Team: true}}, Now: now}
+	endpoints := make(map[string]PublicURL)
 	for _, worktree := range []string{"checkout-a", "checkout-b"} {
 		r.IdempotencyKey = worktree
 		r.RequestDigest = sha256.Sum256([]byte(worktree))
@@ -82,6 +84,7 @@ func TestIntegrationAppliedProjectLocalProjectionAndMemberBinding(t *testing.T) 
 		}
 		r.CanonicalHostname = worktree + "." + label + ".tunnels.example.test"
 		u := createTestPublicURL(t, d, r, now)
+		endpoints[u.ID] = u
 		local.WorktreeKey, local.PublicURLID = worktree, u.ID
 		if _, err := d.RealizeLocalProjectService(t.Context(), local); err != nil {
 			t.Fatal(err)
@@ -90,6 +93,12 @@ func TestIntegrationAppliedProjectLocalProjectionAndMemberBinding(t *testing.T) 
 	projection, err := d.GetProjectPublicMetadata(t.Context(), r.TeamID, local.ProjectKey, member.IdentityID, now)
 	if err != nil || len(projection.Services) != 2 || projection.Services[0].PublicURLID == projection.Services[1].PublicURLID {
 		t.Fatal("ordinary member lost authorized realized worktree URLs", projection, err)
+	}
+	for _, service := range projection.Services {
+		saved, ok := endpoints[service.PublicURLID]
+		if !ok || service.Hostname != saved.CanonicalHostname || service.Port != saved.Port {
+			t.Fatal("worktree metadata changed the saved public endpoint", service)
+		}
 	}
 	if _, err = d.GetProjectConfiguration(t.Context(), r.TeamID, local.ProjectKey, member.IdentityID, "local"); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("local visitor read full configuration", err)

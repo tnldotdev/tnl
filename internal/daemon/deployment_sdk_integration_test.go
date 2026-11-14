@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherlocal "github.com/tnldotdev/tnl/internal/publisher/local"
@@ -178,7 +180,7 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 			defer cancel()
 			var command *exec.Cmd
 			if variant == "python" {
-				command = exec.CommandContext(ctx, "uv", "run", "--frozen", "--project", filepath.Join(repo, "packages/py"), "python", filepath.Join(directory, "publication.py"))
+				command = exec.CommandContext(ctx, filepath.Join(repo, "packages/py/.venv/bin/python"), filepath.Join(directory, "publication.py"))
 			} else {
 				executable := "node"
 				if variant == "bun" {
@@ -197,16 +199,14 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 			}
 			var stderr synchronizedBuffer
 			command.Stderr = &stderr
-			if err := command.Start(); err != nil {
+			process, err := startOwnedCommand(command, nil)
+			if err != nil {
 				t.Fatal(err)
 			}
-			joined := make(chan error, 1)
-			go func() { joined <- command.Wait() }()
-			stopped := false
 			defer func() {
-				if !stopped {
-					_ = command.Process.Kill()
-					<-joined
+				_ = stdin.Close()
+				if err := process.shutdown(2*time.Second, 2*time.Second); err != nil {
+					t.Error("SDK subprocess cleanup", err)
 				}
 			}()
 			lines := make(chan string, 1)
@@ -240,13 +240,24 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 				result.URL = proof.url
 			} else {
 				response, body, err := f.visitor.requestURL(http.MethodGet, result.URL, nil)
-				if err != nil || response.StatusCode != 200 || string(body) != "SDK publication" {
-					t.Fatal("SDK visitor traffic failed", err)
+				if err != nil {
+					t.Fatal("SDK visitor request failed", err)
+				}
+				if response.StatusCode != 200 || string(body) != "SDK publication" {
+					t.Fatalf("SDK visitor traffic: status=%d body=%q stderr=%q", response.StatusCode, body, stderr.String())
 				}
 			}
+			endpoint, err := url.Parse(result.URL)
+			if err != nil || endpoint.Scheme != "https" || endpoint.Hostname() == "" || endpoint.Port() == "" {
+				t.Fatal("SDK did not return an allocated HTTPS origin", err)
+			}
 			var id string
-			if err := f.inspect.QueryRowContext(t.Context(), `SELECT id FROM control.public_urls WHERE canonical_hostname=$1`, strings.TrimPrefix(result.URL, "https://")).Scan(&id); err != nil {
+			var port int
+			if err := f.inspect.QueryRowContext(t.Context(), `SELECT id,port FROM control.public_urls WHERE canonical_hostname=$1`, endpoint.Hostname()).Scan(&id, &port); err != nil {
 				t.Fatal(err)
+			}
+			if result.URL != naming.HTTPSOrigin(endpoint.Hostname(), port) {
+				t.Fatal("SDK changed the saved allocated origin")
 			}
 			if variant == "node" {
 				savedID, savedURL = id, result.URL
@@ -259,9 +270,8 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 			}
 			_ = stdin.Close()
 			select {
-			case err := <-joined:
-				stopped = true
-				if err != nil {
+			case <-process.done:
+				if process.result() != nil {
 					t.Fatal("SDK cleanup failed", stderr.String())
 				}
 			case <-ctx.Done():

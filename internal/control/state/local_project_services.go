@@ -457,7 +457,7 @@ func (d *Database) GetProjectPublicMetadata(ctx context.Context, team, project, 
 	rows, err := tx.Query(ctx, `WITH public_services AS (
 	    SELECT service,public_url_id FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2
 	    UNION SELECT service,public_url_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2)
-	    SELECT s.service,u.id,''::text,u.canonical_hostname,443 FROM public_services s JOIN control.public_urls u ON u.id=s.public_url_id AND u.lifecycle_state='enabled'
+	    SELECT s.service,u.id,''::text,u.canonical_hostname,u.port FROM public_services s JOIN control.public_urls u ON u.id=s.public_url_id AND u.lifecycle_state='enabled'
 	    WHERE $5 OR EXISTS(SELECT 1 FROM control.visitor_identity_permission('public_url',u.id,$3,$6,'',$4))
 	    UNION ALL SELECT a.service,''::text,s.id,s.certificate_hostname,s.service_port FROM (
 	      SELECT team_id,project_key,service,service_id FROM control.applied_project_services

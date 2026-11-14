@@ -10,57 +10,99 @@ function portOf(server: Awaited<ReturnType<typeof createFetchServer>>): number {
   return address.port;
 }
 
-test("inline Fetch handlers receive a public origin and can stream request and response bodies", async () => {
-  let requestURL = "";
-  const server = await createFetchServer(async (request) => {
-    requestURL = request.url;
-    const body = await request.text();
-    return new Response(
-      new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode("first:"));
-          controller.enqueue(new TextEncoder().encode(body));
-          controller.close();
-        },
-      }),
-      { headers: { "Set-Cookie": "visit=one; HttpOnly" } },
-    );
+test.each(["app.example.test", "app.example.test:25443"])(
+  "inline Fetch retains %s and streams request and response bodies",
+  async (host) => {
+    let requestURL = "";
+    const server = await createFetchServer(async (request) => {
+      requestURL = request.url;
+      const body = await request.text();
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("first:"));
+            controller.enqueue(new TextEncoder().encode(body));
+            controller.close();
+          },
+        }),
+        { headers: { "Set-Cookie": "visit=one; HttpOnly" } },
+      );
+    });
+    try {
+      const result = await new Promise<{
+        status: number;
+        body: string;
+        cookie: string[] | undefined;
+      }>((resolve, reject) => {
+        const request = httpRequest(
+          {
+            hostname: "127.0.0.1",
+            port: portOf(server),
+            path: "/callback?x=1",
+            method: "POST",
+            headers: { Host: host },
+          },
+          (response) => {
+            const chunks: Buffer[] = [];
+            response.on("data", (chunk: Buffer) => chunks.push(chunk));
+            response.on("end", () =>
+              resolve({
+                status: response.statusCode ?? 0,
+                body: Buffer.concat(chunks).toString(),
+                cookie: response.headers["set-cookie"],
+              }),
+            );
+          },
+        );
+        request.on("error", reject);
+        request.end("streamed body");
+      });
+      expect(requestURL).toBe(`https://${host}/callback?x=1`);
+      expect(result).toEqual({
+        status: 200,
+        body: "first:streamed body",
+        cookie: ["visit=one; HttpOnly"],
+      });
+    } finally {
+      await closeServer(server);
+    }
+  },
+);
+
+test.each([
+  "app.example.test:0",
+  "app.example.test:65536",
+  "app.example.test:025443",
+  "app.example.test:abc",
+  "user@app.example.test:25443",
+  "app.example.test:25443/path",
+  "app.example.test:25443?query",
+  "app.example.test:25443#fragment",
+  "app.example.test:25443,other.example.test",
+])("inline Fetch rejects malformed authority %s without calling the handler", async (host) => {
+  let called = false;
+  const server = await createFetchServer(() => {
+    called = true;
+    return new Response("not reached");
   });
   try {
-    const result = await new Promise<{
-      status: number;
-      body: string;
-      cookie: string[] | undefined;
-    }>((resolve, reject) => {
+    const status = await new Promise<number>((resolve, reject) => {
       const request = httpRequest(
         {
           hostname: "127.0.0.1",
           port: portOf(server),
-          path: "/callback?x=1",
-          method: "POST",
-          headers: { Host: "app.example.test" },
+          headers: { Host: host },
         },
         (response) => {
-          const chunks: Buffer[] = [];
-          response.on("data", (chunk: Buffer) => chunks.push(chunk));
-          response.on("end", () =>
-            resolve({
-              status: response.statusCode ?? 0,
-              body: Buffer.concat(chunks).toString(),
-              cookie: response.headers["set-cookie"],
-            }),
-          );
+          response.resume();
+          response.on("end", () => resolve(response.statusCode ?? 0));
         },
       );
       request.on("error", reject);
-      request.end("streamed body");
+      request.end();
     });
-    expect(requestURL).toBe("https://app.example.test/callback?x=1");
-    expect(result).toEqual({
-      status: 200,
-      body: "first:streamed body",
-      cookie: ["visit=one; HttpOnly"],
-    });
+    expect(status).toBe(400);
+    expect(called).toBe(false);
   } finally {
     await closeServer(server);
   }

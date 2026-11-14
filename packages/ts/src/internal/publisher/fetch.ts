@@ -2,6 +2,7 @@ import { once } from "node:events";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import { TnlError } from "../../errors.js";
+import { hostnameSchema, httpsOriginSchema } from "../values.js";
 import type { FetchHandler } from "./fetch_types.js";
 
 // the owned HTTP listener adapts Fetch requests without a framework or child publisher.
@@ -41,10 +42,10 @@ async function serveFetch(
   const controller = new AbortController();
   outgoing.once("close", () => controller.abort());
   try {
-    const host = incoming.headers.host;
+    const origin = httpsOriginSchema.safeParse(`https://${incoming.headers.host ?? ""}`);
     if (
-      typeof host !== "string" ||
-      !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(host) ||
+      !origin.success ||
+      !hostnameSchema.safeParse(new URL(origin.data).hostname).success ||
       typeof incoming.url !== "string" ||
       !incoming.url.startsWith("/") ||
       incoming.url.startsWith("//")
@@ -62,7 +63,7 @@ async function serveFetch(
       incoming.method === "GET" || incoming.method === "HEAD"
         ? undefined
         : (Readable.toWeb(incoming) as unknown as ReadableStream<Uint8Array>);
-    const request = new Request(`https://${host}${incoming.url}`, {
+    const request = new Request(`${origin.data}${incoming.url}`, {
       method: incoming.method,
       headers,
       body,

@@ -148,15 +148,15 @@ func TestIntegrationDeniedVisitorGetsHTTPS403(t *testing.T) {
 			config.AllowedIPPrefixes = []string{"127.0.0.1/32"}
 			handle := startOwnedIntegrationPublisher(t, fixture.owner, config, fixture.diagnostics)
 			ready := fixture.waitReady(t, handle)
-			http2Client, http2Transport := newIntegrationHTTPSClient(t, fixture.pebble.roots, fixture.publicAddress, true, fixture.owner)
-			http2Transport.ForceAttemptHTTP2 = true
+			http2Visitor := newProxiedIntegrationVisitor(t, fixture.pebble.roots, fixture.ingressAddress, fixture.owner)
+			http2Visitor.transport.ForceAttemptHTTP2 = true
 			for _, test := range []struct {
 				accept string
 				client *http.Client
 				proto  int
 			}{
 				{accept: "text/html", client: fixture.visitor.client, proto: 1},
-				{accept: "text/plain", client: http2Client, proto: 2},
+				{accept: "text/plain", client: http2Visitor.client, proto: 2},
 			} {
 				request, err := http.NewRequest(http.MethodGet, ready.PublicURL, nil)
 				if err != nil {

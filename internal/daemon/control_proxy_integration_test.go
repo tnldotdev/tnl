@@ -56,7 +56,7 @@ func TestIntegrationControlProxyDeviceBrowserFlow(t *testing.T) {
 	}}
 	t.Cleanup(transport.CloseIdleConnections)
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
-	state, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		t.Fatal(err)
 	}
