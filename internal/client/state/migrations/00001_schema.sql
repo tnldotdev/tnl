@@ -356,7 +356,8 @@ CREATE TABLE inspections (
     mysql_result_sets INTEGER NOT NULL DEFAULT 0 CHECK (mysql_result_sets >= 0),
     mysql_error_code INTEGER NOT NULL DEFAULT 0 CHECK (mysql_error_code BETWEEN 0 AND 65535),
     CHECK (
-      (service_protocol = 'http' AND method != '' AND status BETWEEN 100 AND 599 AND sql_operation = '' AND result = '' AND redis_command = '')
+      (service_protocol = 'http' AND method != '' AND status BETWEEN 100 AND 599 AND sql_operation = ''
+          AND result IN ('ok','error') AND (status < 400 OR result = 'error') AND redis_command = '')
       OR (service_protocol IN ('postgres', 'mysql') AND method = '' AND path = '' AND status = 0
           AND sql_operation != '' AND result != '' AND redis_command = '')
       OR (service_protocol = 'redis' AND method = '' AND path = '' AND status = 0
