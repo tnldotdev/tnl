@@ -34,7 +34,7 @@ func (BrowserSessionTokenSource) visitorTokenSource() {}
 func (BrowserSessionTokenSource) String() string      { return "browser sign-in token source" }
 func (BrowserSessionTokenSource) GoString() string    { return "browser sign-in token source" }
 
-type DeviceTokenSource struct{ DeviceID string }
+type DeviceTokenSource struct{ DeviceID, PreviewID string }
 
 func (DeviceTokenSource) visitorTokenSource() {}
 
@@ -284,6 +284,12 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		if browser, ok := supplied.(BrowserTokenSource); ok {
 			preview = browser.PreviewID
 		}
+		if device, ok := supplied.(DeviceTokenSource); ok {
+			preview = device.PreviewID
+			if preview != "" && (scope.Kind != visitorscope.PublicURL || !opaqueid.Valid(preview, opaqueid.PreviewPrefix)) {
+				return result, ErrVisitorPermission
+			}
+		}
 		decision, err := q.VisitorPermission(ctx, controlstatedb.VisitorPermissionParams{ResourceKind: string(scope.Kind), ResourceID: scope.ID, IdentityID: principal.IdentityID, ControlSessionID: principal.SessionID, PreviewID: preview, Now: timestamptz(now)})
 		if errors.Is(err, pgx.ErrNoRows) && resource.Anonymous {
 			// a valid signed-in person may visit an explicitly anonymous URL.
@@ -307,9 +313,9 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		}
 		subject = visitortoken.Browser{IdentityID: principal.IdentityID, SessionID: principal.SessionID}
 		if device, ok := supplied.(DeviceTokenSource); ok {
-			if scope.Kind != visitorscope.Service {
-				return result, ErrVisitorPermission
-			}
+			// device enrollment proves possession, not resource permission. the
+			// same current owner, grant, or preview decision above applies to
+			// public URLs without converting them into service authority.
 			var public []byte
 			if err := tx.QueryRow(ctx, `SELECT public_key FROM control.visitor_devices WHERE id=$1 AND identity_id=$2 AND revoked_at IS NULL FOR SHARE`, device.DeviceID, principal.IdentityID).Scan(&public); err != nil {
 				return result, publisherLookupError(err, ErrVisitorPermission)

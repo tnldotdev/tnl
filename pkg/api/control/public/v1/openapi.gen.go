@@ -4617,10 +4617,11 @@ type VisitorTokenControlSessionSource struct {
 // VisitorTokenControlSessionSourceKind defines model for VisitorTokenControlSessionSource.Kind.
 type VisitorTokenControlSessionSourceKind string
 
-// VisitorTokenDeviceSource defines model for VisitorTokenDeviceSource.
+// VisitorTokenDeviceSource A current control session and its enrolled native device. An optional preview selects existing team access to an included public URL; it grants no access by itself.
 type VisitorTokenDeviceSource struct {
-	DeviceId string                       `json:"device_id"`
-	Kind     VisitorTokenDeviceSourceKind `json:"kind"`
+	DeviceId  string                       `json:"device_id"`
+	Kind      VisitorTokenDeviceSourceKind `json:"kind"`
+	PreviewId *PreviewID                   `json:"preview_id,omitempty"`
 }
 
 // VisitorTokenDeviceSourceKind defines model for VisitorTokenDeviceSource.Kind.

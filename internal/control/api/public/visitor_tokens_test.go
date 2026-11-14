@@ -21,6 +21,7 @@ func TestVisitorTokenSourceRejectsMixedUnknownAndIncompleteVariants(t *testing.T
 		`{"kind":"control_session","secret":"ignored"}`,
 		`{"kind":"control_session","preview_id":"bad"}`,
 		`{"kind":"device"}`,
+		`{"kind":"device","device_id":"vdev_` + strings.Repeat("A", 22) + `","preview_id":"bad"}`,
 		`{"kind":"device","device_id":"vdev_` + strings.Repeat("A", 22) + `","credential":"ignored"}`,
 		`{"kind":"workload"}`,
 		`{"kind":"share","share_id":"shr_` + strings.Repeat("A", 22) + `"}`,
@@ -42,6 +43,15 @@ func TestVisitorTokenSourceRejectsMixedUnknownAndIncompleteVariants(t *testing.T
 		if err != nil || parsed == nil || needsHuman != human {
 			t.Fatal("incorrect source authentication boundary", err)
 		}
+	}
+}
+
+func TestVisitorTokenDeviceSourceRetainsExplicitPreviewSelection(t *testing.T) {
+	device, preview := "vdev_"+strings.Repeat("A", 22), "pv_"+strings.Repeat("B", 22)
+	parsed, human, err := parseVisitorTokenSource(json.RawMessage(`{"kind":"device","device_id":"` + device + `","preview_id":"` + preview + `"}`))
+	source, ok := parsed.(controlstate.DeviceTokenSource)
+	if err != nil || !human || !ok || source.DeviceID != device || source.PreviewID != preview {
+		t.Fatal("native preview selection crossed its authentication boundary", err)
 	}
 }
 

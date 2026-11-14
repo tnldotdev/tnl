@@ -2,6 +2,7 @@ package public
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -65,6 +66,26 @@ func TestIntegrationVisitorTokenAPIHasOneSourceAndNoManagementAuthority(t *testi
 	}
 	if _, err := d.AuthenticateAccessToken(t.Context(), credentials.AccessToken(permission.VisitorToken), time.Now()); !errors.Is(err, controlstate.ErrControlAuthentication) {
 		t.Fatal("visitor token authenticated a control session", err)
+	}
+	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{8}, ed25519.SeedSize))
+	device, err := d.EnrollVisitorDevice(t.Context(), session.Identity.Identity.ID, key.Public().(ed25519.PublicKey), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := `{"resource":{"kind":"public_url","id":"` + url.ID + `"},"source":{"kind":"device","device_id":"` + device.ID + `"}}`
+	response = request("/v1/visitor-tokens", native, session.AccessToken.String())
+	var devicePermission controlv1.VisitorTokenResponse
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &devicePermission) != nil ||
+		devicePermission.Resource.Id != url.ID || devicePermission.Resource.Kind != controlv1.VisitorResourceScopeKindPublicUrl ||
+		devicePermission.Port != int(url.Port) || devicePermission.ServiceTrustRevision != nil || devicePermission.VisitorToken == "" ||
+		response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("native public URL permission: status=%d", response.Code)
+	}
+	if response := request("/v1/visitor-tokens", native, ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("device enrollment substituted for a control session: status=%d", response.Code)
+	}
+	if _, err := d.AuthenticateAccessToken(t.Context(), credentials.AccessToken(devicePermission.VisitorToken), now); !errors.Is(err, controlstate.ErrControlAuthentication) {
+		t.Fatal("native visitor permission granted control authority", err)
 	}
 	management := httptest.NewRequest(http.MethodGet, "/v1/public-urls?team_id="+member.TeamID, nil)
 	management.Header.Set("Authorization", "Bearer "+permission.VisitorToken)

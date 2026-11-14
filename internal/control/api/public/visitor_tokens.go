@@ -135,7 +135,14 @@ func parseVisitorTokenSource(raw json.RawMessage) (controlstate.VisitorTokenSour
 		if decode(&source) != nil || !opaqueid.Valid(source.DeviceId, opaqueid.VisitorDevicePrefix) {
 			return nil, false, invalid
 		}
-		return controlstate.DeviceTokenSource{DeviceID: source.DeviceId}, true, nil
+		preview := ""
+		if source.PreviewId != nil {
+			preview = *source.PreviewId
+			if !opaqueid.Valid(preview, opaqueid.PreviewPrefix) {
+				return nil, false, invalid
+			}
+		}
+		return controlstate.DeviceTokenSource{DeviceID: source.DeviceId, PreviewID: preview}, true, nil
 	case "workload":
 		var source controlv1.VisitorTokenWorkloadSource
 		if decode(&source) != nil || len(source.Credential) < 5 || len(source.Credential) > 256 {

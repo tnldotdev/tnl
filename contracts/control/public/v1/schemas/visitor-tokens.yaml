@@ -31,6 +31,8 @@ schemas:
     properties:
       kind: { type: string, enum: [device], x-enum-varnames: [VisitorTokenDevice] }
       device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+      preview_id: { $ref: "../openapi.yaml#/components/schemas/PreviewID" }
+    description: A current control session and its enrolled native device. An optional preview selects existing team access to an included public URL; it grants no access by itself.
   VisitorTokenWorkloadSource:
     type: object
     additionalProperties: false
