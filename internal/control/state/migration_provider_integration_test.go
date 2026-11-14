@@ -56,6 +56,7 @@ func testMigrationRejectsProviderBaseline(t *testing.T, previous string, provide
 	assertProvider(t, excluded, false)
 	// these are frozen test literals, not provider names from project input.
 	for _, query := range []string{
+		`DELETE FROM control.goose_db_version WHERE version_id > 1`,
 		`ALTER TABLE control.workload_sessions DROP CONSTRAINT workload_sessions_provider_check`,
 		fmt.Sprintf(`ALTER TABLE control.workload_sessions ADD CONSTRAINT workload_sessions_provider_check
 			CHECK (provider IN ('%s'))`, strings.Join(providers, "','")),
