@@ -36,7 +36,7 @@ func TestServiceHeartbeatPreservesExplicitHealthAndStreamCounts(t *testing.T) {
 		{Healthy: true, StreamCapacity: 7, ActiveStreams: 7},
 	} {
 		store := &serviceHeartbeatStore{}
-		h := &handler{store: store, dependencies: Stores{ServiceRuns: store}}
+		h := &handler{dependencies: Stores{ServiceRuns: store}}
 		body, err := json.Marshal(health)
 		if err != nil {
 			t.Fatal(err)
@@ -75,13 +75,13 @@ func TestPrivateSelectionReturnsServiceEndpointWithoutStreamCrypto(t *testing.T)
 	service, _ := opaqueid.New(opaqueid.ServicePrefix)
 	device, _ := opaqueid.New("vdev_")
 	store := privateSelectionResponseStore{issued: controlstate.ServiceSelection{
-		Subject:         tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device, IdentityID: testPublicURLReadPrincipal().identityID},
+		Subject:         tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device, IdentityID: testControlReadPrincipal().identityID},
 		ServiceMetadata: controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1, Endpoint: &controlstate.ServiceEndpoint{Hostname: "service.worktree.member.example.test", Port: 25443}},
-		ServiceID:       service, DeviceID: device, IdentityID: testPublicURLReadPrincipal().identityID,
+		ServiceID:       service, DeviceID: device, IdentityID: testControlReadPrincipal().identityID,
 		ServiceRunID: "srun_0123456789ABCDEFGHIJKL",
 		ExpiresAt:    time.Now().Add(time.Minute), RunNumber: 1,
 	}}
-	h := &handler{store: store, dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal()}}
+	h := &handler{dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testControlReadPrincipal()}}
 	r := httptest.NewRequest(http.MethodPost, "/v1/services/"+service+"/select-run", strings.NewReader(`{"device_id":"`+device+`"}`))
 	r.Header.Set("Authorization", "Bearer access-token")
 	w := httptest.NewRecorder()

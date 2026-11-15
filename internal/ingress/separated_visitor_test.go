@@ -46,7 +46,6 @@ func (c separatedHTTPControl) ReadPublisherVisitorPolicy(ctx context.Context, re
 	}
 	update, err := c.policy.ReadPublisherVisitorPolicy(ctx, request, token)
 	update.Policy.Hostname, update.Policy.Anonymous = "route.example", true
-	update.VisitorSourceKey = nil
 	return update, err
 }
 

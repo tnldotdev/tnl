@@ -2927,7 +2927,7 @@
         "managed_url_mode": {
           "type": "string",
           "enum": ["simple", "generated"],
-          "description": "Managed-domain public URL names: ${enum}.",
+          "description": "Managed-domain service hostname labels: ${enum}.",
           "default": "simple"
         },
         "managed_domain_max_member_child_labels": {
@@ -3069,14 +3069,14 @@
             "type": "string"
           },
           "type": "array",
-          "description": "Stable ingress IPv4 address published in owned public URL records; repeat for each address."
+          "description": "Stable ingress IPv4 address published for public service endpoints; repeat for each address."
         },
         "ingress_ipv6_address": {
           "items": {
             "type": "string"
           },
           "type": "array",
-          "description": "Stable ingress IPv6 address published in owned public URL records; repeat for each address."
+          "description": "Stable ingress IPv6 address published for public service endpoints; repeat for each address."
         },
         "cluster_secret": {
           "type": "string",
@@ -3096,7 +3096,7 @@
         },
         "traffic_default_connections": {
           "type": "integer",
-          "description": "Default concurrent visitor connections per public URL publish run on each ingress process.",
+          "description": "Default concurrent visitor connections per service run on each ingress process.",
           "default": 32
         },
         "traffic_default_rate": {
@@ -3126,22 +3126,22 @@
         },
         "traffic_default_total_connections": {
           "type": "integer",
-          "description": "Default total visitor connections per publish run and ingress process; 0 is unlimited.",
+          "description": "Default total visitor connections per service run and ingress process; 0 is unlimited.",
           "default": 0
         },
         "traffic_default_total_upload_bytes": {
           "type": "integer",
-          "description": "Default total encrypted upload bytes per publish run and ingress process; 0 is unlimited.",
+          "description": "Default total encrypted upload bytes per service run and ingress process; 0 is unlimited.",
           "default": 0
         },
         "traffic_default_total_download_bytes": {
           "type": "integer",
-          "description": "Default total encrypted download bytes per publish run and ingress process; 0 is unlimited.",
+          "description": "Default total encrypted download bytes per service run and ingress process; 0 is unlimited.",
           "default": 0
         },
         "traffic_max_connections": {
           "type": "integer",
-          "description": "Maximum selected concurrent visitor connections per publish run.",
+          "description": "Maximum selected concurrent visitor connections per service run.",
           "default": 128
         },
         "traffic_max_rate": {
@@ -3171,17 +3171,17 @@
         },
         "traffic_max_total_connections": {
           "type": "integer",
-          "description": "Maximum selected total connections per publish run and ingress process; 0 is unlimited.",
+          "description": "Maximum selected total connections per service run and ingress process; 0 is unlimited.",
           "default": 0
         },
         "traffic_max_total_upload_bytes": {
           "type": "integer",
-          "description": "Maximum selected total encrypted upload bytes per publish run and ingress process; 0 is unlimited.",
+          "description": "Maximum selected total encrypted upload bytes per service run and ingress process; 0 is unlimited.",
           "default": 0
         },
         "traffic_max_total_download_bytes": {
           "type": "integer",
-          "description": "Maximum selected total encrypted download bytes per publish run and ingress process; 0 is unlimited.",
+          "description": "Maximum selected total encrypted download bytes per service run and ingress process; 0 is unlimited.",
           "default": 0
         },
         "traffic_source_connections": {
@@ -3224,9 +3224,9 @@
           "description": "Concurrent visitors awaiting authorization per ingress process.",
           "default": 64
         },
-        "pending_url_connection_limit": {
+        "pending_service_connection_limit": {
           "type": "integer",
-          "description": "Concurrent visitors awaiting authorization per public URL.",
+          "description": "Concurrent visitors awaiting authorization per service run.",
           "default": 8
         },
         "pending_source_connection_limit": {
@@ -3249,14 +3249,14 @@
           "description": "Encrypted download byte budget while awaiting authorization.",
           "default": 131072
         },
-        "pending_url_rate": {
+        "pending_service_rate": {
           "type": "integer",
-          "description": "Pending visitor attempts per public URL per second.",
+          "description": "Pending visitor attempts per service run per second.",
           "default": 5
         },
-        "pending_url_burst": {
+        "pending_service_burst": {
           "type": "integer",
-          "description": "Pending visitor attempt burst per public URL.",
+          "description": "Pending visitor attempt burst per service run.",
           "default": 10
         },
         "pending_source_rate": {
@@ -3380,11 +3380,6 @@
           "type": "string",
           "description": "Delay before retrying a transient control failure.",
           "default": "1s"
-        },
-        "routing_table_wait": {
-          "type": "string",
-          "description": "Maximum wait for ingress routing-table updates.",
-          "default": "25s"
         },
         "drain_timeout": {
           "type": "string",

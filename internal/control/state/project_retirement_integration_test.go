@@ -58,7 +58,7 @@ func TestIntegrationProjectRetirement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := publisherEnrollment(t, d, CreatePublicURLRequest{TeamID: r.TeamID, ActingIdentityID: r.ActorID}, PublisherScope{TeamID: r.TeamID, Kind: "service", ServiceID: service.ID}, now)
+	e := publisherEnrollment(t, d, serviceTestAuthority{TeamID: r.TeamID, ActingIdentityID: r.ActorID}, PublisherScope{TeamID: r.TeamID, Kind: "service", ServiceID: service.ID}, now)
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)

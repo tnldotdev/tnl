@@ -114,7 +114,7 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentService(t *testing.T) {
 	}
 	second := request
 	second.IdempotencyKey, second.Now = "second", now.Add(time.Second)
-	if _, err := d.AllocateGuestDemoService(t.Context(), second); !errors.Is(err, ErrPublishRunOpen) {
+	if _, err := d.AllocateGuestDemoService(t.Context(), second); !errors.Is(err, ErrServiceConflict) {
 		t.Fatalf("allocated second current service: %v", err)
 	}
 	deleteCtx := WithGuestServiceCredential(t.Context(), credential)

@@ -251,8 +251,8 @@ func TestFinalPublisherVisitorAndRuntimeCommandArguments(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"publisher", "enroll", "--namespace"}, "publisher enroll <public-url-id>"},
-		{[]string{"publisher", "enroll", "url_0123456789abcdefghijkl"}, "publisher enroll <public-url-id>"},
+		{[]string{"publisher", "enroll", "--namespace"}, "publisher enroll <service-or-address>"},
+		{[]string{"publisher", "enroll", "svc_0123456789abcdefghijkl"}, "publisher enroll <service-or-address>"},
 		{[]string{"publisher", "list"}, "publisher list"},
 		{[]string{"publisher", "revoke", "pub_0123456789abcdefghijkl"}, "publisher revoke <publisher-identity-id>"},
 		{[]string{"publisher", "grant", "add", "pub_0123456789abcdefghijkl", "--namespace"}, "publisher grant add <publisher-identity-id>"},

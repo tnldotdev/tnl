@@ -2,8 +2,8 @@ package state
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -42,90 +42,96 @@ func TestIntegrationRelayControlState(t *testing.T) {
 }
 
 func TestIntegrationPublisherConnectionClaims(t *testing.T) {
-	f := newPublishRunFixture(t)
-	database, now := f.database, f.now
-	plan := f.setup.PublisherConnections[0]
-	digest, err := credentials.ParsePublisherConnectionCredential(plan.PublisherConnectionCredential)
+	f := newServicePublicationFixture(t)
+	plan := f.run.Connections[0]
+	lease := f.leases[plan.RelayServiceID].RelayLeaseIdentity
+	badCredential, _, err := credentials.NewPublisherConnectionCredential()
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := PublisherConnectionClaimRequest{ConnectionAssignmentIdentity: plan.ConnectionAssignmentIdentity,
-		RelayLeaseIdentity: f.leases[plan.RelayServiceID].RelayLeaseIdentity, CredentialDigest: [32]byte(digest)}
-	bad := base
-	bad.ClaimID, bad.CredentialDigest = "bad", sha256.Sum256([]byte("wrong"))
-	if _, err := database.ClaimPublisherConnection(t.Context(), bad, now); !errors.Is(err, ErrPublisherConnectionCredential) {
+	if _, err := f.database.ClaimServicePublisherConnection(t.Context(), plan.PublisherConnectionID, f.service.ID, f.run.RunID, f.run.RunNumber, plan.Revision, badCredential.String(), netip.MustParseAddr("127.0.0.1"), lease, f.now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("bad credential: %v", err)
+	}
+	registration := relayLifecycleRegistration(plan.RelayServiceID)
+	registration.RelayID, registration.RelayRunID = "claim-contender", "claim-contender-run"
+	contender, err := f.database.RegisterRelay(t.Context(), registration, f.now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	workers := newIntegrationWorkers(t, cancel)
 	type result struct {
-		claim      PublisherConnectionClaimRequest
-		connection ClaimedPublisherConnection
-		err        error
+		lease RelayLeaseIdentity
+		err   error
 	}
 	results := make(chan result, 2)
-	for _, transport := range []string{"quic", "tcp"} {
+	for _, candidate := range []RelayLeaseIdentity{lease, contender.RelayLeaseIdentity} {
 		workers.Go(func() {
-			claim := base
-			claim.ClaimID = transport
-			connection, err := database.ClaimPublisherConnection(ctx, claim, now)
-			results <- result{claim, connection, err}
+			_, err := f.database.ClaimServicePublisherConnection(ctx, plan.PublisherConnectionID, f.service.ID, f.run.RunID, f.run.RunNumber, plan.Revision, plan.Credential, netip.MustParseAddr("127.0.0.1"), candidate, f.now)
+			results <- result{lease: candidate, err: err}
 		})
 	}
-	var winner PublisherConnectionClaimRequest
+	var winners int
+	var winner RelayLeaseIdentity
 	for range 2 {
-		result := awaitIntegrationResult(t, ctx, results)
+		r := awaitIntegrationResult(t, ctx, results)
 		switch {
-		case result.err == nil:
-			if winner.ClaimID != "" {
-				t.Fatal("both transport candidates claimed one connection")
-			}
-			winner = result.claim
-			if result.connection.State != "connected" || result.connection.ClaimID != winner.ClaimID {
-				t.Fatalf("claimed connection = %#v", result.connection)
-			}
-		case !errors.Is(result.err, ErrPublisherConnectionAlreadyClaimed):
-			t.Fatalf("losing claim: %v", result.err)
+		case r.err == nil:
+			winners++
+			winner = r.lease
+		case errors.Is(r.err, ErrServiceAccess):
+		default:
+			t.Fatalf("claim error: %v", r.err)
 		}
 	}
-	if winner.ClaimID == "" {
-		t.Fatal("neither transport candidate claimed the connection")
+	if winners != 1 {
+		t.Fatalf("expected exactly one winning claim, got %d", winners)
 	}
-	if _, err := database.ClaimPublisherConnection(ctx, winner, now); err != nil {
+	assertState := func(state string) {
+		t.Helper()
+		var matches bool
+		if err := f.database.pool.QueryRow(ctx, `SELECT state=$2 AND
+			CASE WHEN $2='closed' THEN relay_id IS NULL ELSE relay_id=$3 AND relay_run_id=$4 AND relay_lease_revision=$5 END
+			FROM control.service_connection_slots WHERE publisher_connection_id=$1`, plan.PublisherConnectionID, state,
+			winner.RelayID, winner.RelayRunID, int64(winner.RelayLeaseRevision)).Scan(&matches); err != nil || !matches {
+			t.Fatal("claim lost exact state or relay ownership", state, err)
+		}
+	}
+	assertState("connected")
+	if _, err := f.database.ClaimServicePublisherConnection(ctx, plan.PublisherConnectionID, f.service.ID, f.run.RunID, f.run.RunNumber, plan.Revision, plan.Credential, netip.MustParseAddr("127.0.0.1"), winner, f.now); err != nil {
 		t.Fatalf("claim replay: %v", err)
 	}
-	ready, err := database.MarkPublisherConnectionReady(ctx, winner, now)
-	if err != nil || ready.State != "ready" || ready.ReadyAt == nil {
+	ready, err := f.database.ReadyServicePublisherConnection(ctx, plan.PublisherConnectionID, f.run.RunID, f.run.RunNumber, plan.Revision, winner, f.now)
+	if err != nil || ready.ConnectionID != plan.PublisherConnectionID || ready.Revision != plan.Revision {
 		t.Fatalf("ready connection = %#v, %v", ready, err)
 	}
-	if replay, err := database.ClaimPublisherConnection(ctx, winner, now); err != nil || replay.State != "ready" {
-		t.Fatalf("ready claim replay = %#v, %v", replay, err)
+	assertState("ready")
+	if _, err := f.database.ClaimServicePublisherConnection(ctx, plan.PublisherConnectionID, f.service.ID, f.run.RunID, f.run.RunNumber, plan.Revision, plan.Credential, netip.MustParseAddr("127.0.0.1"), winner, f.now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatalf("another handshake reused an established ready connection: %v", err)
 	}
-	other := f.setup.PublisherConnections[1]
-	otherDigest, err := credentials.ParsePublisherConnectionCredential(other.PublisherConnectionCredential)
-	if err != nil {
-		t.Fatal(err)
+
+	other := f.run.Connections[1]
+	otherLease := f.leases[other.RelayServiceID].RelayLeaseIdentity
+	if _, err := f.database.ClaimServicePublisherConnection(ctx, other.PublisherConnectionID, f.service.ID, f.run.RunID, f.run.RunNumber, other.Revision, other.Credential, netip.MustParseAddr("127.0.0.1"), winner, f.now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("wrong relay service claim succeeded")
 	}
-	wrongService := winner
-	wrongService.ConnectionAssignmentIdentity, wrongService.CredentialDigest, wrongService.ClaimID = other.ConnectionAssignmentIdentity, [32]byte(otherDigest), "wrong-service"
-	if _, err := database.ClaimPublisherConnection(ctx, wrongService, now); !errors.Is(err, ErrPublisherConnectionRelayService) {
-		t.Fatalf("wrong service claim: %v", err)
-	}
-	otherLease := f.leases[other.RelayServiceID]
-	draining, err := database.BeginRelayDrain(ctx, otherLease.RelayLeaseIdentity, now, now.Add(time.Minute))
+	draining, err := f.database.BeginRelayDrain(ctx, otherLease, f.now, f.now.Add(time.Minute))
 	if err != nil || !draining.Draining {
 		t.Fatalf("draining lease = %#v, %v", draining, err)
 	}
-	wrongService.RelayLeaseIdentity = otherLease.RelayLeaseIdentity
-	if _, err := database.ClaimPublisherConnection(ctx, wrongService, now); !errors.Is(err, ErrRelayDraining) {
+	if _, err := f.database.ClaimServicePublisherConnection(ctx, other.PublisherConnectionID, f.service.ID, f.run.RunID, f.run.RunNumber, other.Revision, other.Credential, netip.MustParseAddr("127.0.0.1"), otherLease, f.now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("draining claim: %v", err)
 	}
-	closed, err := database.DisconnectPublisherConnection(ctx, winner, now.Add(time.Second), true)
-	if err != nil || closed.State != "closed" {
-		t.Fatalf("disconnected connection = %#v, %v", closed, err)
+	closed, err := f.database.DisconnectServicePublisherConnection(ctx, plan.PublisherConnectionID, f.run.RunID, f.run.RunNumber, plan.Revision, winner, f.now.Add(time.Second), true)
+	if err != nil {
+		t.Fatalf("disconnect: %v", err)
 	}
-	if _, err := database.DisconnectPublisherConnection(ctx, winner, now.Add(2*time.Second), true); !errors.Is(err, ErrConnectionAssignmentStale) {
+	if closed.ConnectionID != plan.PublisherConnectionID || closed.Revision != plan.Revision {
+		t.Fatal("disconnect changed connection identity", closed)
+	}
+	assertState("closed")
+	if _, err := f.database.DisconnectServicePublisherConnection(ctx, plan.PublisherConnectionID, f.run.RunID, f.run.RunNumber, plan.Revision, winner, f.now.Add(2*time.Second), true); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("disconnect replay: %v", err)
 	}
 }

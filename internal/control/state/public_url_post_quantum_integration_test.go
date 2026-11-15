@@ -6,58 +6,10 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
-
-func TestIntegrationPostQuantumPublicURLPersistsAcrossReadsAndRuns(t *testing.T) {
-	database, now := newControlStateIntegrationDatabase(t, "post_quantum_public_url")
-	request := oidcRouteRequest(t, database, now)
-	request.RequirePostQuantum = true
-	request.AllowedIPPrefixes = []string{}
-	publicURL := createTestPublicURL(t, database, request, now)
-	for name, read := range map[string]func() (PublicURL, error){
-		"identity": func() (PublicURL, error) {
-			return database.GetPublicURL(t.Context(), request.ActingIdentityID, publicURL.ID)
-		},
-		"authorization": func() (PublicURL, error) { return database.GetPublicURLForAuthorization(t.Context(), publicURL.ID) },
-		"hostname": func() (PublicURL, error) {
-			return database.GetAuthorizedPublicURLByHostname(t.Context(), publicURL.TeamID, publicURL.CanonicalHostname)
-		},
-		"retry": func() (PublicURL, error) { return database.CreatePublicURL(t.Context(), request, now) },
-	} {
-		t.Run(name, func(t *testing.T) {
-			u, err := read()
-			if err != nil || !u.RequirePostQuantum {
-				t.Fatalf("saved requirement lost: %+v, %v", u, err)
-			}
-		})
-	}
-	page, err := database.ListPublicURLs(t.Context(), request.ActingIdentityID, publicURL.TeamID, "")
-	if err != nil || len(page.PublicURLs) != 1 || !page.PublicURLs[0].RequirePostQuantum {
-		t.Fatalf("list lost saved requirement: %+v, %v", page, err)
-	}
-	update := AuthorizedPublicURLUpdateRequest{PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, ActingIdentityID: request.ActingIdentityID,
-		Target: publicURL.Target, AllowedIPPrefixes: request.AllowedIPPrefixes, PolicyRevision: uint64(publicURL.PolicyRevision), ExpectedMutationRevision: publicURL.MutationRevision}
-	updated, err := database.UpdateAuthorizedPublicURL(t.Context(), update, now)
-	if err != nil || !updated.RequirePostQuantum {
-		t.Fatalf("omitted requirement was cleared: %+v, %v", updated, err)
-	}
-	update.ExpectedMutationRevision = updated.MutationRevision
-	update.RequirePostQuantum = new(false)
-	insertTestPublishRun(t, database, testPublishRun{ID: "run_post_quantum", PublicURLID: publicURL.ID, TeamID: publicURL.TeamID,
-		MembershipID: publicURL.MembershipID, ActingIdentityID: request.ActingIdentityID, CertificateCacheKey: "post-quantum", CertificateScope: "route",
-		CertificateIdentifiers: []string{publicURL.CanonicalHostname}, ChallengeMethod: "dns-01", CreatedAt: now, ExpiresAt: now.Add(time.Minute)})
-	if _, err := database.UpdateAuthorizedPublicURL(t.Context(), update, now); !errors.Is(err, ErrPublishRunOpen) {
-		t.Fatalf("live run's TLS requirement changed: %v", err)
-	}
-	updated, err = database.UpdateAuthorizedPublicURL(t.Context(), update, now.Add(2*time.Minute))
-	if err != nil || updated.RequirePostQuantum {
-		t.Fatalf("explicit false was not saved after the run expired: %+v, %v", updated, err)
-	}
-}
 
 func TestIntegrationPostQuantumAppliedServicePolicy(t *testing.T) {
 	database, now, _, _ := newPublishRunPrerequisites(t)

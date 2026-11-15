@@ -6,10 +6,7 @@ import (
 	"testing"
 )
 
-// Store composes the base fixtures; optional API stores are always explicit.
-type Store interface{ AdminStore }
-
-func testHandler(t *testing.T, cfg Config, store Store, authorization AuthorizationStore, readiness func(context.Context) error, features ...Stores) *http.ServeMux {
+func testHandler(t *testing.T, cfg Config, store AdminStore, authorization AuthorizationStore, readiness func(context.Context) error, features ...Stores) *http.ServeMux {
 	t.Helper()
 	stores := Stores{}
 	if len(features) != 0 {

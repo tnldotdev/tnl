@@ -52,7 +52,7 @@ func TestIntegrationDeploymentAllocationNamespaceRetirement(t *testing.T) {
 	}
 	certified, pending := startAllocatedServiceRun(t, f, access), startAllocatedServiceRun(t, f, access)
 	installPrivateTestCertificate(t, f.d, certified.prepared, certified.run, f.now, 10*24*time.Hour)
-	work := createPlanIssuanceWork(t, f.d, f.now, PublishRunAuthentication{}, pending.prepared.CertificatePlan, false, nil, planIssuanceOptions{privateRun: &pending.run, lifetime: 24 * time.Hour})
+	work := createPlanIssuanceWork(t, f.d, f.now, pending.run, pending.prepared.CertificatePlan, false, nil)
 	if certified.prepared.CertificatePlan.Scope == namespace {
 		t.Fatal("fixture did not exercise exact-host certificate retirement")
 	}

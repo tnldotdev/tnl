@@ -68,6 +68,7 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 func TestParseServiceCertificateWorkers(t *testing.T) {
 	base := []string{
 		"--role", "standalone",
+		"--route53-server-zone-id", "ZSERVER",
 		"--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com",
 		"--managed-domain", "tunnels.example.com",
@@ -89,6 +90,16 @@ func TestParseServiceCertificateWorkers(t *testing.T) {
 	}
 	if _, err := Parse(append(base, "--public-url-certificate-workers", "8")); err == nil {
 		t.Fatal("removed public URL certificate worker flag was accepted")
+	}
+	for _, args := range [][]string{
+		{"--routing-table-wait", "1s"},
+		{"--pending-url-connection-limit", "8"},
+		{"--pending-url-rate", "5"},
+		{"--pending-url-burst", "10"},
+	} {
+		if _, err := Parse(append(base, args...)); err == nil {
+			t.Fatal("removed publication flag was accepted", args[0])
+		}
 	}
 }
 
@@ -258,7 +269,7 @@ func TestConfigControlHostnameRejectsURLAndPort(t *testing.T) {
 		RelayStreamCapacity: 1, QUICMaxIncomingStreams: 1,
 		IngressLeaseDuration: 30 * time.Second, RelayLeaseDuration: 30 * time.Second,
 		LeaseRenewalInterval: 10 * time.Second, ControlRetryInterval: time.Second,
-		RoutingTableWait: time.Second, DrainTimeout: time.Second,
+		DrainTimeout:    time.Second,
 		QUICIdleTimeout: time.Second,
 	}
 	for _, value := range []string{"https://control.tnl.example.com", "control.tnl.example.com:443", "control.tnl.example.com/path", "Control.tnl.example.com"} {

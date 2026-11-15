@@ -78,7 +78,7 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	project := t.TempDir()
 	tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
 		Command: TunnelCommandPublish, Server: "https://server.example", Target: "3000",
-		Project: project, Service: "web",
+		Project: project, Service: "web", ServiceID: testServiceID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -86,9 +86,6 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	defer tunnel.Finish(context.Background(), nil)
 
 	assertTunnelSnapshot(t, database, TunnelStateStarting, TunnelSummary{Total: 1, Starting: 1})
-	if err := tunnel.SetPublicURL(t.Context(), testPublicURLID, "route.example"); err != nil {
-		t.Fatal(err)
-	}
 	if err := tunnel.SetProvisioning(t.Context(), 3); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +95,7 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	}
 	snapshot := assertTunnelSnapshot(t, database, TunnelStateReady, TunnelSummary{Total: 1, Ready: 1})
 	got := snapshot.Tunnels[0]
-	if got.ID != tunnel.ID() || got.PublicURLID != testPublicURLID || got.PublishRunNumber != 3 ||
+	if got.ID != tunnel.ID() || got.ServiceID != testServiceID || got.PublishRunNumber != 3 ||
 		got.PublicURL != "https://route.example" || got.Target != "http://127.0.0.1:3000" ||
 		got.Project != project || got.Service != "web" {
 		t.Fatalf("tunnel = %#v", got)
@@ -114,7 +111,8 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(encoded), `"publish_run_number":3`) || strings.Contains(string(encoded), `"session_version"`) {
+	if !strings.Contains(string(encoded), `"publish_run_number":3`) || !strings.Contains(string(encoded), `"service_id":"`+testServiceID+`"`) ||
+		strings.Contains(string(encoded), `"session_version"`) || strings.Contains(string(encoded), `"public_url_id"`) {
 		t.Fatalf("snapshot JSON publish run number fields = %s", encoded)
 	}
 
@@ -139,6 +137,8 @@ func TestTunnelRequiresPublicationAndTarget(t *testing.T) {
 	for _, options := range []BeginTunnelOptions{
 		{Command: "dev", Server: "https://server.example", Target: "3000", Project: t.TempDir()},
 		{Command: TunnelCommandPublish, Server: "https://server.example", Project: t.TempDir()},
+		{Command: TunnelCommandPublish, Server: "https://server.example", Target: "3000", Project: t.TempDir(), ServiceID: "url_0123456789abcdefghijkl"},
+		{Command: TunnelCommandPublish, Server: "https://server.example", Target: "3000", Project: t.TempDir(), ServiceID: "svc_invalid"},
 	} {
 		if _, err := database.BeginTunnel(t.Context(), options); err == nil {
 			t.Fatal("accepted a tunnel without a publication and target")
@@ -171,7 +171,7 @@ func TestServiceProtocolsShareLocalPublicationJournalWithoutPublicEndpoints(t *t
 			}
 			tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
 				Command: TunnelCommandPublish, Server: "https://server.example", Target: target,
-				Project: project, Service: "orders", ServiceProtocol: protocol,
+				Project: project, Service: "orders", ServiceProtocol: protocol, ServiceID: testServiceID,
 			})
 			if err != nil {
 				t.Fatal("service publication could not join the local journal", protocol, err)
@@ -187,8 +187,8 @@ func TestServiceProtocolsShareLocalPublicationJournalWithoutPublicEndpoints(t *t
 			}
 			snapshot := assertTunnelSnapshot(t, database, TunnelStateReady, TunnelSummary{Total: 1, Ready: 1})
 			saved := snapshot.Tunnels[0]
-			if saved.ID != tunnel.ID() || saved.ServiceProtocol != protocol || saved.Target != canonical || saved.Project != project || saved.Service != "orders" ||
-				saved.PublicURL != "" || saved.Hostname != "" || saved.PublicURLID != "" || saved.PublishRunNumber != 7 {
+			if saved.ID != tunnel.ID() || saved.ServiceProtocol != protocol || saved.ServiceID != testServiceID || saved.Target != canonical || saved.Project != project || saved.Service != "orders" ||
+				saved.PublicURL != "" || saved.Hostname != "" || saved.PublishRunNumber != 7 {
 				t.Fatal("local publication invented a public endpoint or lost its protocol/run", saved)
 			}
 			if err := tunnel.Finish(t.Context(), nil); err != nil {
@@ -207,8 +207,8 @@ func TestServiceProtocolsShareLocalPublicationJournalWithoutPublicEndpoints(t *t
 					t.Fatal(err)
 				}
 				publication := payload.Publication
-				if publication.ID != tunnel.ID() || publication.ServiceProtocol != protocol || publication.Target != canonical ||
-					publication.PublicURL != "" || publication.Hostname != "" || publication.PublicURLID != "" {
+				if publication.ID != tunnel.ID() || publication.ServiceProtocol != protocol || publication.ServiceID != testServiceID || publication.Target != canonical ||
+					publication.PublicURL != "" || publication.Hostname != "" || strings.Contains(string(event.Payload), `"public_url_id"`) {
 					t.Fatal("journal event lost the protocol or invented an endpoint", publication)
 				}
 				states = append(states, publication.State)

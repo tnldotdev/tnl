@@ -55,7 +55,7 @@ func integrationDNSSubprocess(t *testing.T) bool {
 		"-tnl-test-postgres-url="+postgresURL,
 		"-tnl-dns-child="+t.Name(),
 	)
-	cleanupDeployment := isolateIntegrationDNSProcess(t, command)
+	cleanupDeployment := isolateIntegrationCommand(t, command)
 	temporaryDirectory := t.TempDir()
 	command.Env = append(os.Environ(),
 		"TMPDIR="+temporaryDirectory,

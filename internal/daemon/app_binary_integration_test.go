@@ -34,7 +34,7 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 				SELECT run.state, run.certificate_expires_at IS NOT NULL, slot.connection_slot, slot.state
 				FROM control.service_runs AS run
 				JOIN control.service_endpoints AS endpoint ON endpoint.service_id = run.service_id
-				LEFT JOIN control.publisher_service_connection_slots AS slot ON slot.run_id = run.id
+				LEFT JOIN control.service_connection_slots AS slot ON slot.service_run_id = run.id
 				WHERE endpoint.hostname = $1 ORDER BY run.run_number, slot.connection_slot`,
 				"app-led-binary.routes.127.0.0.1.nip.io")
 			if err == nil {
@@ -64,7 +64,7 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 	})
 	project := t.TempDir()
 	initializeIntegrationBinaryProject(t, project, "app-led")
-	configuration := []byte(`{"version":1,"tnl":{"server":"https://control.127.0.0.1.nip.io","services":{"api":{}},"deployments":{"local":{"targets":{"api":{"name":"app-led-binary","public_url":{"access":"anonymous"}}}}}}}`)
+	configuration := []byte(`{"version":1,"tnl":{"server":"https://control.127.0.0.1.nip.io","services":{"api":{}},"deployments":{"local":{"targets":{"api":{"name":"app-led-binary","public":true,"http":{"access":"anonymous"}}}}}}}`)
 	if err := os.WriteFile(filepath.Join(project, "tnl.json"), configuration, 0600); err != nil {
 		t.Fatal(err)
 	}

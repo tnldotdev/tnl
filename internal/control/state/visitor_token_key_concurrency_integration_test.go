@@ -82,9 +82,13 @@ func TestIntegrationVisitorSigningNoOpPreservesSnapshot(t *testing.T) {
 func visitorSigningConcurrencySource(t *testing.T, d *Database, now time.Time) (context.Context, visitorscope.Scope) {
 	t.Helper()
 	request := oidcRouteRequest(t, d, now)
-	url := createTestPublicURL(t, d, request, now)
+	service, err := d.CreateServiceAt(t.Context(), request.TeamID, request.ActingIdentityID, "web", "signing",
+		ServicePlacement{}, now, ServiceMetadata{}, &ProjectServiceConfiguration{Target: "localhost:3000"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	session := newOIDCSession(t, d, now)
-	return WithControlPrincipal(t.Context(), ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}), visitorscope.Scope{Kind: visitorscope.PublicURL, ID: url.ID}
+	return WithControlPrincipal(t.Context(), ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}), visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}
 }
 
 func TestIntegrationVisitorSigningBootstrapWait(t *testing.T) {

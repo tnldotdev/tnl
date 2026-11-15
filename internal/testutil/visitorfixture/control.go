@@ -34,7 +34,6 @@ func (f *PolicyClient) ReadPublisherVisitorPolicy(_ context.Context, body contro
 		}
 	}
 	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: events, SnapshotRequired: body.AfterRevision == 0,
-		VisitorSourceKey: SourceKeyBytes(),
 		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: "preview.example.test", Port: 443, Issuer: "https://control.example.test", VisitorPolicyRevision: revision, KeyRevision: 1,
 			ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true, Anonymous: false, VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "test-key", PublicKey: f.Key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}, nil
 }

@@ -14,10 +14,9 @@ func TestPublisherResolvedScopesHaveExclusiveTargets(t *testing.T) {
 		resolved resolvedPublisherScope
 		want     PublisherScope
 	}{
-		{savedURLPublisherScope{"team", "url"}, PublisherScope{TeamID: "team", Kind: "saved_public_url", PublicURLID: "url"}},
 		{servicePublisherScope{teamID: "team", serviceID: "private"}, PublisherScope{TeamID: "team", Kind: "service", ServiceID: "private"}},
 		{servicePublisherScope{guestID: "trial", serviceID: "demo"}, PublisherScope{GuestID: "trial", Kind: "service", ServiceID: "demo"}},
-		{namespacePublisherScope{"team", "domain", "member.example", "member", PublicURLScopeMember}, PublisherScope{TeamID: "team", Kind: "namespace", DomainID: "domain", Namespace: "member.example", MembershipID: "member", PublicURLScope: PublicURLScopeMember}},
+		{namespacePublisherScope{"team", "domain", "member.example", "member", NamespaceScopeMember}, PublisherScope{TeamID: "team", Kind: "namespace", DomainID: "domain", Namespace: "member.example", MembershipID: "member", NamespaceScope: NamespaceScopeMember}},
 	} {
 		if got := check.resolved.publisherScope(); !reflect.DeepEqual(got, check.want) {
 			t.Fatalf("resolved target leaked another scope's fields: %+v", got)
@@ -26,16 +25,8 @@ func TestPublisherResolvedScopesHaveExclusiveTargets(t *testing.T) {
 	if _, err := insertPublisherGrant(t.Context(), nil, "publisher", "issuer", nil, nil, time.Time{}); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatal("unresolved scope reached grant persistence", err)
 	}
-	for _, check := range []struct {
-		row  controlstatedb.ControlAppliedProjectService
-		kind string
-	}{
-		{controlstatedb.ControlAppliedProjectService{TeamID: "team", PublicURLID: text("url")}, "saved_public_url"},
-		{controlstatedb.ControlAppliedProjectService{TeamID: "team", ServiceID: text("private")}, "service"},
-	} {
-		scope := publisherScopeForAppliedService(check.row).publisherScope()
-		if scope.TeamID != "team" || scope.Kind != check.kind || scope.Namespace != "" || scope.DomainID != "" || scope.MembershipID != "" {
-			t.Fatalf("applied grant acquired caller namespace authority: %+v", scope)
-		}
+	scope := publisherScopeForAppliedService(controlstatedb.ControlAppliedProjectService{TeamID: "team", ServiceID: text("private")}).publisherScope()
+	if scope.TeamID != "team" || scope.Kind != "service" || scope.ServiceID != "private" || scope.Namespace != "" || scope.DomainID != "" || scope.MembershipID != "" {
+		t.Fatalf("applied grant acquired caller namespace authority: %+v", scope)
 	}
 }

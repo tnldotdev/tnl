@@ -424,8 +424,6 @@ func timestamptz(value time.Time) pgtype.Timestamptz {
 
 func text(value string) pgtype.Text { return pgtype.Text{String: value, Valid: true} }
 
-func int8(value uint64) pgtype.Int8 { return pgtype.Int8{Int64: positive(value), Valid: true} }
-
 func isUniqueViolation(err error) bool {
 	var postgresError *pgconn.PgError
 	return errors.As(err, &postgresError) && postgresError.Code == "23505"

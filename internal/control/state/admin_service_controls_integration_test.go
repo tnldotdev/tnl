@@ -86,7 +86,7 @@ func TestIntegrationServiceCreationMaintenanceCoversInsertionOwners(t *testing.T
 						t.Fatal(err)
 					}
 					scope := PublisherScope{TeamID: r.TeamID, Kind: "namespace", DomainID: domain.ID}
-					enrollment := publisherEnrollment(t, d, CreatePublicURLRequest{TeamID: r.TeamID, ActingIdentityID: r.ActorID, DomainID: domain.ID}, scope, now)
+					enrollment := publisherEnrollment(t, d, serviceTestAuthority{TeamID: r.TeamID, ActingIdentityID: r.ActorID, DomainID: domain.ID}, scope, now)
 					public, _, err := ed25519.GenerateKey(rand.Reader)
 					if err != nil {
 						t.Fatal(err)

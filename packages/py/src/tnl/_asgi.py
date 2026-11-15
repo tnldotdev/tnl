@@ -203,7 +203,7 @@ def _limit_payload(value: Limits | None) -> dict[str, object] | None:
         raise TnlError("sdk.configuration_invalid", "request limits must be positive")
     result: dict[str, object] = {}
     if value.requests is not None:
-        result["requests"] = value.requests
+        result["total"] = value.requests
     if value.concurrency is not None:
         result["concurrency"] = value.concurrency
     if value.rate is not None:
@@ -216,7 +216,7 @@ def _limit_payload(value: Limits | None) -> dict[str, object] | None:
             or not any(character in "123456789" for character in value.rate.per)
         ):
             raise TnlError("sdk.configuration_invalid", "rate requires positive requests and per")
-        result["rate"] = {"requests": value.rate.requests, "per": value.rate.per}
+        result["rate"] = {"count": value.rate.requests, "per": value.rate.per}
     return result
 
 

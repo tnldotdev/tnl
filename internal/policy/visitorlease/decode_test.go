@@ -15,6 +15,41 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
+func TestPolicyDecodeRequiresServiceScopeAndExactPort(t *testing.T) {
+	service := controlv1.VisitorResourceScope{Kind: "service", Id: "svc_" + strings.Repeat("A", 22)}
+	for _, test := range []struct {
+		name     string
+		resource controlv1.VisitorResourceScope
+		port     int
+		valid    bool
+	}{
+		{"shared HTTPS", service, 443, true},
+		{"dedicated HTTPS", service, 8443, true},
+		{"non-HTTP", service, 5432, true},
+		{"connector-only", service, 0, true},
+		{"maximum port", service, 65535, true},
+		{"negative port", service, -1, false},
+		{"oversized port", service, 65536, false},
+		{"retired scope", controlv1.VisitorResourceScope{Kind: "public_url", Id: "url_" + strings.Repeat("A", 22)}, 443, false},
+		{"retired kind", controlv1.VisitorResourceScope{Kind: "public_url", Id: service.Id}, 443, false},
+		{"retired ID", controlv1.VisitorResourceScope{Kind: "service", Id: "url_" + strings.Repeat("A", 22)}, 443, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := controlv1.VisitorPolicyUpdate{Policy: controlv1.VisitorPolicySnapshot{Resource: test.resource, Port: test.port}}
+			update, err := Decode(body)
+			if !test.valid {
+				if !errors.Is(err, ErrUpdate) {
+					t.Fatal("invalid service policy did not fail closed", err)
+				}
+				return
+			}
+			if err != nil || update.View.Scope != (visitorscope.Scope{Kind: visitorscope.Service, ID: service.Id}) || int(update.View.Port) != test.port {
+				t.Fatal("service policy changed its exact scope or endpoint port", err)
+			}
+		})
+	}
+}
+
 func TestServicePolicyConnectionDeadlineFencesWithoutVisitorPermission(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		now := time.Now()

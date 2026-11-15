@@ -65,7 +65,7 @@ func TestIntegrationServiceUpdateConditionsPreserveConcurrentPoolChange(t *testi
 	}
 	replacement.Target = "localhost:4000"
 	q := controlstatedb.New(d.pool)
-	policyKey := controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "service", ResourceID: f.service.ID}
+	policyKey := f.service.ID
 	revision, err := q.ReadVisitorPolicyRevision(ctx, policyKey)
 	if err != nil {
 		t.Fatal(err)

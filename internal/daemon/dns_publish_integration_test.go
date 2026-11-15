@@ -95,13 +95,14 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 	release()
 	assertIntegrationPublishedService(t, fixture.inspect, fixture.visitor, fixture.identity, ready)
 	assertSplitRoutePlacement(t, fixture.inspect, ready.ServiceId, ready.RunNumber)
-	assertIntegrationDNSChanges(t, dnsFixture, "*."+namespace, false)
+	assertIntegrationDNSChanges(t, dnsFixture, fixture.identity.hostname, false)
 	dnsFixture.mu.Lock()
 	_, exact := dnsFixture.zone.records[dns.Fqdn(fixture.identity.hostname)+"/A"]
 	_, owner := dnsFixture.zone.records[dns.Fqdn("_tnl-owner."+fixture.identity.hostname)+"/TXT"]
+	_, wildcard := dnsFixture.zone.records[dns.Fqdn("*."+namespace)+"/A"]
 	dnsFixture.mu.Unlock()
-	if exact || owner {
-		t.Fatalf("managed member public URL created exact DNS records: A=%t, owner=%t", exact, owner)
+	if !exact || !owner || wildcard {
+		t.Fatalf("service endpoint DNS lost exact ownership or published a broader namespace: A=%t, owner=%t, wildcard=%t", exact, owner, wildcard)
 	}
 	assertIntegrationDNSChanges(t, dnsFixture, fixture.identity.hostname, true)
 

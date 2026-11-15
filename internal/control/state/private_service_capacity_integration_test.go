@@ -9,7 +9,7 @@ import (
 )
 
 func TestIntegrationPrivateServicePortCapacity(t *testing.T) {
-	f := newPublishRunFixture(t)
+	f := newServicePublicationFixture(t)
 	d, now, ctx := f.database, f.now, t.Context()
 	if err := d.ConfigureIngressServicePorts(ctx, PrimaryIngressPoolID, []tcpport.Range{{First: 25443, Last: 25443}}); err != nil {
 		t.Fatal(err)

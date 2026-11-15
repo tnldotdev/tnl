@@ -6,11 +6,11 @@ import (
 	"errors"
 	"io"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -70,12 +70,13 @@ func runAuditList(ctx context.Context, flags auditListCommand, output, diagnosti
 		params.After = &flags.After
 	}
 	if flags.Service != "" {
-		if len(flags.Service) > 253 || strings.TrimSpace(flags.Service) != flags.Service || strings.ContainsAny(flags.Service, "\x00\r\n") {
-			return failure.Wrap("select audit service", failure.InvalidTunnelFlags, errors.New("--service requires a service name, hostname or ID"))
-		}
-		if opaqueid.Valid(flags.Service, opaqueid.ServicePrefix) || opaqueid.Valid(flags.Service, opaqueid.PublicURLPrefix) {
+		if opaqueid.Valid(flags.Service, opaqueid.ServicePrefix) {
 			params.ServiceId = &flags.Service
 		} else {
+			hostname, err := naming.CanonicalizeHostname(flags.Service)
+			if err != nil || hostname != flags.Service {
+				return failure.Wrap("select audit service", failure.InvalidTunnelFlags, errors.New("--service requires a service name, hostname or ID"))
+			}
 			params.Service = &flags.Service
 		}
 	}
@@ -124,7 +125,7 @@ func readServiceAudit(ctx context.Context, reader serviceAuditReader, team strin
 		}
 		for _, event := range page.Events {
 			cursor, err := auditCursor(event.Cursor)
-			if err != nil || cursor <= previous || event.TeamId != team || event.Id == "" || event.ServiceId == "" || event.EventType == "" || event.OccurredAt.IsZero() || !event.ServiceKind.Valid() {
+			if err != nil || cursor <= previous || event.TeamId != team || event.Id == "" || !opaqueid.Valid(event.ServiceId, opaqueid.ServicePrefix) || event.EventType == "" || event.OccurredAt.IsZero() || !event.ServiceKind.Valid() {
 				return invalid()
 			}
 			previous = cursor

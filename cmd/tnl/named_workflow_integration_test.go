@@ -105,7 +105,7 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 	configuration := filepath.Join(root, "development.json")
 	services := map[string]any{
 		"api": map[string]any{"address": target.URL, "access": map[string]any{"team": true}},
-		"web": map[string]any{"address": target.URL, "public_url": map[string]any{}, "access": map[string]any{"team": true}, "http": map[string]any{"readiness": map[string]any{"path": "/health"}}},
+		"web": map[string]any{"address": target.URL, "public": true, "access": map[string]any{"team": true}, "http": map[string]any{"readiness": map[string]any{"path": "/health"}}},
 	}
 	declarations := map[string]any{"api": map[string]any{}, "web": map[string]any{}}
 	deployments := map[string]any{"local": map[string]any{"targets": services}}
@@ -329,7 +329,7 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 		assertRealized()
 		readIDs := func() string {
 			var ids string
-			if err := connection.QueryRow(t.Context(), `SELECT string_agg(COALESCE(service_id, public_url_id)||':'||visitor_grant_id, ',' ORDER BY service) FROM control.local_project_services WHERE team_id=$1 AND project_key=$2`, team, source.Key).Scan(&ids); err != nil {
+			if err := connection.QueryRow(t.Context(), `SELECT string_agg(service_id||':'||visitor_grant_id, ',' ORDER BY service) FROM control.local_project_services WHERE team_id=$1 AND project_key=$2`, team, source.Key).Scan(&ids); err != nil {
 				t.Fatal(err)
 			}
 			return ids

@@ -66,7 +66,7 @@ func CertificateIssuanceBinding(chains [][]*x509.Certificate) (visitorscope.Scop
 	}
 	payload, err := base64.RawURLEncoding.Strict().DecodeString(parts[1])
 	var value claims
-	if err != nil || decode(payload, &value) != nil || value.Version != 1 || !validText(value.Issuer, 256) || !validResource(value.Scope, value.Hostname, value.Port) || value.Revision < 1 || value.Issued <= 0 || value.Expires <= value.Issued || value.Expires != leaf.NotAfter.Unix() {
+	if err != nil || decode(payload, &value) != nil || value.Version != 1 || !validText(value.Issuer, 256) || !validResource(value.Scope, value.Hostname) || value.Revision < 1 || value.Issued <= 0 || value.Expires <= value.Issued || value.Expires != leaf.NotAfter.Unix() {
 		return deny()
 	}
 	nonce, err := base64.RawURLEncoding.Strict().DecodeString(value.ID)

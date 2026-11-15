@@ -207,14 +207,14 @@ func TestIntegrationEphemeralServiceCleanupKeepsSavedServicesAndWorktreeIdentity
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := d.expireServices(ctx, record.CreatedAt.Add(ephemeralServiceGracePeriod-time.Microsecond)); err != nil {
+			if _, err := d.expireServices(ctx, record.CreatedAt.Add(ephemeralServiceGracePeriod-time.Microsecond)); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := d.GetService(ctx, ephemeral.ServiceID, project.ActorID); err != nil {
 				t.Fatal("ephemeral service disappeared before its grace period", err)
 			}
 			expiration := record.CreatedAt.Add(ephemeralServiceGracePeriod)
-			if err := d.expireServices(ctx, expiration); err != nil {
+			if _, err := d.expireServices(ctx, expiration); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := d.GetService(ctx, ephemeral.ServiceID, project.ActorID); !errors.Is(err, ErrServiceAccess) {
@@ -254,7 +254,7 @@ func TestIntegrationEphemeralServiceCleanupWaitsForTheLastClosedRun(t *testing.T
 		t.Fatal(err)
 	}
 	closedAt := now.Truncate(time.Microsecond).Add(2 * ephemeralServiceGracePeriod)
-	if err := d.expireServices(ctx, closedAt); err != nil {
+	if _, err := d.expireServices(ctx, closedAt); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.GetService(ctx, service.ID, request.ActorID); err != nil {
@@ -267,13 +267,13 @@ func TestIntegrationEphemeralServiceCleanupWaitsForTheLastClosedRun(t *testing.T
 	if _, err := d.pool.Exec(ctx, `UPDATE control.services SET updated_at=$2 WHERE id=$1`, service.ID, closedAt.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.expireServices(ctx, closedAt.Add(ephemeralServiceGracePeriod-time.Microsecond)); err != nil {
+	if _, err := d.expireServices(ctx, closedAt.Add(ephemeralServiceGracePeriod-time.Microsecond)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.GetService(ctx, service.ID, request.ActorID); err != nil {
 		t.Fatal("idle cleanup measured its grace period from service creation", err)
 	}
-	if err := d.expireServices(ctx, closedAt.Add(ephemeralServiceGracePeriod)); err != nil {
+	if _, err := d.expireServices(ctx, closedAt.Add(ephemeralServiceGracePeriod)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.GetService(ctx, service.ID, request.ActorID); !errors.Is(err, ErrServiceAccess) {

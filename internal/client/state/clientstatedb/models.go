@@ -140,7 +140,6 @@ type LocalTunnel struct {
 	Hostname             sql.NullString
 	Target               sql.NullString
 	Framework            sql.NullString
-	PublicURLID          sql.NullString
 	PublishRunNumber     sql.NullInt64
 	State                string
 	StartedAt            int64

@@ -243,33 +243,21 @@ func TestInvocationLimitsValidation(t *testing.T) {
 	}
 }
 
-func TestDeploymentInvocationAllocationKeepsHTTPBudgetAndTargetTLSSeparate(t *testing.T) {
+func TestInvocationOptionsKeepHTTPBudgetAndTargetSelection(t *testing.T) {
 	for _, target := range []string{"http://127.0.0.1:3000", "https://app.example.test:8443"} {
 		t.Run(target, func(t *testing.T) {
 			request := publisherprotocol.Invocation{InvocationId: "ivk_0123456789ABCDEFGHIJKL", Target: target, RequirePostQuantum: new(true),
 				Limits: &controlv1.ProjectHTTPApplicationLimits{Total: new(7), Concurrency: new(2),
 					Rate: &controlv1.ProjectApplicationRate{Count: 3, Per: "4s", Burst: new(5)}}}
-			allocation, err := invocationAllocation(request)
+			options, err := invocationOptions(request)
 			if err != nil {
 				t.Fatal(err)
 			}
-			declaration := allocation.Configuration
-			if allocation.InvocationId != request.InvocationId || declaration.Protocol == nil || *declaration.Protocol != controlv1.ServiceProtocolHTTP ||
-				declaration.Ephemeral == nil || !*declaration.Ephemeral || declaration.Public == nil || !*declaration.Public ||
-				declaration.RequirePostQuantum == nil || !*declaration.RequirePostQuantum || declaration.Traffic != nil {
-				t.Fatal("invocation introduced another publication model or traffic budget", declaration)
+			if options.InvocationID != request.InvocationId || options.Target != target || !options.RequirePostQuantum || options.TargetTLS != nil {
+				t.Fatal("invocation replaced its target selection or independent target trust", options)
 			}
-			limits, err := requestlimit.ParseLimits(declaration.Http.Limits)
-			if err != nil || limits != (applicationlimits.Limits{Requests: 7, Concurrency: 2, RateRequests: 3, RatePer: 4 * time.Second, RateBurst: 5}) {
-				t.Fatal("invocation lost a supported HTTP budget", limits, err)
-			}
-			if strings.HasPrefix(target, "https:") {
-				if declaration.Target != "app.example.test:8443" || declaration.TargetTls == nil ||
-					declaration.TargetTls.Hostname != "app.example.test" || declaration.TargetTls.Digest == "" || declaration.TargetTls.CaPem != nil {
-					t.Fatal("HTTPS target lost independent system trust", declaration)
-				}
-			} else if declaration.Target != "127.0.0.1:3000" || declaration.TargetTls != nil {
-				t.Fatal("plaintext target acquired visitor TLS as target trust", declaration)
+			if options.Limits != (applicationlimits.Limits{Requests: 7, Concurrency: 2, RateRequests: 3, RatePer: 4 * time.Second, RateBurst: 5}) {
+				t.Fatal("invocation lost a supported HTTP budget", options.Limits)
 			}
 		})
 	}

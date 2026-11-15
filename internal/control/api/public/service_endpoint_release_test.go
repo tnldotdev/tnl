@@ -21,7 +21,7 @@ type serviceEndpointReleaseStore struct {
 
 func (s *serviceEndpointReleaseStore) ReleaseServiceEndpoint(_ context.Context, service, actor string, revision int64, port int, _ time.Time) (controlstate.ServiceRecord, error) {
 	s.calls++
-	if service != "svc_aaaaaaaaaaaaaaaaaaaaaa" || actor != testPublicURLReadPrincipal().identityID || revision != 7 || port != 25443 {
+	if service != "svc_aaaaaaaaaaaaaaaaaaaaaa" || actor != testControlReadPrincipal().identityID || revision != 7 || port != 25443 {
 		panic("release changed its exact binding or authenticated actor")
 	}
 	return controlstate.ServiceRecord{ID: service, EndpointRevision: 8, ServiceMetadata: controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 2, Endpoint: &controlstate.ServiceEndpoint{Hostname: "api.example.test"}}}, s.err
@@ -53,7 +53,7 @@ func TestServiceEndpointReleaseWireBoundsAndConflictMessages(t *testing.T) {
 	} {
 		t.Run(test.body+"/"+test.message, func(t *testing.T) {
 			store := &serviceEndpointReleaseStore{err: test.err}
-			h := &handler{store: store, dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal()}}
+			h := &handler{dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testControlReadPrincipal()}}
 			r := httptest.NewRequest(http.MethodPost, "/v1/services/svc_aaaaaaaaaaaaaaaaaaaaaa/endpoint/release", strings.NewReader(test.body))
 			r.Header.Set("Authorization", "Bearer access-token")
 			w := httptest.NewRecorder()

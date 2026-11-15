@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,8 +19,8 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-// local load test: production publish run and claim transactions, one team,
-// 1,000 saved public URLs, 64 workers, two eight-connection pools, four relays.
+// local load test: production service run and claim transactions, one team,
+// 1,000 saved services, 64 workers, two eight-connection pools, four relays.
 // HTTP, ACME, visitor traffic, and background heartbeats are deliberately absent.
 func TestLoadPlacement(t *testing.T) {
 	RunPlacementLoad(t, nil)
@@ -30,12 +31,12 @@ func TestLoadPlacement(t *testing.T) {
 func RunPlacementLoad(t *testing.T, newHandler func(*Database, *observability.Metrics) http.Handler) {
 	t.Helper()
 	f := newControlLoadFixture(t)
-	database, now, request := f.database, f.now, f.base
+	database, now := f.database, f.now
 	routes, controls, leases := f.routes, f.controls, f.leases
 	const parallel = 64
 	var accessToken credentials.AccessToken
 	if newHandler != nil {
-		session, err := database.createControlSession(t.Context(), controlstatedb.New(database.pool), request.ActingIdentityID,
+		session, err := database.createControlSession(t.Context(), controlstatedb.New(database.pool), f.actorID,
 			time.Hour, time.Hour, time.Now())
 		if err != nil {
 			t.Fatal(err)
@@ -57,6 +58,7 @@ func RunPlacementLoad(t *testing.T, newHandler func(*Database, *observability.Me
 	var next, completed, claims atomic.Int64
 	var first sync.Once
 	var firstErr error
+	runs := make([]ServiceRunState, routes)
 	started := time.Now()
 	for worker := range parallel {
 		workers.Go(func() {
@@ -66,10 +68,12 @@ func RunPlacementLoad(t *testing.T, newHandler func(*Database, *observability.Me
 				if index >= int64(routes) {
 					return
 				}
-				candidate := f.request(int(index))
+				i := int(index)
+				service, publisher := f.services[i], f.publishers[i]
+				request := f.request(i)
 				if newHandler != nil {
 					lookupCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-					err := placementLoadLookup(lookupCtx, handlers[(worker/16)%2], accessToken, candidate)
+					err := placementLoadLookup(lookupCtx, handlers[(worker/16)%2], accessToken, service)
 					stop()
 					if err != nil {
 						first.Do(func() { firstErr = err; cancel() })
@@ -77,26 +81,35 @@ func RunPlacementLoad(t *testing.T, newHandler func(*Database, *observability.Me
 					}
 				}
 				callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-				setup, err := control.CreatePublishRun(callCtx, candidate, now, time.Hour, time.Hour)
+				prepared, err := control.PrepareServiceRun(callCtx, service.ID, publisher, fmt.Sprintf("placement-%d", i), now, request)
 				stop()
 				if err == nil {
-					for _, assignment := range setup.PublisherConnections {
-						digest, parseErr := credentials.ParsePublisherConnectionCredential(assignment.PublisherConnectionCredential)
-						if parseErr != nil {
-							err = parseErr
-							break
+					callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
+					var run ServiceRunState
+					run, err = control.StartServiceRun(callCtx, service.ID, prepared.RunID, prepared.RunNumber, publisher, now)
+					stop()
+					if err == nil {
+						if run.ServiceID != service.ID || run.RunID != prepared.RunID || run.RunNumber != prepared.RunNumber || len(run.Connections) != 2 {
+							first.Do(func() { firstErr = fmt.Errorf("placement changed service/run tuple: %s", service.ID); cancel() })
+							return
 						}
-						callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
-						_, err = control.ClaimPublisherConnection(callCtx, PublisherConnectionClaimRequest{
-							ConnectionAssignmentIdentity: assignment.ConnectionAssignmentIdentity,
-							RelayLeaseIdentity:           leases[assignment.RelayServiceID][index%2].RelayLeaseIdentity,
-							ClaimID:                      "load", CredentialDigest: [32]byte(digest),
-						}, now)
-						stop()
-						if err != nil {
-							break
+						runs[i] = run
+						for _, assignment := range run.Connections {
+							callCtx2, stop2 := context.WithTimeout(ctx, 20*time.Second)
+							var claimed ServicePublisherConnection
+							claimed, err = control.ClaimServicePublisherConnection(callCtx2, assignment.PublisherConnectionID, service.ID,
+								run.RunID, run.RunNumber, assignment.Revision, assignment.Credential,
+								netip.MustParseAddr("127.0.0.1"), leases[assignment.RelayServiceID][i%2].RelayLeaseIdentity, now)
+							stop2()
+							if err == nil && claimed != (ServicePublisherConnection{ServiceID: service.ID, RunID: run.RunID, RunNumber: run.RunNumber,
+								ConnectionID: assignment.PublisherConnectionID, Revision: assignment.Revision, RelayServiceID: assignment.RelayServiceID}) {
+								err = fmt.Errorf("claim changed assignment identity for service %s", service.ID)
+							}
+							if err != nil {
+								break
+							}
+							claims.Add(1)
 						}
-						claims.Add(1)
 					}
 				}
 				if err != nil {
@@ -108,30 +121,45 @@ func RunPlacementLoad(t *testing.T, newHandler func(*Database, *observability.Me
 		})
 	}
 	workers.Wait()
-	t.Logf("completed=%d/%d claims=%d workers=%d pools=2x8 extra_query_delay=%s hostname_lookup=%t elapsed=%s", completed.Load(), routes, claims.Load(), parallel, f.delay, newHandler != nil, time.Since(started))
-	if firstErr != nil || completed.Load() != int64(routes) {
+	t.Logf("completed=%d/%d claims=%d workers=%d pools=2x8 extra_query_delay=%s service_lookup=%t elapsed=%s", completed.Load(), routes, claims.Load(), parallel, f.delay, newHandler != nil, time.Since(started))
+	if firstErr != nil || ctx.Err() != nil || completed.Load() != int64(routes) || claims.Load() != int64(routes)*2 {
 		t.Fatalf("load failed: %v", firstErr)
+	}
+	for index, run := range runs {
+		for _, slot := range run.Connections {
+			lease := leases[slot.RelayServiceID][index%2]
+			var matches bool
+			err := database.pool.QueryRow(ctx, `SELECT slot.service_id=$2 AND slot.run_number=$3 AND slot.connection_assignment_revision=$4
+				AND slot.relay_service_id=$5 AND slot.relay_id=$6 AND slot.relay_run_id=$7 AND slot.relay_lease_revision=$8
+				AND slot.state='connected' AND slot.session_open AND run.closed_at IS NULL
+				FROM control.service_connection_slots slot JOIN control.service_runs run ON run.id=slot.service_run_id
+				WHERE slot.publisher_connection_id=$1 AND run.id=$9`, slot.PublisherConnectionID, f.services[index].ID,
+				run.RunNumber, slot.Revision, slot.RelayServiceID, lease.RelayID, lease.RelayRunID, int64(lease.RelayLeaseRevision), run.RunID).Scan(&matches)
+			if err != nil || !matches {
+				t.Fatalf("durable placement tuple changed: service=%s slot=%d: %v", run.ServiceID, slot.ConnectionSlot, err)
+			}
+		}
 	}
 	assertAssignmentTotals(t, database.pool, int64(routes)*2)
 }
 
-func placementLoadLookup(ctx context.Context, handler http.Handler, token credentials.AccessToken, candidate PublishRunRequest) error {
-	request := httptest.NewRequestWithContext(ctx, http.MethodGet, "/v1/public-urls?team_id="+candidate.TeamID+"&canonical_hostname="+candidate.CertificateIdentifiers[0], nil)
+func placementLoadLookup(ctx context.Context, handler http.Handler, token credentials.AccessToken, service ServiceRecord) error {
+	request := httptest.NewRequestWithContext(ctx, http.MethodGet, "/v1/services/"+service.ID, nil)
 	request.Header.Set("Authorization", "Bearer "+string(token))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("hostname lookup: %w", err)
+		return fmt.Errorf("service lookup: %w", err)
 	}
 	if response.Code != http.StatusOK {
-		return fmt.Errorf("hostname lookup: HTTP %d", response.Code)
+		return fmt.Errorf("service lookup: HTTP %d", response.Code)
 	}
-	var page controlv1.PublicURLPage
-	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
+	var record controlv1.Service
+	if err := json.Unmarshal(response.Body.Bytes(), &record); err != nil {
 		return err
 	}
-	if len(page.PublicUrls) != 1 || page.PublicUrls[0].Id != candidate.PublicURLID || page.NextCursor != nil {
-		return fmt.Errorf("hostname lookup returned an unexpected route page")
+	if record.Id != service.ID || record.TeamId != service.TeamID || record.Endpoint == nil || record.Endpoint.Hostname != service.Endpoint.Hostname {
+		return fmt.Errorf("service lookup changed the service or its endpoint")
 	}
 	return nil
 }

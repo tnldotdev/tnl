@@ -208,7 +208,7 @@ func TestIntegrationCreateServiceDeclarationRejectsContradictoryMetadataUpdates(
 	if err != nil {
 		t.Fatal(err)
 	}
-	policyKey := controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "service", ResourceID: service.ID}
+	policyKey := service.ID
 	policyRevision, err := q.ReadVisitorPolicyRevision(ctx, policyKey)
 	if err != nil {
 		t.Fatal(err)

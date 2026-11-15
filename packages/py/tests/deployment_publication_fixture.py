@@ -21,6 +21,9 @@ async def main() -> None:
         async with await deployment.publish(
             tnl.handler(endpoint),
             access="restricted" if sys.argv[1] == "python-restricted" else "anonymous",
+            limits=tnl.Limits(
+                requests=10, concurrency=2, rate=tnl.RateLimit(requests=100, per="1s")
+            ),
         ) as publication:
             print(json.dumps({"url": publication.url}), flush=True)
             await asyncio.to_thread(sys.stdin.readline)

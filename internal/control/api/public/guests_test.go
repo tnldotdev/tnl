@@ -152,7 +152,7 @@ func TestGuestAllocationSourceAndExpiryDecisionsRemainInState(t *testing.T) {
 		{authorization.ErrGuestIPChanged, 403, controlv1.GuestIpChanged},
 		{controlstate.ErrGuestTrialSpent, 403, controlv1.GuestTrialExhausted},
 		{controlstate.ErrGuestUnknown, 401, controlv1.Unauthenticated},
-		{controlstate.ErrPublishRunOpen, 409, controlv1.Conflict},
+		{controlstate.ErrServiceConflict, 409, controlv1.Conflict},
 		{errors.New("database unavailable"), 503, controlv1.Unavailable},
 	} {
 		t.Run(string(tc.code), func(t *testing.T) {

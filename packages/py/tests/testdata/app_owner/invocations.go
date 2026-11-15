@@ -109,6 +109,13 @@ func serveInvocations(cleanupReplyLoss string) error {
 	boundary := (&localapi.Server{Capabilities: caps, Manager: manager, Database: database, Project: root, Invocation: func(requestContext context.Context, request publisherprotocol.Invocation) (publisherprotocol.Registration, error) {
 		preparation.Lock()
 		defer preparation.Unlock()
+		encoded, err := json.Marshal(request)
+		if err != nil {
+			return publisherprotocol.Registration{}, err
+		}
+		if err := os.WriteFile(filepath.Join(root, "invocation.json"), encoded, 0600); err != nil {
+			return publisherprotocol.Registration{}, err
+		}
 		for _, service := range manager.Snapshot().Services {
 			if service.Name == request.InvocationId && service.RegistrationID != "" {
 				if !reflect.DeepEqual(requests[service.Name], request) {

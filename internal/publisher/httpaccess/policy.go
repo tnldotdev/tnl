@@ -15,14 +15,13 @@ type PolicyClient interface {
 }
 
 type Policy struct {
-	lease     *visitorlease.Lease
-	client    PolicyClient
-	request   controlv1.PublisherVisitorPolicyRequest
-	token     string
-	sourceKey [32]byte
-	cancel    context.CancelFunc
-	done      chan struct{}
-	gate      chan struct{}
+	lease   *visitorlease.Lease
+	client  PolicyClient
+	request controlv1.PublisherVisitorPolicyRequest
+	token   string
+	cancel  context.CancelFunc
+	done    chan struct{}
+	gate    chan struct{}
 }
 
 // PreparePolicy starts one run-bound policy owner. close joins refresh before
@@ -62,9 +61,6 @@ func PreparePolicy(ctx context.Context, client PolicyClient, scope visitorscope.
 
 func (p *Policy) Lease() *visitorlease.Lease { return p.lease }
 
-// SourceKey is fixed by the initial policy snapshot before the owner is shared.
-func (p *Policy) SourceKey() [32]byte { return p.sourceKey }
-
 // Refresh shares the same bounded fetch-through-apply operation between explicit
 // credential preparation and the background owner; ordinary requests never call it.
 func (p *Policy) Refresh(ctx context.Context) error {
@@ -99,24 +95,7 @@ func (p *Policy) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	key := p.sourceKey
-	if p.request.Resource.Kind == "public_url" {
-		if response.VisitorSourceKey == nil || len(*response.VisitorSourceKey) != 32 || response.VisitorSourceAuthority != nil {
-			return visitorlease.ErrUpdate
-		}
-		key = [32]byte(*response.VisitorSourceKey)
-		if key == ([32]byte{}) || p.sourceKey != ([32]byte{}) && p.sourceKey != key {
-			return visitorlease.ErrUpdate
-		}
-	}
-	if err := p.lease.Apply(request, update); err != nil {
-		return err
-	}
-	// services have no source key; keep their zero value immutable too.
-	if key != ([32]byte{}) && p.sourceKey == ([32]byte{}) {
-		p.sourceKey = key
-	}
-	return nil
+	return p.lease.Apply(request, update)
 }
 
 // timer callbacks can lag their absolute deadline. neither a queued fetch nor

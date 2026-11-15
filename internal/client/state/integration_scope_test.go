@@ -180,7 +180,7 @@ func TestIntegrationScopeMatchesBothComponentsAndServer(t *testing.T) {
 		t.Fatal("duplicate owner bypassed the explicit scope's unique constraint")
 	}
 	current, err := database.WebhookReceiverCurrent(t.Context(), receivers[0])
-	if err != nil || !current || receivers[0].ServiceID == "" || receivers[0].PublicURLID != "" {
+	if err != nil || !current || receivers[0].ServiceID == "" {
 		t.Fatalf("service-backed webhook receiver was not current: %+v, %v", receivers[0], err)
 	}
 	wrong := receivers[0]

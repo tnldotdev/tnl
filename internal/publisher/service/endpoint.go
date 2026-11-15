@@ -180,6 +180,7 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 			return nil, nil, err
 		}
 		prepared.connectorHTTP = httpFrontend
+		prepared.policy = httpFrontend.Policy
 		prepared.httpResponseHooks = httpFrontend.ResponseHooks
 	}
 	decision := func(result controlv1.ServiceClientCertificateDecision, err error) (servicestream.Decision, error) {

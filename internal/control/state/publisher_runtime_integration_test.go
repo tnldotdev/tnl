@@ -62,8 +62,12 @@ func TestIntegrationPublisherRuntimeLifecycle(t *testing.T) {
 				}
 			} else {
 				r := oidcRouteRequest(t, d, now)
-				u := createTestPublicURL(t, d, r, now)
-				e := publisherEnrollment(t, d, r, PublisherScope{TeamID: u.TeamID, Kind: "saved_public_url", PublicURLID: u.ID}, now)
+				u, err := d.CreateServiceAt(ctx, r.TeamID, r.ActingIdentityID, "web", "runtime",
+					ServicePlacement{}, now, ServiceMetadata{}, &ProjectServiceConfiguration{Target: "localhost:3000"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				e := publisherEnrollment(t, d, r, PublisherScope{TeamID: u.TeamID, Kind: "service", ServiceID: u.ID}, now)
 				public, k, err := ed25519.GenerateKey(rand.Reader)
 				if err != nil {
 					t.Fatal(err)

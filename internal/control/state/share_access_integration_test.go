@@ -56,8 +56,9 @@ func TestIntegrationShareAccessBindsPublisherAndRevocation(t *testing.T) {
 	if err != nil || permission.Permission.Subject != (visitortoken.Share{ShareID: share.ID}) {
 		t.Fatal("redeemed session lost its exact share permission", err)
 	}
-	if _, err := database.IssueVisitorToken(t.Context(), testVisitorIssuer, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}, source, now); err == nil {
-		t.Fatal("service share authorized a public URL")
+	other := f.local(t, "api", nil)
+	if _, err := database.IssueVisitorToken(t.Context(), testVisitorIssuer, visitorscope.Scope{Kind: visitorscope.Service, ID: other.ID}, source, now); err == nil {
+		t.Fatal("service share authorized a different service")
 	}
 	if _, err := database.RevokeShare(t.Context(), share.ID, f.project.ActorID, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
@@ -122,14 +123,14 @@ func TestIntegrationShareHandoffIsShortLivedAndBoundToTheTargetPublicURL(t *test
 	if _, err := database.RedeemShare(t.Context(), api.auth(), "", nil, token, now); !errors.Is(err, ErrShareNotFound) {
 		t.Fatalf("handoff could be replayed: %v", err)
 	}
-	if err := database.ExpireVisitorPermissions(t.Context(), now); err != nil {
+	if _, err := database.ExpireServiceRuns(t.Context(), now); err != nil {
 		t.Fatal(err)
 	}
 	var cookies, handoffs int
 	if err := database.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM control.share_cookies),(SELECT count(*) FROM control.share_handoffs)`).Scan(&cookies, &handoffs); err != nil || cookies != 2 || handoffs != 0 {
 		t.Fatal("cleanup lost live share cookies or retained a consumed handoff", cookies, handoffs, err)
 	}
-	if err := database.ExpireVisitorPermissions(t.Context(), share.ExpiresAt); err != nil {
+	if _, err := database.ExpireServiceRuns(t.Context(), share.ExpiresAt); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.share_cookies`).Scan(&cookies); err != nil || cookies != 0 {

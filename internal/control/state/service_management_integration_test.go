@@ -49,7 +49,7 @@ func managementAllocation(t *testing.T, d *Database, team, actor string, now tim
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := CreatePublicURLRequest{TeamID: team, ActingIdentityID: actor, DomainID: domain.ID}
+	r := serviceTestAuthority{TeamID: team, ActingIdentityID: actor, DomainID: domain.ID}
 	enrollment := publisherEnrollment(t, d, r, PublisherScope{TeamID: team, Kind: "namespace", DomainID: domain.ID}, now)
 	public, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -189,7 +189,7 @@ func TestIntegrationServiceManagementMissingAndConflictingProvenance(t *testing.
 		{"both sources", `INSERT INTO control.publisher_namespace_allocations(service_id,publisher_identity_id,publisher_grant_id,invocation_id,required_temporary_approval)
 		    VALUES($1,$2,$3,$4,'restricted')`, f.local, []any{f.local.ID, f.publisher.ID, f.publisher.GrantID, mustOpaqueID(t, opaqueid.InvocationPrefix)}},
 		{"allocation with local source", `UPDATE control.service_endpoints SET local_source_key='conflicting-local-source' WHERE service_id=$1`, f.allocation, []any{f.allocation.ID}},
-		{"shared namespace grant", `UPDATE control.publisher_grants SET public_url_scope='shared',membership_id=NULL WHERE id=$1`, f.allocation, []any{f.publisher.GrantID}},
+		{"shared namespace grant", `UPDATE control.publisher_grants SET namespace_scope='shared',membership_id=NULL WHERE id=$1`, f.allocation, []any{f.publisher.GrantID}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			tx, err := f.d.pool.Begin(t.Context())
@@ -284,7 +284,7 @@ func TestIntegrationServiceManagementPublisherCapabilityIsNotOwnership(t *testin
 	if _, err := f.d.SetMembershipRole(t.Context(), f.owner, f.team, f.unrelated.ID, TeamRoleAdmin, f.now); err != nil {
 		t.Fatal(err)
 	}
-	enrollment := publisherEnrollment(t, f.d, CreatePublicURLRequest{TeamID: f.team, ActingIdentityID: f.unrelated.IdentityID},
+	enrollment := publisherEnrollment(t, f.d, serviceTestAuthority{TeamID: f.team, ActingIdentityID: f.unrelated.IdentityID},
 		PublisherScope{TeamID: f.team, Kind: "service", ServiceID: f.local.ID}, f.now)
 	public, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

@@ -206,20 +206,20 @@ func traceRuntimeCertificateState(t *testing.T, database *sql.DB, start time.Tim
 				'authorizations', (SELECT jsonb_agg(jsonb_build_object('state', a.state,
 					'updated_at', a.updated_at, 'presented_at', a.presented_at) ORDER BY a.id)
 					FROM control.acme_authorizations a WHERE a.order_id = o.id)
-			)::text, clock.current_revision,
-			coalesce((SELECT min(i.routing_table_revision) FROM control.ingress_leases i
-				WHERE NOT i.draining AND i.lease_expires_at > now()), -1)
+			)::text,
+			(SELECT count(*) FROM control.ingress_leases i
+				WHERE NOT i.draining AND i.lease_expires_at > now())
 			FROM control.acme_orders o JOIN control.service_runs s ON s.id = o.service_run_id
-			CROSS JOIN control.ingress_routing_table_clock clock ORDER BY o.id`)
+			ORDER BY o.id`)
 			if err == nil {
 				for rows.Next() {
 					var id, state string
-					var head, applied int64
-					if err = rows.Scan(&id, &state, &head, &applied); err != nil {
+					var currentIngresses int64
+					if err = rows.Scan(&id, &state, &currentIngresses); err != nil {
 						break
 					}
 					if previous[id] != state {
-						t.Logf("provision_state elapsed=%s issuance=%s head=%d applied=%d state=%s", time.Since(start), id, head, applied, state)
+						t.Logf("provision_state elapsed=%s issuance=%s current_ingresses=%d state=%s", time.Since(start), id, currentIngresses, state)
 						previous[id] = state
 					}
 				}

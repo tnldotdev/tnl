@@ -3,46 +3,53 @@ package state
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
-func prepareServingPublisher(t *testing.T, f publishRunFixture) {
+func publicServingFixture(t *testing.T, f servicePublicationFixture) servicePublicationFixture {
 	t.Helper()
-	work := createPlanIssuanceWork(t, f.database, f.now, f.authentication(), f.certificatePlan(), true, nil)
-	if _, err := f.database.MarkPublicURLCertificateInstalled(t.Context(), f.authentication(), work.ID, *work.NotAfter, f.now); err != nil {
+	actor := f.actor(t)
+	declaration, _, err := f.database.GetServiceConfiguration(t.Context(), f.service.ID, actor)
+	if err != nil || declaration == nil {
+		t.Fatal("missing service declaration", err)
+	}
+	declaration.Public = new(true)
+	f.service, err = f.database.ConfigureService(t.Context(), f.service.ID, actor, f.service.ServiceMetadata,
+		declaration, ServiceUpdateConditions{}, f.now)
+	if err != nil {
 		t.Fatal(err)
 	}
-	for slot := range f.setup.PublisherConnections {
-		claimTestConnection(t, f, slot, f.now)
-	}
+	return f
 }
 
-func servingPreparationPending(t *testing.T, f publishRunFixture, now time.Time) {
+func prepareServingPublisher(t *testing.T, f servicePublicationFixture) {
 	t.Helper()
-	if _, err := f.database.MarkPublishRunReady(t.Context(), f.authentication(), now); !errors.Is(err, ErrPublishRunNotReady) {
-		t.Fatalf("preparation pending: %v", err)
-	}
-	var ready bool
-	if err := f.database.pool.QueryRow(t.Context(), `SELECT ready_at IS NOT NULL FROM control.publish_runs WHERE id=$1`, f.setup.PublishRunID).Scan(&ready); err != nil || ready {
-		t.Fatal("preparation committed ready state", ready, err)
+	installPrivateTestCertificate(t, f.database, f.prepared, f.run, f.now)
+	f.readyConnections(t, f.now)
+	state, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now,
+		ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+	if err != nil || state.State != "ready" {
+		t.Fatal("certificate and ready publisher connections did not enable serving", state.State, err)
 	}
 }
 
-func registerServingIngress(t *testing.T, f publishRunFixture, name string, now time.Time) IngressLeaseIdentity {
+func registerServingIngress(t *testing.T, f servicePublicationFixture, name string, now time.Time) IngressLeaseIdentity {
 	t.Helper()
 	var pool string
-	if err := f.database.pool.QueryRow(t.Context(), `SELECT ingress_pool_id FROM control.public_urls WHERE id=$1`, f.setup.PublicURLID).Scan(&pool); err != nil {
+	if err := f.database.pool.QueryRow(t.Context(), `SELECT ingress_pool_id FROM control.services WHERE id=$1`, f.service.ID).Scan(&pool); err != nil {
 		t.Fatal(err)
 	}
 	lease, err := f.database.RegisterIngress(t.Context(), IngressRegistration{
-		IngressID: name, IngressRunID: name + "-process", ProtocolVersion: 1, ConnectionCapacity: 8, IngressPoolID: pool,
+		IngressID: name, IngressRunID: name + "-process", ProtocolVersion: 1, ConnectionCapacity: 64,
+		IngressPoolID: pool, HTTPS: true,
 	}, now, time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -50,289 +57,161 @@ func registerServingIngress(t *testing.T, f publishRunFixture, name string, now 
 	return lease.IngressLeaseIdentity
 }
 
-func servingObservation(t *testing.T, f publishRunFixture, owner IngressLeaseIdentity, now time.Time) (IngressPublicRunObservation, uint64) {
+func admitServingVisitor(t *testing.T, f servicePublicationFixture, owner IngressLeaseIdentity, now time.Time) (PublicServiceVisitorAdmission, error) {
 	t.Helper()
-	snapshot, err := f.database.ReadIngressRoutingTableSnapshot(t.Context(), owner, now)
-	if err != nil {
-		t.Fatal(err)
+	return f.database.AdmitPublicServiceVisitor(t.Context(), owner, PrimaryIngressPoolID,
+		mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), f.service.Endpoint.Hostname, 443, netip.MustParseAddr("192.0.2.10"), now)
+}
+
+func TestIntegrationPublicServingReadinessRequiresPublisherCertificateAndConnections(t *testing.T) {
+	f := publicServingFixture(t, newServicePublicationFixture(t))
+	owner := registerServingIngress(t, f, "receiver-a", f.now)
+	if _, err := admitServingVisitor(t, f, owner, f.now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("starting run admitted a visitor", err)
 	}
-	for _, event := range snapshot.Entries {
-		if event.Projection.PublishRunID == f.setup.PublishRunID {
-			return IngressPublicRunObservation{f.setup.PublishRunID, int64(f.setup.PublishRunNumber), int64(event.EntryRevision), event.Projection.PublicUrlExpiresAt}, snapshot.RoutingTableRevision
+	f.readyConnections(t, f.now)
+	if state, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now,
+		ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil || state.State != "starting" {
+		t.Fatal("connected publisher bypassed certificate readiness", state.State, err)
+	}
+	installPrivateTestCertificate(t, f.database, f.prepared, f.run, f.now)
+	if state, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now,
+		ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil || state.State != "ready" {
+		t.Fatal("complete publisher did not become ready", state.State, err)
+	}
+	// ingress processes select current service state, not per-process
+	// installation acknowledgements. a joining process needs no run mutation.
+	other := registerServingIngress(t, f, "receiver-b", f.now)
+	for _, ingress := range []IngressLeaseIdentity{owner, other} {
+		admission, err := admitServingVisitor(t, f, ingress, f.now)
+		if err != nil || admission.RunID != f.run.RunID || admission.RunNumber != f.run.RunNumber {
+			t.Fatal("ingress selected a different run or required stale installation state", err)
 		}
-	}
-	t.Fatal("missing preparation projection")
-	return IngressPublicRunObservation{}, 0
-}
-
-func observeServingIngress(t *testing.T, f publishRunFixture, owner IngressLeaseIdentity, now time.Time) {
-	t.Helper()
-	observation, revision := servingObservation(t, f, owner, now)
-	if _, err := f.database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: owner,
-		RoutingTableRevision: revision, PreparedPublicRuns: []IngressPublicRunObservation{observation}}, now, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// state fixtures simulate installation explicitly. real runtime tests use the
-// ingress controller and its installed table rather than this helper.
-func readyTestServingRun(t *testing.T, f publishRunFixture, now time.Time) PublishRunLifecycle {
-	t.Helper()
-	if ready, err := f.database.MarkPublishRunReady(t.Context(), f.authentication(), now); err == nil {
-		return ready
-	} else if !errors.Is(err, ErrPublishRunNotReady) {
-		t.Fatal(err)
-	}
-	registerServingIngress(t, f, fmt.Sprintf("fixture-serving-%d", now.UnixNano()), now)
-	rows, err := f.database.pool.Query(t.Context(), `SELECT ingress_id,ingress_run_id,ingress_lease_revision FROM control.ingress_leases
-		WHERE ingress_pool_id=(SELECT ingress_pool_id FROM control.public_urls WHERE id=$1) AND lease_expires_at>$2 AND NOT draining`, f.setup.PublicURLID, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var owners []IngressLeaseIdentity
-	for rows.Next() {
-		var owner IngressLeaseIdentity
-		if err := rows.Scan(&owner.IngressID, &owner.IngressRunID, &owner.IngressLeaseRevision); err != nil {
-			t.Fatal(err)
-		}
-		owners = append(owners, owner)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	for _, owner := range owners {
-		observeServingIngress(t, f, owner, now)
-	}
-	ready, err := f.database.MarkPublishRunReady(t.Context(), f.authentication(), now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, owner := range owners {
-		observeServingIngress(t, f, owner, now)
-	}
-	return ready
-}
-
-func TestIntegrationPublicServingReadinessRequiresEveryCurrentReceiver(t *testing.T) {
-	f := newPublishRunFixture(t)
-	prepareServingPublisher(t, f)
-	servingPreparationPending(t, f, f.now)
-	servingPreparationPending(t, f, f.now) // no receiver is not ready.
-	a := registerServingIngress(t, f, "receiver-a", f.now)
-	b := registerServingIngress(t, f, "receiver-b", f.now)
-	observation, revision := servingObservation(t, f, a, f.now)
-	if _, err := f.database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: a, RoutingTableRevision: revision}, f.now, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	servingPreparationPending(t, f, f.now) // cursor alone proves no policy installation.
-	observeServingIngress(t, f, a, f.now)
-	servingPreparationPending(t, f, f.now)
-	// process renewal must not extend an installed deadline.
-	observation.ValidUntil = f.now.Add(time.Second)
-	if _, err := f.database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: b, RoutingTableRevision: revision, PreparedPublicRuns: []IngressPublicRunObservation{observation}}, f.now, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	later := f.now.Add(time.Second)
-	if _, err := f.database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: b}, later, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	servingPreparationPending(t, f, later)
-	observeServingIngress(t, f, b, later)
-	ready, err := f.database.MarkPublishRunReady(t.Context(), f.authentication(), later)
-	if err != nil || ready.ReadyAt == nil || !ready.ReadyAt.Equal(later) || !ready.Routable {
-		t.Fatal("installed run did not become ready", ready, err)
-	}
-	// install the final projection with a short deadline from the outset;
-	// a later retry of this revision cannot shorten already-observed evidence.
-	observation, revision = servingObservation(t, f, a, later)
-	observation.ValidUntil = later.Add(time.Second)
-	if _, err := f.database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: a, RoutingTableRevision: revision,
-		PreparedPublicRuns: []IngressPublicRunObservation{observation}}, later, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	observeServingIngress(t, f, b, later)
-	joining := registerServingIngress(t, f, "late-receiver", later)
-	if _, err := f.database.MarkPublishRunReady(t.Context(), f.authentication(), later); !errors.Is(err, ErrPublishRunNotReady) {
-		t.Fatal("ready replay ignored an unprepared joining receiver", err)
-	}
-	if _, err := f.database.BeginIngressDrain(t.Context(), joining, later, later.Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.database.MarkPublishRunReady(t.Context(), f.authentication(), later); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.database.MarkPublishRunReady(t.Context(), f.authentication(), observation.ValidUntil); !errors.Is(err, ErrPublishRunNotReady) {
-		t.Fatal("first-ready history revived expired serving evidence", err)
 	}
 }
 
 func TestIntegrationPublicServingReadinessExactBindingAndDrain(t *testing.T) {
-	f := newPublishRunFixture(t)
+	f := publicServingFixture(t, newServicePublicationFixture(t))
 	prepareServingPublisher(t, f)
-	servingPreparationPending(t, f, f.now)
 	owner := registerServingIngress(t, f, "receiver", f.now)
-	observation, revision := servingObservation(t, f, owner, f.now)
-	for _, test := range []struct {
-		name   string
-		change func(*IngressRenewal)
-		stale  bool
-	}{
-		{"run", func(r *IngressRenewal) { r.PreparedPublicRuns[0].PublishRunID = "another-run" }, false},
-		{"number", func(r *IngressRenewal) { r.PreparedPublicRuns[0].PublishRunNumber++ }, false},
-		{"entry", func(r *IngressRenewal) { r.PreparedPublicRuns[0].EntryRevision++ }, false},
-		{"not-applied", func(r *IngressRenewal) { r.RoutingTableRevision = 0 }, false},
-		{"expired", func(r *IngressRenewal) { r.PreparedPublicRuns[0].ValidUntil = f.now }, false},
-		{"process", func(r *IngressRenewal) { r.IngressRunID = "other-process" }, true},
-		{"lease", func(r *IngressRenewal) { r.IngressLeaseRevision++ }, true},
+	for _, change := range []func(*IngressLeaseIdentity){
+		func(i *IngressLeaseIdentity) { i.IngressRunID = "another-process" },
+		func(i *IngressLeaseIdentity) { i.IngressLeaseRevision++ },
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			r := IngressRenewal{IngressLeaseIdentity: owner, RoutingTableRevision: revision, PreparedPublicRuns: []IngressPublicRunObservation{observation}}
-			test.change(&r)
-			_, err := f.database.RenewIngress(t.Context(), r, f.now, time.Minute)
-			if test.stale && !errors.Is(err, ErrIngressLeaseStale) || !test.stale && err != nil {
-				t.Fatal(err)
-			}
-			servingPreparationPending(t, f, f.now)
-		})
+		stale := owner
+		change(&stale)
+		if _, err := admitServingVisitor(t, f, stale, f.now); err == nil {
+			t.Fatal("stale ingress process or lease admitted a visitor")
+		}
 	}
-	observeServingIngress(t, f, owner, f.now)
-	joining := registerServingIngress(t, f, "joining", f.now)
-	servingPreparationPending(t, f, f.now)
-	if _, err := f.database.BeginIngressDrain(t.Context(), joining, f.now, f.now.Add(time.Second)); err != nil {
+	if _, err := f.database.BeginIngressDrain(t.Context(), owner, f.now, f.now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.database.MarkPublishRunReady(t.Context(), f.authentication(), f.now); err != nil {
-		t.Fatal("draining receiver blocked serving receivers", err)
+	if _, err := admitServingVisitor(t, f, owner, f.now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("draining ingress accepted a new visitor", err)
+	}
+	other := registerServingIngress(t, f, "serving", f.now)
+	if _, err := admitServingVisitor(t, f, other, f.now); err != nil {
+		t.Fatal("one draining ingress suppressed a healthy receiver", err)
 	}
 }
 
 func TestIntegrationPublicReadinessSerializesRegistrationWithFinalVisibility(t *testing.T) {
-	f := newPublishRunFixture(t)
-	prepareServingPublisher(t, f)
-	servingPreparationPending(t, f, f.now)
-	owner := registerServingIngress(t, f, "receiver", f.now)
-	observeServingIngress(t, f, owner, f.now)
-	d, now := f.database, f.now
+	f := publicServingFixture(t, newServicePublicationFixture(t))
+	installPrivateTestCertificate(t, f.database, f.prepared, f.run, f.now)
+	f.readyConnections(t, f.now)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	workers := newIntegrationWorkers(t, cancel)
-	defer workers.stop()
-	gate, err := d.pool.Begin(ctx)
+	gate, err := f.database.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if _, err := controlstatedb.New(gate).LockIngressRoutingTableClock(ctx); err != nil {
+	if _, err := controlstatedb.New(gate).LockService(ctx, f.service.ID); err != nil {
 		t.Fatal(err)
 	}
-	final := make(chan error, 1)
-	workers.Go(func() { _, err := d.MarkPublishRunReady(ctx, f.authentication(), now); final <- err })
-	finalPID := waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), final)
-	joined := make(chan error, 1)
-	var snapshot IngressRoutingTableSnapshot
+	workers := newIntegrationWorkers(t, cancel)
+	defer workers.stop()
+	done := make(chan error, 1)
 	workers.Go(func() {
-		lease, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: "joining-during-final", IngressRunID: "new-process", IngressPoolID: PrimaryIngressPoolID, ProtocolVersion: 1, ConnectionCapacity: 8}, now, time.Minute)
-		if err == nil {
-			snapshot, err = d.ReadIngressRoutingTableSnapshot(ctx, lease.IngressLeaseIdentity, now)
+		state, err := f.database.HeartbeatServiceRun(ctx, f.service.ID, f.run.RunID, f.run.Token, f.now,
+			ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+		if err == nil && state.State != "ready" {
+			err = errors.New("complete publication remained starting")
 		}
-		joined <- err
+		done <- err
 	})
-	waitForPostgresBlock(t, ctx, d, finalPID, joined)
-	if _, err := d.RenewIngress(ctx, IngressRenewal{IngressLeaseIdentity: owner}, now, time.Minute); err != nil {
-		t.Fatal(err)
-	}
+	waitForPostgresBlock(t, ctx, f.database, int32(gate.Conn().PgConn().PID()), done)
+	// process registration is independent of a service's locked readiness
+	// transition. admission checks that transition under its own service guard.
+	owner := registerServingIngress(t, f, "joining", f.now)
 	if err := gate.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := awaitIntegrationResult(t, ctx, final); err != nil {
+	if err := awaitIntegrationResult(t, ctx, done); err != nil {
 		t.Fatal(err)
 	}
-	if err := awaitIntegrationResult(t, ctx, joined); err != nil {
-		t.Fatal(err)
-	}
-	if len(snapshot.Entries) != 1 || snapshot.Entries[0].Projection.PublishRunReadyAt == nil || !snapshot.Entries[0].Projection.PublishRunReadyAt.Equal(now) {
-		t.Fatal("joining receiver saw starting state after final receiver selection")
+	if _, err := admitServingVisitor(t, f, owner, f.now); err != nil {
+		t.Fatal("joining ingress could not use committed readiness", err)
 	}
 }
 
 func TestIntegrationPublicServingReadinessIsolationAndStartingClosure(t *testing.T) {
-	a := newPublishRunFixture(t)
-	prepareServingPublisher(t, a)
-	servingPreparationPending(t, a, a.now)
-	seedControlPublicURL(t, a.database, a.now, "independent")
-	r := a.request
-	r.PublicURLID, r.TeamID, r.MembershipID, r.ActingIdentityID = "public_url_independent", "team_independent", "membership_independent", "identity_independent"
-	r.CertificateIdentifiers = []string{"route-independent.example.test"}
-	r.CertificateCacheKey = "certificate_independent"
-	setup, err := a.database.CreatePublishRun(t.Context(), r, a.now, 30*time.Second, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b := publishRunFixture{a.database, a.now, r, setup, a.leases}
+	a := publicServingFixture(t, newServicePublicationFixture(t))
+	b := a.sibling(t, "independent", a.now)
+	b = publicServingFixture(t, b)
+	b.start(t, "first", b.now)
 	prepareServingPublisher(t, b)
-	readyTestServingRun(t, b, b.now)
-	servingPreparationPending(t, a, a.now)
-	if err := a.database.ClosePublishRun(t.Context(), a.setup.PublishRunID, a.setup.PublishRunToken, a.now); err != nil {
+	owner := registerServingIngress(t, b, "receiver", b.now)
+	if err := a.database.CloseServiceRun(t.Context(), a.service.ID, a.run.RunID, a.run.Token, a.now); err != nil {
 		t.Fatal(err)
 	}
-	owner := registerServingIngress(t, b, "snapshot", b.now)
-	snapshot, err := a.database.ReadIngressRoutingTableSnapshot(t.Context(), owner, a.now)
-	if err != nil || len(snapshot.Entries) != 1 || snapshot.Entries[0].Projection.PublishRunID != b.setup.PublishRunID {
-		t.Fatal("closing starting run left preparation routing or removed sibling", snapshot, err)
+	if _, err := admitServingVisitor(t, a, owner, a.now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("closed starting run remained selectable", err)
+	}
+	admission, err := admitServingVisitor(t, b, owner, b.now)
+	if err != nil || admission.RunID != b.run.RunID {
+		t.Fatal("closing a starting service suppressed its ready sibling", err)
 	}
 }
 
 func TestIntegrationPublicReadinessReplacementCannotReuseObservation(t *testing.T) {
-	f := newPublishRunFixture(t)
+	f := publicServingFixture(t, newServicePublicationFixture(t))
 	prepareServingPublisher(t, f)
-	servingPreparationPending(t, f, f.now)
-	r := IngressRegistration{IngressID: "replacement", IngressRunID: "first", ProtocolVersion: 1, ConnectionCapacity: 8, IngressPoolID: PrimaryIngressPoolID}
-	lease, err := f.database.RegisterIngress(t.Context(), r, f.now, time.Second)
+	registration := IngressRegistration{IngressID: "replacement", IngressRunID: "first", HTTPS: true,
+		ProtocolVersion: 1, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID}
+	first, err := f.database.RegisterIngress(t.Context(), registration, f.now, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	observation, revision := servingObservation(t, f, lease.IngressLeaseIdentity, f.now)
-	if _, err := f.database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: lease.IngressLeaseIdentity, RoutingTableRevision: revision, PreparedPublicRuns: []IngressPublicRunObservation{observation}}, f.now, time.Second); err != nil {
-		t.Fatal(err)
-	}
-	r.IngressRunID = "second"
+	registration.IngressRunID = "second"
 	later := f.now.Add(time.Second)
-	replacement, err := f.database.RegisterIngress(t.Context(), r, later, time.Minute)
-	if err != nil {
-		t.Fatal(err)
+	replacement, err := f.database.RegisterIngress(t.Context(), registration, later, time.Minute)
+	if err != nil || replacement.IngressLeaseRevision <= first.IngressLeaseRevision {
+		t.Fatal("ingress replacement lost its lease fence", err)
 	}
-	servingPreparationPending(t, f, later)
-	if _, err := f.database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: lease.IngressLeaseIdentity, RoutingTableRevision: revision, PreparedPublicRuns: []IngressPublicRunObservation{observation}}, later, time.Minute); !errors.Is(err, ErrIngressLeaseStale) {
-		t.Fatal("old process installed on replacement", err)
+	if _, err := admitServingVisitor(t, f, first.IngressLeaseIdentity, later); err == nil {
+		t.Fatal("old ingress process admitted on its replacement's lease")
 	}
-	observeServingIngress(t, f, replacement.IngressLeaseIdentity, later)
-	if _, err := f.database.MarkPublishRunReady(t.Context(), f.authentication(), later); err != nil {
-		t.Fatal(err)
+	if _, err := admitServingVisitor(t, f, replacement.IngressLeaseIdentity, later); err != nil {
+		t.Fatal("replacement could not select current service readiness", err)
 	}
 }
 
-func TestIntegrationPublicReadinessObservationDoesNotLockRunUnderIngress(t *testing.T) {
-	f := newPublishRunFixture(t)
+func TestIntegrationPublicReadinessIngressRenewalCannotExtendRunDeadline(t *testing.T) {
+	f := publicServingFixture(t, newServicePublicationFixture(t))
 	prepareServingPublisher(t, f)
-	servingPreparationPending(t, f, f.now)
-	owner := registerServingIngress(t, f, "independent-renewal", f.now)
-	observation, revision := servingObservation(t, f, owner, f.now)
-	gate, err := f.database.pool.Begin(t.Context())
-	if err != nil {
+	owner := registerServingIngress(t, f, "receiver", f.now)
+	at := f.run.ExpiresAt
+	if _, err := f.database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: owner}, at, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	defer rollbackTestTransaction(t, gate)
-	if _, err := controlstatedb.New(gate).LockPublishRun(t.Context(), f.setup.PublishRunID); err != nil {
-		t.Fatal(err)
+	if _, err := admitServingVisitor(t, f, owner, at); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("ingress renewal revived an expired publisher", err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
-	for range 2 { // both insertion and the conflict-update path must avoid run locks.
-		if _, err := f.database.RenewIngress(ctx, IngressRenewal{IngressLeaseIdentity: owner, RoutingTableRevision: revision,
-			PreparedPublicRuns: []IngressPublicRunObservation{observation}}, f.now, time.Minute); err != nil {
-			t.Fatal("observation inverted run -> pool -> ingress order", err)
-		}
+	if _, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, at,
+		ServiceRunHealth{Healthy: true, StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("first-ready history revived an expired publisher", err)
 	}
 }
 
@@ -375,150 +254,5 @@ func TestIntegrationServiceReadinessStartsGuestClockAndMetricTogether(t *testing
 	}
 	if !strings.Contains(metricText(), "tnl_control_service_runs_ready_total 1\n") {
 		t.Fatal("ready metric counted more than first transition")
-	}
-}
-
-func TestIntegrationPublicReadinessIngressObservationRetainsInstalledDeadline(t *testing.T) {
-	f := newPublishRunFixture(t)
-	prepareServingPublisher(t, f)
-	servingPreparationPending(t, f, f.now)
-	owner := registerServingIngress(t, f, "bounded-installation", f.now)
-	old, revision := servingObservation(t, f, owner, f.now)
-	old.ValidUntil = f.now.Add(time.Second)
-	if _, err := f.database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: owner, RoutingTableRevision: revision,
-		PreparedPublicRuns: []IngressPublicRunObservation{old}}, f.now, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	later := f.now.Add(time.Second)
-	if _, err := f.database.HeartbeatPublishRun(t.Context(), f.authentication(), later, time.Minute, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	current, currentRevision := servingObservation(t, f, owner, later)
-	if current.EntryRevision <= old.EntryRevision || !current.ValidUntil.After(old.ValidUntil) {
-		t.Fatal("starting run heartbeat did not refresh projection", current, old)
-	}
-	// acknowledging the new cursor while retaining an older installed policy
-	// cannot turn the heartbeat response into local serving preparation.
-	if _, err := f.database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: owner, RoutingTableRevision: currentRevision,
-		PreparedPublicRuns: []IngressPublicRunObservation{old}}, later, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	servingPreparationPending(t, f, later)
-	observeServingIngress(t, f, owner, later)
-	if _, err := f.database.MarkPublishRunReady(t.Context(), f.authentication(), later); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestIntegrationPublicReadinessOutOfOrderInstallationReports(t *testing.T) {
-	f := newPublishRunFixture(t)
-	prepareServingPublisher(t, f)
-	servingPreparationPending(t, f, f.now)
-	owner := registerServingIngress(t, f, "out-of-order", f.now)
-	old, oldCursor := servingObservation(t, f, owner, f.now)
-	old.ValidUntil = f.now.Add(20 * time.Second)
-	report := func(observation IngressPublicRunObservation, cursor uint64) {
-		t.Helper()
-		if _, err := f.database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: owner, RoutingTableRevision: cursor,
-			PreparedPublicRuns: []IngressPublicRunObservation{observation}}, f.now.Add(2*time.Second), time.Minute); err != nil {
-			t.Fatal(err)
-		}
-	}
-	assertInstalled := func(expected IngressPublicRunObservation) {
-		t.Helper()
-		var revision int64
-		var until time.Time
-		if err := f.database.pool.QueryRow(t.Context(), `SELECT entry_revision,valid_until FROM control.ingress_public_run_observations
-			WHERE ingress_id=$1 AND publish_run_id=$2 AND ingress_run_id=$3 AND ingress_lease_revision=$4 AND publish_run_number=$5`,
-			owner.IngressID, expected.PublishRunID, owner.IngressRunID, owner.IngressLeaseRevision, expected.PublishRunNumber).Scan(&revision, &until); err != nil {
-			t.Fatal(err)
-		}
-		if revision != expected.EntryRevision || !until.Equal(expected.ValidUntil) {
-			t.Fatal("installation order changed evidence", revision, until, expected)
-		}
-	}
-	report(old, oldCursor)
-	if _, err := f.database.HeartbeatPublishRun(t.Context(), f.authentication(), f.now.Add(time.Second), time.Minute, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	current, cursor := servingObservation(t, f, owner, f.now.Add(time.Second))
-	current.ValidUntil = f.now.Add(5 * time.Second)
-	if current.EntryRevision <= old.EntryRevision {
-		t.Fatal("heartbeat did not create a new projection")
-	}
-	report(current, cursor)
-	assertInstalled(current) // a newer revision replaces an older, longer deadline.
-	// these are valid requests from the same process: lease identity and the
-	// greatest acknowledged cursor do not establish installation arrival order.
-	report(old, oldCursor)
-	assertInstalled(current)
-	report(old, cursor)
-	assertInstalled(current)
-	shorter := current
-	shorter.ValidUntil = f.now.Add(3 * time.Second)
-	report(shorter, cursor)
-	assertInstalled(current)
-	longer := current
-	longer.ValidUntil = f.now.Add(12 * time.Second)
-	report(longer, cursor)
-	report(current, cursor)
-	assertInstalled(longer)
-	servingPreparationPending(t, f, longer.ValidUntil) // retries cannot revive expired evidence.
-
-	// even an overlong reported deadline is bounded by the stored projection
-	// and publisher lifetime, rather than becoming fresh authority on receipt.
-	bounded, cursor := servingObservation(t, f, owner, f.now.Add(2*time.Second))
-	overlong := bounded
-	overlong.ValidUntil = f.now.Add(time.Hour)
-	report(overlong, cursor)
-	assertInstalled(bounded)
-}
-
-func TestIntegrationPublicReadinessClosureAndObservationLockOrder(t *testing.T) {
-	f := newPublishRunFixture(t)
-	prepareServingPublisher(t, f)
-	servingPreparationPending(t, f, f.now)
-	owner := registerServingIngress(t, f, "closure-race", f.now)
-	observeServingIngress(t, f, owner, f.now)
-	observation, revision := servingObservation(t, f, owner, f.now)
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	workers := newIntegrationWorkers(t, cancel)
-	defer workers.stop()
-	gate, err := f.database.pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rollbackTestTransaction(t, gate)
-	if _, err := gate.Exec(ctx, `SELECT 1 FROM control.ingress_public_run_observations WHERE publish_run_id=$1 FOR UPDATE`, f.setup.PublishRunID); err != nil {
-		t.Fatal(err)
-	}
-	closed, renewed := make(chan error, 1), make(chan error, 1)
-	workers.Go(func() {
-		closed <- f.database.ClosePublishRun(ctx, f.setup.PublishRunID, f.setup.PublishRunToken, f.now)
-	})
-	waitForPostgresBlock(t, ctx, f.database, int32(gate.Conn().PgConn().PID()), closed)
-	workers.Go(func() {
-		_, err := f.database.RenewIngress(ctx, IngressRenewal{IngressLeaseIdentity: owner, RoutingTableRevision: revision,
-			PreparedPublicRuns: []IngressPublicRunObservation{observation}}, f.now, time.Minute)
-		renewed <- err
-	})
-	// closure holds the run; renewal must reach the observation row without
-	// waiting on that run. the wait graph proves both lock footprints.
-	waitForPostgresBlock(t, ctx, f.database, int32(gate.Conn().PgConn().PID()), renewed)
-	if err := gate.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	for _, done := range []<-chan error{closed, renewed} {
-		if err := awaitIntegrationResult(t, ctx, done); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := f.database.MarkPublishRunReady(ctx, f.authentication(), f.now); !errors.Is(err, ErrPublishRunStale) {
-		t.Fatal("observation revived a closed run", err)
-	}
-	snapshot, err := f.database.ReadIngressRoutingTableSnapshot(ctx, owner, f.now)
-	if err != nil || len(snapshot.Entries) != 0 {
-		t.Fatal("closed preparation remained selectable", snapshot, err)
 	}
 }

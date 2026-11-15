@@ -11,8 +11,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
-	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
-	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -83,10 +81,7 @@ func localHTTPPermission(request *http.Request, policy *visitorlease.Lease, rene
 	if !enabled {
 		return httpPermission{}, visitortoken.ErrPolicy
 	}
-	validHost := publisherproxy.ValidateRequest(request, view.Hostname) == ""
-	if view.Scope.Kind == visitorscope.Service {
-		validHost = serviceendpoint.MatchesHTTPAuthority(view.Hostname, view.Port, request.Host) && request.Method != http.MethodConnect && !request.URL.IsAbs() && request.URL.Host == "" && request.TLS != nil && request.TLS.ServerName == view.Hostname
-	}
+	validHost := serviceendpoint.MatchesHTTPAuthority(view.Hostname, view.Port, request.Host) && request.Method != http.MethodConnect && !request.URL.IsAbs() && request.URL.Host == "" && request.TLS != nil && request.TLS.ServerName == view.Hostname
 	if !validHost {
 		return httpPermission{}, visitortoken.ErrBinding
 	}
@@ -119,9 +114,6 @@ func localHTTPPermission(request *http.Request, policy *visitorlease.Lease, rene
 	if request.TLS != nil && len(request.TLS.PeerCertificates) != 0 {
 		if len(supplied) != 0 || SuppliedCookieCount(request, BrowserCookieName) != 0 || SuppliedCookieCount(request, ShareCookieName) != 0 {
 			return httpPermission{}, visitortoken.ErrToken
-		}
-		if view.Scope.Kind != visitorscope.Service {
-			return httpPermission{}, visitortoken.ErrBinding
 		}
 		token, err := visitortoken.CertificateToken(request.TLS.PeerCertificates[0])
 		if err != nil {

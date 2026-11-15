@@ -102,7 +102,7 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 			}
 		}
 	} else if errors.Is(err, pgx.ErrNoRows) {
-		result.RunID, result.RunNumber, _, err = selectRoutableServiceRun(ctx, tx, result.ServiceID, clock.current(), excluded...)
+		result.RunID, result.RunNumber, _, err = selectRoutableServiceRun(ctx, tx, result.ServiceID, service.CertificateHostname, clock.current(), excluded...)
 	}
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
@@ -125,7 +125,8 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 	    JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id AND signing.publisher_identity_id=run.publisher_identity_id
 	    WHERE run.id=$1 AND run.service_id=$2 AND run.run_number=$3 AND run.state='ready' AND run.healthy
 	    AND run.closed_at IS NULL AND run.publisher_expires_at>$4 AND run.certificate_expires_at>$4
-	    AND (g.kind='service' OR signing.retired_at IS NULL)`, result.RunID, result.ServiceID, result.RunNumber, clock.current()).Scan(&runUntil, &traffic)
+	    AND run.certificate_hostname=$5 AND run.certificate_domain_id=$6
+	    AND (g.kind='service' OR signing.retired_at IS NULL)`, result.RunID, result.ServiceID, result.RunNumber, clock.current(), service.CertificateHostname, service.DomainID).Scan(&runUntil, &traffic)
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}

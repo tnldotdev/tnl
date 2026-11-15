@@ -53,7 +53,7 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 3 * time.Second,
 		RelayLeaseDuration:   3 * time.Second, LeaseRenewalInterval: time.Second,
-		ControlRetryInterval: 10 * time.Millisecond, RoutingTableWait: time.Second, DrainTimeout: 2 * time.Second,
+		ControlRetryInterval: 10 * time.Millisecond, DrainTimeout: 2 * time.Second,
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)

@@ -90,7 +90,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 			}
 			resource := inspectAppliedPrivateResource(t, d, r, value.ServiceID, localProjectServiceName(request, local.Name), false, outsider, extra)
 			if active {
-				e := publisherEnrollment(t, d, CreatePublicURLRequest{TeamID: r.TeamID, ActingIdentityID: r.ActorID}, PublisherScope{TeamID: r.TeamID, Kind: "service", ServiceID: value.ServiceID}, now)
+				e := publisherEnrollment(t, d, serviceTestAuthority{TeamID: r.TeamID, ActingIdentityID: r.ActorID}, PublisherScope{TeamID: r.TeamID, Kind: "service", ServiceID: value.ServiceID}, now)
 				public, key, err := ed25519.GenerateKey(rand.Reader)
 				if err != nil {
 					t.Fatal(err)
@@ -296,15 +296,15 @@ func assertPrivateOwnershipEntry(t *testing.T, d *Database, r ApplyProjectConfig
 		t.Fatal("incorrect applied service", status.Services)
 	}
 	s := status.Services[0]
-	var privateID, publicID, deploymentID, visitorGrant string
-	if err := d.pool.QueryRow(t.Context(), `SELECT COALESCE(service_id,''),COALESCE(public_url_id,''),COALESCE(deployment_id,''),COALESCE(visitor_grant_id,'') FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service='db'`, r.TeamID, r.ProjectKey).Scan(&privateID, &publicID, &deploymentID, &visitorGrant); err != nil {
+	var privateID, deploymentID, visitorGrant string
+	if err := d.pool.QueryRow(t.Context(), `SELECT COALESCE(service_id,''),COALESCE(deployment_id,''),COALESCE(visitor_grant_id,'') FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service='db'`, r.TeamID, r.ProjectKey).Scan(&privateID, &deploymentID, &visitorGrant); err != nil {
 		t.Fatal(err)
 	}
 	if publisher == "local" {
-		if s.Kind != "local" || s.ServiceID != "" || s.TrustRevision != 0 || privateID != "" || publicID != "" || deploymentID != "" || visitorGrant != "" {
+		if s.Kind != "local" || s.ServiceID != "" || s.TrustRevision != 0 || privateID != "" || deploymentID != "" || visitorGrant != "" {
 			t.Fatal("local apply must defer resource and grant allocation", s)
 		}
-	} else if s.Kind != "service" || !opaqueid.Valid(s.ServiceID, opaqueid.ServicePrefix) || privateID != s.ServiceID || publicID != "" || deploymentID == "" || visitorGrant == "" || s.TrustRevision != 1 {
+	} else if s.Kind != "service" || !opaqueid.Valid(s.ServiceID, opaqueid.ServicePrefix) || privateID != s.ServiceID || deploymentID == "" || visitorGrant == "" || s.TrustRevision != 1 {
 		t.Fatal("deployment apply committed an incomplete private resource", s)
 	}
 }
@@ -350,7 +350,7 @@ func assertPrivateOwnershipAssignments(t *testing.T, d *Database, replicas []enr
 			t.Fatal("deployment received wrong private resource or metadata", a)
 		}
 		var exact bool
-		if err = d.pool.QueryRow(t.Context(), `SELECT kind='service' AND service_id=$2 AND public_url_id IS NULL AND revoked_at IS NULL FROM control.publisher_grants WHERE id=$1 AND publisher_identity_id=$3`, a.GrantID, a.ServiceID, replica.member.PublisherIdentityID).Scan(&exact); err != nil || !exact {
+		if err = d.pool.QueryRow(t.Context(), `SELECT kind='service' AND service_id=$2 AND revoked_at IS NULL FROM control.publisher_grants WHERE id=$1 AND publisher_identity_id=$3`, a.GrantID, a.ServiceID, replica.member.PublisherIdentityID).Scan(&exact); err != nil || !exact {
 			t.Fatal("deployment grant is not exact", err)
 		}
 		if err = d.AcknowledgeDeploymentPublisherConfiguration(t.Context(), replica.lease.AccessToken, assignments.Revision, assignments.ConfigurationHash, true, now); err != nil {
@@ -520,7 +520,7 @@ func assertPrivateOwnershipRollback(t *testing.T, d *Database, r ApplyProjectCon
 func privateOwnershipSnapshot(t *testing.T, d *Database) map[string]string {
 	t.Helper()
 	result := map[string]string{}
-	for _, table := range []string{"applied_projects", "applied_project_services", "local_project_services", "deployments", "deployment_publisher_service_grants", "services", "visitor_grants", "publisher_grants", "service_runs", "publisher_service_connection_slots", "connector_peer_pairs", "service_audit_events"} {
+	for _, table := range []string{"applied_projects", "applied_project_services", "local_project_services", "deployments", "deployment_publisher_service_grants", "services", "visitor_grants", "publisher_grants", "service_runs", "service_connection_slots", "connector_peer_pairs", "service_audit_events"} {
 		var rows string
 		if err := d.pool.QueryRow(t.Context(), `SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY to_jsonb(r)::text),'[]'::jsonb)::text FROM control.`+table+` r`).Scan(&rows); err != nil {
 			t.Fatal(err)

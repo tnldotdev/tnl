@@ -19,16 +19,12 @@ type guestHumanAuthorizer struct {
 	reads int
 }
 
-func (a *guestHumanAuthorizer) AuthorizePublicURLReads(_ context.Context, token string) (publicURLReadPrincipal, error) {
+func (a *guestHumanAuthorizer) AuthorizeControlReads(_ context.Context, token string) (controlReadPrincipal, error) {
 	a.reads++
 	if token != "human-token" {
-		return publicURLReadPrincipal{}, authorization.ErrUnauthenticated
+		return controlReadPrincipal{}, authorization.ErrUnauthenticated
 	}
-	return testPublicURLReadPrincipal(), nil
-}
-
-func (*guestHumanAuthorizer) Authorize(context.Context, authorization.Request) (authorization.Decision, error) {
-	return authorization.Decision{}, authorization.ErrUnauthenticated
+	return testControlReadPrincipal(), nil
 }
 
 type guestDeletionStore struct {

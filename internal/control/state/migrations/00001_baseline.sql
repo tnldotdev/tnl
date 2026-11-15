@@ -1070,6 +1070,7 @@ CREATE TABLE control.shares (
     scope text NOT NULL CHECK (scope IN ('service', 'preview', 'guest')),
     entry_service_id text NOT NULL,
     control_session_id text REFERENCES control.control_sessions(id) ON DELETE RESTRICT,
+    issuer_company_context jsonb,
     label text NOT NULL DEFAULT '' CHECK (char_length(label) <= 128),
     created_by_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
     idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
@@ -1085,6 +1086,8 @@ CREATE TABLE control.shares (
     CHECK (num_nonnulls(team_id,guest_id)=1),
     CHECK ((guest_id IS NULL)=(created_by_identity_id IS NOT NULL)),
     CHECK (guest_id IS NULL OR control_session_id IS NULL),
+    CHECK (issuer_company_context IS NULL OR
+        (guest_id IS NULL AND control_session_id IS NULL AND jsonb_typeof(issuer_company_context)='object')),
     CHECK (expires_at > created_at AND expires_at <= created_at + interval '30 days'),
     CHECK ((revoked_at IS NULL AND num_nonnulls(revoked_by_identity_id,revoked_by_guest_id)=0)
         OR (revoked_at IS NOT NULL AND num_nonnulls(revoked_by_identity_id,revoked_by_guest_id)=1)),
@@ -2581,7 +2584,7 @@ BEGIN
             END LOOP;
         WHEN 'guest' THEN
             FOR resource IN SELECT id FROM control.services WHERE guest_id=facts->>'id' ORDER BY id LOOP
-                PERFORM control.touch_visitor_policy('service',resource.id);
+                PERFORM control.touch_visitor_policy(resource.id);
             END LOOP;
         ELSE RAISE EXCEPTION 'unknown visitor policy fact';
         END CASE;
@@ -2655,10 +2658,10 @@ CREATE TRIGGER visitor_policy_guest AFTER UPDATE ON control.guest_trials FOR EAC
 CREATE FUNCTION control.visitor_policy_project_changed() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE resource record;
 BEGIN
-    FOR resource IN SELECT 'service'::text AS kind,service_id AS id FROM control.applied_project_services
-        WHERE team_id=NEW.team_id AND project_key=NEW.project_key AND service_id IS NOT NULL
-        ORDER BY 1,2 LOOP
-        PERFORM control.touch_visitor_policy(resource.kind,resource.id);
+    FOR resource IN SELECT service_id AS id FROM control.applied_project_services
+        WHERE team_id=NEW.team_id AND project_key=NEW.project_key
+        ORDER BY service_id LOOP
+        PERFORM control.touch_visitor_policy(resource.id);
     END LOOP;
     RETURN NULL;
 END;

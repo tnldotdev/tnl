@@ -115,22 +115,36 @@ func reserveConfiguredService(ctx context.Context, services publisherServices, d
 		defer func() { result = errors.Join(result, lock.Close()) }()
 		current, err = lookup()
 		if failure.Only(err, clientcontrol.ErrNotFound) {
-			current, err = services.routes.CreateServiceAt(ctx, services.teamID, name, "configured-service:"+hex.EncodeToString(digest[:]),
-				&controlv1.ServicePlacement{DomainId: &services.domainID, Hostname: &services.hostname},
-				controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP, TargetTls: publisheridentity.ServiceTargetTLS(trust)}, &declaration)
-			if err == nil {
-				return approved(current, declaration, trust)
+			key, keyErr := randomIdempotencyKey()
+			if keyErr != nil {
+				return controlv1.Service{}, keyErr
 			}
-			if !retryServiceReservation(ctx, err) {
+			// a key belongs to this creation attempt, not every future service at
+			// this hostname. retries retain it until the exact allocation is known.
+			for attempt := range 3 {
+				current, err = services.routes.CreateServiceAt(ctx, services.teamID, name, key,
+					&controlv1.ServicePlacement{DomainId: &services.domainID, Hostname: &services.hostname},
+					controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP, TargetTls: publisheridentity.ServiceTargetTLS(trust)}, &declaration)
+				if err == nil {
+					return approved(current, declaration, trust)
+				}
+				if !retryServiceReservation(ctx, err) {
+					return controlv1.Service{}, err
+				}
+				// a conflict or lost reply can mean creation committed. recover the
+				// saved service before retrying; never invent another allocation.
+				recovered, readErr := lookup()
+				if readErr == nil {
+					current, err = recovered, nil
+					break
+				}
+				if !failure.Only(readErr, clientcontrol.ErrNotFound) || attempt == 2 {
+					return controlv1.Service{}, errors.Join(err, readErr)
+				}
+			}
+			if err != nil {
 				return controlv1.Service{}, err
 			}
-			// a conflict or lost reply can mean creation committed. recover the
-			// exact saved service before doing anything else; never replace it.
-			recovered, readErr := lookup()
-			if readErr != nil {
-				return controlv1.Service{}, errors.Join(err, readErr)
-			}
-			current, err = recovered, nil
 		}
 	}
 	if err != nil {

@@ -32,7 +32,7 @@ func TestIntegrationServiceBrowserCaptureUsesCurrentPublisherSigningKey(t *testi
 				if kind == "namespace" {
 					scope = PublisherScope{TeamID: f.project.TeamID, Kind: "namespace", DomainID: f.service.DomainID}
 				}
-				enrollment := publisherEnrollment(t, f.database, CreatePublicURLRequest{TeamID: f.project.TeamID, ActingIdentityID: f.project.ActorID}, scope, f.now)
+				enrollment := publisherEnrollment(t, f.database, serviceTestAuthority{TeamID: f.project.TeamID, ActingIdentityID: f.project.ActorID}, scope, f.now)
 				public, key, err := ed25519.GenerateKey(rand.Reader)
 				if err != nil {
 					t.Fatal(err)

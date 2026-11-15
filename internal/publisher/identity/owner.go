@@ -35,6 +35,7 @@ func (n *Native) Fork() (*Native, error) {
 	copy.allocationInvocation = n.allocationInvocation
 	copy.allocatedServiceID = n.allocatedServiceID
 	copy.allocationFinished = n.allocationFinished
+	copy.deploymentAllocation = n.deploymentAllocation
 	return copy.WithTraffic(n.traffic)
 }
 

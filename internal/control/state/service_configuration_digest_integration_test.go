@@ -55,7 +55,7 @@ func TestIntegrationServiceConfigurationConditionalReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := controlstatedb.New(d.pool)
-	key := controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "service", ResourceID: service.ID}
+	key := service.ID
 	beforeRevision, err := q.ReadVisitorPolicyRevision(ctx, key)
 	if err != nil {
 		t.Fatal(err)

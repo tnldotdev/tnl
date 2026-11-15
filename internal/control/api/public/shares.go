@@ -1,6 +1,7 @@
 package public
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/control/api/serviceaccess"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -24,6 +26,19 @@ func (h *handler) CreateServiceShare(response http.ResponseWriter, request *http
 
 func (h *handler) createShare(response http.ResponseWriter, request *http.Request, previewID string) {
 	response.Header().Set("Cache-Control", "no-store")
+	var principal controlReadPrincipal
+	signed := len(request.Header.Values("X-Tnl-Actor-Token")) != 0
+	if signed {
+		if previewID != "" {
+			writeBearerProblem(response)
+			return
+		}
+		var ok bool
+		principal, ok = h.authorizeShareRequest(response, request, true)
+		if !ok {
+			return
+		}
+	}
 	var body controlv1.CreateShareRequest
 	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil || body.ExpiresAt.IsZero() || body.EntryServiceId == "" ||
 		len(body.ServiceIds) == 0 || len(body.ServiceIds) > 32 || previewID == "" && len(body.ServiceIds) != 1 ||
@@ -40,17 +55,21 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "shares are unavailable")
 		return
 	}
-	credential, guest, proceed := h.guestServiceCredential(response, request)
-	if !proceed {
-		return
+	var credential controlstate.GuestCredential
+	var guest bool
+	if !signed {
+		var proceed bool
+		credential, guest, proceed = h.guestServiceCredential(response, request)
+		if !proceed {
+			return
+		}
 	}
 	if guest && previewID != "" {
 		writeProblem(response, http.StatusForbidden, controlv1.GuestDemoOnly, "guest access can only share its exact demo service")
 		return
 	}
-	var principal publicURLReadPrincipal
 	var ok bool
-	if !guest {
+	if !guest && !signed {
 		principal, ok = h.authorizeReads(response, request)
 		if !ok {
 			return
@@ -93,14 +112,10 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 		ServiceIDs: ids, EntryServiceID: body.EntryServiceId,
 	}, time.Now())
 	if err != nil {
-		if errors.Is(err, controlstate.ErrServiceAccess) {
-			writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "share permission denied")
-			return
-		}
-		writeControlStateProblem(request.Context(), response, "create share", err)
+		shareProblem(request.Context(), response, "create share", err)
 		return
 	}
-	writeJSON(response, http.StatusCreated, shareCreationResponse(share, share.EntryHostname, encodedSecret))
+	writeJSON(response, http.StatusCreated, serviceaccess.ShareCreation(share, encodedSecret))
 }
 
 func (h *handler) createGuestShare(response http.ResponseWriter, request *http.Request, credential controlstate.GuestCredential, serviceID, key, label string, fingerprint [32]byte, secret string, expiresAt time.Time) {
@@ -110,13 +125,7 @@ func (h *handler) createGuestShare(response http.ResponseWriter, request *http.R
 		return
 	}
 	response.Header().Set("Cache-Control", "no-store")
-	writeJSON(response, http.StatusCreated, shareCreationResponse(share, share.EntryHostname, secret))
-}
-
-func shareCreationResponse(share controlstate.Share, hostname, secret string) controlv1.ShareCreation {
-	return controlv1.ShareCreation{Share: shareResponse(share),
-		Link:        "https://" + hostname + "/__tnl/share/" + share.ID + "." + secret,
-		TokenSource: controlv1.VisitorTokenShareSource{Kind: controlv1.VisitorTokenShare, ShareId: share.ID, Secret: secret}}
+	writeJSON(response, http.StatusCreated, serviceaccess.ShareCreation(share, secret))
 }
 
 func (h *handler) ListShares(response http.ResponseWriter, request *http.Request, previewID controlv1.PreviewID, _ controlv1.ListSharesParams) {
@@ -137,16 +146,16 @@ func (h *handler) ListShares(response http.ResponseWriter, request *http.Request
 		writeControlStateProblem(request.Context(), response, "list shares", err)
 		return
 	}
-	writeSharePage(response, page)
+	writeJSON(response, http.StatusOK, serviceaccess.SharePage(page))
 }
 
 func (h *handler) ListTeamShares(response http.ResponseWriter, request *http.Request, _ controlv1.ListTeamSharesParams) {
-	principal, ok := h.authorizeReads(response, request)
+	principal, ok := h.authorizeShareRequest(response, request, false)
 	if !ok {
 		return
 	}
 	teamID := request.URL.Query().Get("team_id")
-	if _, member := principal.teamIDs[teamID]; !member {
+	if _, member := principal.teamIDs[teamID]; !member && len(request.Header.Values("X-Tnl-Actor-Token")) == 0 {
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
 		return
 	}
@@ -156,45 +165,38 @@ func (h *handler) ListTeamShares(response http.ResponseWriter, request *http.Req
 	}
 	page, err := h.shares.ListTeamShares(request.Context(), teamID, principal.identityID, request.URL.Query().Get("cursor"))
 	if err != nil {
-		writeControlStateProblem(request.Context(), response, "list team shares", err)
+		shareProblem(request.Context(), response, "list team shares", err)
 		return
 	}
-	writeSharePage(response, page)
-}
-
-func writeSharePage(response http.ResponseWriter, page controlstate.SharePage) {
-	body := controlv1.SharePage{SchemaVersion: controlstate.ReviewSchemaVersion, Shares: make([]controlv1.Share, len(page.Shares))}
-	for index, share := range page.Shares {
-		body.Shares[index] = shareResponse(share)
-	}
-	if page.NextCursor != "" {
-		body.NextCursor = &page.NextCursor
-	}
-	writeJSON(response, http.StatusOK, body)
+	writeJSON(response, http.StatusOK, serviceaccess.SharePage(page))
 }
 
 func (h *handler) GetShare(response http.ResponseWriter, request *http.Request, shareID controlv1.ShareID) {
 	share, ok := h.readShare(response, request, string(shareID))
 	if ok {
-		writeJSON(response, http.StatusOK, shareResponse(share))
+		writeJSON(response, http.StatusOK, serviceaccess.Share(share))
 	}
 }
 
 func (h *handler) RevokeShare(response http.ResponseWriter, request *http.Request, shareID controlv1.ShareID) {
-	share, ok := h.readShare(response, request, string(shareID))
+	principal, ok := h.authorizeShareRequest(response, request, false)
 	if !ok {
 		return
 	}
-	revoked, err := h.shares.RevokeShare(request.Context(), share.ID, share.CreatedByIdentityID, time.Now())
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "revoke share", err)
+	if h.shares == nil {
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "shares are unavailable")
 		return
 	}
-	writeJSON(response, http.StatusOK, shareResponse(revoked))
+	revoked, err := h.shares.RevokeShare(request.Context(), shareID, principal.identityID, time.Now())
+	if err != nil {
+		shareProblem(request.Context(), response, "revoke share", err)
+		return
+	}
+	writeJSON(response, http.StatusOK, serviceaccess.Share(revoked))
 }
 
 func (h *handler) readShare(response http.ResponseWriter, request *http.Request, id string) (controlstate.Share, bool) {
-	principal, ok := h.authorizeReads(response, request)
+	principal, ok := h.authorizeShareRequest(response, request, false)
 	if !ok {
 		return controlstate.Share{}, false
 	}
@@ -202,35 +204,25 @@ func (h *handler) readShare(response http.ResponseWriter, request *http.Request,
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "shares are unavailable")
 		return controlstate.Share{}, false
 	}
-	share, err := h.shares.GetShare(request.Context(), id)
+	share, err := h.shares.GetShareForManagement(request.Context(), id, principal.identityID, time.Now())
 	if err != nil {
-		writeControlStateProblem(request.Context(), response, "read share", err)
-		return controlstate.Share{}, false
-	}
-	if share.PreviewID != "" {
-		if _, ok := h.readPreview(response, request, share.PreviewID, principal); !ok {
-			return controlstate.Share{}, false
-		}
-	} else if _, member := principal.teamIDs[share.TeamID]; !member {
-		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
-		return controlstate.Share{}, false
-	}
-	if share.CreatedByIdentityID != principal.identityID {
-		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
+		shareProblem(request.Context(), response, "read share", err)
 		return controlstate.Share{}, false
 	}
 	return share, true
 }
 
-func shareResponse(share controlstate.Share) controlv1.Share {
-	result := controlv1.Share{
-		SchemaVersion: controlv1.ReviewSchemaVersion(share.SchemaVersion),
-		Id:            share.ID, TeamId: share.TeamID, GuestId: share.GuestID, Scope: controlv1.ShareScope(share.Scope), Label: share.Label,
-		ServiceIds: share.ServiceIDs, EntryServiceId: share.EntryServiceID, CreatedByIdentityId: share.CreatedByIdentityID,
-		CreatedAt: share.CreatedAt, ExpiresAt: share.ExpiresAt, RevokedAt: share.RevokedAt,
+func shareProblem(ctx context.Context, response http.ResponseWriter, operation string, err error) {
+	switch {
+	case errors.Is(err, controlstate.ErrControlAuthentication), errors.Is(err, controlstate.ErrOIDCAssertionReplay):
+		writeBearerProblem(response)
+	case errors.Is(err, controlstate.ErrServiceManagerRequired), errors.Is(err, controlstate.ErrServiceAccess):
+		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "current service manager permission is required")
+	case errors.Is(err, controlstate.ErrServiceSourceSignInRequired):
+		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "sign in through the current company source")
+	case errors.Is(err, controlstate.ErrServiceVerifiedEmailRequired):
+		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "sign in with a verified email")
+	default:
+		writeControlStateProblem(ctx, response, operation, err)
 	}
-	if share.PreviewID != "" {
-		result.PreviewId = &share.PreviewID
-	}
-	return result
 }

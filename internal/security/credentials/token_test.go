@@ -91,12 +91,19 @@ func TestInvitationTokenRoundTrip(t *testing.T) {
 }
 
 func TestDataPlaneTokenClasses(t *testing.T) {
-	session, sessionID, sessionHash, err := NewPublishRunToken()
+	run, runHash, err := NewServiceRunToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotID, gotHash, err := ParsePublishRunToken(session); err != nil || gotID != sessionID || gotHash != sessionHash {
-		t.Fatalf("session round trip = %q, %x, %v", gotID, gotHash, err)
+	if gotHash, err := ParseServiceRunToken(run); err != nil || gotHash != runHash {
+		t.Fatalf("service run round trip = %x, %v", gotHash, err)
+	}
+	seed, err := NewAssignmentSeed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ParseAssignmentSeed(seed); err != nil || !strings.HasPrefix(seed.String(), "tnl_assignment_seed_") {
+		t.Fatalf("assignment seed round trip = %v", err)
 	}
 	connection, connectionHash, err := NewPublisherConnectionCredential()
 	if err != nil {
@@ -105,8 +112,36 @@ func TestDataPlaneTokenClasses(t *testing.T) {
 	if gotHash, err := ParsePublisherConnectionCredential(connection); err != nil || gotHash != connectionHash {
 		t.Fatalf("publisher connection round trip = %x, %v", gotHash, err)
 	}
-	if _, err := ParsePublisherConnectionCredential(PublisherConnectionCredential(session)); !errors.Is(err, ErrInvalidPublisherConnectionCredential) {
-		t.Fatalf("session as publisher connection error = %v", err)
+	classes := []struct {
+		name, value string
+		parse       func(string) error
+		invalid     error
+	}{
+		{"service run", run.String(), func(value string) error {
+			_, err := ParseServiceRunToken(ServiceRunToken(value))
+			return err
+		}, ErrInvalidServiceRunToken},
+		{"assignment seed", seed.String(), func(value string) error {
+			return ParseAssignmentSeed(AssignmentSeed(value))
+		}, ErrInvalidAssignmentSeed},
+		{"publisher connection", connection.String(), func(value string) error {
+			_, err := ParsePublisherConnectionCredential(PublisherConnectionCredential(value))
+			return err
+		}, ErrInvalidPublisherConnectionCredential},
+	}
+	for _, target := range classes {
+		for _, input := range classes {
+			t.Run(input.name+" as "+target.name, func(t *testing.T) {
+				err := target.parse(input.value)
+				if input.name == target.name {
+					if err != nil {
+						t.Fatal("credential rejected its own class", err)
+					}
+				} else if !errors.Is(err, target.invalid) {
+					t.Fatalf("wrong credential class error = %v, want %v", err, target.invalid)
+				}
+			})
+		}
 	}
 }
 

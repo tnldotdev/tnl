@@ -1,52 +1,50 @@
 package state
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 )
 
 func TestIntegrationAuthorizedRouteHostnameLookup(t *testing.T) {
-	database, now := newControlStateIntegrationDatabase(t, "hostname_lookup")
-	request := oidcRouteRequest(t, database, now)
-	_, suffix, _ := strings.Cut(request.CanonicalHostname, ".")
-	var target PublicURL
-	for index := range publicURLPageSize + 5 {
-		candidate := request
-		candidate.CanonicalHostname = fmt.Sprintf("lookup-%03d.%s", index, suffix)
-		candidate.IdempotencyKey = fmt.Sprintf("lookup-%03d", index)
-		candidate.RequestDigest = sha256.Sum256([]byte(candidate.IdempotencyKey))
-		target = createTestPublicURL(t, database, candidate, now)
-	}
-	page, err := database.ListAuthorizedPublicURLs(t.Context(), request.TeamID, "")
-	if err != nil || len(page.PublicURLs) != publicURLPageSize || page.NextCursor == "" {
-		t.Fatalf("list pagination changed: %+v, %v", page, err)
-	}
-	got, err := database.GetAuthorizedPublicURLByHostname(t.Context(), request.TeamID, target.CanonicalHostname)
-	if err != nil || got.ID != target.ID || got.Target != target.Target || got.LifecycleState != PublicURLLifecycleEnabled {
-		t.Fatalf("exact lookup = %+v, %v", got, err)
-	}
-	for _, lookup := range [][2]string{{"team_other", target.CanonicalHostname}, {request.TeamID, "missing." + suffix}} {
-		if _, err := database.GetAuthorizedPublicURLByHostname(t.Context(), lookup[0], lookup[1]); !errors.Is(err, ErrPublicURLNotFound) {
-			t.Fatalf("lookup %v: %v", lookup, err)
+	d, now := newControlStateIntegrationDatabase(t, "service_lookup")
+	actor := oidcRouteRequest(t, d, now)
+	var target ServiceRecord
+	for index := range 105 {
+		name := fmt.Sprintf("lookup-%03d", index)
+		var err error
+		target, err = d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, name, name,
+			ServicePlacement{}, now, ServiceMetadata{}, &ProjectServiceConfiguration{Target: "localhost:3000"})
+		if err != nil {
+			t.Fatal(err)
 		}
 	}
-	if _, err := database.GetAuthorizedPublicURLByHostname(t.Context(), request.TeamID, strings.ToUpper(target.CanonicalHostname)); !errors.Is(err, ErrPublicURLInvalid) {
-		t.Fatalf("noncanonical lookup: %v", err)
+	page, next, err := d.ListServices(t.Context(), actor.TeamID, actor.ActingIdentityID, "")
+	if err != nil || len(page) != 100 || next == "" {
+		t.Fatal("service pagination changed", len(page), next, err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET lifecycle_state = 'suspended', suspended_at = $2 WHERE id = $1`, target.ID, now); err != nil {
+	last, cursor, err := d.ListServices(t.Context(), actor.TeamID, actor.ActingIdentityID, next)
+	if err != nil || len(last) != 5 || cursor != "" {
+		t.Fatal("service pagination lost the final page", len(last), cursor, err)
+	}
+	got, err := d.GetService(t.Context(), target.ID, actor.ActingIdentityID)
+	if err != nil || got.ID != target.ID || got.Endpoint.Hostname != target.Endpoint.Hostname || !got.Enabled {
+		t.Fatal("exact lookup lost saved service identity", err)
+	}
+	if _, err := d.GetService(t.Context(), target.ID, "identity_other"); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("another identity read the service", err)
+	}
+	if _, err := d.SetServiceEnabled(t.Context(), target.ID, actor.ActingIdentityID, false, now); err != nil {
 		t.Fatal(err)
 	}
-	got, err = database.GetAuthorizedPublicURLByHostname(t.Context(), request.TeamID, target.CanonicalHostname)
-	if err != nil || got.LifecycleState != PublicURLLifecycleSuspended {
-		t.Fatalf("suspended route disappeared: %+v, %v", got, err)
+	got, err = d.GetService(t.Context(), target.ID, actor.ActingIdentityID)
+	if err != nil || got.Enabled {
+		t.Fatal("suspended service disappeared from management", err)
 	}
-	if err := database.DeletePublicURL(t.Context(), request.ActingIdentityID, target.ID, now); err != nil {
+	if err := d.DeleteService(t.Context(), target.ID, actor.ActingIdentityID, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.GetAuthorizedPublicURLByHostname(t.Context(), request.TeamID, target.CanonicalHostname); !errors.Is(err, ErrPublicURLNotFound) {
-		t.Fatalf("deleted lookup: %v", err)
+	if _, err := d.GetService(t.Context(), target.ID, actor.ActingIdentityID); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("deleted service remained readable", err)
 	}
 }

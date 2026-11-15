@@ -12,7 +12,7 @@ import (
 
 func adminPreparedRun(t *testing.T, d *Database, service ServiceRecord, actor string, now time.Time) (PublisherIdentity, ServiceRunPreparation) {
 	t.Helper()
-	enrollment := publisherEnrollment(t, d, CreatePublicURLRequest{TeamID: service.TeamID, ActingIdentityID: actor},
+	enrollment := publisherEnrollment(t, d, serviceTestAuthority{TeamID: service.TeamID, ActingIdentityID: actor},
 		PublisherScope{TeamID: service.TeamID, Kind: "service", ServiceID: service.ID}, now)
 	public, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

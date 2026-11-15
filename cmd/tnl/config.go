@@ -461,9 +461,9 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.URL.Access.Show.remoteFlags, true)
 	case "url access set <url> <mode>":
 		apply(&flags.URL.Access.Set.remoteFlags, true)
-	case "url update <public-url-id>":
+	case "url update <service-or-address>":
 		apply(&flags.URL.Update.remoteFlags, true)
-	case "url delete <public-url-id>":
+	case "url delete <service-or-address>":
 		apply(&flags.URL.Delete.remoteFlags, true)
 	case "endpoint release <service-id>":
 		apply(&flags.Endpoint.Release.remoteFlags, true)
@@ -471,7 +471,7 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.URL.Inventory.remoteFlags, true)
 	case "url available":
 		apply(&flags.URL.Available.remoteFlags, false)
-	case "publisher enroll", "publisher enroll <public-url-id>":
+	case "publisher enroll", "publisher enroll <service-or-address>":
 		apply(&flags.Publisher.Enroll.remoteFlags, true)
 	case "publisher provision":
 		apply(&flags.Publisher.Provision.remoteFlags, true)

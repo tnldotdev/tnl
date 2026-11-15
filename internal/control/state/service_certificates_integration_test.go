@@ -107,7 +107,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	issue, err := d.CreateServiceCertificateIssuance(t.Context(), run.ServiceID, run.RunID, run.Token, directory, "csr", run.RunNumber, csr, now)
-	if err != nil || issue.PublicURLID != "" || issue.PublishRunID != "" || issue.ServiceRunID != run.RunID {
+	if err != nil || issue.ServiceID != run.ServiceID || issue.ServiceRunID != run.RunID {
 		t.Fatal("private issuance required a public subject", issue, err)
 	}
 	checkpointBoundary, err := d.GetDeploymentPublisherAssignments(t.Context(), a.lease.AccessToken, now)
@@ -192,7 +192,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	challenge, err := d.GetDNSChallengeContextForSubject(t.Context(), work.Subject, work.Authorizations[0].ID)
-	if err != nil || challenge.ServiceID != run.ServiceID || challenge.PublicURLID != "" || challenge.Identifier != plan.Identifiers[0] {
+	if err != nil || challenge.ServiceID != run.ServiceID || challenge.Identifier != plan.Identifiers[0] {
 		t.Fatal("DNS-01 lost private namespace authority", challenge, err)
 	}
 	assertDNSChallengeSubjectBinding(t, d, work.Subject, challenge)
@@ -230,8 +230,8 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 		t.Fatal("a different replica adopted the certificate", err)
 	}
 	var publicRows int
-	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.public_urls WHERE team_id=$1`, r.TeamID).Scan(&publicRows); err != nil || publicRows != 0 {
-		t.Fatal("private certificate work created public URLs", publicRows, err)
+	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.service_endpoints WHERE service_id=ANY($1) AND public AND retired_at IS NULL`, []string{run.ServiceID, sibling.ServiceID}).Scan(&publicRows); err != nil || publicRows != 0 {
+		t.Fatal("connector certificate work enabled public endpoints", publicRows, err)
 	}
 	t.Run("cached-install-after-restart", func(t *testing.T) {
 		if err = d.CloseServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, now); err != nil {

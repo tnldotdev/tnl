@@ -29,22 +29,27 @@ func TestV1ProjectJournalAndHandoffState(t *testing.T) {
 	}
 	if _, err := database.db.ExecContext(ctx, `INSERT INTO local_tunnels
 		(id, command, process_id, server_origin, project_root, hostname, target, framework,
-		 public_url_id, publish_run_number, service_id, state, started_at, updated_at, heartbeat_at, lease_expires_at, failure_code)
-		VALUES (?, 'publish', 1, ?, ?, NULL, 'http://127.0.0.1:3000', NULL, NULL, NULL, 'svc_0123456789abcdefghijkl', 'starting', ?, ?, ?, ?, NULL)`,
+		 publish_run_number, service_id, state, started_at, updated_at, heartbeat_at, lease_expires_at, failure_code)
+		VALUES (?, 'publish', 1, ?, ?, NULL, 'http://127.0.0.1:3000', NULL, NULL, 'svc_0123456789abcdefghijkl', 'starting', ?, ?, ?, ?, NULL)`,
 		"tun_0123456789abcdefghijkl", server, root, now, now, now, now+int64(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	var unknownURL, unknownHost sql.NullString
+	var service string
+	var unknownHost sql.NullString
 	var unknownRun sql.NullInt64
-	if err := database.db.QueryRowContext(ctx, `SELECT public_url_id, hostname, publish_run_number
-		FROM local_tunnels WHERE id = ?`, "tun_0123456789abcdefghijkl").Scan(&unknownURL, &unknownHost, &unknownRun); err != nil ||
-		unknownURL.Valid || unknownHost.Valid || unknownRun.Valid {
-		t.Fatalf("unallocated public address was not NULL: url=%v host=%v run=%v: %v",
-			unknownURL, unknownHost, unknownRun, err)
+	if err := database.db.QueryRowContext(ctx, `SELECT service_id, hostname, publish_run_number
+		FROM local_tunnels WHERE id = ?`, "tun_0123456789abcdefghijkl").Scan(&service, &unknownHost, &unknownRun); err != nil ||
+		service != testServiceID || unknownHost.Valid || unknownRun.Valid {
+		t.Fatalf("service binding lost its identity or invented a public address: service=%v host=%v run=%v: %v",
+			service, unknownHost, unknownRun, err)
 	}
-	if _, err := database.db.ExecContext(ctx, `UPDATE local_tunnels SET public_url_id = ?, hostname = ?, state = 'provisioning', updated_at = ? WHERE id = ?`,
-		"url_example", "app.example.test", now+1, "tun_0123456789abcdefghijkl"); err != nil {
+	if _, err := database.db.ExecContext(ctx, `UPDATE local_tunnels SET hostname = ?, state = 'provisioning', updated_at = ? WHERE id = ?`,
+		"app.example.test", now+1, "tun_0123456789abcdefghijkl"); err != nil {
 		t.Fatal(err)
+	}
+	var retiredFields int
+	if err := database.db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_xinfo('local_tunnels') WHERE name = 'public_url_id'`).Scan(&retiredFields); err != nil || retiredFields != 0 {
+		t.Fatalf("journal retained retired public URL identity storage: %d, %v", retiredFields, err)
 	}
 	var journalEvents, knownServices int
 	if err := database.db.QueryRowContext(ctx, `SELECT count(*) FROM project_events WHERE project_root = ?`, root).Scan(&journalEvents); err != nil || journalEvents != 2 {

@@ -279,15 +279,26 @@ func TestIntegrationLocalServicePortReleaseRetainsLiveConnector(t *testing.T) {
 	if _, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "local-release", request); err != nil {
 		t.Fatal(err)
 	}
+	disabled, err := f.identity.routes.GetService(t.Context(), service.Id)
+	if err != nil || disabled.Endpoint == nil || disabled.Endpoint.Public || disabled.Endpoint.Port != service.Endpoint.Port ||
+		disabled.EndpointRevision <= service.EndpointRevision || disabled.TrustRevision != service.TrustRevision {
+		t.Fatal("disablement changed target trust or lost the held reservation", disabled, err)
+	}
+	if _, err := f.identity.routes.ReleaseServiceEndpoint(t.Context(), service.Id, controlv1.ReleaseServiceEndpointRequest{
+		ExpectedEndpointRevision: service.EndpointRevision, ExpectedPort: service.Endpoint.Port,
+	}); !errors.Is(err, clientcontrol.ErrStatusConflict) {
+		t.Fatal("stale endpoint facts released the current reservation", err)
+	}
 	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
 		var settled bool
-		err := f.inspect.QueryRowContext(ctx, `SELECT bool_and(NOT public AND dns_state IN ('published','unmanaged')) FROM control.service_endpoints WHERE service_id=$1`, service.Id).Scan(&settled)
+		err := f.inspect.QueryRowContext(ctx, `SELECT bool_and(NOT public AND dns_state IN ('removed','unmanaged')) FROM control.service_endpoints WHERE service_id=$1`, service.Id).Scan(&settled)
 		return settled, err
 	})
 	released, err := f.identity.routes.ReleaseServiceEndpoint(t.Context(), service.Id, controlv1.ReleaseServiceEndpointRequest{
-		ExpectedEndpointRevision: service.EndpointRevision, ExpectedPort: service.Endpoint.Port,
+		ExpectedEndpointRevision: disabled.EndpointRevision, ExpectedPort: disabled.Endpoint.Port,
 	})
-	if err != nil || released.Endpoint == nil || released.Endpoint.Port != 0 || released.TrustRevision != service.TrustRevision {
+	if err != nil || released.Endpoint == nil || released.Endpoint.Port != 0 || released.EndpointRevision <= disabled.EndpointRevision ||
+		released.TrustRevision != service.TrustRevision {
 		t.Fatal("release invalidated the service or its target trust", err)
 	}
 	connectorDirectExchange(t, connection, "after release\n")

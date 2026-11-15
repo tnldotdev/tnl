@@ -224,19 +224,14 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 							return
 						}
 						for {
-							incoming, err := session.AcceptInternalForwardingStream(ctx)
+							incoming, err := session.AcceptServiceForwardingStream(ctx)
 							if err != nil {
 								return
 							}
 							streams.Add(1)
 							workers.Go(func() {
 								defer incoming.Stream().Close()
-								request, ok := incoming.(*tunnel.IncomingServiceForwardingStream)
-								if !ok {
-									t.Error("ingress opened a non-service forwarding stream")
-									return
-								}
-								header := request.Header
+								header := incoming.Header
 								if header.Validate() != nil || tunnel.ServiceForwardingRef(header) != ref || header.PublicService == nil || header.PublicService.DestinationPort != 443 || header.SourceIP != "192.0.2.44" {
 									t.Error("ingress changed the control-selected service run or forwarding identity", header)
 									return

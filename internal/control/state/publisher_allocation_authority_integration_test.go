@@ -47,14 +47,14 @@ func TestIntegrationPublisherAllocationRejectsUnrelatedExactServiceEnrollment(t 
 					t.Fatal(err)
 				}
 			}
-			member, err := controlstatedb.New(d.pool).GetActivePublishRunMembership(t.Context(), controlstatedb.GetActivePublishRunMembershipParams{TeamID: service.TeamID, IdentityID: root.CreatorID})
+			member, err := controlstatedb.New(d.pool).GetTeamActorContext(t.Context(), controlstatedb.GetTeamActorContextParams{TeamID: service.TeamID, IdentityID: root.CreatorID})
 			if err != nil {
 				t.Fatal(err)
 			}
 			enrollment, err := d.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{
 				Scope: PublisherScope{TeamID: service.TeamID, Kind: "service", ServiceID: service.ID},
 				Name:  "unrelated-exact", Kind: "installed", EditorID: root.CreatorID,
-				EditorMembershipID: member.ID, PolicyRevision: uint64(member.PolicyRevision), Now: now,
+				EditorMembershipID: member.ActorMembershipID, PolicyRevision: uint64(member.PolicyRevision), Now: now,
 			})
 			if errors.Is(err, ErrPublisherIdentity) || errors.Is(err, ErrServiceAccess) || errors.Is(err, ErrProjectManaged) {
 				return
@@ -96,13 +96,13 @@ func TestIntegrationPublisherAllocationRejectsUnrelatedExactServiceGrant(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := controlstatedb.New(d.pool).GetActivePublishRunMembership(t.Context(), controlstatedb.GetActivePublishRunMembershipParams{TeamID: r.TeamID, IdentityID: r.ActingIdentityID})
+	member, err := controlstatedb.New(d.pool).GetTeamActorContext(t.Context(), controlstatedb.GetTeamActorContextParams{TeamID: r.TeamID, IdentityID: r.ActingIdentityID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.CreatePublisherGrant(t.Context(), CreatePublisherGrantRequest{
 		PublisherIdentityID: root.ID, Scope: PublisherScope{TeamID: r.TeamID, Kind: "service", ServiceID: service.ID},
-		EditorID: r.ActingIdentityID, EditorMembershipID: member.ID, PolicyRevision: uint64(member.PolicyRevision), Now: now,
+		EditorID: r.ActingIdentityID, EditorMembershipID: member.ActorMembershipID, PolicyRevision: uint64(member.PolicyRevision), Now: now,
 	}); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatal("human management created a replacement exact-service allocation root", err)
 	}
@@ -155,8 +155,8 @@ func testAllocationDeferredDeadline(t *testing.T, namespace, deletion bool) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				r := CreatePublicURLRequest{TeamID: f.project.TeamID, ActingIdentityID: f.project.ActorID, DomainID: deployment.DomainID.String}
-				enrollment := publisherEnrollment(t, f.d, r, PublisherScope{Kind: "namespace", TeamID: r.TeamID, DomainID: r.DomainID}, f.now)
+				actor := serviceTestAuthority{TeamID: f.project.TeamID, ActingIdentityID: f.project.ActorID, DomainID: deployment.DomainID.String}
+				enrollment := publisherEnrollment(t, f.d, actor, PublisherScope{Kind: "namespace", TeamID: actor.TeamID, DomainID: actor.DomainID}, f.now)
 				public, _, err := ed25519.GenerateKey(rand.Reader)
 				if err != nil {
 					t.Fatal(err)

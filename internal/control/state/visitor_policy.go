@@ -240,5 +240,8 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 	if err != nil {
 		return result, err
 	}
+	// endpoint edits do not change this publisher's connector TLS identity.
+	// current policy and target trust still apply to the captured run.
+	result.Policy.Hostname = row.CertificateHostname
 	return result, tx.Commit(ctx)
 }

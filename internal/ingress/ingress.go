@@ -89,7 +89,6 @@ type Server struct {
 	closing      bool
 	done         chan struct{}
 	active       sync.WaitGroup
-	nextPoolRun  atomic.Uint64
 	nextBackend  atomic.Uint64
 	traffic      *trafficAdmission
 	servicePorts tcpport.Inventory

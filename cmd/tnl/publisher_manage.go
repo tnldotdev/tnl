@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
+	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -74,13 +75,13 @@ func runPublisherSetup(ctx context.Context, f publisherSetupCommand, project pro
 		return publisherCLIError("--project-key, --idempotency-key, --output json, --members, and --expires-in require --deployment")
 	}
 	if len(f.Services) > 0 {
-		if len(f.Services) != 1 {
+		if len(f.Services) != 1 || !opaqueid.Valid(f.Services[0], opaqueid.ServicePrefix) {
 			return publisherCLIError("select one exact saved service ID without --deployment")
 		}
 		if f.Namespace || f.URL != "" || f.Domain != "" {
 			return publisherCLIError("select --namespace, --url, or --service")
 		}
-		return runPrivatePublisherSetup(ctx, f, output, diagnostics)
+		f.URL = f.Services[0]
 	}
 	if f.Namespace == (f.URL != "") || !f.Namespace && f.Domain != "" {
 		return publisherCLIError("select --namespace or --url <service-id-or-address> for local setup")
@@ -91,11 +92,7 @@ func runPublisherSetup(ctx context.Context, f publisherSetupCommand, project pro
 	}
 	defer session.Close()
 	if f.URL != "" {
-		selected, err := resolveManagedService(ctx, session, f.URL)
-		if err != nil {
-			return err
-		}
-		service, err := managedService(ctx, session, selected.Id)
+		service, err := managedService(ctx, session, f.URL)
 		if err != nil {
 			return err
 		}
@@ -153,10 +150,10 @@ func runPublisherProvision(ctx context.Context, f publisherProvisionCommand, pro
 		return credentialfile.ErrInvalid
 	}
 	if f.ServiceID != "" {
-		if f.Namespace || f.URL != "" || f.Domain != "" {
+		if f.Namespace || f.URL != "" || f.Domain != "" || !opaqueid.Valid(f.ServiceID, opaqueid.ServicePrefix) {
 			return publisherCLIError("select --namespace, --url, or --service")
 		}
-		return runPrivatePublisherProvision(ctx, f, output, diagnostics)
+		f.URL = f.ServiceID
 	}
 	if f.Namespace == (f.URL != "") || !f.Namespace && f.Domain != "" {
 		return publisherCLIError("select --namespace or --url <service-id-or-address>")
@@ -204,17 +201,19 @@ func runPublisherProvision(ctx context.Context, f publisherProvisionCommand, pro
 	if identity.TeamId != current.Team().Id || service != nil && (identity.Kind != "service" || identity.ServiceId == nil || *identity.ServiceId != *service || identity.DomainId != nil || identity.Namespace != nil) || domain != nil && (identity.Kind != "namespace" || identity.ServiceId != nil || identity.DomainId == nil || *identity.DomainId != *domain || identity.Namespace == nil || *identity.Namespace != namespace) {
 		return publisheridentity.ErrScope
 	}
-	if _, err := n.Access(ctx); err != nil {
-		return err
+	if service != nil {
+		_, err = n.SavedService(ctx)
+	} else {
+		_, err = n.Access(ctx)
 	}
-	saved, found, err := session.Store().PublisherIdentity(ctx, identity.ClientId)
 	if err != nil {
 		return err
 	}
-	if !found {
-		return publisheridentity.ErrScope
+	_, signing, err := invocation.SigningIdentity(ctx, session.Store(), identity.ClientId)
+	if err != nil {
+		return err
 	}
-	fCred, err := credentialfile.New(session.Authenticated().ServerEndpoint, identity, saved.SigningKey)
+	fCred, err := credentialfile.New(session.Authenticated().ServerEndpoint, identity, signing)
 	if err != nil {
 		return err
 	}
@@ -228,7 +227,7 @@ func runPublisherProvision(ctx context.Context, f publisherProvisionCommand, pro
 
 type publisherEnrollCommand struct {
 	scopedTeamFlags `embed:""`
-	PublicURLID     string `arg:"" optional:"" name:"public-url-id" help:"Enabled service ID or public address."`
+	Address         string `arg:"" optional:"" name:"service-or-address" help:"Enabled service ID or public address."`
 	ServiceID       string `name:"service" help:"Exact saved service ID."`
 	Name            string `default:"publisher" help:"Lowercase publisher name."`
 	Namespace       bool   `help:"Grant temporary HTTP URLs in your authorized namespace."`
@@ -253,7 +252,7 @@ type publisherRevokeCommand struct {
 type publisherGrantAddCommand struct {
 	scopedTeamFlags     `embed:""`
 	PublisherIdentityID string `arg:"" name:"publisher-identity-id"`
-	PublicURLID         string `name:"public-url-id" help:"Service ID or public address to grant."`
+	URL                 string `name:"url" help:"Public hostname or HTTPS origin of the service to grant."`
 	ServiceID           string `name:"service" help:"Exact saved service ID to grant."`
 	Namespace           bool   `help:"Grant temporary HTTP URLs in your namespace."`
 	Domain              string `help:"Ready team domain for a namespace grant."`
@@ -281,7 +280,7 @@ func runPublisherEnroll(ctx context.Context, f publisherEnrollCommand, output, d
 	if err != nil {
 		return err
 	}
-	service, domain, err := publisherCLIGrantScope(ctx, session, current, f.PublicURLID, f.ServiceID, f.Namespace, f.Domain)
+	service, domain, err := publisherCLIGrantScope(ctx, session, current, f.Address, f.ServiceID, f.Namespace, f.Domain)
 	if err != nil {
 		return err
 	}
@@ -400,7 +399,7 @@ func runPublisherGrantAdd(ctx context.Context, f publisherGrantAddCommand, outpu
 	if err != nil {
 		return err
 	}
-	service, domain, err := publisherCLIGrantScope(ctx, session, current, f.PublicURLID, f.ServiceID, f.Namespace, f.Domain)
+	service, domain, err := publisherCLIGrantScope(ctx, session, current, f.URL, f.ServiceID, f.Namespace, f.Domain)
 	if err != nil {
 		return err
 	}
@@ -444,7 +443,7 @@ func publisherCLIGrantScope(ctx context.Context, session *clientteam.Session, cu
 	if serviceID == "" {
 		serviceID = address
 	}
-	service, err := resolveManagedService(ctx, session, serviceID)
+	service, err := managedService(ctx, session, serviceID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -452,6 +451,30 @@ func publisherCLIGrantScope(ctx context.Context, session *clientteam.Session, cu
 		return nil, nil, publisheridentity.ErrScope
 	}
 	return &service.Id, nil, nil
+}
+
+func managedService(ctx context.Context, session *clientteam.Session, selector string) (controlv1.Service, error) {
+	id := selector
+	if !opaqueid.Valid(id, opaqueid.ServicePrefix) {
+		selected, err := resolveManagedService(ctx, session, selector)
+		if err != nil {
+			return controlv1.Service{}, err
+		}
+		id = selected.Id
+	}
+	current, err := session.Current(ctx)
+	if err != nil {
+		return controlv1.Service{}, err
+	}
+	service, err := session.Authenticated().Control.GetService(ctx, id)
+	if err != nil {
+		return service, err
+	}
+	if service.Id != id || service.TeamId != current.Team().Id || !service.Enabled {
+		return service, publisheridentity.ErrScope
+	}
+	_, err = publisheridentity.ServiceTrust(service)
+	return service, err
 }
 
 func publisherNamespaceMatches(current clientteam.Context, domainID string, namespace *string) bool {

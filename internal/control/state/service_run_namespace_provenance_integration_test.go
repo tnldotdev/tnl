@@ -10,6 +10,11 @@ func TestIntegrationServiceRunNamespaceProvenanceAfterEndpointRelease(t *testing
 	d, now, request, applied, service := serviceReleaseProject(t, "postgres", false)
 	ctx := t.Context()
 	setReleaseProjectExposure(t, d, &request, &applied, false)
+	var err error
+	service, err = d.GetService(ctx, service.ID, request.ActorID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	publisher := serviceReleasePublisher(t, d, request, now)
 	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "namespace-before-release", now, ServiceRunRequest{Metadata: service.ServiceMetadata})
 	if err != nil {

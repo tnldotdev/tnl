@@ -122,7 +122,8 @@ func newAuditCompositionRun(t *testing.T, d *controlstate.Database, inspect *pgx
 	actor, team, member, name string, now time.Time) auditCompositionRun {
 	t.Helper()
 	ctx := t.Context()
-	service, err := d.CreateServiceAt(ctx, team, actor, name, name, controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "http"}, nil)
+	service, err := d.CreateServiceAt(ctx, team, actor, name, name, controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "http"},
+		&controlstate.ProjectServiceConfiguration{Target: "http://127.0.0.1:3000", Public: new(true)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,9 +163,6 @@ func newAuditCompositionRun(t *testing.T, d *controlstate.Database, inspect *pgx
 		}
 	}
 	if _, err = d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 20}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := inspect.Exec(ctx, `UPDATE control.services SET public=true WHERE id=$1`, service.ID); err != nil {
 		t.Fatal(err)
 	}
 	return auditCompositionRun{service: service, prepared: prepared, run: run, publisher: publisher, enrollmentKey: enrollment.Key}
@@ -379,8 +377,8 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 			t.Fatalf("incorrect durable team/source: %+v", e)
 		}
 		serviceEvents++
-		if e.ServiceKind != "service" || e.ServiceID != service.ID || e.RunID != run.RunID || e.PublisherIdentityID != publisher.ID || e.ActorIdentityID != "" || e.DeviceID != "" {
-			t.Fatal("admitted stream lost its verified service binding")
+		if e.ServiceID != service.ID || e.RunID != run.RunID || e.PublisherIdentityID != publisher.ID || e.ActorIdentityID != "" || e.DeviceID != "" {
+			t.Fatalf("admitted stream lost its verified service binding: %+v", e)
 		}
 		for _, secret := range []string{secretPayload, "never-audit-path", fixture.enrollmentKey, run.Token, permission} {
 			if strings.Contains(string(raw), secret) {

@@ -207,7 +207,7 @@ func checkServiceHTTPCompany(t *testing.T, f *privateSeparatedFixture, issuer *s
 		}
 	}
 	var member string
-	if err = f.inspect.QueryRowContext(ctx, `SELECT session.control_session_id,m.id FROM control.service_http_browser_sessions session JOIN control.team_memberships m ON m.team_id=$2 AND m.identity_id=$3 WHERE session.cookie_digest=$1`, digest[:], service.TeamId, identity).Scan(&principal.SessionID, &member); err != nil {
+	if err = f.inspect.QueryRowContext(ctx, `SELECT session.control_session_id,m.id FROM control.service_http_browser_sessions session JOIN control.team_memberships m ON m.team_id=$2 AND m.identity_id=$3 WHERE session.token_digest=$1`, digest[:], service.TeamId, identity).Scan(&principal.SessionID, &member); err != nil {
 		t.Fatal(err)
 	}
 	principal.IdentityID = identity

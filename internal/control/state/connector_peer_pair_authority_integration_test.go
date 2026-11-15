@@ -40,7 +40,7 @@ func newConnectorPairCompanyFixture(t *testing.T) connectorPairCompanyFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment := publisherEnrollment(t, d, CreatePublicURLRequest{TeamID: team.ID, ActingIdentityID: ownerID}, PublisherScope{TeamID: team.ID, Kind: "service", ServiceID: service.ID}, now)
+	enrollment := publisherEnrollment(t, d, serviceTestAuthority{TeamID: team.ID, ActingIdentityID: ownerID}, PublisherScope{TeamID: team.ID, Kind: "service", ServiceID: service.ID}, now)
 	public, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)

@@ -19,13 +19,12 @@ type preparedVisitorInput struct {
 
 // exercise the real preparation and local verifier instead of the retired
 // per-request authorization RPC. state fixtures supply their own clock.
-func preparedPublicURLPermission(ctx context.Context, d *Database, auth PublishRunAuthentication, input preparedVisitorInput, now time.Time) (VisitorPermission, error) {
-	return preparedVisitorPermission(ctx, d, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: auth.PublicURLID},
-		auth.PublishRunID, int64(auth.PublishRunNumber), auth.PublishRunToken.String(), input, now)
+func preparedServiceRunPermission(ctx context.Context, d *Database, auth ServiceHTTPRun, input preparedVisitorInput, now time.Time) (VisitorPermission, error) {
+	return preparedVisitorPermission(ctx, d, auth.Subject, auth.RunID, auth.Number, auth.Token.String(), input, now)
 }
 
 func preparedServiceHTTPPermission(ctx context.Context, d *Database, auth ServiceHTTPRun, input preparedVisitorInput, now time.Time) (VisitorPermission, error) {
-	return preparedVisitorPermission(ctx, d, auth.Subject, auth.RunID, auth.Number, auth.Token.String(), input, now)
+	return preparedServiceRunPermission(ctx, d, auth, input, now)
 }
 
 func preparedVisitorPermission(ctx context.Context, d *Database, scope visitorscope.Scope, run string, number int64, token string, input preparedVisitorInput, now time.Time) (VisitorPermission, error) {

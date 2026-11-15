@@ -66,24 +66,3 @@ func TestIntegrationIngressDrainRetainsExpiration(t *testing.T) {
 		t.Fatalf("restarted ingress = %+v, %v", restarted, err)
 	}
 }
-
-func TestIntegrationIngressRoutingAcknowledgementNeverRegresses(t *testing.T) {
-	database, now := newControlStateIntegrationDatabase(t, "ingress_acknowledgement")
-	lease, err := database.RegisterIngress(t.Context(), IngressRegistration{
-		IngressID: "routing-ingress", IngressRunID: "first-run", ProtocolVersion: 1, ConnectionCapacity: 10,
-	}, now, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, revision := range []uint64{5, 3} {
-		lease, err = database.RenewIngress(t.Context(), IngressRenewal{
-			IngressLeaseIdentity: lease.IngressLeaseIdentity, RoutingTableRevision: revision,
-		}, now.Add(time.Second), time.Minute)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	if lease.RoutingTableRevision != 5 {
-		t.Fatalf("older renewal regressed the routing acknowledgement to %d", lease.RoutingTableRevision)
-	}
-}

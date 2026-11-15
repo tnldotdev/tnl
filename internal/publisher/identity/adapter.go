@@ -37,6 +37,7 @@ type Native struct {
 	allocationInvocation string
 	allocatedServiceID   string
 	allocationFinished   bool
+	deploymentAllocation *deploymentAllocation
 	private              ed25519.PrivateKey
 	traffic              *trafficlimits.Selection
 	runtime              *processidentity.Owner

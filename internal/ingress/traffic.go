@@ -223,7 +223,7 @@ func (a *trafficAdmission) acquirePending(key trafficKey, addr netip.Addr) (func
 	if s.active >= a.pending.SourceConnections {
 		return nil, "pending_source_connections"
 	}
-	if p.active >= a.pending.PublicURLConnections {
+	if p.active >= a.pending.ServiceConnections {
 		return nil, "pending_service_connections"
 	}
 	// check both rate buckets before spending either. a full run must not
@@ -231,7 +231,7 @@ func (a *trafficAdmission) acquirePending(key trafficKey, addr netip.Addr) (func
 	if s.pending.refill(float64(a.pending.SourceRate), float64(a.pending.SourceBurst), now) < 1 {
 		return nil, "pending_source_rate"
 	}
-	if p.attempts.refill(float64(a.pending.PublicURLRate), float64(a.pending.PublicURLBurst), now) < 1 {
+	if p.attempts.refill(float64(a.pending.ServiceRate), float64(a.pending.ServiceBurst), now) < 1 {
 		return nil, "pending_service_rate"
 	}
 	s.pending.tokens--
@@ -260,7 +260,7 @@ func (a *trafficAdmission) prune(now time.Time) {
 		}
 	}
 	for key, p := range a.pendingRuns {
-		if p.active == 0 && now.Sub(p.seen).Seconds() > max(120, float64(a.pending.PublicURLBurst)/float64(a.pending.PublicURLRate)) {
+		if p.active == 0 && now.Sub(p.seen).Seconds() > max(120, float64(a.pending.ServiceBurst)/float64(a.pending.ServiceRate)) {
 			delete(a.pendingRuns, key)
 		}
 	}

@@ -35,12 +35,9 @@ func (h *handler) redeemedVisitorPermission(ctx context.Context, scope visitorsc
 
 func visitorTokenResponse(issued controlstate.IssuedVisitorToken) controlv1.VisitorTokenResponse {
 	permission := issued.Permission
-	response := controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(permission.Scope.Kind), Id: permission.Scope.ID},
-		Hostname: permission.Hostname, Port: int(permission.Port), VisitorPolicyRevision: permission.VisitorPolicyRevision, ExpiresAt: permission.ExpiresAt, VisitorToken: issued.Token.Reveal()}
-	if permission.Scope.Kind == visitorscope.Service {
-		response.ServiceTrustRevision = &issued.ServiceTrustRevision
-	}
-	return response
+	return controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(permission.Scope.Kind), Id: permission.Scope.ID},
+		Hostname: permission.Hostname, Port: int(permission.Port), VisitorPolicyRevision: permission.VisitorPolicyRevision,
+		ServiceTrustRevision: &issued.ServiceTrustRevision, ExpiresAt: permission.ExpiresAt, VisitorToken: issued.Token.Reveal()}
 }
 
 func (h *handler) IssueVisitorToken(w http.ResponseWriter, r *http.Request) {

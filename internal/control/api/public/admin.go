@@ -163,14 +163,14 @@ func (h *handler) SetMaintenanceControl(
 func (h *handler) authorizeAdministrator(
 	response http.ResponseWriter,
 	request *http.Request,
-) (publicURLReadPrincipal, bool) {
+) (controlReadPrincipal, bool) {
 	principal, ok := h.authorizeReads(response, request)
 	if !ok {
-		return publicURLReadPrincipal{}, false
+		return controlReadPrincipal{}, false
 	}
 	if !principal.administrator {
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "operation is not authorized")
-		return publicURLReadPrincipal{}, false
+		return controlReadPrincipal{}, false
 	}
 	return principal, true
 }

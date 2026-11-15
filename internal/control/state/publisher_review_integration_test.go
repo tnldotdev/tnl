@@ -14,9 +14,12 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
-func reviewPublisher(t *testing.T, d *Database, publicURL PublicURL, editor string, now time.Time) (PublisherIdentity, ed25519.PrivateKey) {
+func reviewPublisher(t *testing.T, d *Database, service ServiceRecord, editor, membershipID string, policyRevision uint64, now time.Time) (PublisherIdentity, ed25519.PrivateKey) {
 	t.Helper()
-	e := publisherEnrollment(t, d, CreatePublicURLRequest{TeamID: publicURL.TeamID, ActingIdentityID: editor}, PublisherScope{TeamID: publicURL.TeamID, Kind: "saved_public_url", PublicURLID: publicURL.ID}, now)
+	e, err := d.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{Scope: PublisherScope{TeamID: service.TeamID, Kind: "service", ServiceID: service.ID}, Name: "test", Kind: "installed", EditorID: editor, EditorMembershipID: membershipID, PolicyRevision: policyRevision, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -28,35 +31,22 @@ func reviewPublisher(t *testing.T, d *Database, publicURL PublicURL, editor stri
 	return p, private
 }
 
-func reviewRunRequest(t *testing.T, d *Database, p PublisherIdentity, private ed25519.PrivateKey, publicURL PublicURL, retry string) PublishRunRequest {
-	t.Helper()
-	plan, err := d.PublisherRunPlan(t.Context(), p, publicURL, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	proof, err := publisherproof.SignRun(private, publicURL.ID, retry)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return PublishRunRequest{PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, MembershipID: publicURL.MembershipID, ActingIdentityID: p.CreatorID, IdempotencyKey: retry, RequestDigest: sha256.Sum256([]byte(retry)), PolicyRevision: uint64(publicURL.PolicyRevision), ExpectedMutationRevision: publicURL.MutationRevision, CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers, CertificateChallenge: plan.ChallengeMethod, PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, PublisherKeyID: p.KeyID, PublisherRunProof: proof}
-}
-
-func reviewSharedURL(t *testing.T, f transactionAuthorityFixture) PublicURL {
-	t.Helper()
-	r := f.createRequest
-	r.ActingIdentityID, r.MembershipID, r.PublicURLScope = f.owner, "", PublicURLScopeShared
-	r.CanonicalHostname, r.IdempotencyKey = "shared."+f.domain.CanonicalDomain, "shared-publisher"
-	return createTestPublicURL(t, f.database, r, f.now)
-}
-
 func TestIntegrationPublisherRevocationRechecksWaitingEditor(t *testing.T) {
 	for _, mutation := range []string{"identity", "grant"} {
 		for _, change := range []string{"removed", "demoted"} {
 			t.Run(mutation+"/"+change, func(t *testing.T) {
-				f := newTransactionAuthorityFixture(t)
-				d := f.database
-				p, _ := reviewPublisher(t, d, reviewSharedURL(t, f), f.owner, f.now)
-				if err := d.AuthorizePublisherManagement(t.Context(), f.member.TeamID, p.ID, f.member.IdentityID); err != nil {
+				d, now, owner, team := newAuthorityTeam(t)
+				_, member := allocationVisitorMember(t, d, team.ID, owner, "reviewer", TeamRoleAdmin, now)
+				service, err := d.CreateServiceAt(t.Context(), team.ID, owner, "shared-review", "shared-review", ServicePlacement{}, now, ServiceMetadata{}, &ProjectServiceConfiguration{Target: "http://127.0.0.1:3000"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ownerMember, err := controlstatedb.New(d.pool).GetTeamActorContext(t.Context(), controlstatedb.GetTeamActorContextParams{TeamID: team.ID, IdentityID: owner})
+				if err != nil {
+					t.Fatal(err)
+				}
+				p, _ := reviewPublisher(t, d, service, owner, ownerMember.ActorMembershipID, uint64(ownerMember.PolicyRevision), now)
+				if err := d.AuthorizePublisherManagement(t.Context(), team.ID, p.ID, member.IdentityID); err != nil {
 					t.Fatal(err)
 				}
 				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -67,7 +57,7 @@ func TestIntegrationPublisherRevocationRechecksWaitingEditor(t *testing.T) {
 				}
 				defer rollbackTestTransaction(t, gate)
 				q := controlstatedb.New(gate)
-				if _, err := q.LockLocalTeamForMutation(ctx, f.member.TeamID); err != nil {
+				if _, err := q.LockLocalTeamForMutation(ctx, team.ID); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := q.LockPublisherIdentity(ctx, p.ID); err != nil {
@@ -78,20 +68,20 @@ func TestIntegrationPublisherRevocationRechecksWaitingEditor(t *testing.T) {
 				revoked := make(chan error, 1)
 				revoke := func(editor string) error {
 					if mutation == "identity" {
-						return d.RevokePublisherIdentity(ctx, f.member.TeamID, p.ID, editor, f.now)
+						return d.RevokePublisherIdentity(ctx, team.ID, p.ID, editor, now)
 					}
-					return d.RevokePublisherGrant(ctx, f.member.TeamID, p.ID, p.GrantID, editor, f.now)
+					return d.RevokePublisherGrant(ctx, team.ID, p.ID, p.GrantID, editor, now)
 				}
-				workers.Go(func() { revoked <- revoke(f.member.IdentityID) })
+				workers.Go(func() { revoked <- revoke(member.IdentityID) })
 				waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), revoked)
-				revision, err := q.AdvanceTeamPolicyRevision(ctx, controlstatedb.AdvanceTeamPolicyRevisionParams{TeamID: f.member.TeamID, UpdatedAt: timestamp(f.now)})
+				revision, err := q.AdvanceTeamPolicyRevision(ctx, controlstatedb.AdvanceTeamPolicyRevisionParams{TeamID: team.ID, UpdatedAt: timestamp(now)})
 				if err != nil {
 					t.Fatal(err)
 				}
 				if change == "removed" {
-					_, err = q.RemoveTeamMembership(ctx, controlstatedb.RemoveTeamMembershipParams{MembershipID: f.member.ID, TeamID: f.member.TeamID, AuthorityRevision: revision, RemovedAt: timestamp(f.now), RemovedByIdentityID: text(f.owner)})
+					_, err = q.RemoveTeamMembership(ctx, controlstatedb.RemoveTeamMembershipParams{MembershipID: member.ID, TeamID: team.ID, AuthorityRevision: revision, RemovedAt: timestamp(now), RemovedByIdentityID: text(owner)})
 				} else {
-					_, err = q.UpdateMembershipRole(ctx, controlstatedb.UpdateMembershipRoleParams{MembershipID: f.member.ID, TeamID: f.member.TeamID, Role: "member", AuthorityRevision: revision, UpdatedAt: timestamp(f.now)})
+					_, err = q.UpdateMembershipRole(ctx, controlstatedb.UpdateMembershipRoleParams{MembershipID: member.ID, TeamID: team.ID, Role: "member", AuthorityRevision: revision, UpdatedAt: timestamp(now)})
 				}
 				if err != nil {
 					t.Fatal(err)
@@ -111,7 +101,7 @@ func TestIntegrationPublisherRevocationRechecksWaitingEditor(t *testing.T) {
 				if err := d.pool.QueryRow(ctx, query, id).Scan(&changed); err != nil || changed {
 					t.Fatalf("rejected revocation committed: %t, %v", changed, err)
 				}
-				if err := revoke(f.owner); err != nil {
+				if err := revoke(owner); err != nil {
 					t.Fatalf("current owner could not revoke: %v", err)
 				}
 			})
@@ -120,17 +110,41 @@ func TestIntegrationPublisherRevocationRechecksWaitingEditor(t *testing.T) {
 }
 
 func TestIntegrationPublisherHeartbeatDomainReleaseLockOrder(t *testing.T) {
-	f := newTransactionAuthorityFixture(t)
-	d := f.database
-	publicURL := reviewSharedURL(t, f)
-	registerCertificatePlanRelays(t, d, f.now)
-	p, private := reviewPublisher(t, d, publicURL, f.owner, f.now)
-	r := reviewRunRequest(t, d, p, private, publicURL, "release-race")
-	setup, err := d.CreatePublishRun(t.Context(), r, f.now, time.Hour, time.Hour)
+	d, now, owner, team := newAuthorityTeam(t)
+	domain, err := d.ClaimTeamDomain(t.Context(), ClaimDomainRequest{
+		IdentityID: owner, TeamID: team.ID, Domain: "publisher-release.example.test",
+		IdempotencyKey: "release-domain", RequestDigest: sha256.Sum256([]byte("release-domain")),
+	}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth := PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: publicURL.ID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
+	work, found, err := d.ClaimDNSAuthorityWork(t.Context(), "publisher-release", now, time.Minute)
+	if err != nil || !found || work.Reference != domain.DNSAuthorityReference {
+		t.Fatal("custom domain authority was not queued", found, err)
+	}
+	work.State, work.ProviderZoneID, work.Nameservers = "ready", "ZRELEASE", []string{"ns-1.example.test"}
+	if _, err := d.SaveDNSAuthorityWork(t.Context(), work, now); err != nil {
+		t.Fatal(err)
+	}
+	// control derives the owner's local hostname beneath this custom domain;
+	// organization-local services cannot claim a shared domain-level hostname.
+	service, err := d.CreateServiceAt(t.Context(), team.ID, owner, "shared", "release-service",
+		ServicePlacement{DomainID: domain.ID}, now,
+		ServiceMetadata{}, &ProjectServiceConfiguration{Target: "localhost:3000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.DomainID != domain.ID || service.Endpoint == nil {
+		t.Fatal("release fixture did not select the custom domain")
+	}
+	member, err := controlstatedb.New(d.pool).GetTeamActorContext(t.Context(), controlstatedb.GetTeamActorContextParams{TeamID: team.ID, IdentityID: owner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := reviewPublisher(t, d, service, owner, member.ActorMembershipID, uint64(member.PolicyRevision), now)
+	registerCertificatePlanRelays(t, d, now)
+	f := servicePublicationFixture{database: d, now: now, service: service, publisher: p}
+	f.start(t, "release-race", now)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	gate, err := d.pool.Begin(ctx)
@@ -138,22 +152,23 @@ func TestIntegrationPublisherHeartbeatDomainReleaseLockOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if _, err := controlstatedb.New(gate).LockPublisherIdentity(ctx, p.ID); err != nil {
+	if _, err := controlstatedb.New(gate).LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: f.run.RunID, ServiceID: service.ID}); err != nil {
 		t.Fatal(err)
 	}
 	workers := newIntegrationWorkers(t, cancel)
 	defer workers.stop()
 	heartbeat, release := make(chan error, 1), make(chan error, 1)
 	workers.Go(func() {
-		_, err := d.HeartbeatPublishRun(ctx, auth, f.now.Add(time.Second), time.Hour, time.Hour)
+		_, err := d.HeartbeatServiceRun(ctx, service.ID, f.run.RunID, f.run.Token,
+			now.Add(time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64})
 		heartbeat <- err
 	})
 	heartbeatPID := waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), heartbeat)
 	workers.Go(func() {
-		release <- d.ReleaseTeamDomain(ctx, f.owner, publicURL.TeamID, publicURL.DomainID, f.now.Add(2*time.Second))
+		release <- d.ReleaseTeamDomain(ctx, owner, team.ID, domain.ID, now.Add(2*time.Second))
 	})
-	// release now holds team/domain locks and waits for heartbeat's URL lock.
-	// heartbeat must not acquire either earlier lock after the publisher gate.
+	// heartbeat holds team/service admission before waiting for the run.
+	// domain release must serialize behind it, never invert that lock order.
 	waitForPostgresBlock(t, ctx, d, heartbeatPID, release)
 	if err := gate.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -165,114 +180,173 @@ func TestIntegrationPublisherHeartbeatDomainReleaseLockOrder(t *testing.T) {
 		t.Fatalf("domain release did not finish: %v", err)
 	}
 	var closed bool
-	if err := d.pool.QueryRow(ctx, `SELECT closed_at IS NOT NULL AND close_reason='domain_releasing' FROM control.publish_runs WHERE id=$1`, setup.PublishRunID).Scan(&closed); err != nil || !closed {
+	if err := d.pool.QueryRow(ctx, `SELECT state='closed' AND closed_at IS NOT NULL AND NOT assignments_open
+		FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&closed); err != nil || !closed {
 		t.Fatalf("release failed to close run: %t, %v", closed, err)
+	}
+	var disabled bool
+	if err := d.pool.QueryRow(ctx, `SELECT NOT enabled FROM control.services WHERE id=$1`, service.ID).Scan(&disabled); err != nil || !disabled {
+		t.Fatalf("released domain left its service enabled: %t, %v", disabled, err)
 	}
 }
 
 func TestIntegrationPublisherRetiredKeyOnlyRecoversExactRun(t *testing.T) {
-	d, now := newControlStateIntegrationDatabase(t, "retired_publisher_key")
-	request := oidcRouteRequest(t, d, now)
-	publicURL := createTestPublicURL(t, d, request, now)
-	registerCertificatePlanRelays(t, d, now)
-	p, private := reviewPublisher(t, d, publicURL, request.ActingIdentityID, now)
-	access := publisherAccess(t, d, p, private, "", now)
-	r := reviewRunRequest(t, d, p, private, publicURL, "original")
-	setup, err := d.CreatePublishRun(t.Context(), r, now, time.Hour, time.Hour)
+	d, now, actor, leases := newPublishRunPrerequisites(t)
+	service, err := d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, "retired", "retired",
+		ServicePlacement{}, now, ServiceMetadata{}, &ProjectServiceConfiguration{Target: "localhost:3000"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	public, replacement, _ := ed25519.GenerateKey(rand.Reader)
-	keyID, _ := opaqueid.New(opaqueid.PublisherIdentityKeyPrefix)
+	p, private := reviewPublisher(t, d, service, actor.ActingIdentityID, actor.MembershipID, 1, now)
+	access := publisherAccess(t, d, p, private, "", now)
+	f := servicePublicationFixture{database: d, now: now, service: service, publisher: p, leases: leases}
+	f.start(t, "original", now)
+	other := f.sibling(t, "unstarted", now)
+	grant, err := d.CreatePublisherGrant(t.Context(), CreatePublisherGrantRequest{
+		PublisherIdentityID: p.ID, Scope: PublisherScope{TeamID: service.TeamID, Kind: "service", ServiceID: other.service.ID},
+		EditorID: actor.ActingIdentityID, EditorMembershipID: actor.MembershipID, PolicyRevision: 1, Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unstartedPublisher := p
+	unstartedPublisher.GrantID, unstartedPublisher.Scope.ServiceID = grant, other.service.ID
+	unstarted, err := d.PrepareServiceRun(t.Context(), other.service.ID, unstartedPublisher, "unstarted", now,
+		ServiceRunRequest{Metadata: other.service.ServiceMetadata})
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, replacement, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyID := mustOpaqueID(t, opaqueid.PublisherIdentityKeyPrefix)
 	audience := "https://control.example/v1/publisher-keys/rotate"
-	proof, _ := publisherproof.Sign(p.ID, keyID, p.GrantID, audience, replacement, now)
-	currentProof, _ := publisherproof.Sign(p.ID, p.KeyID, p.GrantID, publisherproof.RotationAudience(audience, keyID, public), private, now)
+	proof, err := publisherproof.Sign(p.ID, keyID, p.GrantID, audience, replacement, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentProof, err := publisherproof.Sign(p.ID, p.KeyID, p.GrantID, publisherproof.RotationAudience(audience, keyID, public), private, now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := d.RotatePublisherKey(t.Context(), access.Token, "", keyID, audience, public, proof, currentProof, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.AuthenticatePublisherAccess(t.Context(), access.Token, "", now); err != nil {
 		t.Fatalf("bounded old token unexpectedly expired: %v", err)
 	}
-	retry, err := d.CreatePublishRun(t.Context(), r, now, time.Hour, time.Hour)
-	if err != nil || retry.PublishRunToken != setup.PublishRunToken || retry.PublishRunID != setup.PublishRunID {
-		t.Fatalf("retired key could not retry its exact run: %v", err)
+	retry, err := d.StartServiceRun(t.Context(), service.ID, f.run.RunID, f.run.RunNumber, p, now)
+	if err != nil || retry.Token != f.run.Token || retry.RunID != f.run.RunID || retry.RunNumber != f.run.RunNumber {
+		t.Fatalf("retired key could not recover its exact run: %v", err)
 	}
-	changed := r
-	changed.RequestDigest = sha256.Sum256([]byte("changed request"))
-	if _, err := d.CreatePublishRun(t.Context(), changed, now, time.Hour, time.Hour); !errors.Is(err, ErrPublishRunIdempotency) {
-		t.Fatalf("retired key changed its request binding: %v", err)
+	if _, err := d.StartServiceRun(t.Context(), service.ID, f.run.RunID, f.run.RunNumber+1, p, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatalf("retired key changed its run binding: %v", err)
 	}
-	if err := d.ClosePublishRun(t.Context(), setup.PublishRunID, setup.PublishRunToken, now.Add(time.Second)); err != nil {
+	if _, err := d.StartServiceRun(t.Context(), other.service.ID, unstarted.RunID, unstarted.RunNumber, unstartedPublisher, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatalf("retired key started a merely prepared run: %v", err)
+	}
+	current := p
+	current.KeyID = keyID
+	if _, err := d.StartServiceRun(t.Context(), service.ID, f.run.RunID, f.run.RunNumber, current, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatalf("replacement key adopted another key's run: %v", err)
+	}
+	if err := d.CloseServiceRun(t.Context(), service.ID, f.run.RunID, f.run.Token, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	publicURL, err = d.GetPublicURLForAuthorization(t.Context(), publicURL.ID)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := d.StartServiceRun(t.Context(), service.ID, f.run.RunID, f.run.RunNumber, p, now.Add(2*time.Second)); !errors.Is(err, ErrServiceAccess) {
+		t.Fatalf("retired key resurrected its closed run: %v", err)
 	}
-	newRun := reviewRunRequest(t, d, p, private, publicURL, "new-attempt")
-	if _, err := d.CreatePublishRun(t.Context(), newRun, now.Add(2*time.Second), time.Hour, time.Hour); !errors.Is(err, ErrPublisherIdentity) {
-		t.Fatalf("retired key started a new run: %v", err)
+	if _, err := d.PrepareServiceRun(t.Context(), service.ID, p, "new-attempt", now.Add(2*time.Second),
+		ServiceRunRequest{Metadata: service.ServiceMetadata}); !errors.Is(err, ErrServiceAccess) {
+		t.Fatalf("retired key prepared a new run: %v", err)
 	}
-	p.KeyID = keyID
-	newRun = reviewRunRequest(t, d, p, replacement, publicURL, "new-attempt")
-	if _, err := d.CreatePublishRun(t.Context(), newRun, now.Add(2*time.Second), time.Hour, time.Hour); err != nil {
-		t.Fatalf("current key could not start a new run: %v", err)
+	f.publisher = current
+	previous := f.run
+	f.start(t, "new-attempt", now.Add(2*time.Second))
+	if f.run.RunID == previous.RunID || f.run.RunNumber <= previous.RunNumber {
+		t.Fatal("current key reused the closed run")
 	}
 }
 
 func TestIntegrationPublisherSavedPurposesHaveExactGrants(t *testing.T) {
-	d, now := newControlStateIntegrationDatabase(t, "publisher_saved_purposes")
-	base := oidcRouteRequest(t, d, now)
-	registerCertificatePlanRelays(t, d, now)
-	for _, purpose := range []PublicURLPurpose{PublicURLPurposeApp, PublicURLPurposeOAuth, PublicURLPurposeWebhooks, PublicURLPurposeAlias, PublicURLPurposeDemo} {
-		r := base
-		r.Purpose, r.CanonicalHostname, r.IdempotencyKey = purpose, string(purpose)+"."+base.CanonicalHostname, string(purpose)
-		if purpose == PublicURLPurposeOAuth || purpose == PublicURLPurposeWebhooks {
-			r.Target = ""
-		}
-		publicURL := createTestPublicURL(t, d, r, now)
-		p, private := reviewPublisher(t, d, publicURL, r.ActingIdentityID, now)
-		a := publisherAccess(t, d, p, private, "", now)
-		if got, err := d.AuthenticatePublisherAccess(t.Context(), a.Token, "", now); err != nil || got.Scope.PublicURLID != publicURL.ID {
-			t.Fatalf("%s grant unavailable: %+v, %v", purpose, got, err)
-		}
-		if owns, err := d.PublisherMayStartRun(t.Context(), p, "another-url"); err != nil || owns {
-			t.Fatalf("%s grant expanded beyond exact URL", purpose)
-		}
-		setup, err := d.CreatePublishRun(t.Context(), reviewRunRequest(t, d, p, private, publicURL, "purpose-"+string(purpose)), now, time.Minute, time.Minute)
-		if err != nil {
-			t.Fatalf("%s publisher run: %v", purpose, err)
-		}
-		if err := d.ClosePublishRun(t.Context(), setup.PublishRunID, setup.PublishRunToken, now.Add(time.Second)); err != nil {
-			t.Fatal(err)
-		}
+	f := newServiceHTTPFixture(t)
+	d, now := f.database, f.now
+	member, err := controlstatedb.New(d.pool).GetTeamActorContext(t.Context(), controlstatedb.GetTeamActorContextParams{
+		TeamID: f.project.TeamID, IdentityID: f.project.ActorID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// app and integration handlers now use ordinary HTTP services. keep every
+	// former purpose case and prove protocol variants use the same exact grants.
+	for _, name := range []string{"app", "oauth", "webhooks", "alias", "demo", "tcp", "mysql", "postgres", "kubernetes"} {
+		t.Run(name, func(t *testing.T) {
+			var service ServiceRecord
+			if name == "tcp" || name == "mysql" || name == "postgres" || name == "kubernetes" {
+				var err error
+				service, err = d.CreateServiceAt(t.Context(), f.project.TeamID, f.project.ActorID, name, name,
+					ServicePlacement{}, now, ServiceMetadata{Protocol: name}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				service = f.local(t, name, nil)
+			}
+			p, private := reviewPublisher(t, d, service, f.project.ActorID, member.ActorMembershipID, uint64(member.PolicyRevision), now)
+			a := publisherAccess(t, d, p, private, "", now)
+			if got, err := d.AuthenticatePublisherAccess(t.Context(), a.Token, "", now); err != nil ||
+				got.Scope != (PublisherScope{TeamID: service.TeamID, Kind: "service", ServiceID: service.ID}) {
+				t.Fatalf("%s exact grant unavailable: %+v, %v", name, got, err)
+			}
+			forged := p
+			forged.Scope.ServiceID = f.service.ID
+			if _, err := d.GetServiceForPublisher(t.Context(), f.service.ID, forged, now); !errors.Is(err, ErrServiceAccess) {
+				t.Fatalf("%s grant expanded beyond its persisted service: %v", name, err)
+			}
+			if _, err := d.PrepareServiceRun(t.Context(), f.service.ID, forged, "foreign", now,
+				ServiceRunRequest{Metadata: f.service.ServiceMetadata}); !errors.Is(err, ErrServiceAccess) {
+				t.Fatalf("%s grant prepared another service: %v", name, err)
+			}
+			publication := servicePublicationFixture{database: d, now: now, service: service, publisher: p, leases: f.leases}
+			publication.start(t, "purpose-"+name, now)
+			if err := d.CloseServiceRun(t.Context(), service.ID, publication.run.RunID, publication.run.Token, now.Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
 func TestIntegrationPublisherSharedGrantSurvivesIssuerRemoval(t *testing.T) {
-	f := newTransactionAuthorityFixture(t)
-	d := f.database
-	publicURL := reviewSharedURL(t, f)
-	registerCertificatePlanRelays(t, d, f.now)
-	p, private := reviewPublisher(t, d, publicURL, f.member.IdentityID, f.now)
-	setup, err := d.CreatePublishRun(t.Context(), reviewRunRequest(t, d, p, private, publicURL, "durable-shared"), f.now, time.Hour, time.Hour)
+	d, now, owner, team := newAuthorityTeam(t)
+	_, member := allocationVisitorMember(t, d, team.ID, owner, "issuer", TeamRoleAdmin, now)
+	service, err := d.CreateServiceAt(t.Context(), team.ID, owner, "shared", "durable-shared", ServicePlacement{}, now,
+		ServiceMetadata{}, &ProjectServiceConfiguration{Target: "localhost:3000"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.RemoveMembership(t.Context(), f.owner, publicURL.TeamID, f.member.ID, f.now.Add(time.Second)); err != nil {
+	actor, err := controlstatedb.New(d.pool).GetTeamActorContext(t.Context(), controlstatedb.GetTeamActorContextParams{TeamID: team.ID, IdentityID: member.IdentityID})
+	if err != nil {
 		t.Fatal(err)
 	}
-	auth := PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: publicURL.ID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
-	if _, err := d.HeartbeatPublishRun(t.Context(), auth, f.now.Add(2*time.Second), time.Hour, time.Hour); err != nil {
+	p, _ := reviewPublisher(t, d, service, member.IdentityID, member.ID, uint64(actor.PolicyRevision), now)
+	registerCertificatePlanRelays(t, d, now)
+	f := servicePublicationFixture{database: d, now: now, service: service, publisher: p}
+	f.start(t, "durable-shared", now)
+	if err := d.RemoveMembership(t.Context(), owner, team.ID, member.ID, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	health := ServiceRunHealth{Healthy: true, StreamCapacity: 64}
+	if _, err := d.HeartbeatServiceRun(t.Context(), service.ID, f.run.RunID, f.run.Token, now.Add(2*time.Second), health); err != nil {
 		t.Fatalf("issuer departure erased its explicitly issued shared grant: %v", err)
 	}
-	if err := d.RevokePublisherGrant(t.Context(), publicURL.TeamID, p.ID, p.GrantID, f.member.IdentityID, f.now.Add(3*time.Second)); !errors.Is(err, ErrPublisherIdentity) {
+	if err := d.RevokePublisherGrant(t.Context(), team.ID, p.ID, p.GrantID, member.IdentityID, now.Add(3*time.Second)); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatalf("departed issuer retained grant management: %v", err)
 	}
-	if err := d.RevokePublisherGrant(t.Context(), publicURL.TeamID, p.ID, p.GrantID, f.owner, f.now.Add(3*time.Second)); err != nil {
+	if err := d.RevokePublisherGrant(t.Context(), team.ID, p.ID, p.GrantID, owner, now.Add(3*time.Second)); err != nil {
 		t.Fatalf("current owner could not revoke durable grant: %v", err)
 	}
-	if _, err := d.HeartbeatPublishRun(t.Context(), auth, f.now.Add(4*time.Second), time.Hour, time.Hour); !errors.Is(err, ErrPublisherIdentity) {
+	if _, err := d.HeartbeatServiceRun(t.Context(), service.ID, f.run.RunID, f.run.Token, now.Add(4*time.Second), health); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("revoked shared grant remained live: %v", err)
 	}
 }

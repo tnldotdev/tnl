@@ -2,9 +2,6 @@ package invocation
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/base32"
-	"encoding/hex"
 	"slices"
 	"strings"
 
@@ -13,8 +10,6 @@ import (
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
-	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/setup"
@@ -137,44 +132,16 @@ func InstallHTTP(ctx context.Context, flags InstallationOptions, presentation se
 		if err != nil {
 			return err
 		}
-		name := flags.Name
-		if name == "" {
-			name, _, _ = strings.Cut(hostname, ".")
-			if !naming.ValidServiceName(name) {
-				digest := sha256.Sum256([]byte(hostname))
-				name = "http-" + hex.EncodeToString(digest[:8])
-			}
-		}
 		policy, err := resolveVisitorAccess(ctx, control, flags.Access, flags.Anonymous, flags.IP)
 		if err != nil {
 			return err
 		}
-		declaration, err := installedHTTPDeclaration(flags, name, domain.Id, hostname, plan, policy)
+		service, err = prepareInstalledHTTPService(ctx, publisherServices{
+			authenticated: session.Authenticated(), state: profile, routes: control,
+			hostname: hostname, teamID: current.Team().Id, domainID: domain.Id,
+		}, flags, plan, policy)
 		if err != nil {
 			return err
-		}
-		placement := &controlv1.ServicePlacement{DomainId: &domain.Id, Hostname: &hostname}
-		worktree := ""
-		if flags.Project.Root != "" {
-			worktree = flags.Project.LocalWorktreeKey()
-			placement.WorktreeKey = &worktree
-			if label := flags.Project.Worktree.Label.FullLabel; label != "" {
-				placement.WorktreeLabel = &label
-			}
-		}
-		// the control API compares retained normalized intent on every retry.
-		// the key identifies this service selection, not a replacement policy.
-		key := installedHTTPCreateKey(server, current.Team().Id, domain.Id, hostname, name, worktree)
-		service, err = control.CreateServiceAt(ctx, current.Team().Id, name, key, placement,
-			controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP, TargetTls: publisheridentity.ServiceTargetTLS(trust), TrustRevision: 1}, &declaration)
-		if err != nil {
-			return err
-		}
-		if service.Name != name || service.Source != nil || service.Endpoint == nil || service.Endpoint.Hostname != hostname || service.DomainId == nil || *service.DomainId != domain.Id || !service.Endpoint.Public {
-			return installedjobs.ErrScope
-		}
-		if worktree != "" && (service.Placement == nil || service.Placement.WorktreeKey == nil || *service.Placement.WorktreeKey != worktree) {
-			return installedjobs.ErrScope
 		}
 	}
 	if err := validateProfileService(service); err != nil {
@@ -202,55 +169,43 @@ func InstallHTTP(ctx context.Context, flags InstallationOptions, presentation se
 	return setup.InstallPublication(ctx, setup.Publication{Database: database, Server: server, Service: service, Control: control, Options: flags.Installation, Job: job, ServerCAFile: flags.ServerCAFile}, presentation)
 }
 
-func installedHTTPCreateKey(server, team, domain, hostname, name, worktree string) string {
-	digest := sha256.Sum256([]byte(strings.Join([]string{"tnl-installed-service/v1", server, team, domain, hostname, name, worktree}, "\x00")))
-	return opaqueid.IdempotencyPrefix + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(digest[:])[:22]
-}
-
-func installedHTTPDeclaration(flags InstallationOptions, name, domain, hostname string, plan target.TargetPlan, policy resolvedVisitorAccess) (controlv1.ProjectServiceConfiguration, error) {
-	protocol := controlv1.ServiceProtocolHTTP
-	declaration := controlv1.ProjectServiceConfiguration{Name: &name, DomainId: &domain, Hostname: &hostname, Protocol: &protocol, Public: new(true), Ephemeral: new(false),
-		Target: plan.Target, RequirePostQuantum: flags.RequirePostQuantum, Http: &controlv1.ProjectServiceHTTP{}}
-	if err := flags.Limits.Validate(); err != nil {
-		return declaration, err
-	}
-	if plan.Trust != nil {
-		captured, err := plan.Trust.Declaration()
+// installation saves its target and readiness settings on the same service that
+// foreground publication selects. omitted policy stays unchanged under the
+// shared declaration compare-and-swap; installation credentials remain separate.
+func prepareInstalledHTTPService(ctx context.Context, services publisherServices, flags InstallationOptions, plan target.TargetPlan, policy resolvedVisitorAccess) (controlv1.Service, error) {
+	declaration := func(current *controlv1.ProjectServiceConfiguration) (controlv1.ProjectServiceConfiguration, error) {
+		desired, err := foregroundServiceDeclaration(flags.PublicOptions, policy, plan, current)
 		if err != nil {
-			return declaration, err
+			return desired, err
 		}
-		declaration.TargetTls = &controlv1.ProjectTargetTLS{Hostname: captured.Hostname, Digest: captured.Digest}
-		if len(captured.CAPEM) != 0 {
-			declaration.TargetTls.CaPem = new(string(captured.CAPEM))
+		desired.Target = plan.Target
+		desired.TargetTls, err = foregroundTargetTLS(plan.Trust)
+		if err != nil {
+			return desired, err
 		}
-	}
-	if policy.explicit {
-		prefixes := slices.Clone(policy.prefixes)
-		slices.Sort(prefixes)
-		declaration.Http.Access = &controlv1.ProjectHTTPAccess{Mode: &policy.access, Ip: &prefixes}
-	}
-	limits := flags.Limits
-	if limits.Requests > 0 || limits.Concurrency > 0 || limits.RateRequests > 0 {
-		declaration.Http.Limits = &controlv1.ProjectHTTPApplicationLimits{}
-		if limits.Requests > 0 {
-			declaration.Http.Limits.Total = &limits.Requests
-		}
-		if limits.Concurrency > 0 {
-			declaration.Http.Limits.Concurrency = &limits.Concurrency
-		}
-		if limits.RateRequests > 0 {
-			declaration.Http.Limits.Rate = &controlv1.ProjectApplicationRate{Count: limits.RateRequests, Per: limits.RatePer.String()}
-			if limits.RateBurst > 0 {
-				declaration.Http.Limits.Rate.Burst = &limits.RateBurst
+		if flags.ReadinessPath != "" {
+			if desired.Http == nil {
+				desired.Http = &controlv1.ProjectServiceHTTP{}
 			}
+			desired.Http.Readiness = &struct {
+				Path string `json:"path"`
+			}{Path: flags.ReadinessPath}
 		}
+		if flags.Traffic != nil {
+			desired.Traffic, err = clientcontrol.TrafficSelection(flags.Traffic)
+		}
+		return desired, err
 	}
-	if flags.ReadinessPath != "" {
-		declaration.Http.Readiness = &struct {
-			Path string `json:"path"`
-		}{Path: flags.ReadinessPath}
+	initial, err := declaration(nil)
+	if err != nil {
+		return controlv1.Service{}, err
 	}
-	var err error
-	declaration.Traffic, err = clientcontrol.TrafficSelection(flags.Traffic)
-	return declaration, err
+	return reserveConfiguredService(ctx, services, initial, func(saved controlv1.Service, current *controlv1.ProjectServiceConfiguration) (*controlv1.ProjectServiceConfiguration, error) {
+		if current == nil {
+			current = &controlv1.ProjectServiceConfiguration{RequirePostQuantum: new(saved.RequirePostQuantum),
+				Http: &controlv1.ProjectServiceHTTP{Limits: saved.HttpLimits}}
+		}
+		desired, err := declaration(current)
+		return &desired, err
+	})
 }

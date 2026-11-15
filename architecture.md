@@ -97,7 +97,7 @@ certificate can delay reuse without later connector renewals pinning capacity.
 | Role      | Job                                                                                         |
 | --------- | ------------------------------------------------------------------------------------------- |
 | Control   | Stores identities, permissions, runs, relay assignments, leases, and certificate approvals. |
-| Ingress   | Accepts public connections and picks a connected relay from control's routing table.        |
+| Ingress   | Asks control to admit each public connection, then forwards it to a connected relay.        |
 | Relay     | Holds publisher connections and carries visitor streams.                                    |
 | Publisher | Publishes apps and services, ends visitor TLS, and connects to targets.                     |
 | Connector | Selects a service, opens local listeners, and connects to its publisher.                    |

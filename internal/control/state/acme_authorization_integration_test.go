@@ -3,42 +3,26 @@ package state
 import (
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func TestIntegrationBaselineACMEAuthorizationConstraints(t *testing.T) {
-	databaseURL := newDisposableControlStateDatabaseURL(t, "authorization_baseline")
-	if err := Migrate(t.Context(), databaseURL); err != nil {
-		t.Fatal(err)
-	}
-	database, err := Open(t.Context(), databaseURL, testStorageKey, "", naming.ManagedURLModeGenerated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(database.Close)
+	f := newServicePublicationFixture(t)
+	database, now := f.database, f.now
 	pool := database.pool
-	now := time.Now().UTC().Truncate(time.Second)
-	seedControlPublicURL(t, database, now, "legacy")
-	insertTestPublishRun(t, database, testPublishRun{
-		ID: "legacy-session", PublicURLID: "public_url_legacy", TeamID: "team_legacy", ActingIdentityID: "identity_legacy",
-		CertificateCacheKey: "legacy-cache", CertificateScope: "route",
-		CertificateIdentifiers: []string{"route-legacy.example.test"}, ChallengeMethod: "dns-01",
-		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
-	})
 	for _, query := range []string{
 		`INSERT INTO control.acme_accounts (id, directory_url, contact_email, account_key_ciphertext, account_key_storage_key_id, created_at, updated_at)
 		VALUES ('legacy-account', 'https://acme.example.test/directory', 'operator@example.test', decode(repeat('03',32),'hex'), 'legacy-key', $1, $1)`,
-		`INSERT INTO control.acme_orders (id, account_id, publish_run_id, public_url_id, publish_run_number, idempotency_key, request_digest,
-			certificate_cache_key, certificate_scope, certificate_identifiers, challenge_method, csr_der, csr_digest, state, available_at, created_at, updated_at)
-		SELECT 'legacy-order-' || n, 'legacy-account', 'legacy-session', 'public_url_legacy', 1, 'order-' || n, decode(repeat('04',32),'hex'),
-			'legacy-cache', 'route', ARRAY['route-legacy.example.test'], 'dns-01', decode('01','hex'), decode(repeat('0' || n,32),'hex'), 'authorizing', $1, $1, $1
-		FROM generate_series(1,2) AS n`,
+		`INSERT INTO control.acme_orders (id, account_id, service_run_id, service_id, service_run_number, idempotency_key, request_digest,
+			certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, available_at, created_at, updated_at)
+		SELECT 'legacy-order-' || n, 'legacy-account', run.id, run.service_id, run.run_number, 'order-' || n, decode(repeat('04',32),'hex'),
+			run.certificate_cache_key, run.certificate_scope, run.certificate_domain_id, run.certificate_identifiers,
+			'dns-01', decode('01','hex'), decode(repeat('0' || n,32),'hex'), 'authorizing', $1, $1, $1
+		FROM control.service_runs run CROSS JOIN generate_series(1,2) AS n`,
 		`INSERT INTO control.acme_authorizations (id, order_id, identifier, authorization_url, challenge_type, challenge_url, challenge_token,
 			challenge_digest, presentation_reference, state, available_at, expires_at, created_at, updated_at)
-		VALUES ('legacy-authorization', 'legacy-order-1', 'route-legacy.example.test', 'https://acme.example.test/authz/shared',
+		VALUES ('legacy-authorization', 'legacy-order-1', (SELECT certificate_hostname FROM control.service_runs LIMIT 1), 'https://acme.example.test/authz/shared',
 			'dns-01', 'https://acme.example.test/challenge/legacy', 'legacy-token', decode(repeat('05',32),'hex'), 'fixture-presentation', 'presenting',
 			$1::timestamptz, $1::timestamptz + interval '1 hour', $1::timestamptz, $1::timestamptz)`,
 	} {
@@ -51,7 +35,7 @@ func TestIntegrationBaselineACMEAuthorizationConstraints(t *testing.T) {
 	if _, err := pool.Exec(t.Context(), `INSERT INTO control.acme_authorizations (
 		id, order_id, identifier, authorization_url, state, available_at, validated_at,
 		cleanup_completed_at, expires_at, created_at, updated_at)
-		VALUES ('reused', 'legacy-order-2', 'route-legacy.example.test', 'https://acme.example.test/authz/shared',
+		VALUES ('reused', 'legacy-order-2', (SELECT certificate_hostname FROM control.service_runs LIMIT 1), 'https://acme.example.test/authz/shared',
 		'complete', $1::timestamptz, $1::timestamptz, $1::timestamptz,
 		$1::timestamptz + interval '1 hour', $1::timestamptz, $1::timestamptz)`, now); err != nil {
 		t.Fatalf("reused authorization rejected: %v", err)

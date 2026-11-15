@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
@@ -31,16 +33,22 @@ func (a *allocationSelectionAuthority) ExchangePublisherAssertion(ctx context.Co
 
 type allocationControl struct {
 	*privateScopeControl
-	allocated                          controlv1.Service
-	readErr, allocationErr, cleanupErr error
-	allocations, cleanups              int
-	cleanupID, cleanupAccess           string
-	onRead                             func()
-	checkAllocation                    func(context.Context, string, controlv1.AllocateServiceRequest)
-	checkCleanup                       func(context.Context)
+	allocated                                   controlv1.Service
+	readErr, allocationErr, cleanupErr          error
+	allocations, cleanups                       int
+	namespaceAllocations, deploymentAllocations int
+	cleanupID, cleanupAccess                    string
+	onRead                                      func()
+	checkAllocation                             func(context.Context, string, controlv1.AllocateServiceRequest)
+	checkCleanup                                func(context.Context)
 }
 
 func (c *allocationControl) AllocatePublisherService(ctx context.Context, access string, body controlv1.AllocateServiceRequest) (controlv1.Service, error) {
+	c.namespaceAllocations++
+	return c.allocate(ctx, access, body)
+}
+
+func (c *allocationControl) allocate(ctx context.Context, access string, body controlv1.AllocateServiceRequest) (controlv1.Service, error) {
 	if access != "access" {
 		return controlv1.Service{}, ErrScope
 	}
@@ -52,10 +60,11 @@ func (c *allocationControl) AllocatePublisherService(ctx context.Context, access
 }
 
 func (c *allocationControl) AllocateDeploymentPublication(ctx context.Context, access, team, project, deployment string, body controlv1.AllocateServiceRequest) (controlv1.Service, error) {
+	c.deploymentAllocations++
 	if team != c.service.TeamId || project != "project" || deployment != "production" {
 		return controlv1.Service{}, ErrScope
 	}
-	return c.AllocatePublisherService(ctx, access, body)
+	return c.allocate(ctx, access, body)
 }
 
 func (c *allocationControl) GetPublisherService(ctx context.Context, service, access string) (controlv1.Service, error) {
@@ -100,6 +109,18 @@ func allocationFixture(t *testing.T) (*Native, *allocationControl, *publicationA
 		t.Fatal(err)
 	}
 	return native, control, authority, controlv1.AllocateServiceRequest{InvocationId: invocation, Configuration: controlv1.ProjectServiceConfiguration{Target: "localhost:3000"}}
+}
+
+func deploymentAllocationFixture(t *testing.T) (*Native, *allocationControl, *publicationAuthority, controlv1.AllocateServiceRequest) {
+	t.Helper()
+	original, control, authority, body := allocationFixture(t)
+	approval := controlv1.DeploymentCredential{ClientId: authority.client, GrantId: authority.grant, KeyId: authority.key,
+		TeamId: original.identity.teamID, ProjectKey: "project", ExpiresAt: time.Now().Add(time.Hour)}
+	native, err := NewDeploymentAllocator(control, authority, approval, authority.private, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return native, control, authority, body
 }
 
 func TestAllocateServiceRetainsExactObservedCleanupOwnership(t *testing.T) {
@@ -273,13 +294,17 @@ func TestAllocateServiceResponseLossRequiresOriginalInvocationRecovery(t *testin
 	}
 }
 
-func TestPrepareDeploymentAllocationRetainsCleanupOwnerOnFailure(t *testing.T) {
+func TestDeploymentAllocationRetainsCleanupOwnerOnFailure(t *testing.T) {
 	native, control, authority, body := allocationFixture(t)
 	primary, cleanupErr := errors.New("selection unavailable"), errors.New("delete unavailable")
 	control.readErr, control.cleanupErr = primary, cleanupErr
 	approval := controlv1.DeploymentCredential{ClientId: authority.client, GrantId: authority.grant, KeyId: authority.key, TeamId: native.identity.teamID, ProjectKey: "project", ExpiresAt: time.Now().Add(time.Hour)}
-	owner, service, err := PrepareDeploymentAllocation(t.Context(), control, authority, approval, authority.private, "production", body)
-	if !errors.Is(err, primary) || !errors.Is(err, cleanupErr) || owner == nil || service == nil ||
+	owner, err := NewDeploymentAllocator(control, authority, approval, authority.private, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := owner.AllocateService(t.Context(), body)
+	if !errors.Is(err, primary) || !errors.Is(err, cleanupErr) ||
 		service.Id != control.allocated.Id || owner.selectedServiceID != "" ||
 		owner.identity.kind != "deployment_credential" || owner.PublisherGrantID() != approval.GrantId || control.cleanupID != service.Id {
 		t.Fatal("registered allocation lost its original cleanup owner or returned a ready selection", err)
@@ -290,7 +315,7 @@ func TestPrepareDeploymentAllocationRetainsCleanupOwnerOnFailure(t *testing.T) {
 	}
 }
 
-func TestPrepareDeploymentAllocationPreservesUncertainOwnerForOriginalRetry(t *testing.T) {
+func TestDeploymentAllocationPreservesUncertainOwnerForOriginalRetry(t *testing.T) {
 	for _, boundary := range []string{"lost-reply", "invalid-id", "wrong-team", "saved-service"} {
 		t.Run(boundary, func(t *testing.T) {
 			native, control, authority, body := allocationFixture(t)
@@ -305,7 +330,8 @@ func TestPrepareDeploymentAllocationPreservesUncertainOwnerForOriginalRetry(t *t
 			control.checkAllocation = func(ctx context.Context, access string, got controlv1.AllocateServiceRequest) {
 				t.Helper()
 				document, err := json.Marshal(got)
-				if err != nil || !bytes.Equal(document, original) || access != "access" || ctx != t.Context() {
+				deadline, bounded := ctx.Deadline()
+				if err != nil || !bytes.Equal(document, original) || access != "access" || !bounded || !deadline.Equal(approval.ExpiresAt) {
 					t.Fatal("deployment retry changed the original invocation, request, access, or context", err)
 				}
 			}
@@ -322,8 +348,12 @@ func TestPrepareDeploymentAllocationPreservesUncertainOwnerForOriginalRetry(t *t
 			case "saved-service":
 				control.allocated.Ephemeral = false
 			}
-			owner, service, err := PrepareDeploymentAllocation(t.Context(), control, authority, approval, authority.private, "production", body)
-			if !errors.Is(err, primary) || owner == nil || service != nil || !strings.Contains(err.Error(), body.InvocationId) {
+			owner, err := NewDeploymentAllocator(control, authority, approval, authority.private, "production")
+			if err != nil {
+				t.Fatal(err)
+			}
+			service, err := owner.AllocateService(t.Context(), body)
+			if !errors.Is(err, primary) || service.Id != "" || !strings.Contains(err.Error(), body.InvocationId) {
 				t.Fatal("uncertain deployment allocation lost its native owner or exposed an unvalidated service", err)
 			}
 			assertOriginalIdentity := func(owner *Native) {
@@ -349,8 +379,12 @@ func TestPrepareDeploymentAllocationPreservesUncertainOwnerForOriginalRetry(t *t
 				t.Fatal("unobserved deletion reached control or exchanged another credential")
 			}
 			control.allocated, control.allocationErr = valid, nil
-			recovered, service, err := PrepareDeploymentAllocation(t.Context(), control, authority, approval, authority.private, "production", body)
-			if err != nil || recovered == nil || service == nil || service.Id != valid.Id {
+			recovered, err := owner.Fork()
+			if err != nil {
+				t.Fatal(err)
+			}
+			service, err = recovered.AllocateService(t.Context(), body)
+			if err != nil || service.Id != valid.Id {
 				t.Fatal("same approval and original request could not recover the authoritative allocation", err)
 			}
 			assertOriginalIdentity(recovered)
@@ -360,7 +394,7 @@ func TestPrepareDeploymentAllocationPreservesUncertainOwnerForOriginalRetry(t *t
 			}
 			if err := recovered.DeleteAllocatedService(t.Context(), service.Id); err != nil || control.cleanupID != valid.Id ||
 				control.cleanupAccess != "access" || control.cleanups != 1 || control.allocations != 2 || authority.calls != 4 ||
-				recovered.allocatedServiceID != "" || !recovered.allocationFinished {
+				recovered.allocatedServiceID != "" || !recovered.allocationFinished || control.namespaceAllocations != 0 || control.deploymentAllocations != 2 {
 				t.Fatal("recovered deployment could not delete its exact observed allocation", err)
 			}
 		})
@@ -379,7 +413,7 @@ func (a *failedAllocationExchange) ExchangePublisherAssertion(ctx context.Contex
 	return "", a.err
 }
 
-func TestPrepareDeploymentAllocationReturnsNoOwnerBeforeAttempt(t *testing.T) {
+func TestDeploymentAllocationDoesNotAttemptBeforeSignedAccess(t *testing.T) {
 	for _, boundary := range []string{"signed-exchange", "expired-approval"} {
 		t.Run(boundary, func(t *testing.T) {
 			native, control, authority, body := allocationFixture(t)
@@ -395,8 +429,19 @@ func TestPrepareDeploymentAllocationReturnsNoOwnerBeforeAttempt(t *testing.T) {
 			} else {
 				approval.ExpiresAt = time.Now().Add(-time.Second)
 			}
-			owner, service, err := PrepareDeploymentAllocation(t.Context(), control, exchanger, approval, authority.private, "production", body)
-			if !errors.Is(err, primary) || owner != nil || service != nil || control.allocations != 0 ||
+			owner, err := NewDeploymentAllocator(control, exchanger, approval, authority.private, "production")
+			if boundary == "signed-exchange" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = owner.AllocateService(t.Context(), body)
+				if cleanup := owner.CleanupServiceAllocation(t.Context(), body); cleanup != nil {
+					t.Fatal("pre-attempt cleanup made another attempt", cleanup)
+				}
+			} else if owner != nil {
+				t.Fatal("expired approval created an allocator")
+			}
+			if !errors.Is(err, primary) || control.allocations != 0 ||
 				control.reads != 0 || control.cleanups != 0 || authority.calls != exchanges {
 				t.Fatal("pre-attempt failure exposed allocation ownership or performed an allocation", err)
 			}
@@ -404,7 +449,7 @@ func TestPrepareDeploymentAllocationReturnsNoOwnerBeforeAttempt(t *testing.T) {
 	}
 }
 
-func TestPrepareDeploymentAllocationConfirmedCleanupReturnsNoOwner(t *testing.T) {
+func TestDeploymentAllocationConfirmedCleanupIsTerminalAfterSelectionFailure(t *testing.T) {
 	for _, alreadyDeleted := range []bool{false, true} {
 		t.Run(map[bool]string{false: "deleted", true: "not-found"}[alreadyDeleted], func(t *testing.T) {
 			native, control, authority, body := allocationFixture(t)
@@ -415,10 +460,19 @@ func TestPrepareDeploymentAllocationConfirmedCleanupReturnsNoOwner(t *testing.T)
 			if alreadyDeleted {
 				control.cleanupErr = clientcontrol.ErrNotFound
 			}
-			owner, service, err := PrepareDeploymentAllocation(t.Context(), control, authority, approval, authority.private, "production", body)
-			if !errors.Is(err, primary) || owner != nil || service != nil || control.allocations != 1 || control.cleanups != 1 ||
+			owner, err := NewDeploymentAllocator(control, authority, approval, authority.private, "production")
+			if err != nil {
+				t.Fatal(err)
+			}
+			service, err := owner.AllocateService(t.Context(), body)
+			if !errors.Is(err, primary) || service.Id != "" || !owner.allocationFinished || control.allocations != 1 || control.cleanups != 1 ||
 				control.cleanupID != control.allocated.Id || control.cleanupAccess != "access" || authority.calls != 2 {
 				t.Fatal("confirmed cleanup retained ownership or lost the exact observed allocation credential", err)
+			}
+			for range 3 {
+				if err := owner.CleanupServiceAllocation(t.Context(), body); err != nil || control.allocations != 1 || control.cleanups != 1 || authority.calls != 2 {
+					t.Fatal("confirmed cleanup replayed a deleted allocation or returned the publication failure", err)
+				}
 			}
 		})
 	}
@@ -652,7 +706,7 @@ func TestCleanupServiceAllocationRejectsInvalidRecoveredScopeWithoutDeleting(t *
 	}
 }
 
-func TestCleanupServiceAllocationIsNamespaceOnly(t *testing.T) {
+func TestCleanupServiceAllocationRequiresCapturedAllocationAuthority(t *testing.T) {
 	for _, kind := range []string{"service", "deployment_credential"} {
 		t.Run(kind, func(t *testing.T) {
 			native, control, authority, body := allocationFixture(t)
@@ -667,4 +721,142 @@ func TestCleanupServiceAllocationIsNamespaceOnly(t *testing.T) {
 	if err := (*Native)(nil).CleanupServiceAllocation(t.Context(), controlv1.AllocateServiceRequest{}); !errors.Is(err, ErrScope) {
 		t.Fatal("nil cleanup owner was not rejected", err)
 	}
+}
+
+func TestDeploymentAllocationCleanupRecoversWithoutPublicationSelection(t *testing.T) {
+	for _, firstDelete := range []error{nil, clientcontrol.ErrNotFound, errors.Join(context.Canceled, errors.New("delete unavailable"))} {
+		t.Run(fmt.Sprint(firstDelete), func(t *testing.T) {
+			native, control, authority, body := deploymentAllocationFixture(t)
+			body.ExpiresAt = new(time.Now().Add(time.Minute))
+			body.Configuration.Http = &controlv1.ProjectServiceHTTP{Limits: &controlv1.ProjectHTTPApplicationLimits{Total: new(7)}}
+			original, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			control.checkAllocation = func(ctx context.Context, _ string, request controlv1.AllocateServiceRequest) {
+				t.Helper()
+				document, err := json.Marshal(request)
+				deadline, bounded := ctx.Deadline()
+				if err != nil || !bytes.Equal(document, original) || !bounded || !deadline.Equal(native.deploymentAllocation.expiresAt) {
+					t.Fatal("recovery changed its captured endpoint, declaration, or approval deadline", err)
+				}
+			}
+			lost := io.ErrUnexpectedEOF
+			control.allocationErr = lost
+			_, operationErr := native.AllocateService(t.Context(), body)
+			if !errors.Is(operationErr, lost) {
+				t.Fatal(operationErr)
+			}
+			control.allocationErr, control.cleanupErr = nil, firstDelete
+			control.readErr = errors.New("publication selection is unavailable")
+			control.onRead = func() { t.Error("cleanup attempted publication selection") }
+			// cleanup retains the allocation endpoint independently of service reads.
+			native.Services = nil
+			cleanupErr := native.CleanupServiceAllocation(t.Context(), body)
+			if firstDelete != nil && !errors.Is(firstDelete, clientcontrol.ErrNotFound) {
+				combined := errors.Join(operationErr, cleanupErr)
+				if !errors.Is(combined, lost) || !errors.Is(combined, firstDelete) || native.allocationFinished ||
+					native.allocatedServiceID != control.allocated.Id {
+					t.Fatal("failed cleanup lost original ownership or an independent failure", combined)
+				}
+				native.Services = control
+				fork, err := native.Fork()
+				if err != nil || fork.deploymentAllocation != native.deploymentAllocation {
+					t.Fatal("fork lost the captured deployment allocation authority", err)
+				}
+				native = fork
+				control.cleanupErr = nil
+				if err := native.CleanupServiceAllocation(t.Context(), body); err != nil {
+					t.Fatal("retry could not delete the already observed allocation", err)
+				}
+			} else if cleanupErr != nil {
+				t.Fatal(cleanupErr)
+			}
+			allocations, cleanups, exchanges := control.allocations, control.cleanups, authority.calls
+			for range 3 {
+				if err := native.CleanupServiceAllocation(t.Context(), body); err != nil {
+					t.Fatal("confirmed cleanup was not terminal", err)
+				}
+			}
+			wantCleanups := 1
+			if firstDelete != nil && !errors.Is(firstDelete, clientcontrol.ErrNotFound) {
+				wantCleanups++
+			}
+			if control.namespaceAllocations != 0 || allocations != 2 || control.deploymentAllocations != 2 ||
+				cleanups != wantCleanups || control.reads != 0 || control.cleanupID != control.allocated.Id ||
+				control.cleanupAccess != "access" || control.allocations != allocations || control.cleanups != cleanups ||
+				authority.calls != exchanges || native.allocatedServiceID != "" || !native.allocationFinished || native.selectedServiceID != "" {
+				t.Fatal("cleanup replayed a finished invocation, reselected publication, or used namespace authority",
+					control.allocations, control.cleanups, control.reads, authority.calls)
+			}
+		})
+	}
+}
+
+func TestDeploymentAllocationCleanupRetriesRecoveryFailuresOnOriginalOwner(t *testing.T) {
+	for _, boundary := range []string{"signed-access", "allocation-replay", "invalid-response"} {
+		t.Run(boundary, func(t *testing.T) {
+			native, control, authority, body := deploymentAllocationFixture(t)
+			control.allocationErr = io.ErrUnexpectedEOF
+			if _, err := native.AllocateService(t.Context(), body); !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatal(err)
+			}
+			valid := control.allocated
+			primary := error(ErrScope)
+			switch boundary {
+			case "signed-access":
+				primary = errors.New("signed access unavailable")
+				native.authority = &failedAllocationExchange{publicationAuthority: authority, err: primary}
+			case "allocation-replay":
+				primary = errors.New("recovery unavailable")
+				control.allocationErr = primary
+			case "invalid-response":
+				control.allocationErr = nil
+				control.allocated.TeamId = "another-team"
+			}
+			if err := native.CleanupServiceAllocation(t.Context(), body); !errors.Is(err, primary) || native.allocationFinished ||
+				native.allocatedServiceID != "" || control.cleanups != 0 || control.reads != 0 {
+				t.Fatal("failed recovery discarded uncertainty or guessed deletion authority", err)
+			}
+			native.authority, control.allocated, control.allocationErr = authority, valid, nil
+			control.onRead = func() { t.Error("cleanup reselected publication") }
+			if err := native.CleanupServiceAllocation(t.Context(), body); err != nil || !native.allocationFinished ||
+				control.namespaceAllocations != 0 || control.cleanups != 1 || control.cleanupID != valid.Id {
+				t.Fatal("original deployment invocation could not recover cleanup", err)
+			}
+		})
+	}
+}
+
+func TestDeploymentAllocationDeadlineIsCapturedAndTerminalCleanupSurvivesExpiry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		for _, completed := range []bool{false, true} {
+			native, control, authority, body := deploymentAllocationFixture(t)
+			expires := native.deploymentAllocation.expiresAt
+			if completed {
+				if _, err := native.AllocateService(t.Context(), body); err != nil {
+					t.Fatal(err)
+				}
+				if err := native.CleanupServiceAllocation(t.Context(), body); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				control.allocationErr = io.ErrUnexpectedEOF
+				if _, err := native.AllocateService(t.Context(), body); !errors.Is(err, io.ErrUnexpectedEOF) {
+					t.Fatal(err)
+				}
+			}
+			allocations, cleanups, exchanges := control.allocations, control.cleanups, authority.calls
+			time.Sleep(time.Until(expires))
+			// a replacement caller deadline cannot extend the captured approval.
+			body.ExpiresAt = new(time.Now().Add(time.Hour))
+			ctx, cancel := context.WithTimeout(t.Context(), time.Hour)
+			err := native.CleanupServiceAllocation(ctx, body)
+			cancel()
+			if completed && err != nil || !completed && !errors.Is(err, context.DeadlineExceeded) ||
+				control.allocations != allocations || control.cleanups != cleanups || authority.calls != exchanges {
+				t.Fatal("expiry replayed authority or invalidated confirmed cleanup", err)
+			}
+		}
+	})
 }

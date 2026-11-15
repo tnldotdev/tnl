@@ -6,7 +6,9 @@ WITH candidate AS (
       AND (NOT work.public OR work.dns_state='removing' OR EXISTS (
           SELECT 1 FROM control.services service
           JOIN control.service_runs run ON run.service_id=service.id
-          WHERE service.id=work.service_id AND service.public AND service.enabled AND service.deleted_at IS NULL
+           WHERE service.id=work.service_id AND service.public AND service.enabled AND service.deleted_at IS NULL
+             AND service.certificate_hostname=work.hostname AND service.domain_id=work.domain_id
+             AND run.certificate_hostname=work.hostname AND run.certificate_domain_id=work.domain_id
             AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
             AND run.publisher_expires_at>sqlc.arg(now) AND run.certificate_expires_at>sqlc.arg(now)
             AND EXISTS(SELECT 1 FROM control.service_connection_slots slot

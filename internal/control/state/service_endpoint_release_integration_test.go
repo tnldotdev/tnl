@@ -195,16 +195,16 @@ func TestIntegrationServiceEndpointReleaseRequiresSettledDNS(t *testing.T) {
 		return err
 	}
 	if err := release(); !errors.Is(err, ErrServiceEndpointDNSPending) {
-		t.Fatal("release skipped the private DNS replacement", err)
+		t.Fatal("release skipped DNS removal", err)
 	}
 	work, found, err := d.ClaimServiceEndpointDNSWork(t.Context(), "release-dns", now, time.Minute)
-	if err != nil || !found || work.Public {
-		t.Fatal("private DNS work unavailable", work, found, err)
+	if err != nil || !found || work.Public || work.State != ServiceEndpointDNSRemoving {
+		t.Fatal("DNS removal work unavailable", work, found, err)
 	}
 	if err := release(); !errors.Is(err, ErrServiceEndpointDNSPending) {
 		t.Fatal("in-flight DNS was treated as a completed receipt", err)
 	}
-	work.State, work.AvailableAt = ServiceEndpointDNSPublished, time.Time{}
+	work.State, work.AvailableAt = ServiceEndpointDNSRemoved, time.Time{}
 	if _, err := d.SaveServiceEndpointDNSWork(t.Context(), work, now); err != nil {
 		t.Fatal(err)
 	}

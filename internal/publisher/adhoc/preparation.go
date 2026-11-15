@@ -34,7 +34,7 @@ func (*Prepared) GoString() string { return "temporary service preparation" }
 // coordination. it does not transfer cleanup ownership or start any workers.
 func (p *Prepared) Publisher() *publisheridentity.Native { return p.native }
 
-// Prepare selects the real namespace identity and allocates one HTTP service.
+// Prepare selects the real allocation identity and allocates one HTTP service.
 // it starts no publication workers. a non-nil result must be cleaned up even on
 // error, after the caller's run has joined and before borrowed state is closed.
 func Prepare(ctx context.Context, options Options) (*Prepared, error) {
@@ -62,7 +62,7 @@ func Prepare(ctx context.Context, options Options) (*Prepared, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := native.NamespaceScope(); err != nil {
+	if err := native.AllocationScope(); err != nil {
 		return nil, err
 	}
 	if native.ControlURL() != options.ControlURL {

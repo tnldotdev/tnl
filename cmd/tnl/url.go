@@ -31,7 +31,7 @@ type publicURLCommand struct {
 
 type publicURLUpdateCommand struct {
 	scopedTeamFlags `embed:""`
-	PublicURLID     string `arg:"" name:"public-url-id" required:"" help:"Service ID, public hostname, or HTTPS origin."`
+	Service         string `arg:"" name:"service-or-address" required:"" help:"Service ID, public hostname, or HTTPS origin."`
 	Target          string `name:"target" help:"New HTTP or HTTPS target origin; no connection is made from this command."`
 }
 
@@ -46,7 +46,7 @@ type publicURLInventoryCommand struct {
 
 type publicURLDeleteCommand struct {
 	scopedTeamFlags `embed:""`
-	PublicURLID     string `arg:"" name:"public-url-id" required:"" help:"Service ID, public hostname, or HTTPS origin to delete."`
+	Service         string `arg:"" name:"service-or-address" required:"" help:"Service ID, public hostname, or HTTPS origin to delete."`
 }
 
 func runURLList(ctx context.Context, command publicURLListCommand, output, diagnostics io.Writer) error {
@@ -140,7 +140,7 @@ func runURLInventory(ctx context.Context, command publicURLInventoryCommand, out
 	if err != nil {
 		return err
 	}
-	routes, err := session.Authenticated().Control.ListServices(ctx, current.Team().Id)
+	services, err := session.Authenticated().Control.ListServices(ctx, current.Team().Id)
 	if err != nil {
 		return err
 	}
@@ -149,7 +149,7 @@ func runURLInventory(ctx context.Context, command publicURLInventoryCommand, out
 		clioutput.Field{Label: "team", Value: current.Team().DisplayName},
 	)}
 	count := 0
-	for _, service := range routes {
+	for _, service := range services {
 		if service.Endpoint == nil || !service.Endpoint.Public {
 			continue
 		}
@@ -182,7 +182,7 @@ func runURLDelete(ctx context.Context, command publicURLDeleteCommand, output, d
 		return err
 	}
 	defer session.Close()
-	selected, err := resolveManagedService(ctx, session, command.PublicURLID)
+	selected, err := resolveManagedService(ctx, session, command.Service)
 	if err != nil {
 		return err
 	}
@@ -202,7 +202,7 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 		return err
 	}
 	defer session.Close()
-	service, err := resolveManagedService(ctx, session, flags.PublicURLID)
+	service, err := resolveManagedService(ctx, session, flags.Service)
 	if err != nil {
 		return err
 	}

@@ -182,43 +182,39 @@ func TestIntegrationMembershipRemovalClosesRoutesAndQuarantinesSlug(t *testing.T
 	database, now, owner, team := newAuthorityTeam(t)
 	admin := addAuthorityMember(t, database, now, owner, team.ID, "admin", "admin")
 	member := addAuthorityMember(t, database, now, admin.IdentityID, team.ID, "second", "member")
-	sealedDigest, err := database.sealSecret(publicURLRequestDigestContext("public_url_member"), bytes.Repeat([]byte{'1'}, 32))
+	registerCertificatePlanRelays(t, database, now)
+	service, publisher := managementAllocation(t, database, team.ID, member.IdentityID, now)
+	prepared, err := database.PrepareServiceRun(t.Context(), service.ID, publisher, "member-run", now,
+		ServiceRunRequest{Metadata: service.ServiceMetadata})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.public_urls (
-		id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key,
-		request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname, target,
-		public_url_scope, purpose, policy_revision, ip_policy,
-		lifecycle_state, dns_state, created_at, updated_at
-	) VALUES ('public_url_member', $1, $2, $3, $4, 'member-route', $5, $6,
-		'second.example.test', 'http://127.0.0.1:3000', 'member', 'app', $7, 'allow_all', 'enabled', 'unmanaged', $8, $8)`,
-		team.ID, team.DefaultDomainID, member.ID, member.IdentityID,
-		sealedDigest, database.storageKey.CurrentID(), member.PolicyRevision, now); err != nil {
+	run, err := database.StartServiceRun(t.Context(), service.ID, prepared.RunID, prepared.RunNumber, publisher, now)
+	if err != nil {
 		t.Fatal(err)
 	}
-	insertTestPublishRun(t, database, testPublishRun{
-		ID: "session_member", PublicURLID: "public_url_member", TeamID: team.ID,
-		MembershipID: member.ID, ActingIdentityID: member.IdentityID, PolicyRevision: int64(member.PolicyRevision),
-		CertificateCacheKey: "member-cert", CertificateScope: "route", CertificateIdentifiers: []string{"second.example.test"},
-		ChallengeMethod: "dns-01", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
-	})
 	if err := database.RemoveMembership(t.Context(), admin.IdentityID, team.ID, member.ID, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.getMembership(t.Context(), team.ID, member.ID); !errors.Is(err, ErrMembershipNotFound) {
 		t.Fatalf("removed membership: %v", err)
 	}
-	var publicURLState, sessionState, reason, slugState string
-	if err := database.pool.QueryRow(t.Context(), `SELECT routes.lifecycle_state, sessions.state, sessions.close_reason, slugs.state
-		FROM control.public_urls AS routes JOIN control.publish_runs AS sessions ON sessions.public_url_id = routes.id
-		JOIN control.team_memberships AS memberships ON memberships.id = routes.membership_id
-		JOIN control.member_slug_reservations AS slugs ON slugs.id = memberships.slug_reservation_id
-		WHERE routes.id = 'public_url_member'`).Scan(&publicURLState, &sessionState, &reason, &slugState); err != nil {
+	var closed, retained bool
+	var slugState string
+	if err := database.pool.QueryRow(t.Context(), `SELECT run.state='closed' AND run.closed_at IS NOT NULL,
+		service.deleted_at IS NULL,slugs.state
+		FROM control.service_runs run JOIN control.services service ON service.id=run.service_id
+		JOIN control.team_memberships memberships ON memberships.id=$2
+		JOIN control.member_slug_reservations slugs ON slugs.id=memberships.slug_reservation_id
+		WHERE run.id=$1`, run.RunID, member.ID).Scan(&closed, &retained, &slugState); err != nil {
 		t.Fatal(err)
 	}
-	if publicURLState != "suspended" || sessionState != "closed" || reason != "membership_removed" || slugState != "quarantined" {
-		t.Fatalf("removed member runtime = %s/%s/%s/%s", publicURLState, sessionState, reason, slugState)
+	if !closed || !retained || slugState != "quarantined" {
+		t.Fatalf("removed member runtime closed=%t retained=%t slug=%s", closed, retained, slugState)
+	}
+	if _, err := database.HeartbeatServiceRun(t.Context(), service.ID, run.RunID, run.Token, now.Add(time.Second),
+		ServiceRunHealth{Healthy: true, StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("removed member retained publisher authority", err)
 	}
 	request := authorityInvitationRequest(owner, team.ID, "second", now)
 	request.IdempotencyKey = "reuse-accepted-slug"

@@ -28,9 +28,10 @@ func TestPortablePublisherCommandFlags(t *testing.T) {
 		command string
 	}{
 		{[]string{"publisher", "setup", "--namespace"}, "publisher setup"},
-		{[]string{"publisher", "setup", "--url", "url_selected"}, "publisher setup"},
+		{[]string{"publisher", "setup", "--url", "https://app.example.test"}, "publisher setup"},
 		{[]string{"publisher", "provision", "--namespace", "--output-file", "/tmp/publisher.json"}, "publisher provision"},
-		{[]string{"publisher", "provision", "--url", "url_selected", "--output-file", "/tmp/publisher.json"}, "publisher provision"},
+		{[]string{"publisher", "provision", "--url", "https://app.example.test", "--output-file", "/tmp/publisher.json"}, "publisher provision"},
+		{[]string{"publisher", "grant", "add", "pub_0123456789abcdefghijkl", "--url", "https://app.example.test"}, "publisher grant add <publisher-identity-id>"},
 		{[]string{"publish", "3000", "--publisher-credential-file", "/tmp/publisher.json"}, "publish <service-or-target>"},
 	} {
 		var flags cli
@@ -48,6 +49,17 @@ func TestPortablePublisherCommandFlags(t *testing.T) {
 		if tc.command == "publish <service-or-target>" && flags.Publish.PublisherCredentialFile != "/tmp/publisher.json" {
 			t.Fatal("file flag was lost")
 		}
+	}
+}
+
+func TestPublisherGrantRejectsRetiredPublicURLIDFlag(t *testing.T) {
+	var flags cli
+	parser, err := kong.New(&flags, kong.Writers(io.Discard, io.Discard))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parser.Parse([]string{"publisher", "grant", "add", "pub_0123456789abcdefghijkl", "--public-url-id", "url_0123456789abcdefghijkl"}); err == nil {
+		t.Fatal("retired public URL grant option was accepted")
 	}
 }
 
@@ -70,7 +82,7 @@ func TestPublisherAddressSelectsExactManagedServiceWithoutVisitorAuthority(t *te
 				{Id: id, TeamId: team, Enabled: true, Protocol: controlv1.ServiceProtocolHTTP, Endpoint: &controlv1.ServiceEndpoint{Hostname: "app.example.test", Port: 443, Public: true}},
 			}})
 		case "GET /v1/services/" + id:
-			_ = json.NewEncoder(w).Encode(controlv1.Service{Id: id, TeamId: team, Enabled: true, Protocol: controlv1.ServiceProtocolHTTP})
+			_ = json.NewEncoder(w).Encode(controlv1.Service{Id: id, TeamId: team, Enabled: true, Protocol: controlv1.ServiceProtocolHTTP, TrustRevision: 1})
 		default:
 			t.Errorf("publisher selection used visitor or retired URL authority: %s %s", r.Method, r.URL)
 			w.WriteHeader(http.StatusNotFound)

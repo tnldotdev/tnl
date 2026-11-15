@@ -75,7 +75,7 @@ func TestIntegrationSharesSnapshotAndRevoke(t *testing.T) {
 		t.Fatalf("creator's team shares = %+v, %v", teamPage, err)
 	}
 	otherPage, err := database.ListTeamShares(t.Context(), preview.TeamID, "other-identity", "")
-	if err != nil || len(otherPage.Shares) != 0 {
+	if !errors.Is(err, ErrServiceAccess) || len(otherPage.Shares) != 0 {
 		t.Fatalf("another identity's team shares = %+v, %v", otherPage, err)
 	}
 	if _, err := database.RevokeShare(t.Context(), share.ID, "other-identity", now); !errors.Is(err, ErrShareNotFound) {

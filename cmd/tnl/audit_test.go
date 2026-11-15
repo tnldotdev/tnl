@@ -5,21 +5,28 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/alecthomas/kong"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func auditEvent(cursor int64) controlv1.ServiceAuditEvent {
-	return controlv1.ServiceAuditEvent{Id: "event-" + strconv.FormatInt(cursor, 10), Cursor: strconv.FormatInt(cursor, 10), TeamId: "team-shop", ServiceId: "service-api", ServiceKind: "service", EventType: "visitor.admit", OccurredAt: time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)}
+	return controlv1.ServiceAuditEvent{Id: "event-" + strconv.FormatInt(cursor, 10), Cursor: strconv.FormatInt(cursor, 10), TeamId: "team-shop", ServiceId: "svc_0123456789abcdefghijkl", ServiceKind: "service", EventType: "visitor.admit", OccurredAt: time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)}
 }
 
 func TestAuditListParsesRequestedWorkflowAndProjectTeam(t *testing.T) {
@@ -62,6 +69,79 @@ func TestAuditSinceUsesOneUTCInstantAndRejectsInvalidInput(t *testing.T) {
 		if _, err := auditSince(value, now); err == nil {
 			t.Fatalf("accepted invalid --since %q", value)
 		}
+	}
+}
+
+func TestAuditSelectsOnlyServiceIDsNamesAndHostnames(t *testing.T) {
+	const team = "tm_0123456789abcdefghijkl"
+	access, _, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	filters := make(chan url.Values, 1)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/v1/discovery" && r.Header.Get("Authorization") != "Bearer "+access.String() {
+			t.Error("audit did not use its management session")
+		}
+		switch r.URL.Path {
+		case "/v1/discovery":
+			_ = json.NewEncoder(w).Encode(controlv1.ControlDiscovery{ManagedDomain: "example.test", ManagedUrlMode: "generated",
+				Authentication: controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{"oidc"}, Oidc: &controlv1.OIDCAuthenticationFacts{Issuer: "https://identity.example.test", LoginFlow: "device_code"}}})
+		case "/v1/identity":
+			_ = json.NewEncoder(w).Encode(authorityv1.IdentityContext{Memberships: []authorityv1.Membership{{TeamId: team}}})
+		case "/v1/teams/" + team:
+			_ = json.NewEncoder(w).Encode(authorityv1.Team{Id: team})
+		case "/v1/teams/" + team + "/service-audit":
+			filters <- r.URL.Query()
+			_ = json.NewEncoder(w).Encode(controlv1.ServiceAuditPage{Events: []controlv1.ServiceAuditEvent{}})
+		default:
+			t.Errorf("unexpected audit request: %s", r.URL)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+	original := http.DefaultTransport
+	http.DefaultTransport = server.Client().Transport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	for _, selector := range []string{"svc_0123456789abcdefghijkl", "api", "api.example.test"} {
+		t.Run(selector, func(t *testing.T) {
+			flags := auditListCommand{Service: selector, Limit: 1, Output: statusOutputJSON,
+				scopedTeamFlags: scopedTeamFlags{remoteFlags: remoteFlags{ServerURL: server.URL, AccessToken: access.String(), StateDir: filepath.Join(t.TempDir(), "state")}, teamSelectionFlags: teamSelectionFlags{Team: team}}}
+			if err := runAuditList(t.Context(), flags, io.Discard, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			var got url.Values
+			select {
+			case got = <-filters:
+			default:
+				t.Fatal("audit did not request service history")
+			}
+			id := ""
+			if strings.HasPrefix(selector, "svc_") {
+				id = selector
+				selector = ""
+			}
+			if got.Get("service_id") != id || got.Get("service") != selector {
+				t.Fatalf("audit changed service selection: %v", got)
+			}
+		})
+	}
+	for _, selector := range []string{"url_0123456789abcdefghijkl", "svc_invalid", " api", "api/path", "https://api.example.test", "api\n", "api\x00", strings.Repeat("a", 254)} {
+		t.Run(selector, func(t *testing.T) {
+			before := requests.Load()
+			state := filepath.Join(t.TempDir(), "state")
+			flags := auditListCommand{Service: selector, Limit: 1, scopedTeamFlags: scopedTeamFlags{remoteFlags: remoteFlags{ServerURL: server.URL, AccessToken: access.String(), StateDir: state}}}
+			err := runAuditList(t.Context(), flags, io.Discard, io.Discard)
+			if reason, _ := failure.ReasonOf(err); reason != failure.InvalidTunnelFlags || requests.Load() != before {
+				t.Fatalf("invalid service selector reached control: %v", err)
+			}
+			if _, err := os.Stat(state); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("invalid service selector opened client state: %v", err)
+			}
+		})
 	}
 }
 
@@ -122,14 +202,14 @@ func (f auditReaderFunc) ListServiceAudit(ctx context.Context, team string, p co
 }
 
 func TestAuditRejectsStalledBackwardAndCrossTeamPages(t *testing.T) {
-	for _, mode := range []string{"stalled", "backward", "empty", "cross-team", "skipped-cursor"} {
+	for _, mode := range []string{"stalled", "backward", "empty", "cross-team", "skipped-cursor", "retired-service", "malformed-service"} {
 		t.Run(mode, func(t *testing.T) {
 			calls := 0
 			reader := auditReaderFunc(func(_ context.Context, _ string, _ controlv1.ListServiceAuditParams) (controlv1.ServiceAuditPage, error) {
 				calls++
 				next := "1"
 				page := controlv1.ServiceAuditPage{Events: []controlv1.ServiceAuditEvent{auditEvent(1)}, NextCursor: &next}
-				if calls == 1 && mode != "empty" && mode != "cross-team" && mode != "skipped-cursor" {
+				if calls == 1 && (mode == "stalled" || mode == "backward") {
 					return page, nil
 				}
 				switch mode {
@@ -141,6 +221,10 @@ func TestAuditRejectsStalledBackwardAndCrossTeamPages(t *testing.T) {
 					page.Events[0].TeamId = "other-team"
 				case "skipped-cursor":
 					next = "9"
+				case "retired-service":
+					page.Events[0].ServiceId = "url_0123456789abcdefghijkl"
+				case "malformed-service":
+					page.Events[0].ServiceId = "svc_invalid"
 				}
 				return page, nil
 			})

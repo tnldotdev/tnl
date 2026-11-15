@@ -62,7 +62,7 @@ func TestIntegrationGuestAuthorityCumulativeBudgetAndOfflineReplacement(t *testi
 	}
 	request := f.allocation
 	request.IdempotencyKey, request.Now = "next", overlapAt
-	if _, err := f.database.AllocateGuestDemoService(t.Context(), request); !errors.Is(err, ErrPublishRunOpen) {
+	if _, err := f.database.AllocateGuestDemoService(t.Context(), request); !errors.Is(err, ErrServiceConflict) {
 		t.Fatalf("another demo reused outstanding authority: %v", err)
 	}
 	request.Now = issued.ServingUntil.Time.Add(time.Second)

@@ -182,6 +182,11 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	if err != nil {
 		return result, err
 	}
+	if metadata.Endpoint == nil {
+		return result, ErrServiceMetadata
+	}
+	metadata.Endpoint.Hostname = run.CertificateHostname
+	permission.Hostname = run.CertificateHostname
 	// retain the entry-time serving cap. elapsed time only narrows the time left
 	// to authorize; a slow database must not mint a later deadline.
 	recheckUntil := minTime(deadline, requestAt.Add(5*time.Minute))
@@ -414,17 +419,7 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 		// sign the permission already authenticated under these admission locks,
 		// not a second source read or a later transaction. key retention rolls
 		// back with pair renewal if any final authority deadline is spent.
-		service, err := q.GetService(ctx, r.ServiceID)
-		if err != nil {
-			return ConnectorPeerPair{}, err
-		}
-		result.Metadata, err = checkedServiceMetadata(service)
-		if err != nil {
-			return ConnectorPeerPair{}, err
-		}
-		if result.Metadata.Endpoint == nil {
-			return ConnectorPeerPair{}, ErrServiceMetadata
-		}
+		result.Metadata = metadata
 		result.RunValidUntil = publisherUntil
 		permission.ExpiresAt = minTime(permission.ExpiresAt, result.ExpiresAt).Truncate(time.Second)
 		if !permission.ExpiresAt.After(checkedNow()) {

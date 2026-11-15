@@ -32,12 +32,13 @@ func drainWorkloadHistory(t *testing.T, d *Database, now time.Time, limit int) i
 	var total int64
 	for range 100 {
 		before := workloadHistoryCounts(t, d)
-		if err := d.ExpireVisitorPermissions(t.Context(), now); err != nil {
+		if _, err := d.ExpireServiceRuns(t.Context(), now); err != nil {
 			t.Fatal(err)
 		}
 		if after := workloadHistoryCounts(t, d)["workload_assertions"]; after != before["workload_assertions"] {
 			t.Fatalf("visitor permission worker bypassed workload retention: assertions %d -> %d", before["workload_assertions"], after)
 		}
+		before = workloadHistoryCounts(t, d)
 		n, err := d.CleanupWorkloads(t.Context(), now, limit)
 		if err != nil || n < 0 || n > int64(6*limit) {
 			t.Fatalf("bounded cleanup: removed=%d err=%v", n, err)

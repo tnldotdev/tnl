@@ -292,7 +292,7 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
                 "project",
                 "service",
                 "service_protocol",
-                "public_url_id",
+                "service_id",
                 "publish_run_number",
                 "public_port",
                 "hostname",
@@ -339,6 +339,11 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
                     raise InvalidResponse()
             else:
                 text(field_value)
+        if (
+            "service_id" in publication
+            and re.fullmatch(r"svc_[A-Za-z0-9]{22}", text(publication["service_id"])) is None
+        ):
+            raise InvalidResponse()
     if not services:
         return None
     item = object_value(

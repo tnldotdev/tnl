@@ -4,6 +4,7 @@ package public
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"time"
@@ -16,12 +17,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/serverhttp"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-)
-
-const (
-	publisherLeaseDuration                = 45 * time.Second
-	publisherConnectionCredentialDuration = 2 * time.Minute
 )
 
 // Config contains the public API settings derived from tnld configuration.
@@ -38,6 +35,8 @@ type Config struct {
 	OIDCIssuer                        string
 	OIDCClientID                      string
 	OIDCClientSecret                  string
+	OIDCVerifier                      oidc.Verifier
+	WebServiceSecret                  string
 	AccessTokenLifetime               time.Duration
 	RefreshTokenLifetime              time.Duration
 	OIDCScopes                        []string
@@ -84,7 +83,8 @@ type BrowserAccessStore interface {
 type ShareStore interface {
 	CreateShare(context.Context, controlstate.CreateShareRequest, time.Time) (controlstate.Share, error)
 	CreateGuestShare(context.Context, controlstate.GuestCredential, string, string, string, [32]byte, time.Time, time.Time) (controlstate.Share, error)
-	GetShare(context.Context, string) (controlstate.Share, error)
+	GetShareForManagement(context.Context, string, string, time.Time) (controlstate.Share, error)
+	ResolveCompanyAccount(context.Context, string, string) (string, error)
 	ListShares(context.Context, string, string) (controlstate.SharePage, error)
 	ListTeamShares(context.Context, string, string, string) (controlstate.SharePage, error)
 	RevokeShare(context.Context, string, string, time.Time) (controlstate.Share, error)
@@ -108,12 +108,11 @@ type FeedbackStore interface {
 	ReviewerFeedbackScope(context.Context, controlstate.ServiceHTTPRun, string, controlstate.FeedbackActor, time.Time) (string, string, error)
 }
 
-// AuthorizationStore provides the identity state needed for public URL authorization.
+// AuthorizationStore provides current identity and team session authority.
 type AuthorizationStore interface {
 	AuthenticateAccessToken(context.Context, credentials.AccessToken, time.Time) (controlstate.ControlPrincipal, error)
 	AuthorizeTeamSession(context.Context, controlstate.ControlPrincipal, string, time.Time) error
 	IdentityContext(context.Context, string) (controlstate.IdentityContext, error)
-	ListTeamDomains(context.Context, string, string) ([]controlstate.Domain, error)
 }
 
 type handler struct {
@@ -130,8 +129,9 @@ type handler struct {
 	feedback          FeedbackStore
 	guests            GuestStore
 	readiness         func(context.Context) error
-	authorizer        publicURLAuthorizer
+	authorizer        controlSessionAuthorizer
 	webhookCatalog    *webhooks.Catalog
+	shareWebsiteAuth  serverhttp.BearerSecrets
 }
 
 var _ controlv1.ServerInterface = (*handler)(nil)
@@ -158,6 +158,22 @@ func NewHandler(
 		previews: stores.Previews, previewTeamAccess: stores.PreviewTeamAccess,
 		browserAccess: stores.BrowserAccess, shares: stores.Shares, shareAccess: stores.ShareAccess,
 		feedback: stores.Feedback, guests: stores.Guests}
+	if cfg.WebServiceSecret != "" {
+		if cfg.OIDCIssuer == "" || cfg.OIDCClientID == "" {
+			return nil, errors.New("website share management requires an OIDC issuer and client ID")
+		}
+		var err error
+		h.shareWebsiteAuth, err = serverhttp.NewBearerSecrets(cfg.WebServiceSecret, "")
+		if err != nil {
+			return nil, err
+		}
+		if h.config.OIDCVerifier == nil {
+			h.config.OIDCVerifier, err = oidc.NewVerifier(oidc.VerifierConfig{Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, HTTPClient: cfg.HTTPClient})
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	h.webhookCatalog = cfg.WebhookCatalog
 	if h.webhookCatalog == nil {
 		h.webhookCatalog = webhooks.New(cfg.HTTPClient)

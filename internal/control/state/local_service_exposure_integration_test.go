@@ -4,6 +4,8 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"fmt"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -154,8 +156,47 @@ func TestIntegrationLocalServiceExposureAtomicAcrossWorktrees(t *testing.T) {
 	}
 }
 
+func readyLocalExposureRun(t *testing.T, d *Database, local LocalProjectService, actor serviceTestAuthority, leases map[string]RelayLease, now time.Time) (ServiceRunPreparation, ServiceRunState) {
+	t.Helper()
+	service, err := d.GetService(t.Context(), local.ServiceID, actor.ActingIdentityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrollment := publisherEnrollment(t, d, actor, PublisherScope{TeamID: service.TeamID, Kind: "service", ServiceID: service.ID}, now)
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher, err := d.RedeemPublisherEnrollment(t.Context(), enrollment.Key, pub, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := d.PrepareServiceRun(t.Context(), service.ID, publisher, fmt.Sprintf("local-%s", service.ID), now, ServiceRunRequest{Metadata: service.ServiceMetadata})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := d.StartServiceRun(t.Context(), service.ID, prepared.RunID, prepared.RunNumber, publisher, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installPrivateTestCertificate(t, d, prepared, run, now)
+	for _, slot := range run.Connections {
+		lease := leases[slot.RelayServiceID].RelayLeaseIdentity
+		if _, err = d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), lease, now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = d.ReadyServicePublisherConnection(t.Context(), slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if state, err := d.HeartbeatServiceRun(t.Context(), service.ID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil || state.State != "ready" {
+		t.Fatal("local exposure run was not ready", state, err)
+	}
+	return prepared, run
+}
+
 func TestIntegrationLocalServiceExposureFencesDNSWork(t *testing.T) {
-	d, now, _, _ := newPublishRunPrerequisites(t)
+	d, now, _, leases := newPublishRunPrerequisites(t)
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	request := RealizeLocalProjectServiceRequest{
@@ -166,42 +207,71 @@ func TestIntegrationLocalServiceExposureFencesDNSWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	private, found, err := d.ClaimServiceEndpointDNSWork(ctx, "private-worker", now, time.Minute)
-	if err != nil || !found || private.Public || private.ServiceID != first.ServiceID {
-		t.Fatal("local private DNS was not queued", private, found, err)
+	if _, found, err := d.ClaimServiceEndpointDNSWork(ctx, "private-worker", now, time.Minute); err != nil || found {
+		t.Fatal("local private DNS was queued for publication", found, err)
 	}
+
 	request.Configuration.Public, request.Now = new(true), now.Add(time.Second)
 	public, err := d.RealizeLocalProjectService(ctx, request)
 	if err != nil || !public.Metadata.Endpoint.Public || public.Metadata.Endpoint.Port != 443 {
 		t.Fatal("public startup did not use shared HTTPS", public, err)
 	}
-	if err := d.ValidateServiceEndpointDNSWork(ctx, private, request.Now); !errors.Is(err, ErrServiceEndpointDNSWorkStale) {
-		t.Fatal("old loopback worker retained provider authority", err)
-	}
-	private.State = ServiceEndpointDNSPublished
-	if _, err := d.SaveServiceEndpointDNSWork(ctx, private, request.Now); !errors.Is(err, ErrServiceEndpointDNSWorkStale) {
-		t.Fatal("old DNS worker completed the new public revision", err)
-	}
 	if _, found, err := d.ClaimServiceEndpointDNSWork(ctx, "public-worker", request.Now, time.Minute); err != nil || found {
 		t.Fatal("public DNS published before a routable publisher", found, err)
 	}
-	request.Configuration.Public, request.Now = new(false), now.Add(2*time.Second)
-	disabled, err := d.RealizeLocalProjectService(ctx, request)
-	if err != nil || disabled.ServiceID != first.ServiceID || disabled.Metadata.Endpoint.Port != public.Metadata.Endpoint.Port || disabled.Metadata.Endpoint.Public {
-		t.Fatal("disable released a local reservation", disabled, err)
-	}
-	current, found, err := d.ClaimServiceEndpointDNSWork(ctx, "current-worker", request.Now, time.Minute)
-	if err != nil || !found || current.Public || current.Revision <= private.Revision {
-		t.Fatal("disable did not replace public DNS with loopback", current, found, err)
-	}
-	if _, err := d.RealizeLocalProjectService(ctx, request); err != nil {
+	if _, err = d.RegisterIngress(ctx, IngressRegistration{
+		IngressID: "local-exposure-ingress", IngressRunID: "local-exposure-ingress-run", ProtocolVersion: 1,
+		ConnectionCapacity: 100, IngressPoolID: PrimaryIngressPoolID, HTTPS: true,
+	}, request.Now, time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.ValidateServiceEndpointDNSWork(ctx, current, request.Now); err != nil {
-		t.Fatal("idempotent startup invalidated current DNS work", err)
+	_, run := readyLocalExposureRun(t, d, public, serviceTestAuthority{TeamID: r.TeamID, ActingIdentityID: r.ActorID}, leases, request.Now)
+	published, found, err := d.ClaimServiceEndpointDNSWork(ctx, "public-worker", request.Now, time.Minute)
+	if err != nil || !found || published.ServiceID != public.ServiceID || !published.Public || published.State != ServiceEndpointDNSPending {
+		t.Fatal("public DNS was not claimable with a ready publisher", published, found, err)
 	}
-	current.State, current.AvailableAt = ServiceEndpointDNSPublished, time.Time{}
+	if err := d.ValidateServiceEndpointDNSWork(ctx, published, request.Now); err != nil {
+		t.Fatal(err)
+	}
+	published.State, published.AvailableAt = ServiceEndpointDNSPublished, time.Time{}
+	if _, err = d.SaveServiceEndpointDNSWork(ctx, published, request.Now); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := d.ClaimServiceEndpointDNSWork(ctx, "duplicate", request.Now, time.Minute); err != nil || found {
+		t.Fatal("completed public DNS work remained queued", found, err)
+	}
+
+	stale := published
+	request.Configuration.Public, request.Now = new(false), now.Add(3*time.Second)
+	disabled, err := d.RealizeLocalProjectService(ctx, request)
+	if err != nil || disabled.ServiceID != first.ServiceID || disabled.Metadata.Endpoint.Public {
+		t.Fatal("disable changed local service identity", disabled, err)
+	}
+	if err := d.ValidateServiceEndpointDNSWork(ctx, stale, request.Now); !errors.Is(err, ErrServiceEndpointDNSWorkStale) {
+		t.Fatal("old publication retained provider authority", err)
+	}
+	stale.State, stale.AvailableAt = ServiceEndpointDNSPublished, time.Time{}
+	if _, err := d.SaveServiceEndpointDNSWork(ctx, stale, request.Now); !errors.Is(err, ErrServiceEndpointDNSWorkStale) {
+		t.Fatal("old DNS worker completed the retired public revision", err)
+	}
+	current, found, err := d.ClaimServiceEndpointDNSWork(ctx, "current-worker", request.Now, time.Minute)
+	if err != nil || !found || current.Public || current.State != ServiceEndpointDNSRemoving {
+		t.Fatal("disable did not retire public DNS", current, found, err)
+	}
+	if err := d.ValidateServiceEndpointDNSWork(ctx, current, request.Now); err != nil {
+		t.Fatal("disable invalidated current DNS removal work", err)
+	}
+	current.State, current.AvailableAt = ServiceEndpointDNSRemoved, time.Time{}
 	if _, err := d.SaveServiceEndpointDNSWork(ctx, current, request.Now); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := d.ClaimServiceEndpointDNSWork(ctx, "duplicate", request.Now, time.Minute); err != nil || found {
+		t.Fatal("completed DNS removal remained queued", found, err)
+	}
+	if err := d.CloseServiceRun(ctx, public.ServiceID, run.RunID, run.Token, request.Now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.RealizeLocalProjectService(ctx, request); err != nil {
 		t.Fatal(err)
 	}
 	// even another team manager cannot adopt this app owner's realization.

@@ -389,7 +389,11 @@ func (s *nullableAuditString) ScanText(v pgtype.Text) error {
 	return nil
 }
 
-func auditDeviceMutation(ctx context.Context, tx pgx.Tx, identity, device, operation string, now time.Time) error {
+type deviceAuditService struct{ team, id string }
+
+// device writes acquire identity/device foreign-key locks. collect and lock
+// their audit parents first, in the same owner -> service order as admission.
+func lockDeviceAuditServices(ctx context.Context, tx pgx.Tx, identity, device string) ([]deviceAuditService, error) {
 	rows, err := tx.Query(ctx, `SELECT DISTINCT s.team_id,s.id FROM control.services s WHERE
 		EXISTS(SELECT 1 FROM control.team_memberships m WHERE m.team_id=s.team_id AND m.identity_id=$1 AND m.removed_at IS NULL)
 		OR EXISTS(SELECT 1 FROM control.visitor_grants g WHERE g.service_id=s.id AND g.identity_id=$1)
@@ -397,25 +401,44 @@ func auditDeviceMutation(ctx context.Context, tx pgx.Tx, identity, device, opera
 		OR EXISTS(SELECT 1 FROM control.connector_peer_audit_bindings b WHERE b.service_id=s.id AND b.device_id=$2)
 		ORDER BY s.team_id,s.id`, identity, device)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	type scope struct{ team, id string }
-	var scopes []scope
+	var scopes []deviceAuditService
 	for rows.Next() {
-		var s scope
+		var s deviceAuditService
 		if err = rows.Scan(&s.team, &s.id); err != nil {
 			rows.Close()
-			return err
+			return nil, err
 		}
 		scopes = append(scopes, s)
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
-		return err
+		return nil, err
 	}
+	q := controlstatedb.New(tx)
+	var owner string
 	for _, s := range scopes {
-		if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: s.team, ServiceID: s.id, ServiceKind: "service", EventType: operation, OccurredAt: now, ActorIdentityID: identity, DeviceID: device}, device); err != nil {
+		if owner != s.team {
+			// retained device history may still name a deleted team. this
+			// lock orders audit writes; it grants no service permission.
+			var locked string
+			if err := tx.QueryRow(ctx, `SELECT id FROM control.teams WHERE id=$1 FOR SHARE`, s.team).Scan(&locked); err != nil {
+				return nil, err
+			}
+			owner = s.team
+		}
+		if _, err := q.LockService(ctx, s.id); err != nil {
+			return nil, err
+		}
+	}
+	return scopes, nil
+}
+
+func auditDeviceMutation(ctx context.Context, tx pgx.Tx, scopes []deviceAuditService, identity, device, operation string, now time.Time) error {
+	for _, s := range scopes {
+		if err := RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: s.team, ServiceID: s.id, ServiceKind: "service", EventType: operation, OccurredAt: now, ActorIdentityID: identity, DeviceID: device}, device); err != nil {
 			return err
 		}
 	}

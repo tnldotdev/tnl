@@ -14,7 +14,7 @@ func TestPublicServicePendingSourceAndServiceCapacity(t *testing.T) {
 	p, _, _, _ := publicServiceTestSetup(t)
 	s := p
 	s.config.Pending.Connections = 3
-	s.traffic.pending.PublicURLConnections, s.traffic.pending.SourceConnections = 2, 1
+	s.traffic.pending.ServiceConnections, s.traffic.pending.SourceConnections = 2, 1
 	limits := s.config.Traffic.Default
 	pending := func(service, source string) (*visitorAdmission, string) {
 		v, reason := s.admitPendingService()

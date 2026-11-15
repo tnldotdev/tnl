@@ -3,59 +3,63 @@ package state
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/netip"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
 func TestIntegrationPublisherConnectionsShareRelayServiceGuard(t *testing.T) {
 	for _, operation := range []string{"claim", "ready"} {
 		t.Run(operation, func(t *testing.T) {
-			fixtures, registration := relayServiceSessions(t)
+			fixtures, registration := relayScopeSessions(t)
 			database, now := fixtures[0].database, fixtures[0].now
-			claims := []PublisherConnectionClaimRequest{sessionClaim(t, fixtures[0]), sessionClaim(t, fixtures[1])}
+			connections := []relayScopeConnection{
+				relayScopeSlot(t, fixtures[0], registration.RelayServiceID),
+				relayScopeSlot(t, fixtures[1], registration.RelayServiceID),
+			}
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			if operation == "ready" {
-				for _, claim := range claims {
-					if _, err := database.ClaimPublisherConnection(ctx, claim, now); err != nil {
+				for _, connection := range connections {
+					if err := connection.claim(ctx); err != nil {
 						t.Fatal(err)
 					}
 				}
 			}
-			perform := func(ctx context.Context, claim PublisherConnectionClaimRequest) error {
+			perform := func(ctx context.Context, connection relayScopeConnection) error {
 				if operation == "ready" {
-					_, err := database.MarkPublisherConnectionReady(ctx, claim, now)
-					return err
+					return connection.ready(ctx)
 				}
-				_, err := database.ClaimPublisherConnection(ctx, claim, now)
-				return err
+				return connection.claim(ctx)
 			}
 			gate, err := database.pool.Begin(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer rollbackTestTransaction(t, gate)
-			if _, err := gate.Exec(ctx, `SELECT relay_id FROM control.relay_leases WHERE relay_id = $1 FOR UPDATE`, claims[0].RelayID); err != nil {
+			if _, err := gate.Exec(ctx, `SELECT relay_id FROM control.relay_leases WHERE relay_id=$1 FOR UPDATE`, connections[0].lease.RelayID); err != nil {
 				t.Fatal(err)
 			}
 			workers := newIntegrationWorkers(t, cancel)
 			defer workers.stop()
 			first := make(chan error, 1)
-			workers.Go(func() { first <- perform(ctx, claims[0]) })
+			workers.Go(func() { first <- perform(ctx, connections[0]) })
 			firstPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), first)
-			// the first operation holds the service guard while waiting on its lease.
+			// a blocked process reader retains a shared service guard, not an
+			// exclusive guard that prevents another process from claiming.
 			independent, stop := context.WithTimeout(ctx, 2*time.Second)
 			defer stop()
-			if err := perform(independent, claims[1]); err != nil {
+			if err := perform(independent, connections[1]); err != nil {
 				t.Fatalf("another relay process in the same service could not %s: %v", operation, err)
 			}
 			registered := make(chan error, 1)
@@ -63,7 +67,8 @@ func TestIntegrationPublisherConnectionsShareRelayServiceGuard(t *testing.T) {
 				_, err := database.RegisterRelay(ctx, registration, now, time.Hour)
 				registered <- err
 			})
-			// registration targets the other lease but must still wait on the service.
+			// registration targets the other process, so this wait proves the
+			// service guard rather than contention on the gated process lease.
 			waitForPostgresBlock(t, ctx, database, firstPID, registered)
 			if err := gate.Commit(ctx); err != nil {
 				t.Fatal(err)
@@ -80,9 +85,9 @@ func TestIntegrationPublisherConnectionsShareRelayServiceGuard(t *testing.T) {
 func TestIntegrationRelayServiceWritersProgressDuringPublisherRetries(t *testing.T) {
 	for _, writer := range []string{"registration", "replenishment", "certificate-store", "certificate-save", "key-rotation"} {
 		t.Run(writer, func(t *testing.T) {
-			fixtures, registration := relayServiceProgressSessions(t)
-			database, now := fixtures[0].database, fixtures[0].now
-			write := relayServiceProgressWriter(t, writer, fixtures, registration)
+			fixtures, registration := relayScopeProgressSessions(t)
+			database := fixtures[0].database
+			write := relayScopeProgressWriter(t, writer, fixtures, registration)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			gate, err := database.pool.Begin(ctx)
@@ -90,34 +95,47 @@ func TestIntegrationRelayServiceWritersProgressDuringPublisherRetries(t *testing
 				t.Fatal(err)
 			}
 			defer rollbackTestTransaction(t, gate)
-			if _, err := gate.Exec(ctx, `SELECT relay_id FROM control.relay_leases WHERE relay_id = $1 FOR UPDATE`, registration.RelayID); err != nil {
+			if _, err := gate.Exec(ctx, `SELECT relay_id FROM control.relay_leases WHERE relay_id=$1 FOR UPDATE`, registration.RelayID); err != nil {
 				t.Fatal(err)
 			}
 			workers := newIntegrationWorkers(t, cancel)
 			defer workers.stop()
 			failed := make(chan error, len(fixtures)-1)
+			stopReaders := make(chan struct{})
 			var retries atomic.Int64
 			var readerPIDs []int32
 			blocker := int32(gate.Conn().PgConn().PID())
-			// queue four real readers on the lease before starting the writer.
-			// once the gate opens every transaction can finish; later retries must
-			// not keep the service writer waiting indefinitely. this tests bounded
-			// progress, not FIFO ordering between individual row-lock requests.
 			for _, fixture := range fixtures[:len(fixtures)-1] {
-				claim := sessionClaim(t, fixture)
+				connection := relayScopeSlot(t, fixture, registration.RelayServiceID)
 				workers.Go(func() {
-					for ctx.Err() == nil {
-						_, err := database.ClaimPublisherConnection(ctx, claim, now)
-						if err == nil {
-							_, err = database.MarkPublisherConnectionReady(ctx, claim, now)
-						}
-						if ctx.Err() != nil {
-							return
-						}
-						if err != nil {
+					if err := connection.claim(ctx); err != nil {
+						if ctx.Err() == nil || !failure.Only(err, ctx.Err()) {
 							failed <- err
+						}
+						return
+					}
+					ready := false
+					for ctx.Err() == nil {
+						if ready {
+							select {
+							case <-stopReaders:
+								return
+							default:
+							}
+						}
+						err := connection.ready(ctx)
+						if ctx.Err() != nil && failure.Only(err, ctx.Err()) {
 							return
 						}
+						if !ready && err == nil {
+							ready = true
+						} else if !ready || !failure.Only(err, ErrServiceAccess) {
+							failed <- fmt.Errorf("readiness retry ready=%t: %v", ready, err)
+							return
+						}
+						// readiness is single-use in the service API. later real
+						// retries must take its guard and reject the ready slot,
+						// not silently accept an unrelated error.
 						retries.Add(1)
 					}
 				})
@@ -135,14 +153,26 @@ func TestIntegrationRelayServiceWritersProgressDuringPublisherRetries(t *testing
 			}
 			err = awaitIntegrationResult(t, ctx, written)
 			elapsed := time.Since(started)
-			workers.stop()
+			close(stopReaders)
+			workers.Wait()
 			select {
-			case err := <-failed:
-				t.Fatal(err)
+			case failure := <-failed:
+				t.Fatal(failure)
 			default:
 			}
 			if err != nil {
 				t.Fatalf("%s failed to progress in %s after %d claim/readiness retries: %v", writer, elapsed, retries.Load(), err)
+			}
+			for _, fixture := range fixtures[:len(fixtures)-1] {
+				connection := relayScopeSlot(t, fixture, registration.RelayServiceID)
+				var current bool
+				err := database.pool.QueryRow(t.Context(), `SELECT state='ready' AND session_open AND service_run_id=$2
+					AND service_id=$3 AND run_number=$4 AND connection_assignment_revision=$5
+					FROM control.service_connection_slots WHERE publisher_connection_id=$1`, connection.slot.PublisherConnectionID,
+					fixture.run.RunID, fixture.service.ID, fixture.run.RunNumber, connection.slot.Revision).Scan(&current)
+				if err != nil || !current {
+					t.Fatalf("readiness retries changed the current slot: %v", err)
+				}
 			}
 			t.Logf("%s progressed in %s with %d claim/readiness retries", writer, elapsed, retries.Load())
 		})
@@ -212,8 +242,8 @@ func TestIntegrationRelayServiceMaintenanceSkipsQueuedWriter(t *testing.T) {
 				registered <- err
 			})
 			waitForPostgresBlock(t, ctx, database, int32(reader.Conn().PgConn().PID()), registered)
-			// opportunistic maintenance must skip relay-a and finish relay-b even
-			// while relay-a has both an active reader and a queued service writer.
+			// maintenance must actually skip relay-a and finish relay-b while
+			// relay-a has both an active reader and a queued service writer.
 			maintenanceCtx, stop := context.WithTimeout(ctx, 2*time.Second)
 			defer stop()
 			if err := maintain(maintenanceCtx); err != nil {
@@ -225,15 +255,14 @@ func TestIntegrationRelayServiceMaintenanceSkipsQueuedWriter(t *testing.T) {
 			if err := awaitIntegrationResult(t, ctx, registered); err != nil {
 				t.Fatal(err)
 			}
-			// the skipped service remains eligible once its reader and writer drain.
 			if err := maintain(maintenanceCtx); err != nil {
-				t.Fatal(err)
+				t.Fatal("skipped service did not become eligible after the writer joined", err)
 			}
 		})
 	}
 }
 
-func relayServiceProgressWriter(t *testing.T, writer string, fixtures [5]publishRunFixture, registration RelayRegistration) func(context.Context) error {
+func relayScopeProgressWriter(t *testing.T, writer string, fixtures [5]servicePublicationFixture, registration RelayRegistration) func(context.Context) error {
 	t.Helper()
 	database, now := fixtures[0].database, fixtures[0].now
 	switch writer {
@@ -246,20 +275,21 @@ func relayServiceProgressWriter(t *testing.T, writer string, fixtures [5]publish
 			return err
 		}
 	case "replenishment":
-		setup := fixtures[len(fixtures)-1].setup
+		fixture := fixtures[len(fixtures)-1]
 		return func(ctx context.Context) error {
-			replenished, err := database.HeartbeatPublishRun(ctx, PublishRunAuthentication{
-				PublishRunID: setup.PublishRunID, PublicURLID: setup.PublicURLID,
-				PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken,
-			}, now.Add(2*time.Minute), time.Hour, time.Minute)
+			replenished, err := database.HeartbeatServiceRun(ctx, fixture.service.ID, fixture.run.RunID, fixture.run.Token,
+				now.Add(2*time.Minute), ServiceRunHealth{Healthy: true, StreamCapacity: 64})
 			if err != nil {
 				return err
 			}
-			for slot, connection := range replenished.PublisherConnections {
-				previous := setup.PublisherConnections[slot]
-				if connection.PublisherConnectionID == previous.PublisherConnectionID ||
-					connection.ConnectionAssignmentRevision != previous.ConnectionAssignmentRevision+1 ||
-					connection.RelayServiceID != previous.RelayServiceID || connection.State != PublisherConnectionAssigned {
+			if replenished.ServiceID != fixture.service.ID || replenished.RunID != fixture.run.RunID ||
+				replenished.RunNumber != fixture.run.RunNumber || len(replenished.Connections) != 2 {
+				return errors.New("replenishment replaced the service run")
+			}
+			for slot, connection := range replenished.Connections {
+				previous := fixture.run.Connections[slot]
+				if connection.PublisherConnectionID == previous.PublisherConnectionID || connection.Revision != previous.Revision+1 ||
+					connection.RelayServiceID != previous.RelayServiceID || connection.ConnectionSlot != previous.ConnectionSlot || connection.State != "assigned" {
 					return fmt.Errorf("slot %d was not replenished", slot)
 				}
 			}
@@ -321,7 +351,7 @@ func relayServiceProgressWriter(t *testing.T, writer string, fixtures [5]publish
 				return err
 			}
 			var keyID string
-			if err := database.pool.QueryRow(ctx, `SELECT transport_private_key_storage_key_id FROM control.relay_services WHERE relay_service_id = $1`, registration.RelayServiceID).Scan(&keyID); err != nil {
+			if err := database.pool.QueryRow(ctx, `SELECT transport_private_key_storage_key_id FROM control.relay_services WHERE relay_service_id=$1`, registration.RelayServiceID).Scan(&keyID); err != nil {
 				return err
 			}
 			if rotated.PrivateKeyPEM != string(key) || keyID != rotating.storageKey.CurrentID() {
@@ -335,15 +365,11 @@ func relayServiceProgressWriter(t *testing.T, writer string, fixtures [5]publish
 	}
 }
 
-// four independent public URLs retry on one relay process while a fifth
-// needs placement. every service has exactly enough capacity for all five.
-func relayServiceProgressSessions(t *testing.T) ([5]publishRunFixture, RelayRegistration) {
-	return relayServiceProgressSessionsWithSharedTeam(t, false)
-}
-
-func relayServiceProgressSessionsWithSharedTeam(t *testing.T, sharedTeam bool) ([5]publishRunFixture, RelayRegistration) {
+// four independent services retry on one process while a fifth needs placement.
+// each relay service has exactly five reservations, including the fifth run.
+func relayScopeProgressSessions(t *testing.T) ([5]servicePublicationFixture, RelayRegistration) {
 	t.Helper()
-	database, now := newRelayLifecycleDatabase(t)
+	database, now := newControlStateIntegrationDatabase(t, "relay_progress")
 	leases := make(map[string]RelayLease)
 	var registration RelayRegistration
 	for _, service := range []string{"relay-a", "relay-b"} {
@@ -358,45 +384,27 @@ func relayServiceProgressSessionsWithSharedTeam(t *testing.T, sharedTeam bool) (
 			registration = candidate
 		}
 	}
-	var fixtures [5]publishRunFixture
+	var fixtures [5]servicePublicationFixture
 	for index := range fixtures {
-		suffix := fmt.Sprintf("relayprogress%d", index)
-		seedControlPublicURL(t, database, now, suffix)
-		if sharedTeam && index == 1 {
-			// build a second, valid public URL in the first team before its run exists.
-			if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls
-				SET team_id = $2, domain_id = $3, created_by_identity_id = $4, idempotency_key = $5
-				WHERE id = $1`, "public_url_"+suffix, "team_relayprogress0", "domain_relayprogress0",
-				"identity_relayprogress0", "seed-"+suffix); err != nil {
-				t.Fatal(err)
-			}
-		}
-		request := PublishRunRequest{
-			PublicURLID: "public_url_" + suffix, TeamID: "team_" + suffix, ActingIdentityID: "identity_" + suffix,
-			MembershipID: "membership_" + suffix,
-			RetrySecret:  bytes.Repeat([]byte{7}, 32), IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
-			PolicyRevision: 1, ExpectedMutationRevision: 1, CertificateCacheKey: suffix, CertificateScope: "route",
-			CertificateIdentifiers: []string{"route-" + suffix + ".example.test"}, CertificateChallenge: "dns-01",
-		}
-		if sharedTeam && index == 1 {
-			request.TeamID = "team_relayprogress0"
-			request.ActingIdentityID = "identity_relayprogress0"
-			request.MembershipID = "membership_relayprogress0"
-		}
-		setup, err := database.CreatePublishRun(t.Context(), request, now, time.Hour, time.Minute)
-		if err != nil {
-			t.Fatal(err)
-		}
-		fixtures[index] = publishRunFixture{database: database, now: now, request: request, setup: setup, leases: leases}
+		fixtures[index] = relayScopeService(t, database, now, fmt.Sprintf("progress-%d", index), leases)
 	}
+	// keep publisher authority live while the fifth run's never-claimed
+	// two-minute credentials reach their exact replacement boundary.
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.service_runs SET publisher_expires_at=$1`, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	assertAssignmentTotals(t, database.pool, 10)
 	return fixtures, registration
 }
 
 func TestIntegrationConcurrentClaimsRespectRelayProcessCapacity(t *testing.T) {
-	fixtures, _ := relayServiceSessions(t)
+	fixtures, registration := relayScopeSessions(t)
 	database, now := fixtures[0].database, fixtures[0].now
-	claims := []PublisherConnectionClaimRequest{sessionClaim(t, fixtures[0]), sessionClaim(t, fixtures[1])}
-	claims[1].RelayLeaseIdentity = claims[0].RelayLeaseIdentity
+	connections := []relayScopeConnection{
+		relayScopeSlot(t, fixtures[0], registration.RelayServiceID),
+		relayScopeSlot(t, fixtures[1], registration.RelayServiceID),
+	}
+	connections[1].lease = connections[0].lease
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	gate, err := database.pool.Begin(ctx)
@@ -404,20 +412,15 @@ func TestIntegrationConcurrentClaimsRespectRelayProcessCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if _, err := gate.Exec(ctx, `SELECT relay_id FROM control.relay_leases WHERE relay_id = $1 FOR UPDATE`, claims[0].RelayID); err != nil {
+	if _, err := gate.Exec(ctx, `SELECT relay_id FROM control.relay_leases WHERE relay_id=$1 FOR UPDATE`, connections[0].lease.RelayID); err != nil {
 		t.Fatal(err)
 	}
 	workers := newIntegrationWorkers(t, cancel)
 	defer workers.stop()
 	done := []chan error{make(chan error, 1), make(chan error, 1)}
-	for index, claim := range claims {
-		workers.Go(func() {
-			_, err := database.ClaimPublisherConnection(ctx, claim, now)
-			done[index] <- err
-		})
-	}
+	workers.Go(func() { done[0] <- connections[0].claim(ctx) })
 	firstPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), done[0])
-	// the other claim must queue behind the first lease-lock waiter.
+	workers.Go(func() { done[1] <- connections[1].claim(ctx) })
 	waitForPostgresBlock(t, ctx, database, firstPID, done[1])
 	if err := gate.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -437,31 +440,39 @@ func TestIntegrationConcurrentClaimsRespectRelayProcessCapacity(t *testing.T) {
 	if successes != 1 || full != 1 {
 		t.Fatalf("claims succeeded=%d capacity_rejected=%d; want 1/1", successes, full)
 	}
-	if _, err := database.ClaimPublisherConnection(ctx, claims[winner], now); err != nil {
+	if err := connections[winner].claim(ctx); err != nil {
 		t.Fatalf("idempotent claim at capacity: %v", err)
 	}
-	if err := database.ClosePublishRun(ctx, fixtures[winner].setup.PublishRunID, fixtures[winner].setup.PublishRunToken, now); err != nil {
+	var active int
+	if err := database.pool.QueryRow(ctx, `SELECT count(*) FROM control.service_connection_slots
+		WHERE relay_id=$1 AND relay_run_id=$2 AND relay_lease_revision=$3 AND session_open AND state='connected'`,
+		connections[winner].lease.RelayID, connections[winner].lease.RelayRunID, int64(connections[winner].lease.RelayLeaseRevision)).Scan(&active); err != nil || active != 1 {
+		t.Fatalf("idempotent claim changed occupied capacity: %d %v", active, err)
+	}
+	if err := database.CloseServiceRun(ctx, fixtures[winner].service.ID, fixtures[winner].run.RunID, fixtures[winner].run.Token, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.ClaimPublisherConnection(ctx, claims[1-winner], now); err != nil {
+	if err := connections[1-winner].claim(ctx); err != nil {
 		t.Fatalf("claim after capacity was released: %v", err)
 	}
+	assertAssignmentTotals(t, database.pool, 2)
 }
 
-// two public URLs, two relay services, two capacity-one processes per service. each public URL
-// claims a different process, unless a test explicitly selects the same process.
-func relayServiceSessions(t *testing.T) ([2]publishRunFixture, RelayRegistration) {
+// two services, two relay services, and two capacity-one processes per relay
+// service. explicit service lookup makes placement deterministic for each proof.
+func relayScopeSessions(t *testing.T) ([2]servicePublicationFixture, RelayRegistration) {
 	t.Helper()
-	f := newTransactionAuthorityFixture(t)
+	database, now := newControlStateIntegrationDatabase(t, "relay_scope")
 	leases := [2]map[string]RelayLease{{}, {}}
 	var registration RelayRegistration
 	for _, service := range []string{"relay-a", "relay-b"} {
 		for process := range 2 {
 			candidate := relayLifecycleRegistration(service)
+			candidate.ConnectionCapacity = 1
 			if process == 1 {
 				candidate.RelayID = service + "-2"
 			}
-			lease, err := f.database.RegisterRelay(t.Context(), candidate, f.now, time.Hour)
+			lease, err := database.RegisterRelay(t.Context(), candidate, now, time.Hour)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -471,27 +482,79 @@ func relayServiceSessions(t *testing.T) ([2]publishRunFixture, RelayRegistration
 			}
 		}
 	}
-	var result [2]publishRunFixture
-	for index, request := range []PublishRunRequest{f.sessionRequest, siblingSessionRequest(t, f)} {
-		setup, err := f.database.CreatePublishRun(t.Context(), request, f.now, time.Hour, time.Hour)
-		if err != nil {
-			t.Fatal(err)
-		}
-		result[index] = publishRunFixture{database: f.database, now: f.now, request: request, setup: setup, leases: leases[index]}
+	var fixtures [2]servicePublicationFixture
+	for index := range fixtures {
+		fixtures[index] = relayScopeService(t, database, now, fmt.Sprintf("scope-%d", index), leases[index])
 	}
-	return result, registration
+	return fixtures, registration
 }
 
-func sessionClaim(t *testing.T, f publishRunFixture) PublisherConnectionClaimRequest {
+func relayScopeService(t *testing.T, database *Database, now time.Time, name string, leases map[string]RelayLease) servicePublicationFixture {
 	t.Helper()
-	assignment := f.setup.PublisherConnections[0]
-	digest, err := credentials.ParsePublisherConnectionCredential(assignment.PublisherConnectionCredential)
+	session := newOIDCSession(t, database, now)
+	member, actor := session.Identity.Memberships[0], session.Identity.Identity.ID
+	service, err := database.CreateServiceAt(t.Context(), member.TeamID, actor, name, name, ServicePlacement{}, now,
+		ServiceMetadata{}, &ProjectServiceConfiguration{Target: "http://127.0.0.1:3000"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return PublisherConnectionClaimRequest{
-		ConnectionAssignmentIdentity: assignment.ConnectionAssignmentIdentity,
-		RelayLeaseIdentity:           f.leases[assignment.RelayServiceID].RelayLeaseIdentity,
-		ClaimID:                      "scope-test", CredentialDigest: [32]byte(digest),
+	enrollment, err := database.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{
+		Scope: PublisherScope{TeamID: service.TeamID, Kind: "service", ServiceID: service.ID},
+		Name:  name, Kind: "installed", EditorID: actor, EditorMembershipID: member.ID,
+		PolicyRevision: uint64(member.PolicyRevision), Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher, err := database.RedeemPublisherEnrollment(t.Context(), enrollment.Key, public, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := servicePublicationFixture{database: database, now: now, service: service, publisher: publisher, leases: leases}
+	fixture.start(t, name, now)
+	return fixture
+}
+
+type relayScopeConnection struct {
+	fixture servicePublicationFixture
+	slot    ServiceRunAssignment
+	lease   RelayLeaseIdentity
+}
+
+func relayScopeSlot(t *testing.T, fixture servicePublicationFixture, service string) relayScopeConnection {
+	t.Helper()
+	for _, slot := range fixture.run.Connections {
+		if slot.RelayServiceID == service {
+			return relayScopeConnection{fixture, slot, fixture.leases[service].RelayLeaseIdentity}
+		}
+	}
+	t.Fatalf("service run %s has no assignment for relay service %s", fixture.run.RunID, service)
+	return relayScopeConnection{}
+}
+
+func (c relayScopeConnection) check(result ServicePublisherConnection, err error) error {
+	if err != nil {
+		return err
+	}
+	expected := ServicePublisherConnection{ServiceID: c.fixture.service.ID, RunID: c.fixture.run.RunID, RunNumber: c.fixture.run.RunNumber,
+		ConnectionID: c.slot.PublisherConnectionID, Revision: c.slot.Revision, RelayServiceID: c.slot.RelayServiceID}
+	if result != expected {
+		return errors.New("publisher connection operation changed the exact service/run/slot tuple")
+	}
+	return nil
+}
+
+func (c relayScopeConnection) claim(ctx context.Context) error {
+	return c.check(c.fixture.database.ClaimServicePublisherConnection(ctx, c.slot.PublisherConnectionID,
+		c.fixture.service.ID, c.fixture.run.RunID, c.fixture.run.RunNumber, c.slot.Revision, c.slot.Credential,
+		netip.MustParseAddr("127.0.0.1"), c.lease, c.fixture.now))
+}
+
+func (c relayScopeConnection) ready(ctx context.Context) error {
+	return c.check(c.fixture.database.ReadyServicePublisherConnection(ctx, c.slot.PublisherConnectionID,
+		c.fixture.run.RunID, c.fixture.run.RunNumber, c.slot.Revision, c.lease, c.fixture.now))
 }

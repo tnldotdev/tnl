@@ -88,16 +88,26 @@ func TestAllocationRequestRejectsInvalidInputs(t *testing.T) {
 
 type allocationControl struct {
 	publisheridentity.ServiceControl
-	allocate func(controlv1.AllocateServiceRequest) (controlv1.Service, error)
-	read     func() (controlv1.Service, error)
-	remove   func(string) error
+	allocate                        func(controlv1.AllocateServiceRequest) (controlv1.Service, error)
+	read                            func() (controlv1.Service, error)
+	remove                          func(string) error
+	namespaceCalls, deploymentCalls int
 }
 
 func (*allocationControl) ControlURL() string { return "https://control.example.test" }
 
 func (c *allocationControl) AllocatePublisherService(_ context.Context, access string, body controlv1.AllocateServiceRequest) (controlv1.Service, error) {
+	c.namespaceCalls++
 	if access != "signed-allocation-token" {
 		return controlv1.Service{}, errors.New("allocation used a human credential")
+	}
+	return c.allocate(body)
+}
+
+func (c *allocationControl) AllocateDeploymentPublication(_ context.Context, access, team, project, deployment string, body controlv1.AllocateServiceRequest) (controlv1.Service, error) {
+	c.deploymentCalls++
+	if access != "signed-allocation-token" || team != "team" || project != "project" || deployment != "production" {
+		return controlv1.Service{}, publisheridentity.ErrScope
 	}
 	return c.allocate(body)
 }
@@ -129,6 +139,19 @@ func allocationNative(t *testing.T, control *allocationControl) *publisheridenti
 			GrantId: opaqueid.PublisherGrantPrefix + strings.Repeat("G", 22), KeyId: opaqueid.PublisherIdentityKeyPrefix + strings.Repeat("K", 22),
 			Kind: authorityv1.Namespace, TeamId: "team", DomainId: new(opaqueid.DomainPrefix + strings.Repeat("D", 22)), Namespace: new("member.example.test")},
 		ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return native
+}
+
+func deploymentAllocationNative(t *testing.T, control *allocationControl) *publisheridentity.Native {
+	t.Helper()
+	native, err := publisheridentity.NewDeploymentAllocator(control, allocationAuthority{},
+		controlv1.DeploymentCredential{ClientId: opaqueid.PublisherIdentityPrefix + strings.Repeat("I", 22),
+			GrantId: opaqueid.PublisherGrantPrefix + strings.Repeat("G", 22), KeyId: opaqueid.PublisherIdentityKeyPrefix + strings.Repeat("K", 22),
+			TeamId: "team", ProjectKey: "project", ExpiresAt: time.Now().Add(time.Hour)},
+		ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize)), "production")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,6 +452,147 @@ func TestAllocationRejectsSubstitutedSavedPublicationFacts(t *testing.T) {
 			}
 			if err := Run(t.Context(), options); err == nil || !reflect.DeepEqual(deleted, []string{saved.Id}) {
 				t.Fatal("substituted saved facts were published or lost exact cleanup", err, deleted)
+			}
+		})
+	}
+}
+
+func TestAllocationRequestKeepsHTTPBudgetAndTargetTLSSeparate(t *testing.T) {
+	for _, target := range []string{"http://127.0.0.1:3000", "https://app.example.test:8443"} {
+		t.Run(target, func(t *testing.T) {
+			options := Options{InvocationID: "ivk_0123456789ABCDEFGHIJKL", Target: target, RequirePostQuantum: true,
+				Limits: applicationlimits.Limits{Requests: 7, Concurrency: 2, RateRequests: 3, RatePer: 4 * time.Second, RateBurst: 5}}
+			allocation, _, _, err := allocationRequest(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			declaration := allocation.Configuration
+			if allocation.InvocationId != options.InvocationID || declaration.Protocol == nil || *declaration.Protocol != controlv1.ServiceProtocolHTTP ||
+				declaration.Ephemeral == nil || !*declaration.Ephemeral || declaration.Public == nil || !*declaration.Public ||
+				declaration.RequirePostQuantum == nil || !*declaration.RequirePostQuantum || declaration.Traffic != nil {
+				t.Fatal("allocation introduced another publication model or traffic budget", declaration)
+			}
+			if declaration.Http.Limits == nil || *declaration.Http.Limits.Total != 7 || *declaration.Http.Limits.Concurrency != 2 ||
+				declaration.Http.Limits.Rate.Count != 3 || declaration.Http.Limits.Rate.Per != "4s" || *declaration.Http.Limits.Rate.Burst != 5 {
+				t.Fatal("allocation lost a supported HTTP budget", declaration.Http.Limits)
+			}
+			if strings.HasPrefix(target, "https:") {
+				if declaration.Target != "app.example.test:8443" || declaration.TargetTls == nil ||
+					declaration.TargetTls.Hostname != "app.example.test" || declaration.TargetTls.Digest == "" || declaration.TargetTls.CaPem != nil {
+					t.Fatal("HTTPS target lost independent system trust", declaration)
+				}
+			} else if declaration.Target != "127.0.0.1:3000" || declaration.TargetTls != nil {
+				t.Fatal("plaintext target acquired visitor TLS as target trust", declaration)
+			}
+		})
+	}
+}
+
+func TestDeploymentPreparationLostReplyCleanupRetriesWithoutReselection(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		control := &allocationControl{}
+		native := deploymentAllocationNative(t, control)
+		options := allocationOptions(native)
+		options.ExpiresAt = new(time.Now().Add(time.Minute))
+		options.Limits = applicationlimits.Limits{Requests: 7}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		var saved controlv1.Service
+		var declarations []string
+		control.allocate = func(body controlv1.AllocateServiceRequest) (controlv1.Service, error) {
+			encoded, _ := json.Marshal(body)
+			declarations = append(declarations, string(encoded))
+			if len(declarations) == 1 {
+				saved = allocatedService(body)
+				cancel()
+				return controlv1.Service{}, io.ErrUnexpectedEOF
+			}
+			return saved, nil
+		}
+		control.read = func() (controlv1.Service, error) {
+			t.Error("cleanup reselected publication")
+			return controlv1.Service{}, errors.New("publication selection is unavailable")
+		}
+		var deleted []string
+		independent := errors.New("delete unavailable")
+		control.remove = func(id string) error {
+			deleted = append(deleted, id)
+			if len(deleted) == 1 {
+				return errors.Join(context.Canceled, independent)
+			}
+			return nil
+		}
+		prepared, operationErr := Prepare(ctx, options)
+		if prepared == nil || !errors.Is(operationErr, io.ErrUnexpectedEOF) || !errors.Is(operationErr, context.Canceled) {
+			t.Fatal("uncertain preparation lost its original owner or failure", operationErr)
+		}
+		*options.ExpiresAt = options.ExpiresAt.Add(time.Hour)
+		options.Limits.Requests = 99
+		cleanup, stop := context.WithTimeout(t.Context(), time.Second)
+		defer stop()
+		cleanupErr := prepared.Cleanup(cleanup)
+		combined := errors.Join(operationErr, cleanupErr)
+		if !errors.Is(combined, independent) || !errors.Is(combined, io.ErrUnexpectedEOF) || len(declarations) != 2 {
+			t.Fatal("cleanup hid an independent failure or replayed an observed allocation", combined, declarations)
+		}
+		for range 3 {
+			if err := prepared.Cleanup(cleanup); err != nil {
+				t.Fatal("cleanup did not retain its exact retry or terminal success", err)
+			}
+		}
+		if len(declarations) != 2 || declarations[0] != declarations[1] || control.namespaceCalls != 0 || control.deploymentCalls != 2 ||
+			!reflect.DeepEqual(deleted, []string{saved.Id, saved.Id}) || prepared.Config.Control != nil || prepared.Service.Id != "" {
+			t.Fatal("cleanup changed authority, original declaration, or confirmed completion", declarations, deleted)
+		}
+	})
+}
+
+func TestDeploymentPreparationUsesSharedSavedFactValidation(t *testing.T) {
+	for _, fact := range []string{"valid", "protocol", "endpoint", "target_trust", "post_quantum", "expiration", "http_limits"} {
+		t.Run(fact, func(t *testing.T) {
+			control := &allocationControl{}
+			native := deploymentAllocationNative(t, control)
+			options := allocationOptions(native)
+			options.Target, options.RequirePostQuantum = "https://app.example.test:8443", true
+			options.ExpiresAt = new(time.Now().Add(time.Minute))
+			options.Limits.Requests = 7
+			var saved controlv1.Service
+			control.allocate = func(body controlv1.AllocateServiceRequest) (controlv1.Service, error) {
+				saved = allocatedService(body)
+				return saved, nil
+			}
+			control.read = func() (controlv1.Service, error) {
+				selected := saved
+				selected.Endpoint = new(*saved.Endpoint)
+				switch fact {
+				case "protocol":
+					selected.Protocol = controlv1.Postgres
+				case "endpoint":
+					selected.Endpoint.Port = 8443
+				case "target_trust":
+					selected.TargetTls = nil
+				case "post_quantum":
+					selected.RequirePostQuantum = false
+				case "expiration":
+					selected.ExpiresAt = new(saved.ExpiresAt.Add(time.Hour))
+				case "http_limits":
+					selected.HttpLimits = &controlv1.ProjectHTTPApplicationLimits{Total: new(99)}
+				}
+				return selected, nil
+			}
+			var deleted []string
+			control.remove = func(id string) error { deleted = append(deleted, id); return nil }
+			prepared, err := Prepare(t.Context(), options)
+			if prepared == nil || (err == nil) != (fact == "valid") {
+				t.Fatal("deployment preparation bypassed shared saved-fact validation", fact, err)
+			}
+			if fact == "valid" && (prepared.Config.ServiceID != saved.Id || prepared.Config.PublisherIdentityID != native.PublisherIdentityID() ||
+				prepared.Config.PublisherGrantID != native.PublisherGrantID() || prepared.Config.PublisherKeyID != native.PublisherKeyID()) {
+				t.Fatal("preparation replaced its registered identity or exact service")
+			}
+			if err := prepared.Cleanup(t.Context()); err != nil || control.namespaceCalls != 0 || control.deploymentCalls != 1 ||
+				!reflect.DeepEqual(deleted, []string{saved.Id}) {
+				t.Fatal("validation lost cleanup ownership or used namespace allocation", err, deleted)
 			}
 		})
 	}

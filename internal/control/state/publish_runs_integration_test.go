@@ -1,14 +1,11 @@
 package state
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -18,392 +15,269 @@ import (
 )
 
 func TestIntegrationPublishRunCreation(t *testing.T) {
-	database, now, request, _ := newPublishRunPrerequisites(t)
-	setup, err := database.CreatePublishRun(t.Context(), request, now, 30*time.Second, time.Minute)
-	if err != nil {
-		t.Fatal(err)
+	f := newServicePublicationFixture(t)
+	if f.run.ServiceID != f.service.ID || f.run.RunNumber != 1 || f.run.State != "starting" || f.run.Token == "" {
+		t.Fatal("start lost the service identity, run number, or credential")
 	}
-	if setup.PublicURLID != request.PublicURLID || setup.PublishRunNumber != 1 || setup.State != "starting" || setup.PublishRunToken == "" {
-		t.Fatalf("session setup = %#v", setup)
-	}
-	services := make(map[string]bool)
-	for slot, connection := range setup.PublisherConnections {
-		if connection.ConnectionSlot != slot || connection.PublishRunID != setup.PublishRunID || connection.PublicURLID != setup.PublicURLID || connection.PublishRunNumber != setup.PublishRunNumber || connection.ConnectionAssignmentRevision != 1 {
-			t.Fatalf("connection slot %d = %#v", slot, connection)
+	services := map[string]bool{}
+	for index, connection := range f.run.Connections {
+		if int(connection.ConnectionSlot) != index || connection.Revision != 1 {
+			t.Fatal("start lost the exact connection slot")
 		}
-		if _, err := credentials.ParsePublisherConnectionCredential(connection.PublisherConnectionCredential); err != nil {
-			t.Fatalf("slot %d credential: %v", slot, err)
+		if _, err := credentials.ParsePublisherConnectionCredential(credentials.PublisherConnectionCredential(connection.Credential)); err != nil {
+			t.Fatal(err)
 		}
 		services[connection.RelayServiceID] = true
 	}
-	if len(services) != publishRunConnectionCount {
-		t.Fatalf("assigned services = %v", services)
+	if len(services) != 2 {
+		t.Fatal("start did not assign distinct relay services")
 	}
-	repeated, err := database.CreatePublishRun(t.Context(), request, now.Add(time.Second), 30*time.Second, time.Minute)
-	if err != nil || !reflect.DeepEqual(repeated, setup) {
-		t.Fatalf("session replay = %#v, %v", repeated, err)
+	repeated, err := f.database.StartServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.RunNumber, f.publisher, f.now)
+	if err != nil || repeated.Token != f.run.Token || !reflect.DeepEqual(repeated.Connections, f.run.Connections) {
+		t.Fatal("start replay changed its run or assignment credentials", err)
 	}
-	changed := request
-	changed.RequestDigest = sha256.Sum256([]byte("changed"))
-	if _, err := database.CreatePublishRun(t.Context(), changed, now, 30*time.Second, time.Minute); !errors.Is(err, ErrPublishRunIdempotency) {
-		t.Fatalf("session idempotency: %v", err)
+	changed := f.service.ServiceMetadata
+	changed.Protocol = "tcp"
+	if _, err := f.database.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "changed", f.now, ServiceRunRequest{Metadata: changed}); !errors.Is(err, ErrServiceConflict) {
+		t.Fatal("run preparation changed saved protocol approval", err)
 	}
-	changed.IdempotencyKey, changed.ExpectedMutationRevision = "second", 2
-	if _, err := database.CreatePublishRun(t.Context(), changed, now, 30*time.Second, time.Minute); !errors.Is(err, ErrPublishRunConflict) {
-		t.Fatalf("live session conflict: %v", err)
+	if _, err := f.database.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "second", f.now, ServiceRunRequest{Metadata: f.service.ServiceMetadata}); !errors.Is(err, ErrServiceConflict) {
+		t.Fatal("one publisher joined the same service twice", err)
 	}
-	changed.PolicyRevision = 2
-	if _, err := database.CreatePublishRun(t.Context(), changed, now, 30*time.Second, time.Minute); !errors.Is(err, ErrPublicURLAuthority) {
-		t.Fatalf("stale authority: %v", err)
+	if err := f.database.CloseServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := database.UpdateAuthorizedPublicURL(t.Context(), AuthorizedPublicURLUpdateRequest{
-		PublicURLID: request.PublicURLID, TeamID: request.TeamID, ActingIdentityID: request.ActingIdentityID,
-		Target: "http://127.0.0.1:4000", AllowedIPPrefixes: []string{"192.0.2.0/24"}, PolicyRevision: 1, ExpectedMutationRevision: 2,
-	}, now); !errors.Is(err, ErrPublishRunOpen) {
-		t.Fatalf("attached route update: %v", err)
+	request := ServiceRunRequest{Metadata: f.service.ServiceMetadata}
+	prepared, err := f.database.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "prepared-retry", f.now, request)
+	if err != nil {
+		t.Fatal(err)
 	}
-	publicURL, err := database.GetPublicURL(t.Context(), request.ActingIdentityID, request.PublicURLID)
-	if err != nil || len(publicURL.AllowedIPPrefixes) != 0 {
-		t.Fatalf("failed mutations changed route policy = %#v, %v", publicURL, err)
+	retry, err := f.database.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "prepared-retry", f.now.Add(time.Second), request)
+	if err != nil || !reflect.DeepEqual(prepared, retry) {
+		t.Fatal("preparation replay changed the captured plan or deadline", err)
+	}
+	request.PreferredRegions = []string{"aws:us-east-1"}
+	if _, err := f.database.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "prepared-retry", f.now, request); !errors.Is(err, ErrServiceConflict) {
+		t.Fatal("preparation replay changed placement intent", err)
 	}
 }
 
 func TestIntegrationPublishRunExpiryAndGatedReplay(t *testing.T) {
-	f := newPublishRunFixture(t)
-	database, now, setup, request := f.database, f.now, f.setup, f.request
-	closedAt := setup.CreatedAt.Add(5 * time.Second)
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state = 'ready', ready_at = $2, publisher_expires_at = $3 WHERE id = $1`, setup.PublishRunID, now, closedAt); err != nil {
+	f := newServicePublicationFixture(t)
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.maintenance_controls SET allowed=false,revision=revision+1,updated_at=$1,updated_by='test' WHERE operation='service_run_creation'`, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.maintenance_controls SET allowed = false, revision = revision + 1, updated_at = $1, updated_by = 'test' WHERE operation = 'service_run_creation'`, now); err != nil {
+	// existing bounded work remains usable while new run creation is gated.
+	if _, err := f.database.StartServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.RunNumber, f.publisher, f.now); err != nil {
 		t.Fatal(err)
 	}
-	retry, err := database.CreatePublishRun(t.Context(), request, now.Add(7*time.Second), 30*time.Second, time.Minute)
-	if err != nil || retry.ReadyAt == nil || !retry.ReadyAt.Equal(now) || retry.ClosedAt == nil || !retry.ClosedAt.Equal(closedAt) || !retry.ExpiresAt.Equal(closedAt) {
-		t.Fatalf("gated replay expiry = %#v, %v", retry, err)
+	expiredAt := f.now.Add(time.Minute)
+	if count, err := f.database.ExpireServiceRuns(t.Context(), expiredAt); err != nil || count != 1 {
+		t.Fatal("gated cleanup did not expire the run", count, err)
 	}
-	expected := setup
-	expected.State, expected.ExpiresAt, expected.ReadyAt, expected.ClosedAt = "expired", closedAt, retry.ReadyAt, &closedAt
-	for index := range expected.PublisherConnections {
-		expected.PublisherConnections[index].State = PublisherConnectionClosed
+	if _, err := f.database.StartServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.RunNumber, f.publisher, expiredAt); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("gated replay revived expired publication authority", err)
 	}
-	if !reflect.DeepEqual(retry, expected) {
-		t.Fatalf("gated replay changed setup: got %#v, want %#v", retry, expected)
+	request := ServiceRunRequest{Metadata: f.service.ServiceMetadata}
+	if _, err := f.database.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "replacement", expiredAt, request); !errors.Is(err, ErrServiceRunCreationGated) {
+		t.Fatal("new run bypassed maintenance control", err)
 	}
-	var reason string
-	if err := database.pool.QueryRow(t.Context(), `SELECT close_reason FROM control.publish_runs WHERE id = $1`, setup.PublishRunID).Scan(&reason); err != nil || reason != "publisher_expired" {
-		t.Fatalf("close reason = %q, %v", reason, err)
-	}
-	var eventKind string
-	if err := database.pool.QueryRow(t.Context(), `SELECT event_kind FROM control.ingress_routing_table_events WHERE public_url_id = $1 AND publish_run_number = $2`, setup.PublicURLID, setup.PublishRunNumber).Scan(&eventKind); err != nil || eventKind != string(IngressPublicURLTombstone) {
-		t.Fatalf("gated replay routing event = %q, %v", eventKind, err)
-	}
-	request.IdempotencyKey, request.RequestDigest, request.ExpectedMutationRevision = "replacement", sha256.Sum256([]byte("replacement")), 2
-	if _, err := database.CreatePublishRun(t.Context(), request, now.Add(8*time.Second), 30*time.Second, time.Minute); !errors.Is(err, ErrServiceRunCreationGated) {
-		t.Fatalf("gated creation: %v", err)
-	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.maintenance_controls SET allowed = true, revision = revision + 1, updated_at = $1, updated_by = 'test' WHERE operation = 'service_run_creation'`, now); err != nil {
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.maintenance_controls SET allowed=true,revision=revision+1,updated_at=$1,updated_by='test' WHERE operation='service_run_creation'`, expiredAt); err != nil {
 		t.Fatal(err)
 	}
-	replacement, err := database.CreatePublishRun(t.Context(), request, now.Add(9*time.Second), 30*time.Second, time.Minute)
-	if err != nil || replacement.PublishRunNumber != 2 || replacement.PublishRunID == setup.PublishRunID || replacement.PublishRunToken == setup.PublishRunToken {
-		t.Fatalf("replacement session = %#v, %v", replacement, err)
-	}
-	publicURL, err := database.GetPublicURL(t.Context(), request.ActingIdentityID, request.PublicURLID)
-	if err != nil || len(publicURL.AllowedIPPrefixes) != 0 {
-		t.Fatalf("replacement changed route policy: %#v, %v", publicURL, err)
+	f.start(t, "replacement", expiredAt)
+	if f.run.RunNumber != 2 {
+		t.Fatal("failed creation consumed a run number")
 	}
 }
 
 func TestIntegrationPublishRunPlacementRequiresAvailableServices(t *testing.T) {
-	database, now, request, _ := newPublishRunPrerequisites(t)
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET draining = true, drain_deadline = $1`, now.Add(time.Minute)); err != nil {
+	f := newServicePublicationFixture(t)
+	if err := f.database.CloseServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.CreatePublishRun(t.Context(), request, now, time.Minute, time.Minute); !errors.Is(err, ErrInsufficientRelayServices) {
-		t.Fatalf("draining placement: %v", err)
-	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET draining = false, drain_deadline = NULL`); err != nil {
+	prepared, err := f.database.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "placement", f.now, ServiceRunRequest{Metadata: f.service.ServiceMetadata})
+	if err != nil {
 		t.Fatal(err)
 	}
-	setup, err := database.CreatePublishRun(t.Context(), request, now, time.Minute, time.Minute)
-	if err != nil || setup.PublishRunNumber != 1 {
-		t.Fatalf("failed placement consumed publish run number: %#v, %v", setup, err)
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET draining=true,drain_deadline=$1`, f.now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.database.StartServiceRun(t.Context(), f.service.ID, prepared.RunID, prepared.RunNumber, f.publisher, f.now); !errors.Is(err, ErrInsufficientRelayServices) {
+		t.Fatal("draining placement accepted", err)
+	}
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET draining=false,drain_deadline=NULL`); err != nil {
+		t.Fatal(err)
+	}
+	run, err := f.database.StartServiceRun(t.Context(), f.service.ID, prepared.RunID, prepared.RunNumber, f.publisher, f.now)
+	if err != nil || run.RunNumber != prepared.RunNumber {
+		t.Fatal("placement retry changed the prepared run", err)
 	}
 }
 
 func TestIntegrationPublishRunReplacesExpiredSession(t *testing.T) {
-	f := newPublishRunFixture(t)
-	request := f.request
-	request.IdempotencyKey, request.RequestDigest, request.ExpectedMutationRevision = "replacement", sha256.Sum256([]byte("replacement")), 2
-	setup, err := f.database.CreatePublishRun(t.Context(), request, f.now.Add(time.Minute), time.Hour, time.Hour)
-	if err != nil || setup.PublishRunNumber != 2 || setup.PublishRunID == f.setup.PublishRunID {
-		t.Fatalf("replace expired session = %#v, %v", setup, err)
+	f := newServicePublicationFixture(t)
+	old := f.run
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.service_runs SET publisher_expires_at=$2 WHERE id=$1`, old.RunID, f.now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	f.start(t, "replacement", f.now.Add(2*time.Second))
+	if f.run.RunNumber != 2 || f.run.RunID == old.RunID || f.run.Token == old.Token {
+		t.Fatal("replacement reused an expired run identity")
 	}
 	var closed bool
-	if err := f.database.pool.QueryRow(t.Context(), `SELECT state = 'expired' AND closed_at = publisher_expires_at FROM control.publish_runs WHERE id = $1`, f.setup.PublishRunID).Scan(&closed); err != nil || !closed {
-		t.Fatalf("old session expiry = %t, %v", closed, err)
+	if err := f.database.pool.QueryRow(t.Context(), `SELECT state='closed' AND closed_at IS NOT NULL AND NOT assignments_open FROM control.service_runs WHERE id=$1`, old.RunID).Scan(&closed); err != nil || !closed {
+		t.Fatal("replacement retained the expired run's relay authority", err)
 	}
 }
 
 func TestIntegrationPublishRunCreationRollsBackBothAssignmentsAndVersion(t *testing.T) {
-	database, now, request, leases := newPublishRunPrerequisites(t)
-	if _, err := database.pool.Exec(t.Context(), `ALTER TABLE control.publisher_service_connection_slots ADD CONSTRAINT reject_second_slot CHECK (service_kind <> 'http' OR connection_slot <> 1)`); err != nil {
+	f := newServicePublicationFixture(t)
+	if err := f.database.CloseServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now); err != nil {
 		t.Fatal(err)
 	}
-	_, err := database.CreatePublishRun(t.Context(), request, now, time.Hour, time.Hour)
+	prepared, err := f.database.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "rollback", f.now, ServiceRunRequest{Metadata: f.service.ServiceMetadata})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.database.pool.Exec(t.Context(), `ALTER TABLE control.service_connection_slots ADD CONSTRAINT reject_second_slot CHECK(connection_slot<>1 OR NOT session_open)`); err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.database.StartServiceRun(t.Context(), f.service.ID, prepared.RunID, prepared.RunNumber, f.publisher, f.now)
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.ConstraintName != "reject_second_slot" {
-		t.Fatalf("second assignment failure = %v", err)
+		t.Fatal("second assignment did not fail at the selected boundary", err)
 	}
-	var version, revision, sessions, connections, audits int64
-	err = database.pool.QueryRow(t.Context(), `SELECT next_publish_run_number, mutation_revision,
-		(SELECT count(*) FROM control.publish_runs),
-		(SELECT count(*) FROM control.publish_run_connection_slots),
-		(SELECT count(*) FROM control.admin_audit_events WHERE operation = 'publish_run.create')
-		FROM control.public_urls WHERE id = $1`, request.PublicURLID).Scan(&version, &revision, &sessions, &connections, &audits)
-	if err != nil || version != 1 || revision != 1 || sessions != 0 || connections != 0 || audits != 0 {
-		t.Fatalf("failed creation left version/revision/sessions/connections/audits = %d/%d/%d/%d/%d, %v", version, revision, sessions, connections, audits, err)
+	var unchanged bool
+	err = f.database.pool.QueryRow(t.Context(), `SELECT run.state='prepared' AND run.started_at IS NULL AND service.next_run_number=$2+1
+		AND NOT EXISTS(SELECT 1 FROM control.service_connection_slots WHERE service_run_id=run.id)
+		AND NOT EXISTS(SELECT 1 FROM control.service_audit_events WHERE run_id=run.id AND event_type='run.start')
+		FROM control.service_runs run JOIN control.services service ON service.id=run.service_id WHERE run.id=$1`, prepared.RunID, prepared.RunNumber).Scan(&unchanged)
+	if err != nil || !unchanged {
+		t.Fatal("failed start left assignments, a start audit, or changed its run number", err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `ALTER TABLE control.publisher_service_connection_slots DROP CONSTRAINT reject_second_slot`); err != nil {
+	if _, err := f.database.pool.Exec(t.Context(), `ALTER TABLE control.service_connection_slots DROP CONSTRAINT reject_second_slot`); err != nil {
 		t.Fatal(err)
 	}
-	setup, err := database.CreatePublishRun(t.Context(), request, now, time.Hour, time.Hour)
-	if err != nil || setup.PublishRunNumber != 1 {
-		t.Fatalf("retry after rollback = %#v, %v", setup, err)
+	f.prepared = prepared
+	f.run, err = f.database.StartServiceRun(t.Context(), f.service.ID, prepared.RunID, prepared.RunNumber, f.publisher, f.now)
+	if err != nil {
+		t.Fatal(err)
 	}
-	f := publishRunFixture{database: database, now: now, request: request, setup: setup, leases: leases}
-	for slot, connection := range setup.PublisherConnections {
-		lease := leases[connection.RelayServiceID]
-		if connection.RelayAddress != lease.RelayAddress || connection.TLSServerName != lease.TLSServerName {
-			t.Fatalf("slot %d has the wrong assigned relay address", slot)
-		}
-		claimTestConnection(t, f, slot, now)
-	}
+	f.readyConnections(t, f.now)
 }
 
 func TestIntegrationPublishRunCreationRejectsExhaustedCounters(t *testing.T) {
-	for _, counter := range []string{"publish_run_number", "mutation_revision"} {
-		t.Run(counter, func(t *testing.T) {
-			database, now, request, _ := newPublishRunPrerequisites(t)
-			version, revision := int64(1), int64(1)
-			if counter == "publish_run_number" {
-				version = math.MaxInt64
-			} else {
-				revision = math.MaxInt64
-			}
-			if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET next_publish_run_number = $2, mutation_revision = $3 WHERE id = $1`, request.PublicURLID, version, revision); err != nil {
-				t.Fatal(err)
-			}
-			request.ExpectedMutationRevision = uint64(revision)
-			if _, err := database.CreatePublishRun(t.Context(), request, now, time.Hour, time.Hour); err == nil || !strings.Contains(err.Error(), "exhausted") {
-				t.Fatalf("exhausted %s: %v", counter, err)
-			}
-			var unchanged bool
-			if err := database.pool.QueryRow(t.Context(), `SELECT next_publish_run_number = $2 AND mutation_revision = $3 AND NOT EXISTS (SELECT FROM control.publish_runs) FROM control.public_urls WHERE id = $1`, request.PublicURLID, version, revision).Scan(&unchanged); err != nil || !unchanged {
-				t.Fatalf("exhausted creation changed state: %t, %v", unchanged, err)
-			}
-		})
+	f := newServicePublicationFixture(t)
+	if err := f.database.CloseServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.services SET next_run_number=$2 WHERE id=$1`, f.service.ID, int64(math.MaxInt64)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.database.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "exhausted", f.now, ServiceRunRequest{Metadata: f.service.ServiceMetadata}); !errors.Is(err, ErrServiceConflict) {
+		t.Fatal("exhausted run counter accepted", err)
+	}
+	var unchanged bool
+	if err := f.database.pool.QueryRow(t.Context(), `SELECT next_run_number=$2 AND NOT EXISTS(SELECT 1 FROM control.service_runs WHERE service_id=$1 AND closed_at IS NULL) FROM control.services WHERE id=$1`, f.service.ID, int64(math.MaxInt64)).Scan(&unchanged); err != nil || !unchanged {
+		t.Fatal("exhausted preparation changed saved authority", err)
 	}
 }
 
 func TestIntegrationPublishRunReadiness(t *testing.T) {
-	f := newPublishRunFixture(t)
-	database, now, authentication := f.database, f.now, f.authentication()
-	if _, err := database.MarkPublishRunReady(t.Context(), authentication, now); !errors.Is(err, ErrPublishRunNotReady) {
-		t.Fatalf("early readiness: %v", err)
-	} else {
-		var blocked *PublishRunNotReadyError
-		if !errors.As(err, &blocked) || blocked.Reason() != "certificate_and_connections_missing" || blocked.ReadyPublisherConnectionCount != 0 {
-			t.Fatalf("missing readiness prerequisites = %+v, %v", blocked, err)
+	f := newServicePublicationFixture(t)
+	health := ServiceRunHealth{Healthy: true, StreamCapacity: 64}
+	check := func(state string) {
+		t.Helper()
+		result, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now, health)
+		if err != nil || result.State != state {
+			t.Fatal("readiness skipped a certificate or connection prerequisite", result.State, err)
 		}
 	}
-	claimTestConnection(t, f, 0, now)
-	work := createPlanIssuanceWork(t, database, now, authentication, f.certificatePlan(), true, nil)
-	lifecycle, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, work.ID, *work.NotAfter, now)
-	if err != nil || lifecycle.State != "starting" || lifecycle.CertificateAt == nil || lifecycle.ReadyAt != nil || lifecycle.Routable || lifecycle.ReadyPublisherConnectionCount != 1 {
-		t.Fatalf("certificate with one connection = %#v, %v", lifecycle, err)
-	}
-	if _, err := database.MarkPublishRunReady(t.Context(), authentication, now); !errors.Is(err, ErrPublishRunNotReady) {
-		t.Fatalf("early readiness: %v", err)
-	} else {
-		var blocked *PublishRunNotReadyError
-		if !errors.As(err, &blocked) || blocked.Reason() != "connections_missing" || blocked.ReadyPublisherConnectionCount != 1 || !blocked.CertificateInstalled {
-			t.Fatalf("missing second ready connection = %+v, %v", blocked, err)
-		}
-	}
-	issuance, err := database.GetCertificateIssuance(t.Context(), work.ID, authentication.PublishRunToken, now)
-	if err != nil || issuance.State != "installed" {
-		t.Fatalf("installed issuance = %#v, %v", issuance, err)
-	}
-	if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, "issuance_other", *work.NotAfter, now); !errors.Is(err, ErrPublicURLCertificate) {
-		t.Fatalf("wrong issuance acknowledgement: %v", err)
-	}
-	claimTestConnection(t, f, 1, now.Add(time.Second))
-	lifecycle = readyTestServingRun(t, f, now.Add(2*time.Second))
-	if lifecycle.ReadyAt == nil || !lifecycle.Routable || lifecycle.ReadyPublisherConnectionCount != 2 {
-		t.Fatalf("ready lifecycle = %#v", lifecycle)
-	}
-	repeated, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, work.ID, *work.NotAfter, now.Add(3*time.Second))
-	if err != nil || !repeated.Routable || repeated.ReadyAt == nil || !repeated.ReadyAt.Equal(*lifecycle.ReadyAt) {
-		t.Fatalf("certificate replay changed readiness = %#v, %v", repeated, err)
-	}
-}
-
-func TestIntegrationManagedMemberReadinessWaitsForWildcardDNS(t *testing.T) {
-	database, now, request, leases := newPublishRunPrerequisites(t)
-	const hostname = "api.member-session.tnl.wtf"
-	if _, err := database.pool.Exec(t.Context(), `
-		INSERT INTO control.domains (id, kind, canonical_domain, state, authority_revision, created_at, verified_at, updated_at)
-		VALUES ('domain_managed', 'managed', 'tnl.wtf', 'ready', 1, $1, $1, $1)
-	`, now); err != nil {
+	check("starting")
+	f.readyConnection(t, 0, f.now)
+	work := createPlanIssuanceWork(t, f.database, f.now, f.run, f.prepared.CertificatePlan, true, nil)
+	if err := f.database.MarkServiceCertificateInstalled(t.Context(), f.service.ID, f.run.RunID, f.run.Token, work.ID, f.run.RunNumber, *work.NotAfter, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `
-		UPDATE control.public_urls SET domain_id = 'domain_managed', membership_id = 'membership_session',
-			public_url_scope = 'member', canonical_hostname = $2, dns_state = 'pending', dns_available_at = $3
-		WHERE id = $1
-	`, request.PublicURLID, hostname, now); err != nil {
+	check("starting")
+	if issued, err := f.database.GetServiceCertificateIssuance(t.Context(), f.service.ID, f.run.RunID, f.run.Token, work.ID, f.now); err != nil || issued.State != "installed" {
+		t.Fatal("certificate acknowledgement was not durable", err)
+	}
+	if err := f.database.MarkServiceCertificateInstalled(t.Context(), f.service.ID, f.run.RunID, f.run.Token, "issuance_other", f.run.RunNumber, *work.NotAfter, f.now); !errors.Is(err, ErrCertificateIssuanceNotFound) {
+		t.Fatal("another issuance was acknowledged", err)
+	}
+	f.readyConnection(t, 1, f.now)
+	check("ready")
+	var firstReadyAt time.Time
+	if err := f.database.pool.QueryRow(t.Context(), `SELECT ready_at FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&firstReadyAt); err != nil {
 		t.Fatal(err)
 	}
-	request.CertificateCacheKey, request.CertificateScope = "member-session.tnl.wtf", "member-session.tnl.wtf"
-	request.CertificateIdentifiers = []string{"*.member-session.tnl.wtf", "member-session.tnl.wtf"}
-	request.CertificateChallenge = "dns-01"
-	setup, err := database.CreatePublishRun(t.Context(), request, now, 30*time.Second, time.Minute)
-	if err != nil {
+	if err := f.database.MarkServiceCertificateInstalled(t.Context(), f.service.ID, f.run.RunID, f.run.Token, work.ID, f.run.RunNumber, *work.NotAfter, f.now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	f := publishRunFixture{database, now, request, setup, leases}
-	authentication := f.authentication()
-	work := createPlanIssuanceWork(t, database, now, authentication, f.certificatePlan(), true, nil)
-	if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, work.ID, *work.NotAfter, now); err != nil {
-		t.Fatal(err)
-	}
-	for slot := range setup.PublisherConnections {
-		claimTestConnection(t, f, slot, now)
-	}
-	if _, err := database.MarkPublishRunReady(t.Context(), authentication, now); !errors.Is(err, ErrPublishRunNotReady) {
-		t.Fatalf("ready before wildcard DNS: %v", err)
-	} else {
-		var blocked *PublishRunNotReadyError
-		if !errors.As(err, &blocked) || blocked.Reason() != "dns_pending" {
-			t.Fatalf("DNS readiness reason = %#v, %v", blocked, err)
-		}
-	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET dns_state = 'published', dns_available_at = NULL WHERE id = $1`, request.PublicURLID); err != nil {
-		t.Fatal(err)
-	}
-	ready := readyTestServingRun(t, f, now)
-	if !ready.Routable {
-		t.Fatalf("ready after wildcard DNS = %#v", ready)
-	}
-}
-
-func TestIntegrationExactPublicURLReadinessWaitsForDNS(t *testing.T) {
-	f := newPublishRunFixture(t)
-	database, now, authentication := f.database, f.now, f.authentication()
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET dns_state = 'pending', dns_available_at = $2 WHERE id = $1`, f.setup.PublicURLID, now); err != nil {
-		t.Fatal(err)
-	}
-	work := createPlanIssuanceWork(t, database, now, authentication, f.certificatePlan(), true, nil)
-	if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, work.ID, *work.NotAfter, now); err != nil {
-		t.Fatal(err)
-	}
-	for slot := range f.setup.PublisherConnections {
-		claimTestConnection(t, f, slot, now)
-	}
-	for _, test := range []struct {
-		state  string
-		reason string
-	}{
-		{"pending", "dns_pending"},
-		{"failed", "dns_failed"},
-	} {
-		if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET dns_state = $2, dns_available_at = CASE WHEN $2 = 'pending' THEN $3::timestamptz END WHERE id = $1`, f.setup.PublicURLID, test.state, now); err != nil {
-			t.Fatal(err)
-		}
-		_, err := database.MarkPublishRunReady(t.Context(), authentication, now)
-		var blocked *PublishRunNotReadyError
-		if !errors.As(err, &blocked) || string(blocked.Reason()) != test.reason {
-			t.Fatalf("exact URL DNS %s = %#v, %v", test.state, blocked, err)
-		}
-	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET dns_state = 'published', dns_available_at = NULL WHERE id = $1`, f.setup.PublicURLID); err != nil {
-		t.Fatal(err)
-	}
-	ready := readyTestServingRun(t, f, now)
-	if !ready.Routable {
-		t.Fatalf("exact URL ready after DNS = %#v", ready)
+	var stable bool
+	if err := f.database.pool.QueryRow(t.Context(), `SELECT state='ready' AND ready_at=$2 FROM control.service_runs WHERE id=$1`, f.run.RunID, firstReadyAt).Scan(&stable); err != nil || !stable {
+		t.Fatal("install replay changed first readiness", err)
 	}
 }
 
 func TestIntegrationPublishRunHeartbeatPreservesConnectionsAndExpiry(t *testing.T) {
-	f := newPublishRunFixture(t)
-	database, now := f.database, f.now
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET ephemeral = true, expires_at = $2 WHERE id = $1`, f.setup.PublicURLID, now.Add(time.Second)); err != nil {
+	f := newServicePublicationFixture(t)
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.services SET ephemeral=true WHERE id=$1`, f.service.ID); err != nil {
 		t.Fatal(err)
 	}
-	if count, err := database.DeleteExpiredEphemeralPublicURLs(t.Context(), now.Add(2*time.Second)); err != nil || count != 0 {
-		t.Fatalf("active ephemeral cleanup = %d, %v", count, err)
+	if count, err := f.database.ExpireServiceRuns(t.Context(), f.now.Add(2*time.Second)); err != nil || count != 0 {
+		t.Fatal("active ephemeral service was removed", count, err)
 	}
-	for slot := range f.setup.PublisherConnections {
-		claimTestConnection(t, f, slot, now)
-	}
-	heartbeatAt := now.Add(3 * time.Second)
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_run_connection_slots SET publisher_connection_credential_expires_at = $2 WHERE publish_run_id = $1`, f.setup.PublishRunID, heartbeatAt.Add(-time.Second)); err != nil {
+	f.readyConnections(t, f.now)
+	at := f.now.Add(3 * time.Second)
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.service_connection_slots SET credential_expires_at=$2 WHERE service_run_id=$1`, f.run.RunID, at.Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	heartbeat, err := database.HeartbeatPublishRun(t.Context(), f.authentication(), heartbeatAt, 30*time.Second, time.Minute)
-	if err != nil || !heartbeat.ExpiresAt.Equal(heartbeatAt.Add(30*time.Second)) || heartbeat.PublishRunNumber != f.setup.PublishRunNumber {
-		t.Fatalf("heartbeat = %#v, %v", heartbeat, err)
+	heartbeat, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, at, ServiceRunHealth{StreamCapacity: 64})
+	if err != nil || !heartbeat.ExpiresAt.Equal(at.Add(45*time.Second)) {
+		t.Fatal("heartbeat did not renew the bounded publisher lease", err)
 	}
-	publicURL, err := database.GetPublicURL(t.Context(), f.request.ActingIdentityID, f.setup.PublicURLID)
-	if err != nil || publicURL.ExpiresAt == nil || !publicURL.ExpiresAt.Equal(heartbeatAt.Add(ephemeralPublicURLGracePeriod)) {
-		t.Fatalf("renewed ephemeral route = %#v, %v", publicURL, err)
-	}
-	earlier, err := database.HeartbeatPublishRun(t.Context(), f.authentication(), heartbeatAt.Add(-time.Second), 10*time.Second, time.Minute)
+	earlier, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, at.Add(-time.Second), ServiceRunHealth{StreamCapacity: 64})
 	if err != nil || !earlier.ExpiresAt.Equal(heartbeat.ExpiresAt) {
-		t.Fatalf("nonmonotonic heartbeat = %#v, %v", earlier, err)
+		t.Fatal("an older heartbeat shortened an existing lease", err)
 	}
-	monotonic, err := database.GetPublicURL(t.Context(), f.request.ActingIdentityID, f.setup.PublicURLID)
-	if err != nil || monotonic.ExpiresAt == nil || !monotonic.ExpiresAt.Equal(*publicURL.ExpiresAt) {
-		t.Fatalf("nonmonotonic route expiry = %#v, %v", monotonic, err)
-	}
-	for slot, connection := range heartbeat.PublisherConnections {
-		previous := f.setup.PublisherConnections[slot]
-		if connection.PublisherConnectionID != previous.PublisherConnectionID || connection.ConnectionAssignmentRevision != previous.ConnectionAssignmentRevision || connection.State != PublisherConnectionReady {
-			t.Fatalf("expired credential replaced connected slot %d: %#v", slot, connection)
+	for index, connection := range heartbeat.Connections {
+		if connection.PublisherConnectionID != f.run.Connections[index].PublisherConnectionID || connection.Revision != f.run.Connections[index].Revision || connection.State != "ready" {
+			t.Fatal("expired bootstrap credential replaced a connected slot")
 		}
 	}
 }
 
 func TestIntegrationHealthyPublishRunHeartbeatSkipsUnrelatedPlacementLock(t *testing.T) {
-	f := newPublishRunFixture(t)
-	database, now := f.database, f.now
-	readyTestSession(t, f)
-	if _, err := database.RegisterRelay(t.Context(), relayLifecycleRegistration("placement-unrelated"), now, time.Hour); err != nil {
+	f := newServicePublicationFixture(t)
+	f.readyConnections(t, f.now)
+	installPrivateTestCertificate(t, f.database, f.prepared, f.run, f.now)
+	health := ServiceRunHealth{Healthy: true, StreamCapacity: 64}
+	if _, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now, health); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.database.RegisterRelay(t.Context(), relayLifecycleRegistration("placement-unrelated"), f.now, time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	gate, err := database.pool.Begin(ctx)
+	gate, err := f.database.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if _, err := gate.Exec(ctx, `SELECT relay_service_id FROM control.relay_services WHERE relay_service_id = 'placement-unrelated' FOR UPDATE`); err != nil {
+	if _, err := gate.Exec(ctx, `SELECT relay_service_id FROM control.relay_services WHERE relay_service_id='placement-unrelated' FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
 	workers := newIntegrationWorkers(t, cancel)
 	workers.Go(func() {
-		setup, err := database.HeartbeatPublishRun(ctx, f.authentication(), now.Add(time.Second), time.Hour, time.Minute)
-		if err == nil {
-			for slot, connection := range setup.PublisherConnections {
-				previous := f.setup.PublisherConnections[slot]
-				if connection.PublisherConnectionID != previous.PublisherConnectionID ||
-					connection.ConnectionAssignmentRevision != previous.ConnectionAssignmentRevision ||
-					connection.State != PublisherConnectionReady {
+		result, err := f.database.HeartbeatServiceRun(ctx, f.service.ID, f.run.RunID, f.run.Token, f.now.Add(time.Second), health)
+		if err == nil && !reflect.DeepEqual(result.Connections, f.run.Connections) {
+			for i, slot := range result.Connections {
+				if slot.PublisherConnectionID != f.run.Connections[i].PublisherConnectionID || slot.Revision != f.run.Connections[i].Revision {
 					err = errors.New("healthy heartbeat replaced publisher connections")
 					break
 				}
@@ -421,38 +295,29 @@ func TestIntegrationHealthyPublishRunHeartbeatSkipsUnrelatedPlacementLock(t *tes
 	}
 }
 
-type publishRunFixture struct {
-	database *Database
-	now      time.Time
-	request  PublishRunRequest
-	setup    PublishRunSetup
-	leases   map[string]RelayLease
-}
-
-func newPublishRunPrerequisites(t *testing.T) (*Database, time.Time, PublishRunRequest, map[string]RelayLease) {
+func newPublishRunPrerequisites(t *testing.T) (*Database, time.Time, serviceTestAuthority, map[string]RelayLease) {
 	return publishRunPrerequisitesWithRelayKeys(t, nil)
 }
 
-func publishRunPrerequisitesWithRelayKeys(t *testing.T, keyForRun func(string) []byte) (*Database, time.Time, PublishRunRequest, map[string]RelayLease) {
+func publishRunPrerequisitesWithRelayKeys(t *testing.T, keyForRun func(string) []byte) (*Database, time.Time, serviceTestAuthority, map[string]RelayLease) {
 	t.Helper()
-	database, now := newControlStateIntegrationDatabase(t, "publish_run")
+	database, now := newControlStateIntegrationDatabase(t, "service_prerequisites")
 	return publishRunPrerequisitesInDatabase(t, database, now, keyForRun)
 }
 
-func publishRunPrerequisitesInDatabase(t *testing.T, database *Database, now time.Time, keyForRun func(string) []byte) (*Database, time.Time, PublishRunRequest, map[string]RelayLease) {
+func publishRunPrerequisitesInDatabase(t *testing.T, database *Database, now time.Time, keyForRun func(string) []byte) (*Database, time.Time, serviceTestAuthority, map[string]RelayLease) {
 	t.Helper()
-	seedControlPublicURL(t, database, now, "session")
-	leases := make(map[string]RelayLease)
-	for slot := range publishRunConnectionCount {
+	authority := seedControlServiceAuthority(t, database, now, "session")
+	leases := map[string]RelayLease{}
+	for slot := range 2 {
 		registration := relayLifecycleRegistration(fmt.Sprintf("placement-%d", slot))
 		registration.ConnectionCapacity = 10
 		if keyForRun != nil {
-			runID, err := opaqueid.New(opaqueid.RelayRunPrefix)
+			run, err := opaqueid.New(opaqueid.RelayRunPrefix)
 			if err != nil {
 				t.Fatal(err)
 			}
-			registration.RelayRunID = runID
-			registration.PeerSigningPublicKey = keyForRun(registration.RelayRunID)
+			registration.RelayRunID, registration.PeerSigningPublicKey = run, keyForRun(run)
 		}
 		lease, err := database.RegisterRelay(t.Context(), registration, now, time.Hour)
 		if err != nil {
@@ -460,64 +325,15 @@ func publishRunPrerequisitesInDatabase(t *testing.T, database *Database, now tim
 		}
 		leases[lease.RelayServiceID] = lease
 	}
-	return database, now, PublishRunRequest{PublicURLID: "public_url_session", TeamID: "team_session", ActingIdentityID: "identity_session", MembershipID: "membership_session",
-		RetrySecret: bytes.Repeat([]byte{7}, 32), IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")), PolicyRevision: 1,
-		CertificateCacheKey: "certificate_session", CertificateScope: "public-url", CertificateIdentifiers: []string{"route-session.example.test"}, CertificateChallenge: "dns-01", ExpectedMutationRevision: 1}, leases
-}
-
-func newPublishRunFixture(t *testing.T) publishRunFixture {
-	t.Helper()
-	database, now, request, leases := newPublishRunPrerequisites(t)
-	setup, err := database.CreatePublishRun(t.Context(), request, now, 30*time.Second, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return publishRunFixture{database, now, request, setup, leases}
-}
-
-func (f publishRunFixture) authentication() PublishRunAuthentication {
-	return PublishRunAuthentication{PublishRunID: f.setup.PublishRunID, PublicURLID: f.setup.PublicURLID, PublishRunNumber: f.setup.PublishRunNumber, PublishRunToken: f.setup.PublishRunToken}
-}
-
-func (f publishRunFixture) certificatePlan() CertificatePlan {
-	return CertificatePlan{CacheKey: f.request.CertificateCacheKey, Scope: f.request.CertificateScope, Identifiers: f.request.CertificateIdentifiers, ChallengeMethod: f.request.CertificateChallenge}
-}
-
-func claimTestConnection(t *testing.T, f publishRunFixture, slot int, now time.Time) PublisherConnectionClaimRequest {
-	t.Helper()
-	plan := f.setup.PublisherConnections[slot]
-	digest, err := credentials.ParsePublisherConnectionCredential(plan.PublisherConnectionCredential)
-	if err != nil {
-		t.Fatal(err)
-	}
-	claim := PublisherConnectionClaimRequest{ConnectionAssignmentIdentity: plan.ConnectionAssignmentIdentity,
-		RelayLeaseIdentity: f.leases[plan.RelayServiceID].RelayLeaseIdentity, ClaimID: fmt.Sprintf("claim-%d", slot), CredentialDigest: [32]byte(digest)}
-	if _, err := f.database.ClaimPublisherConnection(t.Context(), claim, now); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.database.MarkPublisherConnectionReady(t.Context(), claim, now); err != nil {
-		t.Fatal(err)
-	}
-	return claim
-}
-
-func readyTestSession(t *testing.T, f publishRunFixture) []PublisherConnectionClaimRequest {
-	t.Helper()
-	work := createPlanIssuanceWork(t, f.database, f.now, f.authentication(), f.certificatePlan(), true, nil)
-	if _, err := f.database.MarkPublicURLCertificateInstalled(t.Context(), f.authentication(), work.ID, *work.NotAfter, f.now); err != nil {
-		t.Fatal(err)
-	}
-	var claims []PublisherConnectionClaimRequest
-	for slot := range f.setup.PublisherConnections {
-		claims = append(claims, claimTestConnection(t, f, slot, f.now))
-	}
-	readyTestServingRun(t, f, f.now)
-	return claims
+	return database, now, authority, leases
 }
 
 func registerTestIngress(t *testing.T, database *Database, now time.Time) IngressLease {
 	t.Helper()
-	lease, err := database.RegisterIngress(t.Context(), IngressRegistration{IngressID: "ingress_test", IngressRunID: "run_test", ProtocolVersion: 1, ConnectionCapacity: 100}, now, time.Hour)
+	lease, err := database.RegisterIngress(t.Context(), IngressRegistration{
+		IngressID: "ingress_test", IngressRunID: "run_test", ProtocolVersion: 1, ConnectionCapacity: 100,
+		IngressPoolID: PrimaryIngressPoolID, HTTPS: true,
+	}, now, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

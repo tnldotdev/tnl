@@ -212,16 +212,16 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 			}
 			var stderr synchronizedBuffer
 			command.Stderr = &stderr
-			if err := command.Start(); err != nil {
+			stopDescendants := isolateIntegrationCommand(t, command)
+			process, err := startOwnedCommand(command, nil)
+			if err != nil {
 				t.Fatal(err)
 			}
-			joined := make(chan error, 1)
-			go func() { joined <- command.Wait() }()
-			stopped := false
 			defer func() {
-				if !stopped {
-					_ = command.Process.Kill()
-					<-joined
+				defer stopDescendants()
+				_ = stdin.Close()
+				if err := process.shutdown(3*time.Second, 3*time.Second); err != nil {
+					t.Error("SDK subprocess cleanup", err)
 				}
 			}()
 			lines := make(chan string, 1)
@@ -288,6 +288,21 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 			if err := f.inspect.QueryRowContext(t.Context(), `SELECT service_id FROM control.service_endpoints WHERE hostname=$1`, strings.TrimPrefix(result.URL, "https://")).Scan(&id); err != nil {
 				t.Fatal(err)
 			}
+			if variant == "bun" || variant == "fetch" || variant == "python" {
+				declaration, _, err := f.identity.routes.GetServiceConfiguration(t.Context(), id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if declaration == nil || declaration.Http == nil {
+					t.Fatal("SDK request limits were not saved in its service declaration")
+				}
+				limits := declaration.Http.Limits
+				if limits == nil || limits.Total == nil || *limits.Total != 10 ||
+					limits.Concurrency == nil || *limits.Concurrency != 2 ||
+					limits.Rate == nil || limits.Rate.Count != 100 || limits.Rate.Per != "1s" {
+					t.Fatal("SDK request limits did not reach native service preparation", limits)
+				}
+			}
 			if variant == "node" {
 				savedID, savedURL = id, result.URL
 			}
@@ -299,9 +314,8 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 			}
 			_ = stdin.Close()
 			select {
-			case err := <-joined:
-				stopped = true
-				if err != nil {
+			case <-process.done:
+				if err := process.result(); err != nil {
 					t.Fatal("SDK cleanup failed", stderr.String())
 				}
 			case <-ctx.Done():
@@ -377,16 +391,35 @@ func newSDKLostReplyProxy(t *testing.T, owner publisherprotocol.Endpoint, ready 
 			mu.Unlock()
 			if response.StatusCode == 200 && !dropped.Swap(true) {
 				var proof sdkLostReplyEvidence
-				select {
-				case proof.url = <-ready:
-					visited, content, visitErr := visitor.requestURLContext(r.Context(), http.MethodGet, proof.url, nil)
-					proof.body, proof.err = string(content), visitErr
-					if visited != nil {
-						proof.status = visited.StatusCode
+				var registration publisherprotocol.Registration
+				proof.err = json.Unmarshal(data, &registration)
+				tick := time.NewTicker(publisherapp.LeaseDuration / 4)
+			awaitVisitor:
+				for proof.err == nil {
+					// the proxy owns this artificial acknowledgment delay. keep
+					// the accepted registration alive until the SDK can recover it.
+					renewCtx, cancel := context.WithTimeout(r.Context(), publisherapp.LeaseDuration/4)
+					proof.err = publisherprotocol.Call(renewCtx, owner, http.MethodPost, "/v1/renew", registration, nil)
+					cancel()
+					if proof.err != nil {
+						break
 					}
-				case <-r.Context().Done():
-					proof.err = r.Context().Err()
+					select {
+					case proof.url = <-ready:
+						visitCtx, cancel := context.WithTimeout(r.Context(), publisherapp.LeaseDuration/2)
+						visited, content, visitErr := visitor.requestURLContext(visitCtx, http.MethodGet, proof.url, nil)
+						cancel()
+						proof.body, proof.err = string(content), visitErr
+						if visited != nil {
+							proof.status = visited.StatusCode
+						}
+						break awaitVisitor
+					case <-tick.C:
+					case <-r.Context().Done():
+						proof.err = r.Context().Err()
+					}
 				}
+				tick.Stop()
 				mu.Lock()
 				evidence.url, evidence.body, evidence.status, evidence.err = proof.url, proof.body, proof.status, proof.err
 				mu.Unlock()

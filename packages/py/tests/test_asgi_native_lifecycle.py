@@ -13,6 +13,7 @@ import httpx
 import pytest
 from starlette.types import Receive, Scope, Send
 
+import tnl
 from tnl import _asgi
 from tnl._native import NativeRuntime
 from tnl._protocol import Endpoint, NativeUnavailable, PublicationCleanupFailed, parse_endpoint
@@ -79,7 +80,13 @@ def test_initial_registration_reply_loss_reconciles_and_joins_before_asgi_shutdo
                     await send({"type": "http.response.body", "body": b"still serving"})
 
             async def publish() -> None:
-                async with await _asgi.start_publication(app, directory=tmp_path):
+                async with await _asgi.start_publication(
+                    app,
+                    directory=tmp_path,
+                    limits=tnl.Limits(
+                        requests=7, concurrency=2, rate=tnl.RateLimit(requests=3, per="1s")
+                    ),
+                ):
                     pytest.fail("lost initial reply was accepted")
 
             async def marker(name: str) -> None:
@@ -91,6 +98,12 @@ def test_initial_registration_reply_loss_reconciles_and_joins_before_asgi_shutdo
             try:
                 await marker("committed.json")
                 registration = json.loads((tmp_path / "committed.json").read_text())
+                invocation = json.loads((tmp_path / "invocation.json").read_text())
+                assert invocation["limits"] == {
+                    "total": 7,
+                    "concurrency": 2,
+                    "rate": {"count": 3, "per": "1s"},
+                }
                 if cancel:
                     task.cancel()
                 (tmp_path / "release-register").touch()

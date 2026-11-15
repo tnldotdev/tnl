@@ -136,7 +136,7 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 				if store.saved[len(store.saved)-1].State == "ready_to_finalize" {
 					break
 				}
-				workerNow = workerNow.Add(time.Second)
+				workerNow = store.saved[len(store.saved)-1].AvailableAt
 			}
 			last := store.saved[len(store.saved)-1]
 			if last.ID != issuance.ID || last.State != "ready_to_finalize" || len(last.Authorizations) != 1 || api.newOrderCalls != 1 || api.acceptCalls != 1 {
@@ -180,24 +180,22 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 				wildcard.ChallengeType != "dns-01" || wildcard.PresentationReference == "" || wildcard.PresentedAt == nil || wildcard.ValidatedAt == nil {
 				t.Fatalf("authorization PostgreSQL round-trip: last %#v, claimed %#v", last.Authorizations, work.Authorizations)
 			}
-			for _, name := range []string{"duplicate", "token", "digest", "presentation", "not_complete", "expired"} {
+			for _, name := range []string{"duplicate", "token", "digest", "presentation"} {
 				invalid := work
 				invalid.Authorizations = slices.Clone(work.Authorizations)
+				expected := controlstate.ErrACMEWorkStale
 				switch name {
 				case "duplicate":
 					invalid.Authorizations = append(invalid.Authorizations, invalid.Authorizations[0])
+					expected = controlstate.ErrCertificateIssuanceInvalid
 				case "token":
 					invalid.Authorizations[0].ChallengeToken = "fabricated"
 				case "digest":
 					invalid.Authorizations[0].ChallengeDigest = sha256.Sum256([]byte("fabricated"))
 				case "presentation":
 					invalid.Authorizations[0].PresentationReference = "fabricated"
-				case "not_complete":
-					invalid.Authorizations[0].State = "presenting"
-				case "expired":
-					invalid.Authorizations[0].ExpiresAt = invalid.Authorizations[0].ValidatedAt
 				}
-				if _, err := database.SaveACMEOrderWork(t.Context(), invalid, restartNow); !errors.Is(err, controlstate.ErrCertificateIssuanceInvalid) {
+				if _, err := database.SaveACMEOrderWork(t.Context(), invalid, restartNow); !errors.Is(err, expected) {
 					t.Fatalf("%s authorization save = %v", name, err)
 				}
 			}
@@ -240,6 +238,27 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 				authorization.Attempts = 0
 				authorization.CleanupCompletedAt = authorization.ValidatedAt
 				reused.Authorizations = append(reused.Authorizations, authorization)
+			}
+			// reused authorizations have no live challenge material. validate
+			// their complete state and lifetime independently of active challenges.
+			for _, name := range []string{"token", "digest", "presentation", "not_complete", "expired"} {
+				invalid := reused
+				invalid.Authorizations = slices.Clone(reused.Authorizations)
+				switch name {
+				case "token":
+					invalid.Authorizations[0].ChallengeToken = "fabricated"
+				case "digest":
+					invalid.Authorizations[0].ChallengeDigest = sha256.Sum256([]byte("fabricated"))
+				case "presentation":
+					invalid.Authorizations[0].PresentationReference = "fabricated"
+				case "not_complete":
+					invalid.Authorizations[0].State = "presenting"
+				case "expired":
+					invalid.Authorizations[0].ExpiresAt = invalid.Authorizations[0].ValidatedAt
+				}
+				if _, err := database.SaveACMEOrderWork(t.Context(), invalid, secondNow); !errors.Is(err, controlstate.ErrCertificateIssuanceInvalid) {
+					t.Fatalf("%s reused authorization save = %v", name, err)
+				}
 			}
 			if _, err := database.SaveACMEOrderWork(t.Context(), reused, secondNow); err != nil {
 				t.Fatalf("authorization URL reuse across orders: %v", err)

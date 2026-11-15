@@ -43,7 +43,7 @@ func (d *Database) ReleaseServiceEndpoint(ctx context.Context, service, actor st
 		return result, err
 	}
 	// control has no dns work for unmanaged names. managed names must have
-	// completed the private loopback replacement, and old names must be removed.
+	// completed removal after public access was disabled.
 	// lock the receipts so a concurrent dns update cannot change this proof.
 	endpoints, err := tx.Query(ctx, `SELECT hostname,public,dns_state,retired_at IS NOT NULL
 	    FROM control.service_endpoints WHERE service_id=$1 ORDER BY hostname FOR UPDATE`, service)
@@ -60,7 +60,7 @@ func (d *Database) ReleaseServiceEndpoint(ctx context.Context, service, actor st
 		}
 		if hostname == row.CertificateHostname && !retired {
 			current = true
-			cleared = cleared && !public && (state == "published" || state == "unmanaged")
+			cleared = cleared && !public && (state == "removed" || state == "unmanaged")
 		} else {
 			cleared = cleared && retired && state == "removed"
 		}

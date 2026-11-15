@@ -13,7 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
-const testPublicURLID = "url_0123456789abcdefghijkl"
+const testServiceID = "svc_0123456789abcdefghijkl"
 
 func TestStateRejectsDifferentFreshBaselineWithoutReplacingIt(t *testing.T) {
 	for _, baseline := range []string{"missing", "other"} {

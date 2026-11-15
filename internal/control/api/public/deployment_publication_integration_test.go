@@ -154,17 +154,25 @@ func TestIntegrationDeploymentPublicationHTTPAndNativePreparation(t *testing.T) 
 	if err != nil || denied.StatusCode() != 400 || denied.ApplicationproblemJSONDefault == nil || denied.ApplicationproblemJSONDefault.Code != controlv1.InvalidRequest {
 		t.Fatal("allocation accepted a custom hostname claim", denied, err)
 	}
-	temporary, first, err := publisheridentity.PrepareDeploymentAllocation(ctx, control, authority, *response.JSON201, private, "production", allocation)
-	if err != nil || first == nil || !first.Ephemeral {
+	temporary, err := publisheridentity.NewDeploymentAllocator(control, authority, *response.JSON201, private, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := temporary.AllocateService(ctx, allocation)
+	if err != nil || !first.Ephemeral {
 		t.Fatal("temporary preparation borrowed anonymous saved policy", err)
 	}
-	_, retry, err := publisheridentity.PrepareDeploymentAllocation(ctx, control, authority, *response.JSON201, private, "production", allocation)
+	retried, err := publisheridentity.NewDeploymentAllocator(control, authority, *response.JSON201, private, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := retried.AllocateService(ctx, allocation)
 	if err != nil || retry.Id != first.Id || retry.ExpiresAt == nil || first.ExpiresAt == nil || !retry.ExpiresAt.Equal(*first.ExpiresAt) {
 		t.Fatal("native retry lost original allocation", err)
 	}
 	anonymous := allocation
 	anonymous.Configuration.Http = &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: new(controlv1.Anonymous)}}
-	if _, _, err := publisheridentity.PrepareDeploymentAllocation(ctx, control, authority, *response.JSON201, private, "production", anonymous); err == nil {
+	if _, err := retried.AllocateService(ctx, anonymous); err == nil {
 		t.Fatal("HTTP allocation exceeded visitor approval")
 	}
 	if err := d.PrepareVisitorSigningKeys(ctx, server.URL, now); err != nil {
@@ -195,11 +203,15 @@ func TestIntegrationDeploymentPublicationHTTPAndNativePreparation(t *testing.T) 
 		}
 	}
 	checkPolicy(native, *saved, true)
-	checkPolicy(temporary, *first, false)
+	checkPolicy(temporary, first, false)
 	if err := temporary.DeleteAllocatedService(ctx, first.Id); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := publisheridentity.PrepareDeploymentAllocation(ctx, control, authority, *response.JSON201, private, "production", allocation); err == nil {
+	replayed, err := publisheridentity.NewDeploymentAllocator(control, authority, *response.JSON201, private, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replayed.AllocateService(ctx, allocation); err == nil {
 		t.Fatal("deleted allocation resurrected through native retry")
 	}
 	if err := native.DeleteAllocatedService(ctx, saved.Id); err == nil {

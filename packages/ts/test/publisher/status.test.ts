@@ -86,6 +86,7 @@ describe("publisher status replies", () => {
       process_id: 1,
       server: "https://control.example",
       project: "/project",
+      service_id: `svc_${"A".repeat(22)}`,
       publish_run_number: 2,
       started_at: snapshot.observed_at,
       updated_at: snapshot.observed_at,
@@ -101,6 +102,8 @@ describe("publisher status replies", () => {
     for (const changed of [
       { ...publication, tunnel_id: "another-tunnel" },
       { ...publication, service: "another-service" },
+      { ...publication, service_id: `url_${"A".repeat(22)}` },
+      { ...publication, public_url_id: `url_${"A".repeat(22)}` },
     ])
       expect(() =>
         parseStatus({ ...value, publications: [changed] }, invocation, registrationID, target),

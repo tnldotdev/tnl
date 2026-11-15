@@ -353,10 +353,10 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 				'publisher_expires_at',(SELECT publisher_expires_at FROM control.service_runs ORDER BY created_at DESC LIMIT 1),
 				'closed_at',(SELECT closed_at FROM control.service_runs ORDER BY created_at DESC LIMIT 1),
 				'publisher_connections',(SELECT json_agg(json_build_object('slot',connection_slot,'state',state,
-					'relay_id',connected_relay_id,'relay_run_id',connected_relay_run_id,'relay_lease_revision',connected_relay_lease_revision))
-					FROM control.publisher_service_connection_slots),
+					'relay_id',relay_id,'relay_run_id',relay_run_id,'relay_lease_revision',relay_lease_revision))
+					FROM control.service_connection_slots),
 				'ingress_leases',(SELECT json_agg(json_build_object('id',ingress_id,'run_id',ingress_run_id,
-					'expires_at',lease_expires_at,'routing_table_revision',routing_table_revision)) FROM control.ingress_leases),
+					'expires_at',lease_expires_at,'lease_revision',ingress_lease_revision)) FROM control.ingress_leases),
 				'relay_leases',(SELECT json_agg(json_build_object('id',relay_id,'run_id',relay_run_id,
 					'expires_at',lease_expires_at,'lease_revision',relay_lease_revision)) FROM control.relay_leases))::text
 				FROM control.guest_trials LIMIT 1`).Scan(&authority)
@@ -745,7 +745,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 			var revision int64
 			err := inspect.QueryRowContext(ctx, `SELECT run.publisher_expires_at > $3 AND run.closed_at IS NULL, policy.revision
 				FROM control.service_runs AS run JOIN control.visitor_policies AS policy
-				ON policy.resource_kind='service' AND policy.resource_id=run.service_id
+				ON policy.resource_id=run.service_id
 				WHERE run.service_id=$1 AND run.run_number=$2`, ready.ServiceId, ready.RunNumber, transferredAt).Scan(&renewed, &revision)
 			// observe a successful renewal after the transfer and the policy already
 			// installed by this exact service run, not a newly fetched response.
@@ -916,11 +916,8 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 		FROM control.services WHERE id=$1`, service.Id).Scan(&forgotten); err != nil || !forgotten {
 		t.Fatalf("expired guest retained its encrypted target declaration: %t, %v", forgotten, err)
 	}
-	var retainedHashes int
-	if err := inspect.QueryRow(`SELECT count(*) FROM control.ingress_routing_table_events
-		WHERE convert_from(projection, 'UTF8') LIKE '%' || $1 || '%'
-		AND convert_from(projection, 'UTF8')::jsonb ? 'allowed_ip_hashes'`,
-		ready.ServiceId).Scan(&retainedHashes); err != nil || retainedHashes != 0 {
-		t.Fatalf("expired guest routing events retained %d IP hashes: %v", retainedHashes, err)
+	var retiredProjection bool
+	if err := inspect.QueryRow(`SELECT to_regclass('control.ingress_routing_table_events') IS NULL`).Scan(&retiredProjection); err != nil || !retiredProjection {
+		t.Fatalf("guest source hashes can still be retained in the retired routing projection: %v", err)
 	}
 }

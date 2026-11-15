@@ -60,11 +60,11 @@ func waitForReadyPublisherConnections(t *testing.T, database *sql.DB, serviceID 
 	waitForIntegrationCondition(t, 25*time.Second, func(ctx context.Context) (bool, error) {
 		var ready int
 		err := database.QueryRowContext(ctx, `
-			SELECT count(*) FROM control.publisher_service_connection_slots AS connections
+			SELECT count(*) FROM control.service_connection_slots AS connections
 			JOIN control.relay_leases AS leases
-			  ON leases.relay_id = connections.connected_relay_id
-			 AND leases.relay_run_id = connections.connected_relay_run_id
-			 AND leases.relay_lease_revision = connections.connected_relay_lease_revision
+			  ON leases.relay_id = connections.relay_id
+			 AND leases.relay_run_id = connections.relay_run_id
+			 AND leases.relay_lease_revision = connections.relay_lease_revision
 			WHERE connections.service_id = $1 AND connections.run_number = $2
 			  AND connections.state = 'ready' AND NOT leases.draining AND leases.lease_expires_at > now()
 		`, serviceID, runNumber).Scan(&ready)
@@ -111,8 +111,8 @@ func readSplitConnectionState(t *testing.T, database *sql.DB, serviceID string, 
 	t.Helper()
 	var state splitConnectionState
 	if err := database.QueryRowContext(integrationOperationContext(t), `
-		SELECT publisher_connection_id, connection_assignment_revision, connected_relay_run_id
-		FROM control.publisher_service_connection_slots
+		SELECT publisher_connection_id, connection_assignment_revision, relay_run_id
+		FROM control.service_connection_slots
 		WHERE service_id = $1 AND run_number = $2 AND relay_service_id = $3 AND state = 'ready'
 	`, serviceID, runNumber, relayServiceID).Scan(&state.publisherConnectionID, &state.assignmentRevision, &state.connectedRelayRunID); err != nil {
 		t.Fatal(err)
@@ -167,8 +167,8 @@ func assertSplitRoutePlacement(t *testing.T, database *sql.DB, serviceID string,
 	t.Helper()
 	var connections, services, relays int
 	if err := database.QueryRowContext(integrationOperationContext(t), `
-		SELECT count(*), count(DISTINCT relay_service_id), count(DISTINCT connected_relay_id)
-		FROM control.publisher_service_connection_slots WHERE service_id = $1 AND run_number = $2 AND state = 'ready'
+		SELECT count(*), count(DISTINCT relay_service_id), count(DISTINCT relay_id)
+		FROM control.service_connection_slots WHERE service_id = $1 AND run_number = $2 AND state = 'ready'
 	`, serviceID, runNumber).Scan(&connections, &services, &relays); err != nil {
 		t.Fatal(err)
 	}

@@ -21,8 +21,6 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-const PublicURLID = "url_0123456789abcdefghijkl"
-
 type HTTPSource struct{ BrowserCookieSecret, ShareId, ShareCookieSecret *string }
 type HTTPDecision struct {
 	VisitAllowed bool
@@ -59,7 +57,9 @@ func (c *HTTPControl) ReadPublisherVisitorPolicy(_ context.Context, body control
 		if errors.Is(err, clientcontrol.ErrUnavailable) {
 			return controlv1.VisitorPolicyUpdate{}, err
 		}
-		allowed := err == nil && decision.VisitAllowed && decision.ValidUntil != nil && decision.ValidUntil.After(time.Now())
+		// a token deadline ends that credential, not every visitor's policy.
+		// explicit permission changes still advance the shared revision.
+		allowed := err == nil && decision.VisitAllowed
 		if allowed != c.Allowed[key] {
 			c.Revision++
 			c.Allowed[key] = allowed
@@ -74,7 +74,6 @@ func (c *HTTPControl) ReadPublisherVisitorPolicy(_ context.Context, body control
 		}
 	}
 	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: events, SnapshotRequired: body.AfterRevision == 0,
-		VisitorSourceKey: SourceKeyBytes(),
 		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: "route.example", Port: 443, Issuer: "https://control.example.test", Enabled: true,
 			VisitorPolicyRevision: c.Revision, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second),
 			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "live", PublicKey: key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}, nil

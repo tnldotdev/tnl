@@ -21,7 +21,7 @@ type serviceEnabledStore struct {
 }
 
 func (s *serviceEnabledStore) SetServiceEnabled(_ context.Context, service, actor string, enabled bool, _ time.Time) (controlstate.ServiceRecord, error) {
-	if service != "svc_aaaaaaaaaaaaaaaaaaaaaa" || actor != testPublicURLReadPrincipal().identityID {
+	if service != "svc_aaaaaaaaaaaaaaaaaaaaaa" || actor != testControlReadPrincipal().identityID {
 		panic("availability changed the exact service or authenticated manager")
 	}
 	s.calls++
@@ -47,7 +47,7 @@ func TestServiceEnabledWireRequiresExplicitBooleanAndManagement(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &serviceEnabledStore{err: test.err}
-			h := &handler{store: store, dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal()}}
+			h := &handler{dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testControlReadPrincipal()}}
 			r := httptest.NewRequest(http.MethodPut, "/v1/services/svc_aaaaaaaaaaaaaaaaaaaaaa/enabled", strings.NewReader(test.body))
 			r.Header.Set("Authorization", "Bearer access-token")
 			w := httptest.NewRecorder()

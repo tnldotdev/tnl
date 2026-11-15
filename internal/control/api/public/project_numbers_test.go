@@ -25,7 +25,7 @@ func (s *projectNumberStore) ApplyProjectConfiguration(_ context.Context, r cont
 
 func TestProjectHTTPPreservesLargeRevision(t *testing.T) {
 	store := &projectNumberStore{}
-	h := &handler{dependencies: Stores{ProjectConfiguration: store}, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal()}}
+	h := &handler{dependencies: Stores{ProjectConfiguration: store}, authorizer: &recordingAuthorizer{principal: testControlReadPrincipal()}}
 	request := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"team_id":"team_1","deployment":"local","service_declarations":{},"expected_revision":"9007199254740993","configuration":{}}`))
 	request.Header.Set("Authorization", "Bearer access-token")
 	response := httptest.NewRecorder()
@@ -49,7 +49,7 @@ func TestProjectHTTPPreservesLargeRevision(t *testing.T) {
 
 func TestProjectHTTPRejectsDeploymentWideExposureBeforeMutation(t *testing.T) {
 	store := &projectNumberStore{}
-	h := &handler{dependencies: Stores{ProjectConfiguration: store}, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal()}}
+	h := &handler{dependencies: Stores{ProjectConfiguration: store}, authorizer: &recordingAuthorizer{principal: testControlReadPrincipal()}}
 	for _, value := range []string{"true", "false"} {
 		request := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"team_id":"team_1","deployment":"production","service_declarations":{},"expected_revision":"0","configuration":{"settings":{"public":`+value+`},"services":{},"oauth":false,"webhooks":{}}}`))
 		request.Header.Set("Authorization", "Bearer access-token")

@@ -25,7 +25,7 @@ type serviceConfigurationStore struct {
 
 func (s *serviceConfigurationStore) ConfigureService(_ context.Context, service, actor string, metadata controlstate.ServiceMetadata, configuration *controlstate.ProjectServiceConfiguration, conditions controlstate.ServiceUpdateConditions, _ time.Time) (controlstate.ServiceRecord, error) {
 	s.calls++
-	if service != "svc_aaaaaaaaaaaaaaaaaaaaaa" || actor != testPublicURLReadPrincipal().identityID ||
+	if service != "svc_aaaaaaaaaaaaaaaaaaaaaa" || actor != testControlReadPrincipal().identityID ||
 		metadata.Protocol != "http" || metadata.TrustRevision != 7 || metadata.PublisherPool || metadata.TLS != nil {
 		panic("configure changed authenticated scope or approved metadata")
 	}
@@ -55,7 +55,7 @@ func TestConfigureServicePoolConditionWire(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &serviceConfigurationStore{err: test.err}
-			h := &handler{store: store, dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal()}}
+			h := &handler{dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testControlReadPrincipal()}}
 			request := httptest.NewRequest(http.MethodPut, "/v1/services/svc_aaaaaaaaaaaaaaaaaaaaaa", strings.NewReader("{"+settings+test.condition+"}"))
 			request.Header.Set("Authorization", "Bearer access-token")
 			response := httptest.NewRecorder()
@@ -97,7 +97,7 @@ func TestConfigureServiceDeclarationWire(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &serviceConfigurationStore{err: test.err}
-			h := &handler{store: store, dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal()}}
+			h := &handler{dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testControlReadPrincipal()}}
 			request := httptest.NewRequest(http.MethodPut, "/v1/services/svc_aaaaaaaaaaaaaaaaaaaaaa", strings.NewReader(test.body))
 			request.Header.Set("Authorization", "Bearer access-token")
 			response := httptest.NewRecorder()
@@ -133,7 +133,7 @@ func TestConfigureServiceDeclarationWire(t *testing.T) {
 
 func (s *serviceConfigurationStore) GetServiceConfiguration(_ context.Context, service, actor string) (*controlstate.ProjectServiceConfiguration, string, error) {
 	s.calls++
-	if service != "svc_aaaaaaaaaaaaaaaaaaaaaa" || actor != testPublicURLReadPrincipal().identityID {
+	if service != "svc_aaaaaaaaaaaaaaaaaaaaaa" || actor != testControlReadPrincipal().identityID {
 		panic("configuration read changed its authenticated service manager")
 	}
 	return s.configuration, s.digest, s.err
@@ -153,7 +153,7 @@ func TestGetServiceConfigurationWire(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &serviceConfigurationStore{configuration: test.configuration, digest: digest, err: test.err}
-			h := &handler{store: store, dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal()}}
+			h := &handler{dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testControlReadPrincipal()}}
 			request := httptest.NewRequest(http.MethodGet, "/v1/services/svc_aaaaaaaaaaaaaaaaaaaaaa/configuration", nil)
 			request.Header.Set("Authorization", "Bearer access-token")
 			response := httptest.NewRecorder()
