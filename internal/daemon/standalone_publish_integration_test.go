@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -405,7 +406,13 @@ func TestIntegrationLongLivedHTTPStreams(t *testing.T) {
 				if err := waitForDoneWithin(websocketGate, 10*time.Second); err != nil {
 					return
 				}
-				_ = websocket.Message.Send(connection, "update")
+				if err := websocket.Message.Send(connection, "update"); err != nil {
+					return
+				}
+				var trailing string
+				if err := websocket.Message.Receive(connection, &trailing); !errors.Is(err, io.EOF) {
+					t.Error("WebSocket target did not receive the request half-close", err)
+				}
 			}))
 			mux.HandleFunc("/events", func(response http.ResponseWriter, _ *http.Request) {
 				flusher, ok := response.(http.Flusher)

@@ -60,6 +60,7 @@ func TestVisitorLookupFailureIsCountedOnce(t *testing.T) {
 	})
 	config.Metrics = metrics
 	server, address := startIngress(t, config)
+	startServiceRoutingFixture(t, server)
 	visitor := ingressClient(t, address, "missing.example", "192.0.2.4:42000")
 	if err := visitor.Handshake(); err == nil {
 		t.Fatal("missing hostname was forwarded")

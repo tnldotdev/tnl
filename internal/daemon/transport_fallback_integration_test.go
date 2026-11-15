@@ -132,8 +132,8 @@ func TestIntegrationPublisherFallsBackAfterQUICConnectionFails(t *testing.T) {
 		}
 	}
 	// the first TCP fallback does not prove both old QUIC claims have retired.
-	// count only current replacement identities; service admission reads them
-	// directly and does not wait for the retired routing-table projection.
+	// count only current replacement identities. ingress may borrow their
+	// background routing snapshot before sending any new visitor byte.
 	waitForIntegrationCondition(t, 25*time.Second, func(ctx context.Context) (bool, error) {
 		var readyReplacements int
 		var slots string

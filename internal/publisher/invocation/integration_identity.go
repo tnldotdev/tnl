@@ -12,12 +12,13 @@ import (
 
 func nativeIntegrationConfig(ctx context.Context, services publisherServices, hostname string, allowed []string) (publisherservice.RunConfig, controlv1.Service, error) {
 	services.hostname = hostname
-	prefixes := slices.Clone(allowed)
-	if prefixes == nil {
-		prefixes = []string{}
+	access := &controlv1.ProjectHTTPAccess{Mode: new(controlv1.Anonymous)}
+	if len(allowed) != 0 {
+		prefixes := slices.Clone(allowed)
+		access.Ip = &prefixes
 	}
 	declaration := controlv1.ProjectServiceConfiguration{Target: "app",
-		Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: new(controlv1.Anonymous), Ip: &prefixes},
+		Http: &controlv1.ProjectServiceHTTP{Access: access,
 			Limits: &controlv1.ProjectHTTPApplicationLimits{Concurrency: new(32)}}}
 	native, saved, err := selectNativeProjectPublisher(ctx, services, declaration)
 	if err != nil {

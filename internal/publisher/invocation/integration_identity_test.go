@@ -1,11 +1,13 @@
 package invocation
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"slices"
 	"testing"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -38,9 +40,18 @@ func TestNativeIntegrationConfigCreatesUpdatesAndReloadsWithoutTarget(t *testing
 				http := f.declaration.Http
 				if f.declaration.Target != "app" || f.declaration.Traffic != nil || http == nil ||
 					http.Access == nil || http.Access.Mode == nil || *http.Access.Mode != controlv1.Anonymous ||
-					http.Access.Ip == nil || !slices.Equal(*http.Access.Ip, desired) ||
+					(http.Access.Ip == nil) != (len(desired) == 0) ||
+					http.Access.Ip != nil && !slices.Equal(*http.Access.Ip, desired) ||
 					http.Limits == nil || http.Limits.Concurrency == nil || *http.Limits.Concurrency != 32 {
 					t.Fatal("integration changed its handler declaration, source policy, or independent HTTP budget", f.declaration)
+				}
+				encoded, err := json.Marshal(http)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var settings config.HTTPService
+				if err := json.Unmarshal(encoded, &settings); err != nil || settings.Access == nil || settings.Access.Validate() != nil {
+					t.Fatal("integration emitted an invalid HTTP access declaration", err)
 				}
 				access, err := cfg.Access(t.Context())
 				if err != nil {

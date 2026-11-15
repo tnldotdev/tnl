@@ -1042,6 +1042,11 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 		_ = publicServer.Drain(ctx)
 	})
 	f.workers.Go(func() { _ = publicServer.Serve() })
+	f.workers.Go(func() {
+		if err := publicServer.RefreshServices(f.ctx); err != nil && f.ctx.Err() == nil {
+			t.Errorf("workflow ingress routing: %v", err)
+		}
+	})
 }
 
 // the local CA and DNS boundary are test infrastructure. control still owns

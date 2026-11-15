@@ -17,6 +17,7 @@ import (
 
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
@@ -223,8 +224,8 @@ func exerciseServiceFixture(t *testing.T, anonymous, denySource bool) {
 		ticker := time.NewTicker(10 * time.Millisecond)
 		defer ticker.Stop()
 		for {
-			probeStatus, _, _, probeErr := f.VisitWithHeaders(policy, address+"/__tnl/missing", nil)
-			if errors.Is(probeErr, io.EOF) && probeStatus == 0 {
+			probeStatus, _, probeBody, probeErr := f.VisitWithHeaders(policy, address+"/__tnl/missing", nil)
+			if closedBeforeHTTP(probeStatus, probeBody, probeErr) {
 				break
 			}
 			if probeErr != nil || probeStatus != http.StatusNotFound {
@@ -236,8 +237,8 @@ func exerciseServiceFixture(t *testing.T, anonymous, denySource bool) {
 			case <-ticker.C:
 			}
 		}
-		status, _, _, err = f.VisitWithHeaders(t.Context(), address, headers)
-		if !errors.Is(err, io.EOF) || status != 0 || requests.Load() != before {
+		status, _, body, err = f.VisitWithHeaders(t.Context(), address, headers)
+		if !closedBeforeHTTP(status, body, err) || requests.Load() != before {
 			t.Fatal("signed permission bypassed current service disablement", status, err)
 		}
 	}
@@ -253,6 +254,26 @@ func exerciseServiceFixture(t *testing.T, anonymous, denySource bool) {
 	}
 	if closes.Load() != 1 || f.Runs.Load() != 1 || f.Allocations.Load() != 0 || f.Deletions.Load() != 0 {
 		t.Fatal("saved service publication changed its lifecycle", closes.Load(), f.Runs.Load())
+	}
+}
+
+// a policy refusal can close the yamux stream without a TLS close_notify.
+// neither EOF form may carry an HTTP response or application body.
+func closedBeforeHTTP(status int, body []byte, err error) bool {
+	return status == 0 && len(body) == 0 && (failure.Only(err, io.EOF) || failure.Only(err, io.ErrUnexpectedEOF))
+}
+
+func TestPolicyRefusalKeepsIndependentTransportFailures(t *testing.T) {
+	for _, closed := range []error{io.EOF, io.ErrUnexpectedEOF} {
+		if !closedBeforeHTTP(0, nil, closed) ||
+			closedBeforeHTTP(http.StatusOK, nil, closed) ||
+			closedBeforeHTTP(0, []byte("partial response"), closed) ||
+			closedBeforeHTTP(0, nil, errors.Join(closed, errors.New("independent cleanup failed"))) {
+			t.Fatal("policy refusal hid a response or an independent transport failure")
+		}
+	}
+	if closedBeforeHTTP(0, nil, nil) || closedBeforeHTTP(0, nil, context.Canceled) {
+		t.Fatal("policy refusal treated cancellation or success as a closed transport")
 	}
 }
 

@@ -182,6 +182,12 @@ func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 		}
 		_, _ = io.Copy(io.Discard, response.Body)
 		_ = response.Body.Close()
+		if err := c.CloseWrite(); err != nil {
+			t.Fatal("HTTP request did not half-close after its response", err)
+		}
+		if _, err := c.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+			t.Fatal("HTTP response did not finish after its body", err)
+		}
 		_ = c.Close()
 		if response.StatusCode != test.want {
 			t.Fatalf("source %s status %d; want %d", test.source, response.StatusCode, test.want)
@@ -193,7 +199,7 @@ func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 		}
 		transfer := ingressAwait(t, transport.transfers)
 		if transfer.LeftToRight <= 0 || transfer.RightToLeft <= 0 || !serviceHTTPStreamClosed(transfer.err) {
-			t.Fatal("HTTP relay lost bytes or failed before expected stream closure", transfer)
+			t.Fatalf("HTTP relay lost bytes or failed before expected stream closure: bytes=%+v error=%v", transfer.Result, transfer.err)
 		}
 	}
 	if err := ingressAwait(t, publisher); err != nil {

@@ -29,7 +29,7 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	f := newServiceRuntimeFixture(t, false, nil)
 	process := startSeparatedPrivateIngress(t, f, 0, "quic", nil)
-	startSeparatedPrivateIngress(t, f, 1, "quic", nil)
+	secondIngress := startSeparatedPrivateIngress(t, f, 1, "quic", nil)
 	var posts atomic.Int64
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get(httpstream.ReadinessProbeHeader) != "" {
@@ -185,6 +185,16 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 		if err != nil || current.TrustRevision != service.TrustRevision || current.Endpoint == nil || current.Endpoint.Hostname != service.Endpoint.Hostname || current.Endpoint.Port != service.Endpoint.Port || current.Endpoint.Public != public {
 			t.Fatal("local exposure replaced an independently authorized binding", current, err)
 		}
+		// exposure is installed asynchronously at both ingress processes.
+		// observe that boundary without sending an application request.
+		var committed time.Time
+		if err := f.inspect.QueryRowContext(t.Context(), `SELECT clock_timestamp()`).Scan(&committed); err != nil {
+			t.Fatal(err)
+		}
+		privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+			return !process.ingresses[0].server.RoutingObservedAt().Before(committed) &&
+				!secondIngress.ingresses[0].server.RoutingObservedAt().Before(committed), nil
+		})
 	}
 	setPublic(false)
 	publicTransport.CloseIdleConnections()

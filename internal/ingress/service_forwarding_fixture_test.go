@@ -32,9 +32,11 @@ type httpsServiceControl struct {
 	services map[string]httpsService
 	claims   chan ingressv1.PublicServiceVisitorClaim
 	sources  netip.Prefix
+	reads    atomic.Int32
 }
 
 func (c *httpsServiceControl) ReadIngressServices(_ context.Context, id string, lease ingressv1.IngressLeaseIdentity) (ingressv1.IngressServices, error) {
+	c.reads.Add(1)
 	now := time.Now()
 	snapshot := ingressv1.IngressServices{ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime)}
 	source := c.sources
