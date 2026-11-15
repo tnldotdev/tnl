@@ -4,14 +4,14 @@ INSERT INTO control.previews (
 ) VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (team_id, created_by_identity_id, idempotency_key)
 DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
-RETURNING id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled;
+RETURNING id, schema_version, team_id, guest_id, created_by_identity_id, created_at, team_access_enabled;
 
 -- name: GetPreview :one
-SELECT id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled, demo_service_run_id
+SELECT id, schema_version, team_id, guest_id, created_by_identity_id, created_at, team_access_enabled, demo_service_run_id
 FROM control.previews WHERE id = $1;
 
 -- name: LockPreviewForTeamAccess :one
-SELECT id, team_id, created_by_identity_id, team_access_enabled, demo_service_run_id
+SELECT id, team_id, guest_id, created_by_identity_id, team_access_enabled, demo_service_run_id
 FROM control.previews WHERE id = $1 FOR NO KEY UPDATE;
 
 -- name: SetPreviewTeamAccess :exec

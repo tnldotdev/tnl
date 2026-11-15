@@ -45,7 +45,7 @@ func TestIntegrationRelayDrainPreservesActiveVisitorStream(t *testing.T) {
 	publisher := fixture.startPublisher(t, target.URL, quic, tcp)
 	ready := fixture.waitReady(t, publisher)
 
-	request, err := http.NewRequest(http.MethodGet, ready.PublicURL+"/stream", nil)
+	request, err := http.NewRequest(http.MethodGet, serviceHTTPAddress(ready)+"/stream", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestIntegrationRelayDrainPreservesActiveVisitorStream(t *testing.T) {
 		t.Fatalf("drained relay lease = %#v", draining)
 	}
 	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
-	probe, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/after-drain", nil)
+	probe, body, err := fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(ready)+"/after-drain", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

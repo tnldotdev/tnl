@@ -12,7 +12,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/region"
-	"github.com/tnldotdev/tnl/internal/security/credentials"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 )
@@ -153,119 +152,6 @@ func (s *service) GetRelayTransportCertificate(
 		RelayServiceId: certificate.RelayServiceID, TlsServerName: certificate.TLSServerName,
 		CertificatePem: certificate.CertificatePEM, PrivateKeyPem: certificate.PrivateKeyPEM,
 		NotAfter: certificate.NotAfter,
-	}, nil
-}
-
-func (s *service) ClaimPublisherConnection(
-	ctx context.Context,
-	publisherConnectionID relayv1.PublisherConnectionID,
-	body relayv1.PublisherConnectionClaim,
-) (relayv1.ClaimedPublisherConnection, error) {
-	claim, err := publisherConnectionClaim(publisherConnectionID, publisherConnectionFields{
-		publishRunID: body.PublishRunId, publicURLID: body.PublicUrlId, publishRunNumber: body.PublishRunNumber,
-		publisherConnectionID: body.PublisherConnectionId, connectionSlot: body.ConnectionSlot,
-		assignmentRevision: body.ConnectionAssignmentRevision, relayServiceID: body.RelayServiceId,
-		relayID: body.RelayId, relayRunID: body.RelayRunId, relayLeaseRevision: body.RelayLeaseRevision,
-		claimID: body.ClaimId,
-	})
-	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, err
-	}
-	digest, err := credentials.ParsePublisherConnectionCredential(
-		credentials.PublisherConnectionCredential(body.PublisherConnectionCredential),
-	)
-	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, serverhttp.NewProblemError(
-			http.StatusUnauthorized, "invalid_publisher_connection_credential",
-			"Publisher connection credential is invalid",
-		)
-	}
-	claim.CredentialDigest = [32]byte(digest)
-	connection, err := s.store.ClaimPublisherConnection(ctx, claim, s.now())
-	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, s.storeError(ctx, err)
-	}
-	return claimedPublisherConnection(connection), nil
-}
-
-func (s *service) MarkPublisherConnectionReady(
-	ctx context.Context,
-	publisherConnectionID relayv1.PublisherConnectionID,
-	body relayv1.PublisherConnectionTransition,
-) (relayv1.ClaimedPublisherConnection, error) {
-	claim, err := publisherConnectionClaim(publisherConnectionID, publisherConnectionFields{
-		publishRunID: body.PublishRunId, publicURLID: body.PublicUrlId, publishRunNumber: body.PublishRunNumber,
-		publisherConnectionID: body.PublisherConnectionId, connectionSlot: body.ConnectionSlot,
-		assignmentRevision: body.ConnectionAssignmentRevision, relayServiceID: body.RelayServiceId,
-		relayID: body.RelayId, relayRunID: body.RelayRunId, relayLeaseRevision: body.RelayLeaseRevision,
-		claimID: body.ClaimId,
-	})
-	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, err
-	}
-	connection, err := s.store.MarkPublisherConnectionReady(ctx, claim, s.now())
-	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, s.storeError(ctx, err)
-	}
-	return claimedPublisherConnection(connection), nil
-}
-
-func (s *service) DisconnectPublisherConnection(
-	ctx context.Context,
-	publisherConnectionID relayv1.PublisherConnectionID,
-	body relayv1.PublisherConnectionDisconnect,
-) (relayv1.ClaimedPublisherConnection, error) {
-	claim, err := publisherConnectionClaim(publisherConnectionID, publisherConnectionFields{
-		publishRunID: body.PublishRunId, publicURLID: body.PublicUrlId, publishRunNumber: body.PublishRunNumber,
-		publisherConnectionID: body.PublisherConnectionId, connectionSlot: body.ConnectionSlot,
-		assignmentRevision: body.ConnectionAssignmentRevision, relayServiceID: body.RelayServiceId,
-		relayID: body.RelayId, relayRunID: body.RelayRunId, relayLeaseRevision: body.RelayLeaseRevision,
-		claimID: body.ClaimId,
-	})
-	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, err
-	}
-	connection, err := s.store.DisconnectPublisherConnection(ctx, claim, s.now(), body.Unexpected)
-	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, s.storeError(ctx, err)
-	}
-	return claimedPublisherConnection(connection), nil
-}
-
-func publisherConnectionClaim(
-	publisherConnectionID relayv1.PublisherConnectionID,
-	fields publisherConnectionFields,
-) (controlstate.PublisherConnectionClaimRequest, error) {
-	if publisherConnectionID != fields.publisherConnectionID {
-		return controlstate.PublisherConnectionClaimRequest{}, relayPathMismatchError()
-	}
-	if !serverhttp.ValidIdentifiers(
-		fields.publishRunID, fields.publicURLID, fields.publisherConnectionID, fields.relayServiceID,
-		fields.relayID, fields.relayRunID, fields.claimID,
-	) || fields.connectionSlot < 0 || fields.connectionSlot > 1 {
-		return controlstate.PublisherConnectionClaimRequest{}, serverhttp.NewProblemError(
-			http.StatusBadRequest, "invalid_request", "Publisher connection identity is invalid",
-		)
-	}
-	publishRunNumber, routeOK := serverhttp.Positive(fields.publishRunNumber)
-	assignmentRevision, assignmentOK := serverhttp.Positive(fields.assignmentRevision)
-	leaseRevision, leaseOK := serverhttp.Positive(fields.relayLeaseRevision)
-	if !routeOK || !assignmentOK || !leaseOK {
-		return controlstate.PublisherConnectionClaimRequest{}, serverhttp.NewProblemError(
-			http.StatusBadRequest, "invalid_request", "Publisher connection revisions are invalid",
-		)
-	}
-	return controlstate.PublisherConnectionClaimRequest{
-		ConnectionAssignmentIdentity: controlstate.ConnectionAssignmentIdentity{
-			PublishRunID: fields.publishRunID, PublicURLID: fields.publicURLID, PublishRunNumber: publishRunNumber,
-			ConnectionSlot: fields.connectionSlot, PublisherConnectionID: fields.publisherConnectionID,
-			ConnectionAssignmentRevision: assignmentRevision, RelayServiceID: fields.relayServiceID,
-		},
-		RelayLeaseIdentity: controlstate.RelayLeaseIdentity{
-			RelayServiceID: fields.relayServiceID, RelayID: fields.relayID,
-			RelayRunID: fields.relayRunID, RelayLeaseRevision: leaseRevision,
-		},
-		ClaimID: fields.claimID,
 	}, nil
 }
 

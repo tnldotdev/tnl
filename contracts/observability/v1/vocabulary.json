@@ -358,9 +358,8 @@
       "values": [
         "client_hello_connections",
         "public_connections",
-        "public_url_connections",
+        "service_connections",
         "denied_connections",
-        "denied_public_url_connections",
         "control_connections",
         "relay_tcp_connections",
         "publisher_connections",
@@ -368,13 +367,10 @@
         "process_connection_rate",
         "source_connection_rate",
         "source_connections",
-        "public_url_connection_rate",
-        "public_url_connection_total",
         "pending_source_capacity",
         "pending_source_connections",
-        "pending_public_url_connections",
+        "pending_service_connections",
         "pending_source_rate",
-        "pending_public_url_rate",
         "traffic_keys",
         "traffic_bandwidth",
         "invalid_traffic_projection",
@@ -386,7 +382,6 @@
     {
       "key": "tnl.certificate_kind",
       "values": [
-        "public_url",
         "relay",
         "service",
         "control",
@@ -403,8 +398,7 @@
     {
       "key": "tnl.cleanup_kind",
       "values": [
-        "expired_publish_runs",
-        "ephemeral_public_urls",
+        "service_runs",
         "routing_floor",
         "routing_prune",
         "service_audit",
@@ -452,7 +446,7 @@
     },
     {
       "key": "tnl.deployment_id",
-      "semantics": "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive",
+      "semantics": "authenticated stable identity; instrument allowlist required",
       "dimension_policy": "scoped"
     },
     {
@@ -472,9 +466,7 @@
       "key": "tnl.dns_kind",
       "values": [
         "authority",
-        "public_url",
         "service",
-        "public_url_challenge",
         "service_challenge",
         "relay_challenge"
       ],
@@ -586,33 +578,13 @@
       "dimension_policy": "bounded"
     },
     {
-      "key": "tnl.public_url_id",
-      "semantics": "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive",
-      "dimension_policy": "scoped"
-    },
-    {
-      "key": "tnl.public_url_purpose",
-      "semantics": "closed domain value supplied by the owning semantic observer",
-      "dimension_policy": "bounded"
-    },
-    {
-      "key": "tnl.publish_run_id",
-      "semantics": "high-churn correlation only; prohibited as a metric dimension",
-      "dimension_policy": "trace_log"
-    },
-    {
-      "key": "tnl.publish_run_number",
-      "semantics": "high-churn correlation only; prohibited as a metric dimension",
-      "dimension_policy": "trace_log"
-    },
-    {
       "key": "tnl.publisher_connection_id",
       "semantics": "high-churn correlation only; prohibited as a metric dimension",
       "dimension_policy": "trace_log"
     },
     {
       "key": "tnl.publisher_identity_id",
-      "semantics": "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive",
+      "semantics": "authenticated stable identity; instrument allowlist required",
       "dimension_policy": "scoped"
     },
     {
@@ -665,12 +637,12 @@
     },
     {
       "key": "tnl.replica_key",
-      "semantics": "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive",
+      "semantics": "authenticated stable identity; instrument allowlist required",
       "dimension_policy": "scoped"
     },
     {
       "key": "tnl.reported_deployment_id",
-      "semantics": "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive",
+      "semantics": "authenticated stable identity; instrument allowlist required",
       "dimension_policy": "scoped"
     },
     {
@@ -709,16 +681,7 @@
     },
     {
       "key": "tnl.service_id",
-      "semantics": "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive",
-      "dimension_policy": "scoped"
-    },
-    {
-      "key": "tnl.service_kind",
-      "values": [
-        "service",
-        "public_url"
-      ],
-      "semantics": "service or public URL; service wire value normalizes to service",
+      "semantics": "authenticated stable identity; instrument allowlist required",
       "dimension_policy": "scoped"
     },
     {
@@ -732,6 +695,16 @@
       ],
       "semantics": "service application protocol",
       "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.service_run_id",
+      "semantics": "high-churn correlation only; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.service_run_number",
+      "semantics": "high-churn correlation only; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
     },
     {
       "key": "tnl.signal",
@@ -787,7 +760,7 @@
     },
     {
       "key": "tnl.team_id",
-      "semantics": "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive",
+      "semantics": "authenticated stable identity; instrument allowlist required",
       "dimension_policy": "scoped"
     },
     {
@@ -912,7 +885,7 @@
     },
     {
       "name": "tnl_admission_limit",
-      "semantics": "Resolved admission limit by fixed resource; per-URL and per-hostname resources are per key.",
+      "semantics": "Resolved admission limit by fixed resource; keyed source and hostname limits report their configured per-key value.",
       "kind": "gauge",
       "dimensions": [
         "otel.metric.overflow",
@@ -1225,105 +1198,13 @@
     },
     {
       "name": "tnl_control_placement_decisions_total",
-      "semantics": "Publish run placement decisions by action and bounded result.",
+      "semantics": "Service run placement decisions by action and bounded result.",
       "kind": "counter",
       "dimensions": [
         "otel.metric.overflow",
         "tnl.operation",
         "tnl.outcome",
         "tnl.reason"
-      ]
-    },
-    {
-      "name": "tnl_control_public_url_recovery_duration_seconds",
-      "semantics": "Duration of newly committed public URL recovery observations on this control process.",
-      "kind": "histogram",
-      "dimensions": [
-        "otel.metric.overflow"
-      ],
-      "explicit_bounds": [
-        0.001,
-        0.0025,
-        0.005,
-        0.01,
-        0.025,
-        0.05,
-        0.1,
-        0.25,
-        0.5,
-        1,
-        2.5,
-        5,
-        10,
-        20,
-        30,
-        60,
-        120
-      ]
-    },
-    {
-      "name": "tnl_control_public_urls_created_total",
-      "semantics": "New public URLs committed by client-declared purpose; excludes idempotent retries.",
-      "kind": "counter",
-      "dimensions": [
-        "otel.metric.overflow",
-        "tnl.public_url_purpose"
-      ]
-    },
-    {
-      "name": "tnl_control_publish_run_readiness_age_seconds",
-      "semantics": "Age of the publish run at a readiness decision; excludes other errors.",
-      "kind": "histogram",
-      "dimensions": [
-        "otel.metric.overflow",
-        "tnl.state"
-      ],
-      "explicit_bounds": [
-        1,
-        5,
-        10,
-        30,
-        60,
-        120,
-        300,
-        600
-      ]
-    },
-    {
-      "name": "tnl_control_publish_run_readiness_duration_seconds",
-      "semantics": "Time spent checking and publishing publish run readiness; count is the number of attempts.",
-      "kind": "histogram",
-      "dimensions": [
-        "otel.metric.overflow",
-        "tnl.state"
-      ],
-      "explicit_bounds": [
-        0.001,
-        0.0025,
-        0.005,
-        0.01,
-        0.025,
-        0.05,
-        0.1,
-        0.25,
-        0.5,
-        1,
-        2.5,
-        5,
-        10,
-        20,
-        30,
-        60,
-        120
-      ]
-    },
-    {
-      "name": "tnl_control_publish_runs_ready_total",
-      "semantics": "Publish runs first marked ready by their saved public URL purpose.",
-      "kind": "counter",
-      "dimensions": [
-        "otel.metric.overflow",
-        "tnl.public_url_purpose"
       ]
     },
     {
@@ -1382,6 +1263,88 @@
       "name": "tnl_control_routing_history_retained_after_revision",
       "semantics": "Highest committed routing-history retention floor observed by this process.",
       "kind": "gauge",
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
+    },
+    {
+      "name": "tnl_control_service_recovery_duration_seconds",
+      "semantics": "Duration of newly committed service recovery observations on this control process.",
+      "kind": "histogram",
+      "dimensions": [
+        "otel.metric.overflow"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_control_service_run_readiness_age_seconds",
+      "semantics": "Age of the service run at a readiness decision; excludes other errors.",
+      "kind": "histogram",
+      "dimensions": [
+        "otel.metric.overflow",
+        "tnl.state"
+      ],
+      "explicit_bounds": [
+        1,
+        5,
+        10,
+        30,
+        60,
+        120,
+        300,
+        600
+      ]
+    },
+    {
+      "name": "tnl_control_service_run_readiness_duration_seconds",
+      "semantics": "Time spent checking and publishing service run readiness; count is the number of attempts.",
+      "kind": "histogram",
+      "dimensions": [
+        "otel.metric.overflow",
+        "tnl.state"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_control_service_runs_ready_total",
+      "semantics": "Service runs first marked ready by this control process.",
+      "kind": "counter",
       "dimensions": [
         "otel.metric.overflow"
       ]
@@ -1918,13 +1881,11 @@
         "tnl.deployment_id",
         "tnl.exposure",
         "tnl.outcome",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.reason",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.state",
         "tnl.team_id"
@@ -1940,12 +1901,10 @@
         "tnl.component",
         "tnl.deployment_id",
         "tnl.exposure",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id"
       ]
@@ -1961,13 +1920,11 @@
         "tnl.deployment_id",
         "tnl.exposure",
         "tnl.outcome",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.reason",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id",
         "tnl.transport",
@@ -1987,13 +1944,11 @@
         "tnl.event",
         "tnl.exposure",
         "tnl.outcome",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.reason",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id",
         "tnl.transport"
@@ -2010,12 +1965,10 @@
         "tnl.connection_slot",
         "tnl.deployment_id",
         "tnl.exposure",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id",
         "tnl.transport"
@@ -2032,12 +1985,10 @@
         "tnl.deployment_id",
         "tnl.direction",
         "tnl.exposure",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id"
       ]
@@ -2055,14 +2006,12 @@
         "tnl.deployment_id",
         "tnl.exposure",
         "tnl.outcome",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.reason",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.response_origin",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id"
       ],
@@ -2096,12 +2045,10 @@
         "tnl.component",
         "tnl.deployment_id",
         "tnl.exposure",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id"
       ]
@@ -2119,14 +2066,12 @@
         "tnl.deployment_id",
         "tnl.exposure",
         "tnl.outcome",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.reason",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.response_origin",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id"
       ],
@@ -2160,12 +2105,10 @@
         "tnl.component",
         "tnl.deployment_id",
         "tnl.exposure",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id"
       ]
@@ -2183,13 +2126,11 @@
         "tnl.exposure",
         "tnl.operation",
         "tnl.outcome",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.reason",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id",
         "tnl.tls_leg",
@@ -2226,12 +2167,10 @@
         "tnl.component",
         "tnl.deployment_id",
         "tnl.exposure",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.state",
         "tnl.team_id"
@@ -2247,12 +2186,10 @@
         "tnl.component",
         "tnl.deployment_id",
         "tnl.exposure",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id"
       ]
@@ -2267,12 +2204,10 @@
         "tnl.component",
         "tnl.deployment_id",
         "tnl.exposure",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id"
       ]
@@ -2287,12 +2222,10 @@
         "tnl.component",
         "tnl.deployment_id",
         "tnl.exposure",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id"
       ]
@@ -2307,12 +2240,10 @@
         "tnl.component",
         "tnl.deployment_id",
         "tnl.exposure",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id"
       ],
@@ -2346,12 +2277,10 @@
         "tnl.component",
         "tnl.deployment_id",
         "tnl.exposure",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id"
       ]
@@ -2370,13 +2299,11 @@
         "tnl.deployment_id",
         "tnl.exposure",
         "tnl.outcome",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.reason",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id",
         "tnl.tls_leg"
@@ -2393,13 +2320,11 @@
         "tnl.deployment_id",
         "tnl.exposure",
         "tnl.outcome",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.reason",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id",
         "tnl.transport"
@@ -2435,13 +2360,11 @@
         "tnl.deployment_id",
         "tnl.exposure",
         "tnl.outcome",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.reason",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id"
       ]
@@ -2456,12 +2379,10 @@
         "tnl.component",
         "tnl.deployment_id",
         "tnl.exposure",
-        "tnl.public_url_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.reported_deployment_id",
         "tnl.service_id",
-        "tnl.service_kind",
         "tnl.service_protocol",
         "tnl.team_id"
       ]
@@ -2480,8 +2401,7 @@
       "kind": "counter",
       "dimensions": [
         "otel.metric.overflow",
-        "tnl.direction",
-        "tnl.service_kind"
+        "tnl.direction"
       ]
     },
     {
@@ -2563,8 +2483,7 @@
       "dimensions": [
         "otel.metric.overflow",
         "tnl.outcome",
-        "tnl.reason",
-        "tnl.service_kind"
+        "tnl.reason"
       ]
     },
     {

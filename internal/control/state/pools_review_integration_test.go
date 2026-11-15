@@ -136,14 +136,20 @@ func TestIntegrationSharedPublisherStorageAndPoolAuthorizationReview(t *testing.
 	}
 	meta := private.ServiceMetadata
 	meta.PublisherPool = true
-	updated, err := d.ConfigureService(t.Context(), private.ID, creation.ActingIdentityID, meta, now)
-	if err != nil || updated.TrustRevision != private.TrustRevision+1 {
-		t.Fatal("operator pool edits are not revision fenced", err)
+	updated, err := d.ConfigureService(t.Context(), private.ID, creation.ActingIdentityID, meta, nil, ServiceUpdateConditions{}, now)
+	if err != nil || !updated.PublisherPool || updated.TrustRevision != private.TrustRevision || updated.EndpointRevision != private.EndpointRevision {
+		t.Fatal("operator pool edit changed trust or endpoint revision", err)
 	}
-	if _, err = d.ConfigureService(t.Context(), private.ID, creation.ActingIdentityID, private.ServiceMetadata, now); !errors.Is(err, ErrServiceConflict) {
-		t.Fatalf("stale operator silently reverted approved pool: %v", err)
+	meta = updated.ServiceMetadata
+	meta.Protocol = "postgres"
+	trusted, err := d.ConfigureService(t.Context(), private.ID, creation.ActingIdentityID, meta, nil, ServiceUpdateConditions{}, now)
+	if err != nil || trusted.TrustRevision != updated.TrustRevision+1 {
+		t.Fatal("protocol update did not advance target trust", err)
 	}
-	if saved, err := d.GetService(t.Context(), private.ID, creation.ActingIdentityID); err != nil || !saved.PublisherPool || saved.TrustRevision != updated.TrustRevision {
+	if _, err = d.ConfigureService(t.Context(), private.ID, creation.ActingIdentityID, private.ServiceMetadata, nil, ServiceUpdateConditions{}, now); !errors.Is(err, ErrServiceConflict) {
+		t.Fatalf("stale trust revision silently reverted approved protocol and pool: %v", err)
+	}
+	if saved, err := d.GetService(t.Context(), private.ID, creation.ActingIdentityID); err != nil || !saved.PublisherPool || saved.Protocol != "postgres" || saved.TrustRevision != trusted.TrustRevision {
 		t.Fatal("stale configuration changed the saved service", err)
 	}
 }

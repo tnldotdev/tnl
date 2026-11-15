@@ -80,7 +80,7 @@ func TestIntegrationAdministrationState(t *testing.T) {
 		t.Fatalf("maintenance controls = %#v, %v", controls, err)
 	}
 	updated, err := database.SetMaintenanceControl(
-		t.Context(), MaintenanceControlPublicURLCreation, false, actor, "request_maintenance", now.Add(5*time.Second),
+		t.Context(), MaintenanceControlServiceCreation, false, actor, "request_maintenance", now.Add(5*time.Second),
 	)
 	if err != nil || updated.Allowed || updated.Revision != 2 || updated.UpdatedBy != actor {
 		t.Fatalf("updated maintenance control = %#v, %v", updated, err)
@@ -110,11 +110,11 @@ func TestIntegrationMaintenanceControlReadersShareGate(t *testing.T) {
 		name  MaintenanceControlName
 		guard func(context.Context, *controlstatedb.Queries) (bool, error)
 	}{
-		{MaintenanceControlPublicURLCreation, func(ctx context.Context, queries *controlstatedb.Queries) (bool, error) {
-			return queries.LockPublicURLCreationControl(ctx)
+		{MaintenanceControlServiceCreation, func(ctx context.Context, queries *controlstatedb.Queries) (bool, error) {
+			return queries.LockMaintenanceControl(ctx, string(MaintenanceControlServiceCreation))
 		}},
-		{MaintenanceControlPublishRunCreation, func(ctx context.Context, queries *controlstatedb.Queries) (bool, error) {
-			return queries.LockPublishRunCreationControl(ctx)
+		{MaintenanceControlServiceRunCreation, func(ctx context.Context, queries *controlstatedb.Queries) (bool, error) {
+			return queries.LockMaintenanceControl(ctx, string(MaintenanceControlServiceRunCreation))
 		}},
 		{MaintenanceControlCertificateIssuance, func(ctx context.Context, queries *controlstatedb.Queries) (bool, error) {
 			return queries.LockCertificateIssuanceControl(ctx)

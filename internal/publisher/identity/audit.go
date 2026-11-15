@@ -3,22 +3,26 @@ package identity
 import (
 	"context"
 
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
-type PublisherAuditControl interface {
-	ReportPublisherServiceObservations(context.Context, string, uint64, credentials.PublishRunToken, serviceaudit.Batch) error
+type serviceAuditControl interface {
+	ReportServiceRunObservations(context.Context, string, string, int64, credentials.ServiceRunToken, serviceaudit.Batch) error
 }
 
-func (n *Native) ReportPublisherServiceObservations(ctx context.Context, runID string, number uint64, token credentials.PublishRunToken, batch serviceaudit.Batch) error {
-	if n == nil || n.publicURL.Id == "" || len(batch.Events) == 0 {
+func (n *Native) ReportServiceRunObservations(ctx context.Context, service, run string, number int64, token credentials.ServiceRunToken, batch serviceaudit.Batch) error {
+	if _, err := n.serviceControl(service); err != nil {
+		return err
+	}
+	if !opaqueid.Valid(run, opaqueid.ServiceRunPrefix) || number < 1 || token == "" || len(batch.Events) == 0 {
 		return ErrScope
 	}
 	for _, e := range batch.Events {
-		if e.ServiceKind != "public_url" || e.ServiceID != n.publicURL.Id || e.RunID != runID {
+		if e.ServiceKind != "service" || e.ServiceID != service || e.RunID != run || e.RunNumber != number {
 			return ErrScope
 		}
 	}
-	return n.PublicURLControl.ReportPublisherServiceObservations(ctx, runID, number, token, batch)
+	return n.Services.ReportServiceRunObservations(ctx, service, run, number, token, batch)
 }

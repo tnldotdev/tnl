@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -19,6 +20,7 @@ type ServiceControl interface {
 	serviceRunControl
 	ServiceCertificateControl
 	serviceHTTPControl
+	serviceAuditControl
 	connectorPeerControl
 	GetPublisherService(context.Context, string, string) (controlv1.Service, error)
 }
@@ -45,7 +47,7 @@ func EnsureServiceOwner(ctx context.Context, state *clientstate.Store, control S
 	if _, err := ServiceTrust(service); err != nil {
 		return nil, authorityv1.PublisherEnrollmentResult{}, err
 	}
-	return ensureSelectedEnrollment(ctx, state, control, control, authority, enrollmentSelection{kind: "service", team: service.TeamId, id: service.Id})
+	return ensureSelectedEnrollment(ctx, state, control, NativeControl{Services: control}, authority, enrollmentSelection{kind: "service", team: service.TeamId, id: service.Id})
 }
 
 func (n *Native) serviceControl(serviceID string) (serviceRunControl, error) {
@@ -62,6 +64,9 @@ func (n *Native) PrepareServiceRun(ctx context.Context, serviceID, key, access s
 	control, err := n.serviceControl(serviceID)
 	if err != nil || access == "" {
 		return controlv1.ServiceRunPreparation{}, ErrScope
+	}
+	if err := n.renewRuntime(ctx); err != nil {
+		return controlv1.ServiceRunPreparation{}, err
 	}
 	service, err := n.SavedService(ctx)
 	if err != nil {
@@ -121,7 +126,10 @@ func (n *Native) GetPublisherService(ctx context.Context, serviceID, access stri
 	if err != nil {
 		return service, err
 	}
-	if service.Id != n.selectedServiceID || service.TeamId != n.identity.teamID || !service.Enabled {
+	if service.Id != n.selectedServiceID || service.TeamId != n.identity.teamID || service.GuestId != n.identity.guestID || !service.Enabled {
+		return controlv1.Service{}, ErrScope
+	}
+	if n.identity.guestID != "" && (!service.Ephemeral || service.ExpiresAt == nil || !service.ExpiresAt.After(time.Now()) || service.ExpiresAt.After(n.identity.expiresAt)) {
 		return controlv1.Service{}, ErrScope
 	}
 	if _, err := ServiceTrust(service); err != nil {

@@ -13,7 +13,7 @@ type OperationObserver interface {
 
 type ForwardingObserver interface {
 	OperationObserver
-	ObserveRelayTransfer(string, int64, int64, error)
+	ObserveRelayTransfer(int64, int64, error)
 }
 
 func startOperation(ctx context.Context, observer OperationObserver, operation observability.ServerOperation) func(error) {

@@ -14,10 +14,13 @@ import (
 
 type deploymentSelectionReader struct {
 	calls    int
-	services []controlv1.Service
+	services []controlv1.ServiceSummary
 }
 
-func (r *deploymentSelectionReader) ListAvailableServices(context.Context) ([]controlv1.Service, error) {
+func (r *deploymentSelectionReader) ListAvailableServices(_ context.Context, path controlv1.ServiceAccessPath) ([]controlv1.ServiceSummary, error) {
+	if path != controlv1.ServiceAccessPathConnector {
+		return nil, errors.New("connector requested public endpoint discovery")
+	}
 	r.calls++
 	return r.services, nil
 }
@@ -45,7 +48,7 @@ func TestConnectDeclaredServiceRequiresSelectedDeploymentBinding(t *testing.T) {
 				},
 				Config: config.TNL{Deployment: deployment, Services: config.Services{}},
 			}
-			reader := &deploymentSelectionReader{services: []controlv1.Service{{
+			reader := &deploymentSelectionReader{services: []controlv1.ServiceSummary{{
 				Id: "svc_production", Name: "db", TeamId: "tm_shop", Protocol: "postgres",
 			}}}
 			selected, err := Select(t.Context(), reader, project, "db", "tm_shop")
@@ -78,7 +81,7 @@ func TestConnectTCPRequiresItsExplicitDeploymentBinding(t *testing.T) {
 		{"internal", "internal", "production"}, {"shell", "production", "internal"},
 	} {
 		t.Run(service.name, func(t *testing.T) {
-			reader := &deploymentSelectionReader{services: []controlv1.Service{{
+			reader := &deploymentSelectionReader{services: []controlv1.ServiceSummary{{
 				Id: "svc_sibling", Name: service.name, TeamId: "tm_shop", Protocol: "tcp",
 			}}}
 			for _, deployment := range []string{"", service.sibling} {
@@ -109,7 +112,7 @@ func TestConnectExactServiceIDRemainsExplicitWithUnboundDeclarations(t *testing.
 		Declared: &config.Project{Services: map[string]config.ServiceDeclaration{"db": {Protocol: new("postgres")}}},
 		Config:   config.TNL{Deployment: "staging", Services: config.Services{}},
 	}
-	reader := &deploymentSelectionReader{services: []controlv1.Service{{
+	reader := &deploymentSelectionReader{services: []controlv1.ServiceSummary{{
 		Id: "svc_production", Name: "db", TeamId: "tm_shop", Protocol: "postgres",
 	}}}
 	selected, err := Select(t.Context(), reader, project, "svc_production", "tm_shop")

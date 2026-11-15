@@ -9,7 +9,7 @@ import (
 )
 
 // ForgetGuestPrivateState removes rate-limit digests after one hour and guest
-// credentials after the trial ends and all of its public URLs are deleted.
+// credentials after the trial ends and all of its services are deleted.
 func (d *Database) ForgetGuestPrivateState(ctx context.Context, now time.Time) (int, error) {
 	if err := d.requireOpen(); err != nil {
 		return 0, err
@@ -21,25 +21,19 @@ func (d *Database) ForgetGuestPrivateState(ctx context.Context, now time.Time) (
 	if err != nil {
 		return 0, fmt.Errorf("controlstate: forget guest issuance digests: %w", err)
 	}
-	runDigests, err := queries.ForgetExpiredGuestRunDigests(ctx, controlstatedb.ForgetExpiredGuestRunDigestsParams{
+	declarations, err := queries.ForgetExpiredGuestServiceConfigurations(ctx, controlstatedb.ForgetExpiredGuestServiceConfigurationsParams{
 		Now: timestamptz(now), BatchSize: 100,
 	})
 	if err != nil {
-		return int(issuance), fmt.Errorf("controlstate: forget guest publish run digests: %w", err)
-	}
-	routingHashes, err := queries.ForgetExpiredGuestRoutingHashes(ctx, controlstatedb.ForgetExpiredGuestRoutingHashesParams{
-		Now: timestamptz(now), BatchSize: 100,
-	})
-	if err != nil {
-		return int(issuance + runDigests), fmt.Errorf("controlstate: forget guest routing hashes: %w", err)
+		return int(issuance), fmt.Errorf("controlstate: forget guest service declarations: %w", err)
 	}
 	credentials, err := queries.ForgetExpiredGuestCredentials(ctx, controlstatedb.ForgetExpiredGuestCredentialsParams{
 		Now: timestamptz(now), BatchSize: 100,
 	})
 	if err != nil {
-		return int(issuance + runDigests + routingHashes), fmt.Errorf("controlstate: forget guest credentials: %w", err)
+		return int(issuance + declarations), fmt.Errorf("controlstate: forget guest credentials: %w", err)
 	}
-	return int(issuance + runDigests + routingHashes + credentials), nil
+	return int(issuance + declarations + credentials), nil
 }
 
 type GuestTrialStats struct {

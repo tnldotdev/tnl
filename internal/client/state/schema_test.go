@@ -87,8 +87,8 @@ func TestV1ProjectJournalAndHandoffState(t *testing.T) {
 		}
 	}
 	if _, err := database.db.ExecContext(ctx, `INSERT INTO oauth_alias_handoffs
-		(server_origin, hostname, state_digest, callback_path, public_url_id, publish_run_number, created_at, expires_at)
-		VALUES (?, 'alias.example.test', ?, '/callback', 'url_example', 1, ?, ?)`, server, bytes.Repeat([]byte{1}, 32), now, now+int64(time.Minute)); err != nil {
+		(server_origin, hostname, state_digest, callback_path, service_id, run_number, created_at, expires_at)
+		VALUES (?, 'alias.example.test', ?, '/callback', 'svc_0123456789abcdefghijkl', 1, ?, ?)`, server, bytes.Repeat([]byte{1}, 32), now, now+int64(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	for attempt := 1; attempt <= 2; attempt++ {

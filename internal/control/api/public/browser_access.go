@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"slices"
 	"strings"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
@@ -34,42 +32,6 @@ func validBrowserReturnPath(path string) bool {
 	}
 	parsed, err := url.ParseRequestURI(path)
 	return err == nil && parsed.Host == "" && !parsed.IsAbs() && !strings.HasPrefix(parsed.Path, "//") && !strings.ContainsAny(parsed.Path, "\\\r\n\x00") && !strings.HasPrefix(parsed.Path, "/__tnl/")
-}
-
-func (h *handler) BeginPreviewBrowserLogin(response http.ResponseWriter, request *http.Request, params controlv1.BeginPreviewBrowserLoginParams) {
-	response.Header().Set("Referrer-Policy", "no-referrer")
-	response.Header().Set("Cache-Control", "no-store")
-	if h.browserAccess == nil || h.browserOIDC == nil || h.browserAuthority == nil || h.config.ServerDomain == "" {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "browser sign-in is unavailable")
-		return
-	}
-	if !validBrowserReturnPath(params.ReturnPath) {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid preview return path")
-		return
-	}
-	preview := controlstate.Preview{}
-	if params.PreviewId != nil {
-		var err error
-		preview, err = h.previews.GetPreview(request.Context(), *params.PreviewId)
-		if err != nil {
-			writeControlStateProblem(request.Context(), response, "read browser preview", err)
-			return
-		}
-		if !slices.Contains(preview.PublicURLIDs, params.PublicUrlId) {
-			writeProblem(response, http.StatusNotFound, controlv1.NotFound, "preview not found")
-			return
-		}
-	}
-	publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), params.PublicUrlId)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "read browser public URL", err)
-		return
-	}
-	if preview.ID != "" && publicURL.TeamID != preview.TeamID || publicURL.LifecycleState != controlstate.PublicURLLifecycleEnabled || publicURL.Purpose != controlstate.PublicURLPurposeApp && publicURL.Purpose != controlstate.PublicURLPurposeAlias || publicURL.ServiceProtocol != controlstate.PublicURLServiceHTTP {
-		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "public URL not found")
-		return
-	}
-	h.beginBrowserLogin(response, request, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: publicURL.ID}, publicURL.TeamID, preview.ID, params.ReturnPath, params.SwitchAccount)
 }
 
 func (h *handler) BeginServiceBrowserLogin(response http.ResponseWriter, request *http.Request, params controlv1.BeginServiceBrowserLoginParams) {
@@ -94,7 +56,11 @@ func (h *handler) BeginServiceBrowserLogin(response http.ResponseWriter, request
 		writeManagedCertificateProblem(request.Context(), response, "read managed browser subject", err)
 		return
 	}
-	h.beginBrowserLogin(response, request, subject, team, "", params.ReturnPath, params.SwitchAccount)
+	preview := ""
+	if params.PreviewId != nil {
+		preview = *params.PreviewId
+	}
+	h.beginBrowserLogin(response, request, subject, team, preview, params.ReturnPath, params.SwitchAccount)
 }
 
 func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.Request, subject visitorscope.Scope, team, preview, path string, switchAccount *bool) {
@@ -123,12 +89,7 @@ func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.
 			nonce = intent.Nonce
 		}
 	}
-	var state string
-	if subject.Kind == visitorscope.Service {
-		state, err = h.dependencies.ServiceHTTP.BeginServiceBrowserLogin(request.Context(), subject, path, nonce, verifier, binding, intent, now)
-	} else {
-		state, err = h.browserAccess.BeginBrowserLogin(request.Context(), preview, subject.ID, path, nonce, verifier, binding, intent, now)
-	}
+	state, err := h.dependencies.ServiceHTTP.BeginServiceBrowserLogin(request.Context(), subject, preview, path, nonce, verifier, binding, intent, now)
 	if err != nil {
 		writeControlStateProblem(request.Context(), response, "start browser sign-in", err)
 		return
@@ -233,86 +194,19 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 		return
 	}
 	retained = true
-	if handoff.Origin != "" {
-		http.Redirect(response, request, handoff.Origin+"/__tnl/team/handoff/"+handoff.Token, http.StatusSeeOther)
-		return
-	}
-	publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), attempt.PublicURLID)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "read signed-in browser public URL", err)
-		return
-	}
-	http.Redirect(response, request, "https://"+publicURL.CanonicalHostname+"/__tnl/team/handoff/"+handoff.Token, http.StatusSeeOther)
-}
-
-func (h *handler) RedeemPreviewBrowserHandoff(response http.ResponseWriter, request *http.Request, runID controlv1.PublishRunID) {
-	var body controlv1.BrowserHandoffRequest
-	if err := decodeJSON(response, request, &body); err != nil || body.PublishRunNumber <= 0 || (body.ShareId == nil) != (body.ShareSecret == nil) {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid browser handoff")
-		return
-	}
-	auth, ok := h.authenticatePublishRunRequest(response, request, runID, uint64(body.PublishRunNumber))
-	if !ok {
-		return
-	}
-	cookie, path, next, bridge, _, err := h.browserAccess.RedeemBrowserHandoff(request.Context(), auth, body.Token, time.Now())
-	if err != nil && !errors.Is(err, controlstate.ErrPreviewAccess) {
-		writeControlStateProblem(request.Context(), response, "redeem browser handoff", err)
-		return
-	}
-	if err != nil || !validBrowserReturnPath(path) {
-		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "browser handoff expired")
-		return
-	}
-	permission, err := h.redeemedBrowserHandoffPermission(request.Context(), auth.PublicURLID, cookie, body)
-	if err != nil {
-		writeVisitorTokenProblem(request.Context(), response, err)
-		return
-	}
-	session, err := h.browserAccess.BrowserSession(request.Context(), auth.PublicURLID, cookie, time.Now())
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "read redeemed browser session", err)
-		return
-	}
-	// the handoff deadline limits ticket redemption, not the browser sign-in.
-	// the signed visitor permission retains its separate, shorter deadline.
-	writeJSON(response, http.StatusOK, controlv1.BrowserHandoffResponse{CookieSecret: cookie, ReturnPath: path, NextUrl: &next, Bridge: &bridge, ExpiresAt: session.ExpiresAt, Permission: permission})
-}
-
-func (h *handler) redeemedBrowserHandoffPermission(ctx context.Context, urlID, cookie string, body controlv1.BrowserHandoffRequest) (controlv1.VisitorTokenResponse, error) {
-	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: urlID}
-	permission, err := h.redeemedVisitorPermission(ctx, scope, controlstate.BrowserSessionTokenSource{Secret: cookie})
-	if errors.Is(err, controlstate.ErrVisitorPermission) && body.ShareId != nil && body.ShareSecret != nil {
-		// sign-in establishes identity for feedback; the share remains the
-		// independent authority to visit when this person has no team grant.
-		return h.redeemedVisitorPermission(ctx, scope, controlstate.ShareSessionTokenSource{ShareID: *body.ShareId, Secret: *body.ShareSecret})
-	}
-	return permission, err
+	http.Redirect(response, request, handoff.Origin+"/__tnl/team/handoff/"+handoff.Token, http.StatusSeeOther)
 }
 
 func (h *handler) refreshBrowserSignIn(ctx context.Context, scope visitorscope.Scope, token string) (controlstate.BrowserAccessSession, error) {
 	now := time.Now()
-	if scope.Kind == visitorscope.Service {
-		store, ok := h.dependencies.ServiceHTTP, h.dependencies.ServiceHTTP != nil
-		if !ok {
-			return controlstate.BrowserAccessSession{}, clientauthority.ErrUnavailable
-		}
-		return store.RefreshServiceBrowserSession(ctx, scope.ID, token, now, h.rotateBrowserCredentials)
-	}
-	if h.browserAccess == nil {
+	store := h.dependencies.ServiceHTTP
+	if store == nil {
 		return controlstate.BrowserAccessSession{}, clientauthority.ErrUnavailable
 	}
-	session, err := h.browserAccess.BrowserSession(ctx, scope.ID, token, now)
-	if err != nil {
-		return controlstate.BrowserAccessSession{}, err
+	if scope.Kind != visitorscope.Service || !scope.Valid() {
+		return controlstate.BrowserAccessSession{}, controlstate.ErrVisitorSignIn
 	}
-	if !session.AccessExpiresAt.After(now.Add(30 * time.Second)) {
-		session, err = h.browserAccess.RefreshBrowserSession(ctx, scope.ID, token, now, h.rotateBrowserCredentials)
-		if err != nil {
-			return controlstate.BrowserAccessSession{}, err
-		}
-	}
-	return session, nil
+	return store.RefreshServiceBrowserSession(ctx, scope.ID, token, now, h.rotateBrowserCredentials)
 }
 
 func (h *handler) rotateBrowserCredentials(ctx context.Context, refreshToken string) (controlstate.BrowserTokenRotation, error) {
@@ -331,69 +225,16 @@ func (h *handler) rotateBrowserCredentials(ctx context.Context, refreshToken str
 		RefreshToken: rotated.RefreshToken, AccessExpiresAt: rotated.AccessExpiresAt}, nil
 }
 
-func (h *handler) browserSessionAccess(ctxRequest *http.Request, auth controlstate.PublishRunAuthentication, token string) (controlstate.BrowserAccessSession, publicURLReadPrincipal, bool, error) {
-	session, err := h.refreshBrowserSignIn(ctxRequest.Context(), visitorscope.Scope{Kind: visitorscope.PublicURL, ID: auth.PublicURLID}, token)
+func (h *handler) browserSessionAccess(ctxRequest *http.Request, auth controlstate.ServiceHTTPRun, token string) (controlstate.BrowserAccessSession, publicURLReadPrincipal, bool, error) {
+	session, err := h.refreshBrowserSignIn(ctxRequest.Context(), auth.Subject, token)
 	if err != nil {
 		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, err
 	}
-	principal, err := h.authorizer.AuthorizePublicURLReads(ctxRequest.Context(), session.AccessToken)
+	decision, err := h.dependencies.ServiceHTTP.ServiceBrowserSession(ctxRequest.Context(), auth, token, false, time.Now())
 	if err != nil {
-		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, err
-	}
-	if principal.identityID != session.IdentityID {
-		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, authorization.ErrUnauthenticated
-	}
-	decision, err := h.browserAccess.BrowserAuthorizationForRun(ctxRequest.Context(), auth, token, time.Now())
-	if err != nil {
-		return session, principal, false, err
+		return session, publicURLReadPrincipal{}, false, err
 	}
 	session.IdentityID, session.DisplayName = decision.IdentityID, decision.DisplayName
-	session.TeamMember = decision.TeamMember
-	principal.displayName = decision.DisplayName
-	return session, principal, decision.VisitAllowed, nil
-}
-
-func (h *handler) CheckPreviewBrowserAccess(response http.ResponseWriter, request *http.Request, runID controlv1.PublishRunID) {
-	var body controlv1.BrowserAccessRequest
-	if err := decodeJSON(response, request, &body); err != nil || body.PublishRunNumber <= 0 {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid browser access")
-		return
-	}
-	auth, ok := h.authenticatePublishRunRequest(response, request, runID, uint64(body.PublishRunNumber))
-	if !ok {
-		return
-	}
-	session, principal, member, err := h.browserSessionAccess(request, auth, body.CookieSecret)
-	if err != nil {
-		switch {
-		case errors.Is(err, controlstate.ErrPreviewAccess), errors.Is(err, controlstate.ErrVisitorSignIn), errors.Is(err, authorization.ErrUnauthenticated), errors.Is(err, clientauthority.ErrUnauthenticated):
-			writeProblem(response, http.StatusUnauthorized, controlv1.Unauthenticated, "browser sign-in expired")
-		case errors.Is(err, authorization.ErrUnavailable), errors.Is(err, clientauthority.ErrUnavailable):
-			writeUnavailableProblem(request.Context(), response, "check browser access", "browser access is unavailable", failure.ServerAuthorityUnavailable, err)
-		default:
-			writeControlStateProblem(request.Context(), response, "check browser access", err)
-		}
-		return
-	}
-	observability.AuthorizationDecision(request.Context(), "preview_browser_session", member)
-	writeJSON(response, http.StatusOK, controlv1.BrowserAccessResponse{
-		IdentityId: session.IdentityID, DisplayName: principal.displayName, VisitAllowed: member, TeamMember: session.TeamMember,
-	})
-}
-
-func (h *handler) RevokePreviewBrowserAccess(response http.ResponseWriter, request *http.Request, runID controlv1.PublishRunID) {
-	var body controlv1.BrowserAccessRequest
-	if err := decodeJSON(response, request, &body); err != nil || body.PublishRunNumber <= 0 {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid browser logout")
-		return
-	}
-	auth, ok := h.authenticatePublishRunRequest(response, request, runID, uint64(body.PublishRunNumber))
-	if !ok {
-		return
-	}
-	if err := h.browserAccess.RevokeBrowserSession(request.Context(), auth.PublicURLID, body.CookieSecret, time.Now()); err != nil {
-		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "browser logout failed")
-		return
-	}
-	response.WriteHeader(http.StatusNoContent)
+	principal := publicURLReadPrincipal{identityID: decision.IdentityID, displayName: decision.DisplayName}
+	return session, principal, decision.TeamMember, nil
 }

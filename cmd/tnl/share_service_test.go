@@ -29,6 +29,7 @@ const (
 	shareTestInvite  = "sivt_0123456789abcdefghijkl"
 	shareTestGrant   = "sgr_0123456789abcdefghijkl"
 	shareTestHTTP    = "shg_0123456789abcdefghijkl"
+	shareTestShare   = "shr_0123456789abcdefghijkl"
 	shareTestTeam    = "tm_0123456789abcdefghijkl"
 	shareTestPerson  = "ident_0123456789abcdefghijkl"
 )
@@ -36,10 +37,18 @@ const (
 func serviceShareTestClient(t *testing.T, handler http.HandlerFunc) *clientcontrol.Client {
 	t.Helper()
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer current-person" {
+		expectedAccess := "Bearer current-person"
+		if r.URL.Path == "/v1/visitor-tokens" {
+			expectedAccess = ""
+		}
+		if r.Header.Get("Authorization") != expectedAccess {
 			t.Error("service access did not use the current person's control session")
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/shares" {
+			_, _ = io.WriteString(w, `{"schema_version":1,"shares":[]}`)
+			return
+		}
 		handler(w, r)
 	}))
 	t.Cleanup(server.Close)
@@ -81,7 +90,7 @@ func TestServiceShareSyntaxAndEarlyValidation(t *testing.T) {
 		{"token", "create", shareTestService, "--expires-in=8d"},
 		{"link", "create", shareTestService, "--expires-at=2020-01-01T00:00:00Z"},
 		{"invite", "accept", "shr_0123456789abcdefghijkl." + strings.Repeat("A", 43)},
-		{"revoke", shareTestService, "shr_0123456789abcdefghijkl"},
+		{"revoke", shareTestService, "not-an-access-id"},
 		{"list", "unconfigured-friendly-name"},
 	} {
 		var output, diagnostics bytes.Buffer
@@ -116,7 +125,7 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 	}
 	saved, deployment := "orders-saved", "production"
 	project := projectConfiguration{Project: clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")}, Worktree: clientproject.Worktree{Root: root, IsGit: true}, Config: config.TNL{Services: config.Services{
-		"orders": {Name: &saved}, "remote": {HTTP: &config.HTTPService{}, Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://app.internal:3000"))}}, "web": {Tunnel: &config.Tunnel{}},
+		"orders": {Name: &saved}, "remote": {HTTP: &config.HTTPService{}, Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://app.internal:3000"))}}, "web": {Public: new(true)},
 	}}}}
 	source, err := project.SourceIdentity(t.Context())
 	if err != nil {
@@ -126,7 +135,7 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 		t.Run(selector, func(t *testing.T) {
 			lookups, reads := 0, 0
 			scope := controlv1.LocalServiceSource{ProjectKey: source.Key, SourceFingerprint: source.Fingerprint, Service: selector}
-			if selector == "orders" {
+			if selector == "orders" || selector == "web" {
 				local := project.LocalPublicationIdentity()
 				scope.ProjectKey, scope.SourceFingerprint = local.Key, local.Fingerprint
 				scope.WorktreeKey = project.LocalWorktreeKey()
@@ -173,10 +182,10 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 				selectedProject.Config.Services = config.Services{"orders": project.Config.Services["orders"], "web": project.Config.Services["web"]}
 			}
 			service, err := selectServiceShare(t.Context(), s, selectedProject, selector)
-			valid := selector == "orders" || selector == "remote" || selector == shareTestService
+			valid := selector == "orders" || selector == "web" || selector == "remote" || selector == shareTestService
 			if valid {
 				wantLookups := 0
-				if selector == "orders" {
+				if selector == "orders" || selector == "web" {
 					wantLookups = 2
 				}
 				if selector == "remote" {
@@ -338,7 +347,7 @@ func TestServiceShareInvitationResponsesCannotWidenScopeOrLeakSecrets(t *testing
 		case "accept":
 			err = acceptServiceShareInvitation(t.Context(), control, serviceShareInviteAcceptCommand{Secret: secret, Output: statusOutputJSON}, &output)
 		case "list":
-			err = listServiceShares(t.Context(), control, shareTestService, statusOutputJSON, &output)
+			err = listServiceShares(t.Context(), control, shareTestService, shareTestTeam, statusOutputJSON, &output)
 		}
 		if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid || output.Len() != 0 {
 			t.Fatalf("%s widened invitation scope or leaked a secret: %v, %q", operation, err, &output)
@@ -401,13 +410,13 @@ func TestServiceShareInvitationLifecycleUsesExactAPI(t *testing.T) {
 	}
 	for _, mode := range []statusOutputMode{statusOutputHuman, statusOutputJSON} {
 		output.Reset()
-		if err := listServiceShares(t.Context(), control, shareTestService, mode, &output); err != nil || strings.Contains(output.String(), secret) || !strings.Contains(output.String(), shareTestGrant) {
+		if err := listServiceShares(t.Context(), control, shareTestService, shareTestTeam, mode, &output); err != nil || strings.Contains(output.String(), secret) || !strings.Contains(output.String(), shareTestGrant) {
 			t.Fatal("service access list lost scope or exposed a secret", err)
 		}
 	}
 	for _, id := range []string{shareTestInvite, shareTestGrant} {
 		output.Reset()
-		if err := revokeServiceShare(t.Context(), control, shareTestService, serviceShareRevokeCommand{ID: id, Output: statusOutputJSON}, &output); err != nil || !strings.Contains(output.String(), `"revoked":true`) {
+		if err := revokeServiceShare(t.Context(), control, shareTestService, shareTestTeam, serviceShareRevokeCommand{ID: id, Output: statusOutputJSON}, &output); err != nil || !strings.Contains(output.String(), `"revoked":true`) {
 			t.Fatal("exact service revocation", err)
 		}
 	}
@@ -434,7 +443,7 @@ func TestServiceShareHTTPInventoryRejectsMixedScopesAndSecrets(t *testing.T) {
 			}
 		})
 		var output bytes.Buffer
-		err := listServiceShares(t.Context(), control, shareTestService, statusOutputJSON, &output)
+		err := listServiceShares(t.Context(), control, shareTestService, shareTestTeam, statusOutputJSON, &output)
 		if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid || output.Len() != 0 {
 			t.Fatal("HTTP credential inventory widened scope or exposed a secret")
 		}
@@ -462,7 +471,7 @@ func TestServiceShareRejectsUnsafeResponsesAndPreservesFailures(t *testing.T) {
 				_, _ = io.WriteString(w, test.body)
 			})
 			var output bytes.Buffer
-			err := listServiceShares(t.Context(), control, shareTestService, statusOutputJSON, &output)
+			err := listServiceShares(t.Context(), control, shareTestService, shareTestTeam, statusOutputJSON, &output)
 			if reason, ok := failure.ReasonOf(err); !ok || reason != test.want || output.Len() != 0 {
 				t.Fatalf("unsafe response = %v; output=%q", err, &output)
 			}
@@ -482,7 +491,7 @@ func TestServiceShareRejectsUnsafeResponsesAndPreservesFailures(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(controlv1.ServiceGrantPage{Grants: []controlv1.ServiceGrant{{Id: shareTestGrant, ServiceId: shareTestService, Kind: kind}}})
 		})
-		err := revokeServiceShare(t.Context(), control, shareTestService, serviceShareRevokeCommand{ID: shareTestGrant}, io.Discard)
+		err := revokeServiceShare(t.Context(), control, shareTestService, shareTestTeam, serviceShareRevokeCommand{ID: shareTestGrant}, io.Discard)
 		if kind == "team" && (err == nil || deletes != 0) || kind == "identity" && (err != nil || deletes != 1) {
 			t.Fatalf("revoking %s grant: deletes=%d err=%v", kind, deletes, err)
 		}
@@ -491,45 +500,76 @@ func TestServiceShareRejectsUnsafeResponsesAndPreservesFailures(t *testing.T) {
 
 func TestServiceShareServiceHTTPUsesExplicitSubjectAndOneTimeOutput(t *testing.T) {
 	at := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
-	service := controlv1.Service{Id: shareTestService, Protocol: "http", Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.production.example.test", Port: 25443, Public: true}}
-	secret := "vrf1." + shareTestHTTP + "." + strings.Repeat("A", 43)
-	permission := controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: shareTestService}, Hostname: service.Endpoint.Hostname, Port: service.Endpoint.Port, VisitorPolicyRevision: 1, ExpiresAt: at, VisitorToken: "header.permission.signature"}
-	for _, kind := range []controlv1.CreateVisitorCredentialRequestKind{"share", "token"} {
-		for _, corrupt := range []string{"", "subject", "id", "kind", "hostname", "secret"} {
-			t.Run(string(kind)+"/"+corrupt, func(t *testing.T) {
+	service := controlv1.Service{Id: shareTestService, TeamId: shareTestTeam, Protocol: "http", Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.production.example.test", Port: 443, Public: true}}
+	secret := strings.Repeat("A", 43)
+	link := "https://" + service.Endpoint.Hostname + "/__tnl/share/" + shareTestShare + "." + secret
+	share := controlv1.Share{SchemaVersion: 1, Id: shareTestShare, TeamId: shareTestTeam, CreatedByIdentityId: shareTestPerson, Scope: "service",
+		ServiceIds: []string{shareTestService}, EntryServiceId: shareTestService, CreatedAt: time.Now(), ExpiresAt: at}
+	permission := controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: shareTestService}, Hostname: service.Endpoint.Hostname, Port: service.Endpoint.Port, VisitorPolicyRevision: 1, ExpiresAt: time.Now().Add(time.Minute), VisitorToken: "header.permission.signature"}
+	for _, token := range []bool{false, true} {
+		cases := []string{"", "subject", "id", "kind", "hostname", "secret"}
+		if token {
+			cases = append(cases, "permission-subject", "permission-id", "permission-hostname")
+		}
+		for _, corrupt := range cases {
+			t.Run(map[bool]string{false: "link", true: "token"}[token]+"/"+corrupt, func(t *testing.T) {
 				control := serviceShareTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-					if r.Method == http.MethodDelete && r.URL.Path == "/v1/services/"+shareTestService+"/http-grants/"+shareTestHTTP {
-						w.WriteHeader(204)
+					if r.Method == http.MethodGet && r.URL.Path == "/v1/shares/"+shareTestShare {
+						_ = json.NewEncoder(w).Encode(share)
 						return
 					}
-					if r.Method != http.MethodPost || r.URL.Path != "/v1/services/"+shareTestService+"/http-grants" {
-						t.Errorf("service HTTP used another resource's grant: %s %s", r.Method, r.URL)
+					if r.Method == http.MethodPost && r.URL.Path == "/v1/shares/"+shareTestShare+"/revoke" {
+						revoked := share
+						revoked.RevokedAt = new(time.Now())
+						_ = json.NewEncoder(w).Encode(revoked)
+						return
 					}
-					var body controlv1.CreateVisitorCredentialRequest
-					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Kind != kind || !body.ExpiresAt.Equal(at) {
-						t.Error("service HTTP grant changed kind or deadline", err)
+					if r.Method == http.MethodPost && r.URL.Path == "/v1/visitor-tokens" {
+						var body controlv1.VisitorTokenRequest
+						var source controlv1.VisitorTokenShareSource
+						if err := json.NewDecoder(r.Body).Decode(&body); err != nil || json.Unmarshal(body.Source, &source) != nil ||
+							body.Resource != permission.Resource || source.Kind != "share" || source.ShareId != shareTestShare || source.Secret != secret {
+							t.Error("service token did not independently exchange its exact ordinary share source", err)
+						}
+						result := permission
+						switch corrupt {
+						case "permission-subject":
+							result.Resource.Kind = "public_url"
+						case "permission-id":
+							result.Resource.Id = "svc_abcdefghijkl0123456789"
+						case "permission-hostname":
+							result.Hostname = "other.example.test"
+						}
+						_ = json.NewEncoder(w).Encode(result)
+						return
 					}
-					grant := controlv1.VisitorCredential{GrantId: shareTestHTTP, Kind: controlv1.VisitorCredentialKind(kind), RefreshCredential: secret, Permission: permission, ExpiresAt: at}
-					if kind == "share" {
-						grant.ShareUrl = new("https://web.production.example.test:25443/__tnl/share/" + secret)
+					if r.Method != http.MethodPost || r.URL.Path != "/v1/shares" {
+						t.Errorf("service HTTP used connector credentials or another authority: %s %s", r.Method, r.URL)
 					}
+					var body controlv1.CreateShareRequest
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.ServiceIds) != 1 || body.ServiceIds[0] != service.Id ||
+						body.EntryServiceId != service.Id || !body.ExpiresAt.Equal(at) || r.Header.Get("Idempotency-Key") == "" {
+						t.Error("ordinary service share changed its exact scope, key, or deadline", err)
+					}
+					creation := controlv1.ShareCreation{Share: share, Link: link,
+						TokenSource: controlv1.VisitorTokenShareSource{Kind: controlv1.VisitorTokenShare, ShareId: shareTestShare, Secret: secret}}
 					switch corrupt {
 					case "subject":
-						grant.Permission.Resource.Kind = "public_url"
+						creation.Share.ServiceIds = []string{"svc_abcdefghijkl0123456789"}
 					case "id":
-						grant.Permission.Resource.Id = "svc_abcdefghijkl0123456789"
+						creation.Share.EntryServiceId = "svc_abcdefghijkl0123456789"
 					case "kind":
-						grant.Kind = "other"
+						creation.Share.Scope = "preview"
 					case "hostname":
-						grant.ShareUrl = new("https://other.example.test/__tnl/share/" + secret)
+						creation.Link = "https://other.example.test/__tnl/share/" + shareTestShare + "." + secret
 					case "secret":
-						grant.RefreshCredential += "\nprivate-value"
+						creation.TokenSource.Secret += "\nprivate-value"
 					}
 					w.WriteHeader(201)
-					_ = json.NewEncoder(w).Encode(grant)
+					_ = json.NewEncoder(w).Encode(creation)
 				})
 				var output bytes.Buffer
-				err := createServiceShareHTTP(t.Context(), control, service, statusOutputHuman, kind, at, &output)
+				err := createServiceShareHTTP(t.Context(), control, service, statusOutputHuman, token, at, &output)
 				invalid := corrupt != ""
 				if invalid {
 					if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid || output.Len() != 0 {
@@ -538,17 +578,17 @@ func TestServiceShareServiceHTTPUsesExplicitSubjectAndOneTimeOutput(t *testing.T
 					return
 				}
 				want := permission.VisitorToken + "\n"
-				if kind == "share" {
-					want = "https://web.production.example.test:25443/__tnl/share/" + secret + "\n"
+				if !token {
+					want = link + "\n"
 				}
-				if err != nil || output.String() != want {
+				if err != nil || output.String() != want || token && strings.Contains(output.String(), secret) {
 					t.Fatalf("raw service HTTP credential output = %q, %v", &output, err)
 				}
-				if err := revokeServiceShare(t.Context(), control, service.Id, serviceShareRevokeCommand{ID: shareTestHTTP}, io.Discard); err != nil {
+				if err := revokeServiceShare(t.Context(), control, service.Id, service.TeamId, serviceShareRevokeCommand{ID: shareTestShare}, io.Discard); err != nil {
 					t.Fatal("service HTTP revocation", err)
 				}
 				cause := errors.New("private-output-failure")
-				err = createServiceShareHTTP(t.Context(), control, service, statusOutputJSON, kind, at, errorWriter{cause})
+				err = createServiceShareHTTP(t.Context(), control, service, statusOutputJSON, token, at, errorWriter{cause})
 				if reason, ok := failure.ReasonOf(err); !ok || reason != failure.OutputUnavailable || !errors.Is(err, cause) {
 					t.Fatal("output failure lost its classification or cause", err)
 				}
@@ -558,9 +598,80 @@ func TestServiceShareServiceHTTPUsesExplicitSubjectAndOneTimeOutput(t *testing.T
 	control := serviceShareTestClient(t, func(http.ResponseWriter, *http.Request) { t.Error("non-public HTTP credential reached API") })
 	for _, protocol := range []controlv1.ServiceProtocol{"tcp", "postgres", "mysql", "kubernetes", "http"} {
 		service.Protocol, service.Endpoint.Public = protocol, protocol != "http"
-		if err := createServiceShareHTTP(t.Context(), control, service, statusOutputHuman, "token", at, io.Discard); err == nil {
+		if err := createServiceShareHTTP(t.Context(), control, service, statusOutputHuman, true, at, io.Discard); err == nil {
 			t.Fatalf("created HTTP token for private or non-HTTP service: %s", protocol)
 		}
+	}
+}
+
+func TestServiceShareListsOrdinarySharesWithoutBroadPreviewRevocation(t *testing.T) {
+	const previewShareID = "shr_abcdefghijkl0123456789"
+	const otherShareID = "shr_1111111111111111111111"
+	const otherServiceID = "svc_abcdefghijkl0123456789"
+	at := time.Now().Add(time.Hour)
+	exact := controlv1.Share{SchemaVersion: 1, Id: shareTestShare, Scope: "service", TeamId: shareTestTeam,
+		ServiceIds: []string{shareTestService}, EntryServiceId: shareTestService, ExpiresAt: at}
+	preview := exact
+	preview.Id, preview.Scope, preview.PreviewId = previewShareID, "preview", new("pv_0123456789abcdefghijkl")
+	preview.ServiceIds = []string{shareTestService, otherServiceID}
+	other := exact
+	other.Id, other.ServiceIds, other.EntryServiceId = otherShareID, []string{otherServiceID}, otherServiceID
+	revocations := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer current-person" {
+			t.Error("share management used visitor-source authority")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/services/" + shareTestService + "/grants":
+			_ = json.NewEncoder(w).Encode(controlv1.ServiceGrantPage{Grants: []controlv1.ServiceGrant{}})
+		case "GET /v1/services/" + shareTestService + "/invitations":
+			_ = json.NewEncoder(w).Encode(controlv1.ServiceInvitationPage{Invitations: []controlv1.ServiceInvitation{}})
+		case "GET /v1/services/" + shareTestService + "/http-grants":
+			_ = json.NewEncoder(w).Encode([]controlv1.ServiceHTTPGrantSummary{})
+		case "GET /v1/shares":
+			if r.URL.Query().Get("team_id") != shareTestTeam {
+				t.Error("share inventory lost its actual service team")
+			}
+			_ = json.NewEncoder(w).Encode(controlv1.SharePage{SchemaVersion: 1, Shares: []controlv1.Share{exact, preview, other}})
+		case "GET /v1/shares/" + shareTestShare:
+			_ = json.NewEncoder(w).Encode(exact)
+		case "GET /v1/shares/" + previewShareID:
+			_ = json.NewEncoder(w).Encode(preview)
+		case "GET /v1/shares/" + otherShareID:
+			_ = json.NewEncoder(w).Encode(other)
+		case "POST /v1/shares/" + shareTestShare + "/revoke":
+			revocations++
+			_ = json.NewEncoder(w).Encode(exact)
+		default:
+			t.Errorf("service share used another authority or broadened revocation: %s %s", r.Method, r.URL)
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+	control, err := clientcontrol.New(server.URL, server.Client(), "current-person")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := listServiceShares(t.Context(), control, shareTestService, shareTestTeam, statusOutputJSON, &output); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Shares []controlv1.Share `json:"shares"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil || len(result.Shares) != 2 || strings.Contains(output.String(), otherShareID) ||
+		strings.Contains(output.String(), "token_source") || strings.Contains(output.String(), "secret") {
+		t.Fatal("service share inventory widened membership or exposed a source", err)
+	}
+	if err := revokeServiceShare(t.Context(), control, shareTestService, shareTestTeam, serviceShareRevokeCommand{ID: previewShareID}, io.Discard); err == nil || revocations != 0 {
+		t.Fatal("exact-service revocation removed broader captured preview access", err)
+	}
+	if err := revokeServiceShare(t.Context(), control, shareTestService, shareTestTeam, serviceShareRevokeCommand{ID: otherShareID}, io.Discard); err == nil || revocations != 0 {
+		t.Fatal("exact-service revocation removed another service's share", err)
+	}
+	if err := revokeServiceShare(t.Context(), control, shareTestService, shareTestTeam, serviceShareRevokeCommand{ID: shareTestShare}, io.Discard); err != nil || revocations != 1 {
+		t.Fatal("exact-service ordinary share did not revoke through its defining operation", err)
 	}
 }
 

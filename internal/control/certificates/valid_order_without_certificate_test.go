@@ -33,7 +33,7 @@ func TestRelayWorkerRetiresValidOrderWithoutCertificateURL(t *testing.T) {
 	}
 }
 
-func TestPublicURLWorkerRetiresValidOrderWithoutCertificateURL(t *testing.T) {
+func TestServiceWorkerRetiresValidOrderWithoutCertificateURL(t *testing.T) {
 	now := time.Date(2026, time.September, 27, 12, 0, 0, 0, time.UTC)
 	const hostname = "api.example.test"
 	api := &acmeStub{order: acme.Order{
@@ -41,11 +41,11 @@ func TestPublicURLWorkerRetiresValidOrderWithoutCertificateURL(t *testing.T) {
 		Identifiers: []acme.Identifier{{Type: "dns", Value: hostname}},
 		Finalize:    "https://acme.example.test/finalize/1",
 	}}
-	store := &certificateStoreStub{work: controlstate.ACMEOrderWork{Subject: testCertificateSubject("public_url_test"),
+	store := &certificateStoreStub{work: controlstate.ACMEOrderWork{Subject: testCertificateSubject("service_test"),
 		State: "finalizing", ChallengeMethod: "dns-01", CertificateIdentifiers: []string{hostname}, OrderURL: api.order.URL,
 		Account: controlstate.ACMEAccount{AccountURL: "https://acme.example.test/account/1"},
 	}}
-	worker := &PublicURLWorker{store: store, config: PublicURLConfig{DNSChallenges: &dnsChallengesStub{}}, now: func() time.Time { return now }, client: func(controlstate.ACMEAccount) (acmeAPI, error) { return api, nil }}
+	worker := &ServiceWorker{store: store, config: ServiceConfig{DNSChallenges: &dnsChallengesStub{}}, now: func() time.Time { return now }, client: func(controlstate.ACMEAccount) (acmeAPI, error) { return api, nil }}
 	for range 2 {
 		if found, err := worker.processOne(t.Context()); !found || err != nil {
 			t.Fatalf("process valid order: found=%t error=%v", found, err)

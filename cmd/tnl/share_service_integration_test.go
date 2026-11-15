@@ -202,12 +202,66 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 	}
 	assertNoVisit := func() {
 		t.Helper()
-		services, err := adminControl.ListAvailableServices(ctx)
-		if err != nil || len(services) != 0 {
-			t.Fatalf("service management added visit permission: %+v %v", services, err)
+		for _, path := range []controlv1.ServiceAccessPath{controlv1.ServiceAccessPathConnector, controlv1.ServiceAccessPathPublicEndpoint} {
+			services, err := adminControl.ListAvailableServices(ctx, path)
+			if err != nil || len(services) != 0 {
+				t.Fatalf("service management added %s discovery permission: %+v %v", path, services, err)
+			}
 		}
 	}
 	assertNoVisit()
+	t.Run("HTTP links and tokens use ordinary exact-service shares", func(t *testing.T) {
+		service, err := ownerControl.CreateService(ctx, team.Id, "share-web", "share-web", controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP},
+			&controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocolHTTP), Public: new(true), Target: "http://app.internal:3000"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, command := range []string{"link", "token"} {
+			data, err := call(admin.AccessToken.String(), command, "create", service.Id, "--expires-in=1h")
+			if err != nil {
+				t.Fatal("manager without visitor access could not share the exact service", err)
+			}
+			var printed struct {
+				ShareID    string   `json:"share_id"`
+				ServiceID  string   `json:"service_id"`
+				ServiceIDs []string `json:"service_ids"`
+				EntryURL   string   `json:"entry_url"`
+				ShareToken string   `json:"share_token"`
+			}
+			if err := json.Unmarshal(data, &printed); err != nil || !strings.HasPrefix(printed.ShareID, "shr_") {
+				t.Fatal("HTTP share did not return its ordinary share ID", err)
+			}
+			share, err := adminControl.GetShare(ctx, printed.ShareID)
+			if err != nil || share.Scope != "service" || share.PreviewId != nil || share.TeamId != team.Id ||
+				!slices.Equal(share.ServiceIds, []string{service.Id}) || share.EntryServiceId != service.Id {
+				t.Fatal("HTTP share changed its defining service scope", err)
+			}
+			if command == "link" && (!slices.Equal(printed.ServiceIDs, []string{service.Id}) ||
+				!strings.HasPrefix(printed.EntryURL, "https://"+service.Endpoint.Hostname+"/__tnl/share/"+share.Id+".") || printed.ShareToken != "") ||
+				command == "token" && (printed.ServiceID != service.Id || strings.Count(printed.ShareToken, ".") != 2 || printed.EntryURL != "") ||
+				bytes.Contains(data, []byte("token_source")) || bytes.Contains(data, []byte(`"secret"`)) {
+				t.Fatal("HTTP share output lost its exact address or exposed authority-source fields")
+			}
+			listed, err := call(admin.AccessToken.String(), "list", service.Id)
+			if err != nil || !bytes.Contains(listed, []byte(share.Id)) || bytes.Contains(listed, []byte("token_source")) ||
+				bytes.Contains(listed, []byte(`"secret"`)) || printed.ShareToken != "" && bytes.Contains(listed, []byte(printed.ShareToken)) {
+				t.Fatal("HTTP share inventory hid the ordinary share or exposed its credential", err)
+			}
+			httpGrants, err := adminControl.ListServiceHTTPGrants(ctx, service.Id)
+			if err != nil || len(httpGrants) != 0 {
+				t.Fatal("HTTP link or token created a separate HTTP credential", err)
+			}
+			assertNoVisit()
+			if _, err := call(admin.AccessToken.String(), "revoke", service.Id, share.Id); err != nil {
+				t.Fatal("exact-service workflow could not revoke its ordinary share", err)
+			}
+			revoked, err := adminControl.GetShare(ctx, share.Id)
+			if err != nil || revoked.RevokedAt == nil {
+				t.Fatal("ordinary service share stayed active after revocation", err)
+			}
+			assertNoVisit()
+		}
+	})
 	t.Run("same logical key selects only its deployment", func(t *testing.T) {
 		staging, err := ownerControl.GetDeployment(ctx, team.Id, source.Key, "staging")
 		if err != nil {

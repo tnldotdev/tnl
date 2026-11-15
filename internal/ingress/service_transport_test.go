@@ -44,7 +44,7 @@ func newServiceTransportFixture(t *testing.T, ref tunnelv1.ServicePublisherConne
 	f.publisherServer = startForwardingTestServer(t, material, func(ctx context.Context, transport muxsession.Session) error {
 		session, _, err := tunnel.Accept(ctx, transport, func(_ context.Context, hello tunnelv1.Message) error {
 			if hello.Role != tunnelv1.Publisher || hello.Credential != "service-publisher-credential" ||
-				hello.PublisherConnection != nil || hello.ServiceConnection == nil || *hello.ServiceConnection != ref {
+				hello.ServiceConnection == nil || *hello.ServiceConnection != ref {
 				return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 			}
 			return nil
@@ -79,7 +79,7 @@ func newServiceTransportFixture(t *testing.T, ref tunnelv1.ServicePublisherConne
 	f.relayServer = startForwardingTestServer(t, material, func(ctx context.Context, transport muxsession.Session) error {
 		session, _, err := tunnel.Accept(ctx, transport, func(_ context.Context, hello tunnelv1.Message) error {
 			if hello.Role != tunnelv1.Ingress || hello.Credential != forwardingClusterSecret ||
-				hello.PublisherConnection != nil || hello.ServiceConnection != nil {
+				hello.ServiceConnection != nil {
 				return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 			}
 			return nil
@@ -89,18 +89,14 @@ func newServiceTransportFixture(t *testing.T, ref tunnelv1.ServicePublisherConne
 		}
 		defer session.Close()
 		for {
-			incoming, err := session.AcceptInternalForwardingStream(ctx)
+			incoming, err := session.AcceptServiceForwardingStream(ctx)
 			if err != nil {
 				if failure.Only(err, context.Canceled) || failure.Only(err, io.EOF) || failure.Only(err, net.ErrClosed) || failure.Only(err, muxsession.ErrClosed) {
 					return nil
 				}
 				return err
 			}
-			request, ok := incoming.(*tunnel.IncomingServiceForwardingStream)
-			if !ok {
-				_ = incoming.Stream().Close()
-				return errors.New("service relay received another forwarding kind")
-			}
+			request := incoming
 			if request.Header.Validate() != nil || tunnel.ServiceForwardingRef(request.Header) != ref ||
 				request.Header.RelayID != relay.RelayId || request.Header.RelayRunID != relay.RelayRunId ||
 				request.Header.RelayLeaseRevision != uint64(relay.RelayLeaseRevision) {

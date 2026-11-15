@@ -64,7 +64,7 @@ func (d *Database) connectorPeerPairDelivery(ctx context.Context, serviceID, run
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	run, err := serviceRunAuthorization(ctx, tx, q, serviceID, runID, token, clock.current())
+	run, err := d.serviceRunAuthorization(ctx, tx, q, serviceID, runID, token, clock.current())
 	if err != nil {
 		return result, err
 	}

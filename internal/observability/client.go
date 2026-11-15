@@ -102,7 +102,7 @@ func ClientCommand(ctx context.Context, command string) (context.Context, func(e
 		operation = "client.auth.logout"
 	case "auth browser <url>":
 		operation = "client.auth.browser"
-	case "publisher enroll", "publisher enroll <public-url-id>":
+	case "publisher enroll", "publisher enroll <service-id>":
 		operation = "client.enroll"
 	case "publisher setup":
 		operation = "client.publisher.setup"

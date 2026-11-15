@@ -9,7 +9,6 @@ import (
 	"errors"
 	"net/http"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -150,10 +149,6 @@ func (b *Tokens) installSource(source json.RawMessage, response controlv1.Visito
 		if binding.Kind != "share_session" || binding.ShareID != subject.ShareID {
 			return visitortoken.ErrBinding
 		}
-	case visitortoken.Grant:
-		if binding.Kind != "grant" || subject.Kind != "share" {
-			return visitortoken.ErrBinding
-		}
 	default:
 		return visitortoken.ErrBinding
 	}
@@ -219,7 +214,7 @@ func (b *Tokens) installFromSession(source json.RawMessage, response controlv1.V
 
 // use follows signature, policy, source-IP, and request admission. an expired
 // cookie is never a handle for selecting another prepared credential.
-func (b *Tokens) use(token visitortoken.Token, guard *visitorlease.Guard) (controlv1.VisitorTokenResponse, func(), bool) {
+func (b *Tokens) use(token visitortoken.Token, guard *visitorlease.Guard) (controlv1.VisitorTokenResponse, visitortoken.VerifiedPermission, func(), bool) {
 	digest := sha256.Sum256([]byte(token.Reveal()))
 	view, enabled, _ := b.policy.Current()
 	now := time.Now()
@@ -227,32 +222,38 @@ func (b *Tokens) use(token visitortoken.Token, guard *visitorlease.Guard) (contr
 	source := b.tokens[digest]
 	if b.closed || !enabled || source == nil || source.denied || !source.aliases[digest].After(view.AuthorityTime(now)) {
 		b.mu.Unlock()
-		return controlv1.VisitorTokenResponse{}, func() {}, false
+		return controlv1.VisitorTokenResponse{}, visitortoken.VerifiedPermission{}, func() {}, false
 	}
 	source.used = now
+	accepted := true
 	if guard != nil {
 		if err := guard.AllowRenewal(); err != nil {
 			b.mu.Unlock()
-			return controlv1.VisitorTokenResponse{}, func() {}, false
+			return controlv1.VisitorTokenResponse{}, visitortoken.VerifiedPermission{}, func() {}, false
 		}
 		// renewal may have completed before this request began. use that
 		// already verified same-source permission now, without waiting for the
 		// next issuer cycle or resetting an authority deadline.
-		_ = guard.Renew(source.permission)
+		accepted = guard.Renew(source.permission) == nil
+		// a rejected replacement leaves the original proof in place. retain
+		// this source's ownership of later renewal and revocation either way.
 		source.guards[guard] = struct{}{}
 	}
-	response := source.response
+	response, permission := source.response, source.permission
 	b.mu.Unlock()
 	release := sync.OnceFunc(func() {
 		b.mu.Lock()
 		delete(source.guards, guard)
 		b.mu.Unlock()
 	})
-	return response, release, true
+	if !accepted {
+		return controlv1.VisitorTokenResponse{}, visitortoken.VerifiedPermission{}, release, false
+	}
+	return response, permission, release, true
 }
 
 func (b *Tokens) replacement(token visitortoken.Token, proof visitortoken.VerifiedPermission) (visitortoken.Token, visitortoken.VerifiedPermission, error) {
-	response, release, found := b.use(token, nil)
+	response, _, release, found := b.use(token, nil)
 	defer release()
 	if !found || response.VisitorToken == token.Reveal() {
 		return "", visitortoken.VerifiedPermission{}, visitortoken.ErrToken
@@ -459,16 +460,6 @@ func canonicalBrowserTokenSource(source json.RawMessage) (json.RawMessage, error
 	case "share_session":
 		var value controlv1.VisitorTokenShareSessionSource
 		if decode(&value) != nil || !validSecret(value.Secret) || !opaqueid.Valid(value.ShareId, opaqueid.SharePrefix) {
-			return nil, visitortoken.ErrToken
-		}
-		return json.Marshal(value)
-	case "grant":
-		var value controlv1.VisitorTokenGrantSource
-		if decode(&value) != nil {
-			return nil, visitortoken.ErrToken
-		}
-		parts := strings.Split(value.Credential, ".")
-		if len(parts) != 3 || parts[0] != "vrf1" || !opaqueid.Valid(parts[1], "shg_") || !validSecret(parts[2]) {
 			return nil, visitortoken.ErrToken
 		}
 		return json.Marshal(value)

@@ -31,11 +31,11 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 			defer cancel()
 			inspect := inspectStandaloneTestDatabase(t, fixture.databaseURL)
 			rows, err := inspect.QueryContext(ctx, `
-				SELECT run.state, run.certificate_installed_at IS NOT NULL, slot.connection_slot, slot.state
-				FROM control.publish_runs AS run
-				JOIN control.public_urls AS public_url ON public_url.id = run.public_url_id
-				LEFT JOIN control.publish_run_connection_slots AS slot ON slot.publish_run_id = run.id
-				WHERE public_url.canonical_hostname = $1 ORDER BY run.publish_run_number, slot.connection_slot`,
+				SELECT run.state, run.certificate_expires_at IS NOT NULL, slot.connection_slot, slot.state
+				FROM control.service_runs AS run
+				JOIN control.service_endpoints AS endpoint ON endpoint.service_id = run.service_id
+				LEFT JOIN control.publisher_service_connection_slots AS slot ON slot.run_id = run.id
+				WHERE endpoint.hostname = $1 ORDER BY run.run_number, slot.connection_slot`,
 				"app-led-binary.routes.127.0.0.1.nip.io")
 			if err == nil {
 				for rows.Next() {
@@ -53,7 +53,7 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 			} else {
 				t.Logf("read publisher diagnostic: %v", err)
 			}
-			for _, table := range []string{"public_urls", "publisher_identities", "publisher_enrollments", "previews", "preview_public_urls"} {
+			for _, table := range []string{"services", "publisher_identities", "publisher_enrollments", "previews", "preview_services"} {
 				var count int
 				if err := inspect.QueryRowContext(ctx, "SELECT count(*) FROM control."+table).Scan(&count); err == nil {
 					t.Logf("app-led %s=%d", table, count)
@@ -200,8 +200,8 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 			snapshot, err := state.SnapshotProject(ctx, project)
 			return err == nil && len(snapshot.Tunnels) == 0, err
 		})
-		if tunnel.PublicURLID == "" {
-			t.Fatal("publication has no saved public URL")
+		if tunnel.ServiceID == "" {
+			t.Fatal("publication has no saved service")
 		}
 		if index == 1 {
 			// a replaced app cannot reclaim its old registration.

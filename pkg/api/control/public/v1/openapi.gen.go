@@ -41,17 +41,14 @@ func (e AdminServerStatusRole) Valid() bool {
 
 // Defines values for AppliedProjectServiceServiceKind.
 const (
-	AppliedProjectServiceServiceKindLocal     AppliedProjectServiceServiceKind = "local"
-	AppliedProjectServiceServiceKindPublicUrl AppliedProjectServiceServiceKind = "public_url"
-	AppliedProjectServiceServiceKindService   AppliedProjectServiceServiceKind = "service"
+	AppliedProjectServiceServiceKindLocal   AppliedProjectServiceServiceKind = "local"
+	AppliedProjectServiceServiceKindService AppliedProjectServiceServiceKind = "service"
 )
 
 // Valid indicates whether the value is a known member of the AppliedProjectServiceServiceKind enum.
 func (e AppliedProjectServiceServiceKind) Valid() bool {
 	switch e {
 	case AppliedProjectServiceServiceKindLocal:
-		return true
-	case AppliedProjectServiceServiceKindPublicUrl:
 		return true
 	case AppliedProjectServiceServiceKindService:
 		return true
@@ -84,30 +81,6 @@ const (
 func (e AuthorizeServiceHTTPVisitorRequestDestinationPort) Valid() bool {
 	switch e {
 	case N443:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for AvailablePublicURLVisitorAccess.
-const (
-	IdentityGrant AvailablePublicURLVisitorAccess = "identity_grant"
-	Owner         AvailablePublicURLVisitorAccess = "owner"
-	PreviewTeam   AvailablePublicURLVisitorAccess = "preview_team"
-	TeamGrant     AvailablePublicURLVisitorAccess = "team_grant"
-)
-
-// Valid indicates whether the value is a known member of the AvailablePublicURLVisitorAccess enum.
-func (e AvailablePublicURLVisitorAccess) Valid() bool {
-	switch e {
-	case IdentityGrant:
-		return true
-	case Owner:
-		return true
-	case PreviewTeam:
-		return true
-	case TeamGrant:
 		return true
 	default:
 		return false
@@ -356,15 +329,12 @@ func (e CreateServiceGrantRequestKind) Valid() bool {
 
 // Defines values for CreateVisitorCredentialRequestKind.
 const (
-	CreateVisitorCredentialRequestKindShare CreateVisitorCredentialRequestKind = "share"
 	CreateVisitorCredentialRequestKindToken CreateVisitorCredentialRequestKind = "token"
 )
 
 // Valid indicates whether the value is a known member of the CreateVisitorCredentialRequestKind enum.
 func (e CreateVisitorCredentialRequestKind) Valid() bool {
 	switch e {
-	case CreateVisitorCredentialRequestKindShare:
-		return true
 	case CreateVisitorCredentialRequestKindToken:
 		return true
 	default:
@@ -399,6 +369,36 @@ func (e DeploymentTemporaryPublication) Valid() bool {
 	case TemporaryPublicationAnonymous:
 		return true
 	case TemporaryPublicationRestricted:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FeedbackBearerVisitProofKind.
+const (
+	FeedbackVisitBearer FeedbackBearerVisitProofKind = "bearer"
+)
+
+// Valid indicates whether the value is a known member of the FeedbackBearerVisitProofKind enum.
+func (e FeedbackBearerVisitProofKind) Valid() bool {
+	switch e {
+	case FeedbackVisitBearer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FeedbackConnectorVisitProofKind.
+const (
+	FeedbackVisitConnector FeedbackConnectorVisitProofKind = "connector"
+)
+
+// Valid indicates whether the value is a known member of the FeedbackConnectorVisitProofKind enum.
+func (e FeedbackConnectorVisitProofKind) Valid() bool {
+	switch e {
+	case FeedbackVisitConnector:
 		return true
 	default:
 		return false
@@ -563,19 +563,19 @@ func (e KubernetesAuthProvider) Valid() bool {
 
 // Defines values for MaintenanceControlName.
 const (
-	MaintenanceControlNameCertificateIssuance MaintenanceControlName = "certificate_issuance"
-	MaintenanceControlNamePublicUrlCreation   MaintenanceControlName = "public_url_creation"
-	MaintenanceControlNamePublishRunCreation  MaintenanceControlName = "publish_run_creation"
+	CertificateIssuance MaintenanceControlName = "certificate_issuance"
+	ServiceCreation     MaintenanceControlName = "service_creation"
+	ServiceRunCreation  MaintenanceControlName = "service_run_creation"
 )
 
 // Valid indicates whether the value is a known member of the MaintenanceControlName enum.
 func (e MaintenanceControlName) Valid() bool {
 	switch e {
-	case MaintenanceControlNameCertificateIssuance:
+	case CertificateIssuance:
 		return true
-	case MaintenanceControlNamePublicUrlCreation:
+	case ServiceCreation:
 		return true
-	case MaintenanceControlNamePublishRunCreation:
+	case ServiceRunCreation:
 		return true
 	default:
 		return false
@@ -616,7 +616,6 @@ const (
 	PlacementUnavailable          ProblemCode = "placement_unavailable"
 	PolicyRevisionStale           ProblemCode = "policy_revision_stale"
 	ProjectManaged                ProblemCode = "project_managed"
-	PublishRunOpen                ProblemCode = "publish_run_open"
 	RateLimited                   ProblemCode = "rate_limited"
 	StaleNetworkBinding           ProblemCode = "stale_network_binding"
 	TrafficSelectionInvalid       ProblemCode = "traffic_selection_invalid"
@@ -660,8 +659,6 @@ func (e ProblemCode) Valid() bool {
 	case PolicyRevisionStale:
 		return true
 	case ProjectManaged:
-		return true
-	case PublishRunOpen:
 		return true
 	case RateLimited:
 		return true
@@ -746,17 +743,14 @@ func (e ProjectPublicationStatusReason) Valid() bool {
 
 // Defines values for ProjectPublicationStatusServiceKind.
 const (
-	ProjectPublicationStatusServiceKindLocal     ProjectPublicationStatusServiceKind = "local"
-	ProjectPublicationStatusServiceKindPublicUrl ProjectPublicationStatusServiceKind = "public_url"
-	ProjectPublicationStatusServiceKindService   ProjectPublicationStatusServiceKind = "service"
+	ProjectPublicationStatusServiceKindLocal   ProjectPublicationStatusServiceKind = "local"
+	ProjectPublicationStatusServiceKindService ProjectPublicationStatusServiceKind = "service"
 )
 
 // Valid indicates whether the value is a known member of the ProjectPublicationStatusServiceKind enum.
 func (e ProjectPublicationStatusServiceKind) Valid() bool {
 	switch e {
 	case ProjectPublicationStatusServiceKindLocal:
-		return true
-	case ProjectPublicationStatusServiceKindPublicUrl:
 		return true
 	case ProjectPublicationStatusServiceKindService:
 		return true
@@ -810,114 +804,6 @@ func (e ProjectTargetDiscoveryType) Valid() bool {
 	case Eks:
 		return true
 	case Rds:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PublicURLLifecycleState.
-const (
-	Enabled   PublicURLLifecycleState = "enabled"
-	Suspended PublicURLLifecycleState = "suspended"
-)
-
-// Valid indicates whether the value is a known member of the PublicURLLifecycleState enum.
-func (e PublicURLLifecycleState) Valid() bool {
-	switch e {
-	case Enabled:
-		return true
-	case Suspended:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PublicURLPurpose.
-const (
-	Alias    PublicURLPurpose = "alias"
-	App      PublicURLPurpose = "app"
-	Demo     PublicURLPurpose = "demo"
-	Oauth    PublicURLPurpose = "oauth"
-	Webhooks PublicURLPurpose = "webhooks"
-)
-
-// Valid indicates whether the value is a known member of the PublicURLPurpose enum.
-func (e PublicURLPurpose) Valid() bool {
-	switch e {
-	case Alias:
-		return true
-	case App:
-		return true
-	case Demo:
-		return true
-	case Oauth:
-		return true
-	case Webhooks:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PublicURLScope.
-const (
-	Member PublicURLScope = "member"
-	Shared PublicURLScope = "shared"
-)
-
-// Valid indicates whether the value is a known member of the PublicURLScope enum.
-func (e PublicURLScope) Valid() bool {
-	switch e {
-	case Member:
-		return true
-	case Shared:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PublicURLServiceProtocol.
-const (
-	Http PublicURLServiceProtocol = "http"
-)
-
-// Valid indicates whether the value is a known member of the PublicURLServiceProtocol enum.
-func (e PublicURLServiceProtocol) Valid() bool {
-	switch e {
-	case Http:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PublishRunState.
-const (
-	PublishRunStateCanceled PublishRunState = "canceled"
-	PublishRunStateClosed   PublishRunState = "closed"
-	PublishRunStateDraining PublishRunState = "draining"
-	PublishRunStateExpired  PublishRunState = "expired"
-	PublishRunStateReady    PublishRunState = "ready"
-	PublishRunStateStarting PublishRunState = "starting"
-)
-
-// Valid indicates whether the value is a known member of the PublishRunState enum.
-func (e PublishRunState) Valid() bool {
-	switch e {
-	case PublishRunStateCanceled:
-		return true
-	case PublishRunStateClosed:
-		return true
-	case PublishRunStateDraining:
-		return true
-	case PublishRunStateExpired:
-		return true
-	case PublishRunStateReady:
-		return true
-	case PublishRunStateStarting:
 		return true
 	default:
 		return false
@@ -980,9 +866,8 @@ func (e PublisherDeploymentReportProvider) Valid() bool {
 
 // Defines values for PublisherEnrollmentKind.
 const (
-	PublisherEnrollmentKindNamespace      PublisherEnrollmentKind = "namespace"
-	PublisherEnrollmentKindSavedPublicUrl PublisherEnrollmentKind = "saved_public_url"
-	PublisherEnrollmentKindService        PublisherEnrollmentKind = "service"
+	PublisherEnrollmentKindNamespace PublisherEnrollmentKind = "namespace"
+	PublisherEnrollmentKindService   PublisherEnrollmentKind = "service"
 )
 
 // Valid indicates whether the value is a known member of the PublisherEnrollmentKind enum.
@@ -990,9 +875,25 @@ func (e PublisherEnrollmentKind) Valid() bool {
 	switch e {
 	case PublisherEnrollmentKindNamespace:
 		return true
-	case PublisherEnrollmentKindSavedPublicUrl:
-		return true
 	case PublisherEnrollmentKindService:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublisherEnrollmentResultKind.
+const (
+	PublisherEnrollmentResultKindNamespace PublisherEnrollmentResultKind = "namespace"
+	PublisherEnrollmentResultKindService   PublisherEnrollmentResultKind = "service"
+)
+
+// Valid indicates whether the value is a known member of the PublisherEnrollmentResultKind enum.
+func (e PublisherEnrollmentResultKind) Valid() bool {
+	switch e {
+	case PublisherEnrollmentResultKindNamespace:
+		return true
+	case PublisherEnrollmentResultKindService:
 		return true
 	default:
 		return false
@@ -1003,7 +904,6 @@ func (e PublisherEnrollmentKind) Valid() bool {
 const (
 	PublisherGrantKindDeploymentCredential PublisherGrantKind = "deployment_credential"
 	PublisherGrantKindNamespace            PublisherGrantKind = "namespace"
-	PublisherGrantKindSavedPublicUrl       PublisherGrantKind = "saved_public_url"
 	PublisherGrantKindService              PublisherGrantKind = "service"
 )
 
@@ -1013,8 +913,6 @@ func (e PublisherGrantKind) Valid() bool {
 	case PublisherGrantKindDeploymentCredential:
 		return true
 	case PublisherGrantKindNamespace:
-		return true
-	case PublisherGrantKindSavedPublicUrl:
 		return true
 	case PublisherGrantKindService:
 		return true
@@ -1272,17 +1170,32 @@ func (e ReviewerFeedbackEventInputType) Valid() bool {
 	}
 }
 
+// Defines values for ServiceAccessPath.
+const (
+	ServiceAccessPathConnector      ServiceAccessPath = "connector"
+	ServiceAccessPathPublicEndpoint ServiceAccessPath = "public_endpoint"
+)
+
+// Valid indicates whether the value is a known member of the ServiceAccessPath enum.
+func (e ServiceAccessPath) Valid() bool {
+	switch e {
+	case ServiceAccessPathConnector:
+		return true
+	case ServiceAccessPathPublicEndpoint:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ServiceAuditEventServiceKind.
 const (
-	ServiceAuditEventServiceKindPublicUrl ServiceAuditEventServiceKind = "public_url"
-	ServiceAuditEventServiceKindService   ServiceAuditEventServiceKind = "service"
+	ServiceAuditEventServiceKindService ServiceAuditEventServiceKind = "service"
 )
 
 // Valid indicates whether the value is a known member of the ServiceAuditEventServiceKind enum.
 func (e ServiceAuditEventServiceKind) Valid() bool {
 	switch e {
-	case ServiceAuditEventServiceKindPublicUrl:
-		return true
 	case ServiceAuditEventServiceKindService:
 		return true
 	default:
@@ -1310,15 +1223,12 @@ func (e ServiceGrantKind) Valid() bool {
 
 // Defines values for ServiceHTTPGrantSummaryKind.
 const (
-	ServiceHTTPGrantSummaryKindShare ServiceHTTPGrantSummaryKind = "share"
 	ServiceHTTPGrantSummaryKindToken ServiceHTTPGrantSummaryKind = "token"
 )
 
 // Valid indicates whether the value is a known member of the ServiceHTTPGrantSummaryKind enum.
 func (e ServiceHTTPGrantSummaryKind) Valid() bool {
 	switch e {
-	case ServiceHTTPGrantSummaryKindShare:
-		return true
 	case ServiceHTTPGrantSummaryKindToken:
 		return true
 	default:
@@ -1421,15 +1331,12 @@ func (e ServiceObservationReason) Valid() bool {
 
 // Defines values for ServiceObservationServiceKind.
 const (
-	ServiceObservationServiceKindPublicUrl ServiceObservationServiceKind = "public_url"
-	ServiceObservationServiceKindService   ServiceObservationServiceKind = "service"
+	ServiceObservationServiceKindService ServiceObservationServiceKind = "service"
 )
 
 // Valid indicates whether the value is a known member of the ServiceObservationServiceKind enum.
 func (e ServiceObservationServiceKind) Valid() bool {
 	switch e {
-	case ServiceObservationServiceKindPublicUrl:
-		return true
 	case ServiceObservationServiceKindService:
 		return true
 	default:
@@ -1479,6 +1386,30 @@ func (e ServiceRunStateState) Valid() bool {
 	case ServiceRunStateStateReady:
 		return true
 	case ServiceRunStateStateStarting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ServiceSummaryVisitorAccess.
+const (
+	IdentityGrant ServiceSummaryVisitorAccess = "identity_grant"
+	Owner         ServiceSummaryVisitorAccess = "owner"
+	PreviewTeam   ServiceSummaryVisitorAccess = "preview_team"
+	TeamGrant     ServiceSummaryVisitorAccess = "team_grant"
+)
+
+// Valid indicates whether the value is a known member of the ServiceSummaryVisitorAccess enum.
+func (e ServiceSummaryVisitorAccess) Valid() bool {
+	switch e {
+	case IdentityGrant:
+		return true
+	case Owner:
+		return true
+	case PreviewTeam:
+		return true
+	case TeamGrant:
 		return true
 	default:
 		return false
@@ -1547,34 +1478,13 @@ func (e VisitorAccessMode) Valid() bool {
 
 // Defines values for VisitorCredentialKind.
 const (
-	VisitorCredentialKindShare VisitorCredentialKind = "share"
 	VisitorCredentialKindToken VisitorCredentialKind = "token"
 )
 
 // Valid indicates whether the value is a known member of the VisitorCredentialKind enum.
 func (e VisitorCredentialKind) Valid() bool {
 	switch e {
-	case VisitorCredentialKindShare:
-		return true
 	case VisitorCredentialKindToken:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for VisitorGrantKind.
-const (
-	VisitorGrantKindIdentity VisitorGrantKind = "identity"
-	VisitorGrantKindTeam     VisitorGrantKind = "team"
-)
-
-// Valid indicates whether the value is a known member of the VisitorGrantKind enum.
-func (e VisitorGrantKind) Valid() bool {
-	switch e {
-	case VisitorGrantKindIdentity:
-		return true
-	case VisitorGrantKindTeam:
 		return true
 	default:
 		return false
@@ -1583,15 +1493,12 @@ func (e VisitorGrantKind) Valid() bool {
 
 // Defines values for VisitorResourceScopeKind.
 const (
-	VisitorResourceScopeKindPublicUrl VisitorResourceScopeKind = "public_url"
-	VisitorResourceScopeKindService   VisitorResourceScopeKind = "service"
+	VisitorResourceScopeKindService VisitorResourceScopeKind = "service"
 )
 
 // Valid indicates whether the value is a known member of the VisitorResourceScopeKind enum.
 func (e VisitorResourceScopeKind) Valid() bool {
 	switch e {
-	case VisitorResourceScopeKindPublicUrl:
-		return true
 	case VisitorResourceScopeKindService:
 		return true
 	default:
@@ -1927,19 +1834,35 @@ type AdminRelayPage struct {
 
 // AdminServerStatus defines model for AdminServerStatus.
 type AdminServerStatus struct {
-	CurrentTime         time.Time             `json:"current_time"`
-	EnabledPublicUrls   int                   `json:"enabled_public_urls"`
-	IngressLeases       int                   `json:"ingress_leases"`
-	ReadyPublishRuns    int                   `json:"ready_publish_runs"`
-	RelayLeases         int                   `json:"relay_leases"`
-	Role                AdminServerStatusRole `json:"role"`
-	StartedAt           time.Time             `json:"started_at"`
-	StartingPublishRuns int                   `json:"starting_publish_runs"`
-	SuspendedPublicUrls int                   `json:"suspended_public_urls"`
+	CurrentTime time.Time `json:"current_time"`
+
+	// EnabledServices Enabled saved services that are not deleted or expired, including connector-only and guest services.
+	EnabledServices int `json:"enabled_services"`
+	IngressLeases   int `json:"ingress_leases"`
+
+	// ReadyServiceRuns Unclosed healthy ready service runs with current publisher authority, publisher lifetime, and certificate lifetime. This count does not independently probe connected relays.
+	ReadyServiceRuns int                   `json:"ready_service_runs"`
+	RelayLeases      int                   `json:"relay_leases"`
+	Role             AdminServerStatusRole `json:"role"`
+	StartedAt        time.Time             `json:"started_at"`
+
+	// StartingServiceRuns Unclosed starting service runs with current publisher authority and lifetime. Prepared runs are not included.
+	StartingServiceRuns int `json:"starting_service_runs"`
+
+	// SuspendedServices Suspended saved services that are not deleted or expired.
+	SuspendedServices int `json:"suspended_services"`
 }
 
 // AdminServerStatusRole defines model for AdminServerStatus.Role.
 type AdminServerStatusRole string
+
+// AllocateGuestDemoServiceRequest Bound listener for the built-in demo. Control supplies the fixed HTTP declaration, visitor policy, assigned hostname, shared ingress 443, and trial-bound expiry. Source is observed by the server, never supplied in this body.
+type AllocateGuestDemoServiceRequest struct {
+	RequirePostQuantum *bool `json:"require_post_quantum,omitempty"`
+
+	// Target Actual bound HTTP loopback listener origin with an explicit port. No credentials, path other than /, query, fragment, or remote host.
+	Target string `json:"target"`
+}
 
 // AllocateServiceRequest Immutable HTTP declaration for one temporary service. Exact retries recover only the original live allocation. Automated DNS and shared ingress 443 are required. Callers cannot select a hostname, domain, worktree, or saved deployment service.
 type AllocateServiceRequest struct {
@@ -1962,9 +1885,10 @@ type AppendFeedbackEventRequest struct {
 
 // AppendReviewerFeedbackEventRequest defines model for AppendReviewerFeedbackEventRequest.
 type AppendReviewerFeedbackEventRequest struct {
-	Access           FeedbackReviewerAccess `json:"access"`
-	Evidence         *FeedbackEvidence      `json:"evidence,omitempty"`
-	PublishRunNumber int64                  `json:"publish_run_number,string"`
+	// Access Browser identity and visitor access are independent. Control rechecks the supplied browser and share proofs, current service policy, and feedback policy; visit_allowed is an observation, not authority.
+	Access    FeedbackReviewerAccess `json:"access"`
+	Evidence  *FeedbackEvidence      `json:"evidence,omitempty"`
+	RunNumber int64                  `json:"run_number,string"`
 
 	// SourceState Git identifiers captured for one project directory. Compare HEAD, project_path, and changed_files only when both captures are complete. Branch names, staging, and ignored files do not affect matching. File contents and absolute paths are not stored; truncated or unsupported captures are incomplete.
 	SourceState *SourceState                   `json:"source_state,omitempty"`
@@ -2065,31 +1989,6 @@ type AuthorizeServiceHTTPVisitorRequest struct {
 // AuthorizeServiceHTTPVisitorRequestDestinationPort defines model for AuthorizeServiceHTTPVisitorRequest.DestinationPort.
 type AuthorizeServiceHTTPVisitorRequestDestinationPort int
 
-// AvailablePublicURL defines model for AvailablePublicURL.
-type AvailablePublicURL struct {
-	CanonicalHostname string                          `json:"canonical_hostname"`
-	Id                string                          `json:"id"`
-	ServiceProtocol   PublicURLServiceProtocol        `json:"service_protocol"`
-	TeamId            string                          `json:"team_id"`
-	TeamName          string                          `json:"team_name"`
-	VisitorAccess     AvailablePublicURLVisitorAccess `json:"visitor_access"`
-}
-
-// AvailablePublicURLVisitorAccess defines model for AvailablePublicURL.VisitorAccess.
-type AvailablePublicURLVisitorAccess string
-
-// AvailablePublicURLPage defines model for AvailablePublicURLPage.
-type AvailablePublicURLPage struct {
-	NextCursor *string              `json:"next_cursor,omitempty"`
-	PublicUrls []AvailablePublicURL `json:"public_urls"`
-}
-
-// BrowserAccessRequest defines model for BrowserAccessRequest.
-type BrowserAccessRequest struct {
-	CookieSecret     string `json:"cookie_secret"`
-	PublishRunNumber int64  `json:"publish_run_number,string"`
-}
-
 // BrowserAccessResponse defines model for BrowserAccessResponse.
 type BrowserAccessResponse struct {
 	DisplayName  string     `json:"display_name"`
@@ -2098,22 +1997,16 @@ type BrowserAccessResponse struct {
 	VisitAllowed bool       `json:"visit_allowed"`
 }
 
-// BrowserHandoffRequest defines model for BrowserHandoffRequest.
-type BrowserHandoffRequest struct {
-	PublishRunNumber int64    `json:"publish_run_number,string"`
-	ShareId          *ShareID `json:"share_id,omitempty"`
-	ShareSecret      *string  `json:"share_secret,omitempty"`
-	Token            string   `json:"token"`
-}
-
 // BrowserHandoffResponse defines model for BrowserHandoffResponse.
 type BrowserHandoffResponse struct {
-	Bridge       *bool                `json:"bridge,omitempty"`
-	CookieSecret string               `json:"cookie_secret"`
-	ExpiresAt    time.Time            `json:"expires_at"`
-	NextUrl      *string              `json:"next_url,omitempty"`
-	Permission   VisitorTokenResponse `json:"permission"`
-	ReturnPath   string               `json:"return_path"`
+	Bridge       *bool     `json:"bridge,omitempty"`
+	CookieSecret string    `json:"cookie_secret"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	NextUrl      *string   `json:"next_url,omitempty"`
+
+	// Permission Present only when current browser or supplied share permission allows visiting. Identity-only sign-in still returns the browser cookie.
+	Permission *VisitorTokenResponse `json:"permission,omitempty"`
+	ReturnPath string                `json:"return_path"`
 }
 
 // CanonicalHostname defines model for CanonicalHostname.
@@ -2121,29 +2014,6 @@ type CanonicalHostname = string
 
 // CertificateChallengeMethod defines model for CertificateChallengeMethod.
 type CertificateChallengeMethod string
-
-// CertificateInstalledRequest defines model for CertificateInstalledRequest.
-type CertificateInstalledRequest struct {
-	IssuanceId       IssuanceID `json:"issuance_id"`
-	NotAfter         time.Time  `json:"not_after"`
-	PublishRunNumber int64      `json:"publish_run_number,string"`
-}
-
-// CertificateIssuance defines model for CertificateIssuance.
-type CertificateIssuance struct {
-	CertificatePem   *string                  `json:"certificate_pem,omitempty"`
-	CertificatePlan  CertificatePlan          `json:"certificate_plan"`
-	CreatedAt        time.Time                `json:"created_at"`
-	Id               IssuanceID               `json:"id"`
-	NotAfter         *time.Time               `json:"not_after,omitempty"`
-	NotBefore        *time.Time               `json:"not_before,omitempty"`
-	PublicUrlId      PublicURLID              `json:"public_url_id"`
-	PublishRunId     PublishRunID             `json:"publish_run_id"`
-	PublishRunNumber int64                    `json:"publish_run_number,string"`
-	RetryAt          *time.Time               `json:"retry_at,omitempty"`
-	State            CertificateIssuanceState `json:"state"`
-	UpdatedAt        time.Time                `json:"updated_at"`
-}
 
 // CertificateIssuanceState defines model for CertificateIssuanceState.
 type CertificateIssuanceState string
@@ -2444,12 +2314,6 @@ type ControlDiscovery struct {
 // ControlDiscoveryManagedUrlMode Default public URL naming on the server's managed domain.
 type ControlDiscoveryManagedUrlMode string
 
-// CreateCertificateIssuanceRequest defines model for CreateCertificateIssuanceRequest.
-type CreateCertificateIssuanceRequest struct {
-	Csr              []byte `json:"csr"`
-	PublishRunNumber int64  `json:"publish_run_number,string"`
-}
-
 // CreateDeploymentPublisherEnrollmentRequest defines model for CreateDeploymentPublisherEnrollmentRequest.
 type CreateDeploymentPublisherEnrollmentRequest struct {
 	ExpiresIn  *int `json:"expires_in,omitempty"`
@@ -2468,27 +2332,22 @@ type CreateDeploymentRequest struct {
 
 // CreateFeedbackReportRequest defines model for CreateFeedbackReportRequest.
 type CreateFeedbackReportRequest struct {
-	Access           FeedbackReviewerAccess `json:"access"`
-	Anchor           *FeedbackAnchor        `json:"anchor,omitempty"`
-	Evidence         FeedbackEvidence       `json:"evidence"`
-	PagePath         string                 `json:"page_path"`
-	PageTitle        *string                `json:"page_title,omitempty"`
-	PreviewId        PreviewID              `json:"preview_id"`
-	PublishRunNumber int64                  `json:"publish_run_number,string"`
-	Report           struct {
+	// Access Browser identity and visitor access are independent. Control rechecks the supplied browser and share proofs, current service policy, and feedback policy; visit_allowed is an observation, not authority.
+	Access    FeedbackReviewerAccess `json:"access"`
+	Anchor    *FeedbackAnchor        `json:"anchor,omitempty"`
+	Evidence  FeedbackEvidence       `json:"evidence"`
+	PagePath  string                 `json:"page_path"`
+	PageTitle *string                `json:"page_title,omitempty"`
+	PreviewId PreviewID              `json:"preview_id"`
+	Report    struct {
 		DisplayName *string `json:"display_name,omitempty"`
 		Text        string  `json:"text"`
 	} `json:"report"`
-	Service string `json:"service"`
+	RunNumber int64  `json:"run_number,string"`
+	Service   string `json:"service"`
 
 	// SourceAtReport Git identifiers captured for one project directory. Compare HEAD, project_path, and changed_files only when both captures are complete. Branch names, staging, and ignored files do not affect matching. File contents and absolute paths are not stored; truncated or unsupported captures are incomplete.
 	SourceAtReport SourceState `json:"source_at_report"`
-}
-
-// CreateIdentityVisitorGrantRequest defines model for CreateIdentityVisitorGrantRequest.
-type CreateIdentityVisitorGrantRequest struct {
-	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
-	IdentityId IdentityID `json:"identity_id"`
 }
 
 // CreatePreviewRequest defines model for CreatePreviewRequest.
@@ -2496,60 +2355,30 @@ type CreatePreviewRequest struct {
 	TeamId TeamID `json:"team_id"`
 }
 
-// CreatePublicURLRequest defines model for CreatePublicURLRequest.
-type CreatePublicURLRequest struct {
-	AccessMode         *VisitorAccessMode        `json:"access_mode,omitempty"`
-	AllowedIpPrefixes  *[]string                 `json:"allowed_ip_prefixes,omitempty"`
-	CanonicalHostname  CanonicalHostname         `json:"canonical_hostname"`
-	DomainId           DomainID                  `json:"domain_id"`
-	Ephemeral          *bool                     `json:"ephemeral,omitempty"`
-	MembershipId       *MembershipID             `json:"membership_id,omitempty"`
-	PublicUrlScope     PublicURLScope            `json:"public_url_scope"`
-	PublisherPool      *bool                     `json:"publisher_pool,omitempty"`
-	Purpose            PublicURLPurpose          `json:"purpose"`
-	RequirePostQuantum *bool                     `json:"require_post_quantum,omitempty"`
-	ServiceProtocol    *PublicURLServiceProtocol `json:"service_protocol,omitempty"`
-
-	// Target Must be empty for OAuth and webhook URLs, which are non-ephemeral and served by publisher handlers. May be empty for a saved app or alias public URL whose publisher supplies its HTTP target locally. Demo and ephemeral app or alias URLs require a target.
-	Target string `json:"target"`
-	TeamId TeamID `json:"team_id"`
-}
-
-// CreatePublishRunRequest defines model for CreatePublishRunRequest.
-type CreatePublishRunRequest struct {
-	// PreferredRegions Ordered provider-qualified preferences, not hard placement constraints. Control uses nearby eligible capacity when preferred regions are unavailable. Omission preserves load-based placement.
-	PreferredRegions *[]string `json:"preferred_regions,omitempty"`
-
-	// Traffic Explicit encrypted public endpoint traffic limits, resolved once against operator defaults and ceilings when the service run is prepared. Omitted values use operator defaults. Zero totals mean unlimited.
-	Traffic *TrafficSelection `json:"traffic,omitempty"`
-}
-
-// CreatePublisherEnrollmentRequest Enroll with one exact saved public URL, HTTP namespace, or service ID.
+// CreatePublisherEnrollmentRequest Enroll with one exact service or namespace.
 type CreatePublisherEnrollmentRequest struct {
 	DomainId *DomainID                            `json:"domain_id,omitempty"`
 	Kind     CreatePublisherEnrollmentRequestKind `json:"kind"`
 	Name     string                               `json:"name"`
 
-	// Ownership Member-owned publishers stop with that membership. Team ownership requires a shared URL or service and current team administration; the creator remains audit history only. Defaults to member for member URLs and namespaces, team for shared URLs and services.
-	Ownership   *CreatePublisherEnrollmentRequestOwnership `json:"ownership,omitempty"`
-	PublicUrlId *PublicURLID                               `json:"public_url_id,omitempty"`
-	ServiceId   *ServiceID                                 `json:"service_id,omitempty"`
-	TeamId      TeamID                                     `json:"team_id"`
+	// Ownership Member-owned publishers stop with that membership. Team ownership requires a shared service and current team administration; the creator remains audit history only. Defaults to member for namespaces and team for shared services.
+	Ownership *CreatePublisherEnrollmentRequestOwnership `json:"ownership,omitempty"`
+	ServiceId *ServiceID                                 `json:"service_id,omitempty"`
+	TeamId    TeamID                                     `json:"team_id"`
 }
 
 // CreatePublisherEnrollmentRequestKind defines model for CreatePublisherEnrollmentRequest.Kind.
 type CreatePublisherEnrollmentRequestKind string
 
-// CreatePublisherEnrollmentRequestOwnership Member-owned publishers stop with that membership. Team ownership requires a shared URL or service and current team administration; the creator remains audit history only. Defaults to member for member URLs and namespaces, team for shared URLs and services.
+// CreatePublisherEnrollmentRequestOwnership Member-owned publishers stop with that membership. Team ownership requires a shared service and current team administration; the creator remains audit history only. Defaults to member for namespaces and team for shared services.
 type CreatePublisherEnrollmentRequestOwnership string
 
-// CreatePublisherGrantRequest Select exactly one saved public URL, HTTP namespace, or service ID within the team.
+// CreatePublisherGrantRequest Select exactly one service or namespace within the team.
 type CreatePublisherGrantRequest struct {
-	DomainId    *DomainID    `json:"domain_id,omitempty"`
-	ExpiresAt   *time.Time   `json:"expires_at,omitempty"`
-	PublicUrlId *PublicURLID `json:"public_url_id,omitempty"`
-	ServiceId   *ServiceID   `json:"service_id,omitempty"`
-	TeamId      TeamID       `json:"team_id"`
+	DomainId  *DomainID  `json:"domain_id,omitempty"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	ServiceId *ServiceID `json:"service_id,omitempty"`
+	TeamId    TeamID     `json:"team_id"`
 }
 
 // CreateServiceCertificateIssuanceRequest defines model for CreateServiceCertificateIssuanceRequest.
@@ -2596,11 +2425,6 @@ type CreateShareRequest struct {
 	ServiceIds     []ServiceID `json:"service_ids"`
 }
 
-// CreateTeamVisitorGrantRequest defines model for CreateTeamVisitorGrantRequest.
-type CreateTeamVisitorGrantRequest struct {
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-}
-
 // CreateVisitorCredentialRequest defines model for CreateVisitorCredentialRequest.
 type CreateVisitorCredentialRequest struct {
 	ExpiresAt time.Time                          `json:"expires_at"`
@@ -2609,12 +2433,6 @@ type CreateVisitorCredentialRequest struct {
 
 // CreateVisitorCredentialRequestKind defines model for CreateVisitorCredentialRequest.Kind.
 type CreateVisitorCredentialRequestKind string
-
-// CreateVisitorInvitationRequest defines model for CreateVisitorInvitationRequest.
-type CreateVisitorInvitationRequest struct {
-	Email     string    `json:"email"`
-	ExpiresAt time.Time `json:"expires_at"`
-}
 
 // Deployment defines model for Deployment.
 type Deployment struct {
@@ -2792,13 +2610,10 @@ type DeploymentService struct {
 	// Endpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 	Endpoint *ServiceEndpoint `json:"endpoint,omitempty"`
 
-	// Id The bound saved service or public URL ID.
-	Id       ResourceID      `json:"id"`
-	Protocol ServiceProtocol `json:"protocol"`
-
-	// PublicUrl The saved HTTP public URL when this binding uses one rather than a private service endpoint.
-	PublicUrl     *string `json:"public_url,omitempty"`
-	TrustRevision int64   `json:"trust_revision"`
+	// Id The bound service ID.
+	Id            ResourceID      `json:"id"`
+	Protocol      ServiceProtocol `json:"protocol"`
+	TrustRevision int64           `json:"trust_revision"`
 }
 
 // DeploymentSettings defines model for DeploymentSettings.
@@ -2850,13 +2665,14 @@ type DomainID = ResourceID
 
 // EnrollGuestPublisherRequest defines model for EnrollGuestPublisherRequest.
 type EnrollGuestPublisherRequest struct {
-	PublicKey   string      `json:"public_key"`
-	PublicUrlId PublicURLID `json:"public_url_id"`
+	// PublicKey Unpadded base64url Ed25519 public key. The caller keeps the private key.
+	PublicKey string    `json:"public_key"`
+	ServiceId ServiceID `json:"service_id"`
 }
 
 // FeedbackAnchor defines model for FeedbackAnchor.
 type FeedbackAnchor struct {
-	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 	Selection     *struct {
 		End   FeedbackTextBoundary `json:"end"`
@@ -2875,6 +2691,26 @@ type FeedbackAuthor struct {
 	Verified    bool        `json:"verified"`
 }
 
+// FeedbackBearerVisitProof The signed bearer token actually selected by HTTP authorization, including accepted renewal. Certificate tokens are not bearer proof.
+type FeedbackBearerVisitProof struct {
+	Kind  FeedbackBearerVisitProofKind `json:"kind"`
+	Token string                       `json:"token"`
+}
+
+// FeedbackBearerVisitProofKind defines model for FeedbackBearerVisitProof.Kind.
+type FeedbackBearerVisitProofKind string
+
+// FeedbackConnectorVisitProof A snapshot from the actual connector stream admission after checking use. Control rechecks the pair, delivery binding, source, current service run, and signed permission. A claimed pair ID alone is not authority.
+type FeedbackConnectorVisitProof struct {
+	DeliveryGeneration int64                           `json:"delivery_generation,string"`
+	Kind               FeedbackConnectorVisitProofKind `json:"kind"`
+	PairId             string                          `json:"pair_id"`
+	PermissionToken    string                          `json:"permission_token"`
+}
+
+// FeedbackConnectorVisitProofKind defines model for FeedbackConnectorVisitProof.Kind.
+type FeedbackConnectorVisitProofKind string
+
 // FeedbackElement defines model for FeedbackElement.
 type FeedbackElement struct {
 	Html   *string `json:"html,omitempty"`
@@ -2892,7 +2728,7 @@ type FeedbackEvent struct {
 	Evidence   *FeedbackEvidence  `json:"evidence,omitempty"`
 	FeedbackId FeedbackID         `json:"feedback_id"`
 
-	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 
 	// SourceState Git identifiers captured for one project directory. Compare HEAD, project_path, and changed_files only when both captures are complete. Branch names, staging, and ignored files do not affect matching. File contents and absolute paths are not stored; truncated or unsupported captures are incomplete.
@@ -2913,7 +2749,7 @@ type FeedbackEventPage struct {
 	Events      []FeedbackEvent `json:"events"`
 	NextCursor  *int64          `json:"next_cursor,omitempty,string"`
 
-	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 }
 
@@ -2936,7 +2772,7 @@ type FeedbackEvidence struct {
 		Status     int    `json:"status"`
 	} `json:"failed_requests"`
 
-	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 }
 
@@ -2953,7 +2789,7 @@ type FeedbackReport struct {
 	Text      string          `json:"text"`
 }
 
-// FeedbackReviewerAccess defines model for FeedbackReviewerAccess.
+// FeedbackReviewerAccess Browser identity and visitor access are independent. Control rechecks the supplied browser and share proofs, current service policy, and feedback policy; visit_allowed is an observation, not authority.
 type FeedbackReviewerAccess struct {
 	BrowserCookieSecret *string  `json:"browser_cookie_secret,omitempty"`
 	CookieSecret        *string  `json:"cookie_secret,omitempty"`
@@ -2961,17 +2797,20 @@ type FeedbackReviewerAccess struct {
 	ShareSecret         *string  `json:"share_secret,omitempty"`
 	SourceIp            *string  `json:"source_ip,omitempty"`
 	VisitAllowed        bool     `json:"visit_allowed"`
+
+	// VisitProof Publisher-selected visitor proof, never browser input. An explicit invalid proof is denied without falling back to cookie or anonymous access. Browser sign-in remains independent author evidence.
+	VisitProof FeedbackVisitProof `json:"visit_proof,omitempty"`
 }
 
 // FeedbackScope defines model for FeedbackScope.
 type FeedbackScope struct {
-	PagePath         string       `json:"page_path"`
-	PageTitle        *string      `json:"page_title,omitempty"`
-	PreviewId        PreviewID    `json:"preview_id"`
-	PublicUrlId      PublicURLID  `json:"public_url_id"`
-	PublishRunId     PublishRunID `json:"publish_run_id"`
-	PublishRunNumber int64        `json:"publish_run_number,string"`
-	Service          string       `json:"service"`
+	PagePath     string       `json:"page_path"`
+	PageTitle    *string      `json:"page_title,omitempty"`
+	PreviewId    PreviewID    `json:"preview_id"`
+	RunNumber    int64        `json:"run_number,string"`
+	Service      string       `json:"service"`
+	ServiceId    ServiceID    `json:"service_id"`
+	ServiceRunId ServiceRunID `json:"service_run_id"`
 }
 
 // FeedbackSelectors defines model for FeedbackSelectors.
@@ -2993,7 +2832,7 @@ type FeedbackThread struct {
 	MessageCount      int64            `json:"message_count,string"`
 	Report            FeedbackReport   `json:"report"`
 
-	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 	Scope         FeedbackScope       `json:"scope"`
 
@@ -3007,7 +2846,7 @@ type FeedbackThreadPage struct {
 	EventCursor int64       `json:"event_cursor,string"`
 	NextCursor  *FeedbackID `json:"next_cursor,omitempty"`
 
-	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 	SchemaVersion ReviewSchemaVersion     `json:"schema_version"`
 	Threads       []FeedbackThreadSummary `json:"threads"`
 }
@@ -3023,11 +2862,14 @@ type FeedbackThreadSummary struct {
 	MessageCount      int64           `json:"message_count,string"`
 	Report            FeedbackReport  `json:"report"`
 
-	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 	Scope         FeedbackScope       `json:"scope"`
 	State         FeedbackThreadState `json:"state"`
 }
+
+// FeedbackVisitProof Publisher-selected visitor proof, never browser input. An explicit invalid proof is denied without falling back to cookie or anonymous access. Browser sign-in remains independent author evidence.
+type FeedbackVisitProof = json.RawMessage
 
 // GitProjectSource Repository origin and configuration path used to identify a project. These facts are a locator, not proof of repository ownership.
 type GitProjectSource struct {
@@ -3038,30 +2880,15 @@ type GitProjectSource struct {
 	GitOrigin string `json:"git_origin"`
 }
 
-// GuestDemoNumber defines model for GuestDemoNumber.
-type GuestDemoNumber struct {
-	Number int64 `json:"number,string"`
-}
-
-// GuestDemoSession defines model for GuestDemoSession.
+// GuestDemoSession Source-bound trial management credential, not a control session or publisher grant. Allocation returns the actual service and its address. The trial's absolute expiry never renews.
 type GuestDemoSession struct {
-	AccessToken  string            `json:"access_token"`
-	DomainId     DomainID          `json:"domain_id"`
-	ExpiresAt    time.Time         `json:"expires_at"`
-	GuestId      ResourceID        `json:"guest_id"`
-	MembershipId MembershipID      `json:"membership_id"`
-	Namespace    CanonicalHostname `json:"namespace"`
-	TeamId       TeamID            `json:"team_id"`
+	AccessToken string    `json:"access_token"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	GuestId     GuestID   `json:"guest_id"`
 }
 
-// GuestPublisherIdentity defines model for GuestPublisherIdentity.
-type GuestPublisherIdentity struct {
-	ClientId    string      `json:"client_id"`
-	GrantId     string      `json:"grant_id"`
-	KeyId       string      `json:"key_id"`
-	PublicUrlId PublicURLID `json:"public_url_id"`
-	TeamId      TeamID      `json:"team_id"`
-}
+// GuestID defines model for GuestID.
+type GuestID = string
 
 // HashedIPPrefix defines model for HashedIPPrefix.
 type HashedIPPrefix struct {
@@ -3150,13 +2977,14 @@ type OIDCAuthenticationFactsLoginFlow string
 // Preview defines model for Preview.
 type Preview struct {
 	CreatedAt time.Time `json:"created_at"`
+	GuestId   GuestID   `json:"guest_id,omitempty"`
 	Id        PreviewID `json:"id"`
 
-	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 	SchemaVersion     ReviewSchemaVersion `json:"schema_version"`
 	ServiceIds        []ServiceID         `json:"service_ids"`
 	TeamAccessEnabled *bool               `json:"team_access_enabled,omitempty"`
-	TeamId            TeamID              `json:"team_id"`
+	TeamId            TeamID              `json:"team_id,omitempty"`
 }
 
 // PreviewID defines model for PreviewID.
@@ -3170,12 +2998,13 @@ type PreviewPage struct {
 
 // PreviewPageFeedbackRequest defines model for PreviewPageFeedbackRequest.
 type PreviewPageFeedbackRequest struct {
-	Access           FeedbackReviewerAccess `json:"access"`
-	Cursor           *FeedbackID            `json:"cursor,omitempty"`
-	PagePath         *string                `json:"page_path,omitempty"`
-	PreviewId        PreviewID              `json:"preview_id"`
-	PublishRunNumber int64                  `json:"publish_run_number,string"`
-	State            *FeedbackThreadState   `json:"state,omitempty"`
+	// Access Browser identity and visitor access are independent. Control rechecks the supplied browser and share proofs, current service policy, and feedback policy; visit_allowed is an observation, not authority.
+	Access    FeedbackReviewerAccess `json:"access"`
+	Cursor    *FeedbackID            `json:"cursor,omitempty"`
+	PagePath  *string                `json:"page_path,omitempty"`
+	PreviewId PreviewID              `json:"preview_id"`
+	RunNumber int64                  `json:"run_number,string"`
+	State     *FeedbackThreadState   `json:"state,omitempty"`
 }
 
 // PreviewSummary A preview created by the current identity. Fetch its detail for the included public URLs.
@@ -3214,7 +3043,7 @@ type ProjectConfiguration struct {
 	Services map[string]ProjectServiceConfiguration `json:"services"`
 	Settings *DeploymentSettings                    `json:"settings,omitempty"`
 
-	// Webhooks Desired exact endpoints for the existing local webhook integration handler. Each endpoint names a declared local HTTP service with public_url enabled, including app, address, compose, and docker targets. Control does not fetch provider catalogs or provision remote webhook handlers during apply.
+	// Webhooks Desired exact endpoints for the existing local webhook integration handler. Each endpoint names a declared local HTTP service with public reachability enabled, including app, address, compose, and docker targets. Control does not fetch provider catalogs or provision remote webhook handlers during apply.
 	Webhooks  map[string]ProjectWebhook   `json:"webhooks"`
 	Workloads *map[string]ProjectWorkload `json:"workloads,omitempty"`
 }
@@ -3257,9 +3086,7 @@ type ProjectPublicationStatus struct {
 	Deployment                string                                    `json:"deployment"`
 	Hostname                  string                                    `json:"hostname"`
 	Port                      *int                                      `json:"port,omitempty"`
-	PublicUrlId               *string                                   `json:"public_url_id,omitempty"`
 	PublicationState          *ProjectPublicationStatusPublicationState `json:"publication_state,omitempty"`
-	PublishRunId              *string                                   `json:"publish_run_id,omitempty"`
 	PublisherExpiresAt        *time.Time                                `json:"publisher_expires_at,omitempty"`
 	Ready                     bool                                      `json:"ready"`
 	ReadyPublisherConnections int                                       `json:"ready_publisher_connections"`
@@ -3463,108 +3290,6 @@ type ProjectWorkloadKubernetes struct {
 	ServiceAccount string `json:"service_account"`
 }
 
-// PublicURL defines model for PublicURL.
-type PublicURL struct {
-	AccessMode           VisitorAccessMode       `json:"access_mode"`
-	AllowedIpPrefixes    *[]string               `json:"allowed_ip_prefixes,omitempty"`
-	CanonicalHostname    CanonicalHostname       `json:"canonical_hostname"`
-	CreatedAt            time.Time               `json:"created_at"`
-	DomainId             DomainID                `json:"domain_id"`
-	Ephemeral            bool                    `json:"ephemeral"`
-	ExpiresAt            *time.Time              `json:"expires_at,omitempty"`
-	Id                   PublicURLID             `json:"id"`
-	LifecycleState       PublicURLLifecycleState `json:"lifecycle_state"`
-	MembershipId         *MembershipID           `json:"membership_id,omitempty"`
-	MutationRevision     int64                   `json:"mutation_revision,string"`
-	NextPublishRunNumber int64                   `json:"next_publish_run_number,string"`
-	OpenPublishRunId     *PublishRunID           `json:"open_publish_run_id,omitempty"`
-	PolicyRevision       int64                   `json:"policy_revision,string"`
-	PublicUrlScope       PublicURLScope          `json:"public_url_scope"`
-	PublisherPool        *bool                   `json:"publisher_pool,omitempty"`
-	Purpose              PublicURLPurpose        `json:"purpose"`
-
-	// RequirePostQuantum Require TLS 1.3 hybrid post-quantum key agreement from public HTTPS visitors.
-	RequirePostQuantum bool                     `json:"require_post_quantum"`
-	ServiceProtocol    PublicURLServiceProtocol `json:"service_protocol"`
-
-	// Target Empty for handler-backed OAuth and webhook URLs, and for saved app or alias public URLs whose publisher supplies its HTTP target locally.
-	Target    string    `json:"target"`
-	TeamId    TeamID    `json:"team_id"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// PublicURLID defines model for PublicURLID.
-type PublicURLID = ResourceID
-
-// PublicURLLifecycleState defines model for PublicURLLifecycleState.
-type PublicURLLifecycleState string
-
-// PublicURLPage defines model for PublicURLPage.
-type PublicURLPage struct {
-	NextCursor *PublicURLID `json:"next_cursor,omitempty"`
-	PublicUrls []PublicURL  `json:"public_urls"`
-}
-
-// PublicURLPurpose defines model for PublicURLPurpose.
-type PublicURLPurpose string
-
-// PublicURLScope defines model for PublicURLScope.
-type PublicURLScope string
-
-// PublicURLServiceProtocol defines model for PublicURLServiceProtocol.
-type PublicURLServiceProtocol string
-
-// PublishRun defines model for PublishRun.
-type PublishRun struct {
-	ClosedAt                  *time.Time      `json:"closed_at,omitempty"`
-	CreatedAt                 time.Time       `json:"created_at"`
-	ExpiresAt                 time.Time       `json:"expires_at"`
-	Id                        PublishRunID    `json:"id"`
-	MembershipId              *MembershipID   `json:"membership_id,omitempty"`
-	PolicyRevision            int64           `json:"policy_revision,string"`
-	PublicUrlId               PublicURLID     `json:"public_url_id"`
-	PublishRunNumber          int64           `json:"publish_run_number,string"`
-	ReadyAt                   *time.Time      `json:"ready_at,omitempty"`
-	ReadyPublisherConnections *int            `json:"ready_publisher_connections,omitempty"`
-	State                     PublishRunState `json:"state"`
-	TeamId                    TeamID          `json:"team_id"`
-}
-
-// PublishRunHeartbeat Each HTTP publisher becomes ready independently after DNS, its installed public URL certificate, and two ready publisher connections.
-type PublishRunHeartbeat struct {
-	PublishRun           PublishRun             `json:"publish_run"`
-	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
-}
-
-// PublishRunID defines model for PublishRunID.
-type PublishRunID = ResourceID
-
-// PublishRunServiceObservations defines model for PublishRunServiceObservations.
-type PublishRunServiceObservations struct {
-	Events           []ServiceObservation `json:"events"`
-	PublishRunNumber int64                `json:"publish_run_number,string"`
-}
-
-// PublishRunSetup defines model for PublishRunSetup.
-type PublishRunSetup struct {
-	CertificatePlan      CertificatePlan        `json:"certificate_plan"`
-	PublicUrl            PublicURL              `json:"public_url"`
-	PublishRun           PublishRun             `json:"publish_run"`
-	PublishRunToken      string                 `json:"publish_run_token"`
-	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
-
-	// Traffic Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
-	Traffic *TrafficLimits `json:"traffic,omitempty"`
-}
-
-// PublishRunState defines model for PublishRunState.
-type PublishRunState string
-
-// PublishRunVersionRequest defines model for PublishRunVersionRequest.
-type PublishRunVersionRequest struct {
-	PublishRunNumber int64 `json:"publish_run_number,string"`
-}
-
 // PublisherConnectionID defines model for PublisherConnectionID.
 type PublisherConnectionID = ResourceID
 
@@ -3610,7 +3335,6 @@ type PublisherEnrollment struct {
 	Id            ResourceID              `json:"id"`
 	Kind          PublisherEnrollmentKind `json:"kind"`
 	Namespace     *string                 `json:"namespace,omitempty"`
-	PublicUrlId   *PublicURLID            `json:"public_url_id,omitempty"`
 	ServiceId     *ServiceID              `json:"service_id,omitempty"`
 	TeamId        TeamID                  `json:"team_id"`
 }
@@ -3618,18 +3342,35 @@ type PublisherEnrollment struct {
 // PublisherEnrollmentKind defines model for PublisherEnrollment.Kind.
 type PublisherEnrollmentKind string
 
-// PublisherGrant defines model for PublisherGrant.
+// PublisherEnrollmentResult Enrolled publisher key and its exact grant. Exactly one of team_id or guest_id identifies its owner. A guest receives only an exact service grant, bounded by the trial's fixed expiry; enrollment grants no service management or connector permission.
+type PublisherEnrollmentResult struct {
+	ClientId  string                        `json:"client_id"`
+	DomainId  *string                       `json:"domain_id,omitempty"`
+	ExpiresAt *time.Time                    `json:"expires_at,omitempty"`
+	GrantId   string                        `json:"grant_id"`
+	GuestId   GuestID                       `json:"guest_id,omitempty"`
+	KeyId     string                        `json:"key_id"`
+	Kind      PublisherEnrollmentResultKind `json:"kind"`
+	Namespace *string                       `json:"namespace,omitempty"`
+	ServiceId *ServiceID                    `json:"service_id,omitempty"`
+	TeamId    string                        `json:"team_id,omitempty"`
+}
+
+// PublisherEnrollmentResultKind defines model for PublisherEnrollmentResult.Kind.
+type PublisherEnrollmentResultKind string
+
+// PublisherGrant Stored publisher grant with its actual team or trial owner. Guest publication is restricted to the exact service and fixed trial expiry; it grants no management, sharing, or connector access.
 type PublisherGrant struct {
-	CreatedAt   time.Time          `json:"created_at"`
-	DomainId    *DomainID          `json:"domain_id,omitempty"`
-	ExpiresAt   *time.Time         `json:"expires_at,omitempty"`
-	Id          ResourceID         `json:"id"`
-	Kind        PublisherGrantKind `json:"kind"`
-	Namespace   *string            `json:"namespace,omitempty"`
-	PublicUrlId *PublicURLID       `json:"public_url_id,omitempty"`
-	RevokedAt   *time.Time         `json:"revoked_at,omitempty"`
-	ServiceId   *ServiceID         `json:"service_id,omitempty"`
-	TeamId      *TeamID            `json:"team_id,omitempty"`
+	CreatedAt time.Time          `json:"created_at"`
+	DomainId  *DomainID          `json:"domain_id,omitempty"`
+	ExpiresAt *time.Time         `json:"expires_at,omitempty"`
+	GuestId   GuestID            `json:"guest_id,omitempty"`
+	Id        ResourceID         `json:"id"`
+	Kind      PublisherGrantKind `json:"kind"`
+	Namespace *string            `json:"namespace,omitempty"`
+	RevokedAt *time.Time         `json:"revoked_at,omitempty"`
+	ServiceId *ServiceID         `json:"service_id,omitempty"`
+	TeamId    TeamID             `json:"team_id,omitempty"`
 }
 
 // PublisherGrantKind defines model for PublisherGrant.Kind.
@@ -3639,6 +3380,7 @@ type PublisherGrantKind string
 type PublisherIdentity struct {
 	CreatedAt         time.Time                  `json:"created_at"`
 	Grants            []PublisherGrant           `json:"grants"`
+	GuestId           GuestID                    `json:"guest_id,omitempty"`
 	Id                ResourceID                 `json:"id"`
 	Kind              PublisherIdentityKind      `json:"kind"`
 	Name              string                     `json:"name"`
@@ -3648,6 +3390,7 @@ type PublisherIdentity struct {
 
 	// Runtime Last explicitly started runtime for this publisher identity, retained after stop or lease expiry. Active means its lease is live, not that the target is reachable or its egress IP is fixed. The source address seen by control can differ from the address used to reach targets and grants no access.
 	Runtime *PublisherRuntimeStatus `json:"runtime,omitempty"`
+	TeamId  TeamID                  `json:"team_id,omitempty"`
 }
 
 // PublisherIdentityKind defines model for PublisherIdentity.Kind.
@@ -3719,7 +3462,7 @@ type PublisherRuntimeStatusEvidence string
 type PublisherVisitorPolicyRequest struct {
 	AfterRevision int64 `json:"after_revision,string"`
 
-	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
+	// Resource An exact service authorization scope.
 	Resource  VisitorResourceScope `json:"resource"`
 	RunId     string               `json:"run_id"`
 	RunNumber int64                `json:"run_number,string"`
@@ -3847,17 +3590,10 @@ type RenameDeploymentRequest struct {
 	TeamId           string `json:"team_id"`
 }
 
-// ReplaceVisitorAccessRequest defines model for ReplaceVisitorAccessRequest.
-type ReplaceVisitorAccessRequest struct {
-	ExpectedRevision int64             `json:"expected_revision,string"`
-	Ip               []string          `json:"ip"`
-	Mode             VisitorAccessMode `json:"mode"`
-}
-
 // ResourceID defines model for ResourceID.
 type ResourceID = string
 
-// ReviewSchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+// ReviewSchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 type ReviewSchemaVersion = int
 
 // ReviewerFeedbackEventInputType defines model for ReviewerFeedbackEventInputType.
@@ -3865,10 +3601,11 @@ type ReviewerFeedbackEventInputType string
 
 // ReviewerFeedbackReadRequest defines model for ReviewerFeedbackReadRequest.
 type ReviewerFeedbackReadRequest struct {
-	Access           FeedbackReviewerAccess `json:"access"`
-	AfterCursor      *int64                 `json:"after_cursor,omitempty,string"`
-	PreviewId        PreviewID              `json:"preview_id"`
-	PublishRunNumber int64                  `json:"publish_run_number,string"`
+	// Access Browser identity and visitor access are independent. Control rechecks the supplied browser and share proofs, current service policy, and feedback policy; visit_allowed is an observation, not authority.
+	Access      FeedbackReviewerAccess `json:"access"`
+	AfterCursor *int64                 `json:"after_cursor,omitempty,string"`
+	PreviewId   PreviewID              `json:"preview_id"`
+	RunNumber   int64                  `json:"run_number,string"`
 }
 
 // Service Saved service and its approved protocol/TLS trust. service_run_id and run_number are an optional ready-publisher hint; select a run before each new connection.
@@ -3886,6 +3623,7 @@ type Service struct {
 
 	// ExpiresAt Fixed service expiration. Publisher renewal cannot extend it.
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	GuestId   GuestID    `json:"guest_id,omitempty"`
 
 	// HttpLimits Approved run-local HTTP request limits returned to the scoped publisher. Applies after visitor authorization on public and connector admissions.
 	HttpLimits *ProjectHTTPApplicationLimits `json:"http_limits,omitempty"`
@@ -3908,9 +3646,12 @@ type Service struct {
 
 	// TargetTls Approved publisher-to-target trust. This never selects or disables visitor TLS.
 	TargetTls     *ServiceTargetTLS `json:"target_tls,omitempty"`
-	TeamId        TeamID            `json:"team_id"`
+	TeamId        TeamID            `json:"team_id,omitempty"`
 	TrustRevision int64             `json:"trust_revision,string"`
 }
+
+// ServiceAccessPath defines model for ServiceAccessPath.
+type ServiceAccessPath string
 
 // ServiceAuditEvent defines model for ServiceAuditEvent.
 type ServiceAuditEvent struct {
@@ -3941,10 +3682,12 @@ type ServiceAuditPage struct {
 	NextCursor *string             `json:"next_cursor,omitempty"`
 }
 
-// ServiceBrowserRequest defines model for ServiceBrowserRequest.
+// ServiceBrowserRequest The secret is a handoff ticket or browser session cookie. Optional share_id and share_cookie_secret must be supplied together; they prove visitor permission independently of browser identity.
 type ServiceBrowserRequest struct {
-	RunNumber int64  `json:"run_number,string"`
-	Secret    string `json:"secret"`
+	RunNumber         int64    `json:"run_number,string"`
+	Secret            string   `json:"secret"`
+	ShareCookieSecret *string  `json:"share_cookie_secret,omitempty"`
+	ShareId           *ShareID `json:"share_id,omitempty"`
 }
 
 // ServiceCertificateInstalledRequest defines model for ServiceCertificateInstalledRequest.
@@ -4023,7 +3766,7 @@ type ServiceHTTPGrantSummary struct {
 	Kind      ServiceHTTPGrantSummaryKind `json:"kind"`
 	RevokedAt *time.Time                  `json:"revoked_at,omitempty"`
 
-	// Subject An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
+	// Subject An exact service authorization scope.
 	Subject VisitorResourceScope `json:"subject"`
 }
 
@@ -4165,6 +3908,7 @@ type ServiceRunPreparation struct {
 	CertificatePlan     *CertificatePlan `json:"certificate_plan,omitempty"`
 	DomainId            DomainID         `json:"domain_id"`
 	ExpiresAt           time.Time        `json:"expires_at"`
+	GuestId             GuestID          `json:"guest_id,omitempty"`
 	Hostname            string           `json:"hostname"`
 	IdempotencyKey      IdempotencyKey   `json:"idempotency_key"`
 	PublisherGrantId    ResourceID       `json:"publisher_grant_id"`
@@ -4174,7 +3918,7 @@ type ServiceRunPreparation struct {
 	RunNumber           int64            `json:"run_number,string"`
 	ServiceId           ServiceID        `json:"service_id"`
 	ServiceRunId        ServiceRunID     `json:"service_run_id"`
-	TeamId              TeamID           `json:"team_id"`
+	TeamId              TeamID           `json:"team_id,omitempty"`
 
 	// Traffic Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
 	Traffic TrafficLimits `json:"traffic"`
@@ -4239,6 +3983,7 @@ type ServiceSummary struct {
 
 	// Endpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 	Endpoint *ServiceEndpoint `json:"endpoint,omitempty"`
+	GuestId  GuestID          `json:"guest_id,omitempty"`
 	Id       ServiceID        `json:"id"`
 
 	// KubernetesAuth Approved nonsecret native client authentication hint. Contains no publisher target address, CA, or credentials.
@@ -4250,9 +3995,18 @@ type ServiceSummary struct {
 	RunNumber      *int64              `json:"run_number,omitempty,string"`
 	ServiceRunId   *ServiceRunID       `json:"service_run_id,omitempty"`
 	Source         *LocalServiceSource `json:"source,omitempty"`
-	TeamId         TeamID              `json:"team_id"`
-	TrustRevision  int64               `json:"trust_revision,string"`
+	TeamId         TeamID              `json:"team_id,omitempty"`
+
+	// TeamName Actual stored team name. Present in signed-in visitor inventory; omitted in management inventory.
+	TeamName      string `json:"team_name,omitempty"`
+	TrustRevision int64  `json:"trust_revision,string"`
+
+	// VisitorAccess Current identity permission reason for the requested access path. Present in visitor inventory only; listing is not traffic authorization.
+	VisitorAccess ServiceSummaryVisitorAccess `json:"visitor_access,omitempty"`
 }
+
+// ServiceSummaryVisitorAccess Current identity permission reason for the requested access path. Present in visitor inventory only; listing is not traffic authorization.
+type ServiceSummaryVisitorAccess string
 
 // ServiceTargetTLS Approved publisher-to-target trust. This never selects or disables visitor TLS.
 type ServiceTargetTLS struct {
@@ -4272,22 +4026,29 @@ type SetPreviewTeamAccessRequest struct {
 	Enabled bool `json:"enabled"`
 }
 
+// SetServiceEnabledRequest defines model for SetServiceEnabledRequest.
+type SetServiceEnabledRequest struct {
+	// Enabled False suspends publication; true allows new runs after current authorization checks.
+	Enabled *bool `json:"enabled"`
+}
+
 // Share defines model for Share.
 type Share struct {
 	CreatedAt           time.Time  `json:"created_at"`
-	CreatedByIdentityId IdentityID `json:"created_by_identity_id"`
+	CreatedByIdentityId IdentityID `json:"created_by_identity_id,omitempty"`
 	EntryServiceId      ServiceID  `json:"entry_service_id"`
 	ExpiresAt           time.Time  `json:"expires_at"`
+	GuestId             GuestID    `json:"guest_id,omitempty"`
 	Id                  ShareID    `json:"id"`
 	Label               string     `json:"label"`
 	PreviewId           *PreviewID `json:"preview_id,omitempty"`
 	RevokedAt           *time.Time `json:"revoked_at,omitempty"`
 
-	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 	Scope         ShareScope          `json:"scope"`
 	ServiceIds    []ServiceID         `json:"service_ids"`
-	TeamId        TeamID              `json:"team_id"`
+	TeamId        TeamID              `json:"team_id,omitempty"`
 }
 
 // ShareScope defines model for Share.Scope.
@@ -4307,7 +4068,7 @@ type ShareID = ResourceID
 type SharePage struct {
 	NextCursor *ShareID `json:"next_cursor,omitempty"`
 
-	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 	Shares        []Share             `json:"shares"`
 }
@@ -4320,7 +4081,7 @@ type ShareRedemption struct {
 	NextUrl      string               `json:"next_url"`
 	Permission   VisitorTokenResponse `json:"permission"`
 
-	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 	ShareId       ShareID             `json:"share_id"`
 }
@@ -4360,7 +4121,7 @@ type SourceState struct {
 	// ProjectPath Selected project's path relative to the repository root; empty at the root
 	ProjectPath string `json:"project_path"`
 
-	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 }
 
@@ -4404,20 +4165,15 @@ type UpdateDeploymentRequest struct {
 	Targets DeploymentTargets `json:"targets"`
 }
 
-// UpdatePublicURLRequest A partial edit that requires the saved mutation revision. Omission keeps a field; an empty IP list clears it. Null values and edits without a writable field are rejected.
-type UpdatePublicURLRequest struct {
-	AllowedIpPrefixes        *[]string `json:"allowed_ip_prefixes,omitempty"`
-	ExpectedMutationRevision int64     `json:"expected_mutation_revision,string"`
-
-	// RequirePostQuantum Omit to preserve the saved public URL's requirement.
-	RequirePostQuantum *bool `json:"require_post_quantum,omitempty"`
-
-	// Target Must remain empty for OAuth and webhook URLs. May be empty when keeping a saved app or alias public URL targetless.
-	Target *string `json:"target,omitempty"`
-}
-
-// UpdateServiceRequest Replacement service settings. Copy trust_revision into expected_trust_revision; a stale revision is rejected. Omit target_tls to remove it. Endpoint and placement are not writable here.
+// UpdateServiceRequest Replacement service settings. Copy trust_revision into expected_trust_revision; a stale revision is rejected independently of the declaration digest and pool condition. Omit target_tls to remove it. Optional configuration replaces a standalone service's full declaration on the same service ID; protocol and target_tls must agree with it. For read/modify/write, send the observed publisher_pool as expected_publisher_pool and the unquoted ETag token from getServiceConfiguration as expected_configuration_digest; either mismatch conflicts before any service write. Conditions describe observed state, not desired settings. Full desired-intent replacements may omit these optional conditions. Omit configuration to retain the saved declaration, which must still agree with the metadata. Allocated and project-managed declarations cannot be changed here.
 type UpdateServiceRequest struct {
+	Configuration *ProjectServiceConfiguration `json:"configuration,omitempty"`
+
+	// ExpectedConfigurationDigest Opaque canonical declaration digest, without ETag quotes. Requires configuration; also covers the absence of a saved declaration.
+	ExpectedConfigurationDigest *string `json:"expected_configuration_digest,omitempty"`
+
+	// ExpectedPublisherPool Observed publisher_pool value, not the desired setting. A mismatch with the locked service conflicts independently of trust and declaration conditions. Omit for an unconditional pool replacement; null is invalid.
+	ExpectedPublisherPool *bool           `json:"expected_publisher_pool,omitempty"`
 	ExpectedTrustRevision int64           `json:"expected_trust_revision,string"`
 	Protocol              ServiceProtocol `json:"protocol"`
 	PublisherPool         bool            `json:"publisher_pool"`
@@ -4439,7 +4195,6 @@ type VisitorCredential struct {
 	Kind              VisitorCredentialKind `json:"kind"`
 	Permission        VisitorTokenResponse  `json:"permission"`
 	RefreshCredential string                `json:"refresh_credential"`
-	ShareUrl          *string               `json:"share_url,omitempty"`
 }
 
 // VisitorCredentialKind defines model for VisitorCredential.Kind.
@@ -4452,36 +4207,6 @@ type VisitorDevice struct {
 	IdentityId IdentityID `json:"identity_id"`
 	PublicKey  string     `json:"public_key"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
-}
-
-// VisitorGrant defines model for VisitorGrant.
-type VisitorGrant struct {
-	CreatedAt   time.Time        `json:"created_at"`
-	ExpiresAt   *time.Time       `json:"expires_at,omitempty"`
-	Id          string           `json:"id"`
-	IdentityId  *string          `json:"identity_id,omitempty"`
-	Kind        VisitorGrantKind `json:"kind"`
-	PublicUrlId PublicURLID      `json:"public_url_id"`
-	RevokedAt   *time.Time       `json:"revoked_at,omitempty"`
-}
-
-// VisitorGrantKind defines model for VisitorGrant.Kind.
-type VisitorGrantKind string
-
-// VisitorInvitation defines model for VisitorInvitation.
-type VisitorInvitation struct {
-	AcceptedIdentityId *string     `json:"accepted_identity_id,omitempty"`
-	Email              string      `json:"email"`
-	ExpiresAt          time.Time   `json:"expires_at"`
-	Id                 string      `json:"id"`
-	PublicUrlId        PublicURLID `json:"public_url_id"`
-	RevokedAt          *time.Time  `json:"revoked_at,omitempty"`
-}
-
-// VisitorInvitationCreation Creation-only invitation metadata and credential. After signing in with the invited verified email, the recipient sends {secret: credential} to /v1/visitor-invitations/accept. Credentials cannot be recovered; an exact creation retry returns credential_delivery_unavailable with the invitation ID so you can revoke and reissue it.
-type VisitorInvitationCreation struct {
-	Credential string            `json:"credential"`
-	Invitation VisitorInvitation `json:"invitation"`
 }
 
 // VisitorPolicyIP defines model for VisitorPolicyIP.
@@ -4510,7 +4235,7 @@ type VisitorPolicySnapshot struct {
 	Port                int                         `json:"port"`
 	RegisteredKeyLeases []VisitorRegisteredKeyLease `json:"registered_key_leases"`
 
-	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
+	// Resource An exact service authorization scope.
 	Resource              VisitorResourceScope     `json:"resource"`
 	ValidUntil            time.Time                `json:"valid_until"`
 	VerificationKeys      []VisitorVerificationKey `json:"verification_keys"`
@@ -4540,7 +4265,7 @@ type VisitorRegisteredKeyLease struct {
 	KeySha256 string    `json:"key_sha256"`
 }
 
-// VisitorResourceScope An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
+// VisitorResourceScope An exact service authorization scope.
 type VisitorResourceScope struct {
 	Id   string                   `json:"id"`
 	Kind VisitorResourceScopeKind `json:"kind"`
@@ -4609,7 +4334,7 @@ type VisitorTokenRegisteredKeySourceKind string
 
 // VisitorTokenRequest defines model for VisitorTokenRequest.
 type VisitorTokenRequest struct {
-	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
+	// Resource An exact service authorization scope.
 	Resource VisitorResourceScope `json:"resource"`
 	Source   VisitorTokenSource   `json:"source"`
 }
@@ -4622,7 +4347,7 @@ type VisitorTokenResponse struct {
 	// Port Exact signed resource port binding. Zero is permitted only for a service without a public reservation and is never a wildcard.
 	Port int `json:"port"`
 
-	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
+	// Resource An exact service authorization scope.
 	Resource VisitorResourceScope `json:"resource"`
 
 	// ServiceTrustRevision Current service metadata revision, present only for service permissions.
@@ -4742,9 +4467,6 @@ type WorkloadTrust struct {
 	Provider WorkloadProvider  `json:"provider"`
 }
 
-// CanonicalHostnameQuery defines model for CanonicalHostnameQuery.
-type CanonicalHostnameQuery = CanonicalHostname
-
 // Cursor defines model for Cursor.
 type Cursor = ResourceID
 
@@ -4771,19 +4493,12 @@ type CompletePreviewBrowserLoginParams struct {
 	Code  string `form:"code" json:"code"`
 }
 
-// BeginPreviewBrowserLoginParams defines parameters for BeginPreviewBrowserLogin.
-type BeginPreviewBrowserLoginParams struct {
-	PreviewId     *PreviewID  `form:"preview_id,omitempty" json:"preview_id,omitempty"`
-	PublicUrlId   PublicURLID `form:"public_url_id" json:"public_url_id"`
-	ReturnPath    string      `form:"return_path" json:"return_path"`
-	SwitchAccount *bool       `form:"switch_account,omitempty" json:"switch_account,omitempty"`
-}
-
 // BeginServiceBrowserLoginParams defines parameters for BeginServiceBrowserLogin.
 type BeginServiceBrowserLoginParams struct {
-	ServiceId     ServiceID `form:"service_id" json:"service_id"`
-	ReturnPath    string    `form:"return_path" json:"return_path"`
-	SwitchAccount *bool     `form:"switch_account,omitempty" json:"switch_account,omitempty"`
+	ServiceId     ServiceID  `form:"service_id" json:"service_id"`
+	PreviewId     *PreviewID `form:"preview_id,omitempty" json:"preview_id,omitempty"`
+	ReturnPath    string     `form:"return_path" json:"return_path"`
+	SwitchAccount *bool      `form:"switch_account,omitempty" json:"switch_account,omitempty"`
 }
 
 // ListFeedbackThreadsParams defines parameters for ListFeedbackThreads.
@@ -4805,6 +4520,11 @@ type ListFeedbackThreadEventsParams struct {
 
 // AppendFeedbackEventParams defines parameters for AppendFeedbackEvent.
 type AppendFeedbackEventParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// AllocateGuestDemoServiceParams defines parameters for AllocateGuestDemoService.
+type AllocateGuestDemoServiceParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
@@ -4955,56 +4675,6 @@ type GetProjectStatusParams struct {
 	Cursor *string     `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
-// ListPublicURLsParams defines parameters for ListPublicURLs.
-type ListPublicURLsParams struct {
-	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
-	Cursor *Cursor     `form:"cursor,omitempty" json:"cursor,omitempty"`
-
-	// CanonicalHostname Exact canonical hostname within the selected team. Returns zero or one non-deleted public URL with no next cursor. Cannot be combined with cursor.
-	CanonicalHostname *CanonicalHostnameQuery `form:"canonical_hostname,omitempty" json:"canonical_hostname,omitempty"`
-}
-
-// CreatePublicURLParams defines parameters for CreatePublicURL.
-type CreatePublicURLParams struct {
-	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-}
-
-// CreatePublishRunParams defines parameters for CreatePublishRun.
-type CreatePublishRunParams struct {
-	IdempotencyKey    IdempotencyKey `json:"Idempotency-Key"`
-	PublisherRunProof string         `json:"Publisher-Run-Proof"`
-}
-
-// CreateTeamVisitorGrantParams defines parameters for CreateTeamVisitorGrant.
-type CreateTeamVisitorGrantParams struct {
-	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-}
-
-// CreateIdentityVisitorGrantParams defines parameters for CreateIdentityVisitorGrant.
-type CreateIdentityVisitorGrantParams struct {
-	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-}
-
-// CreateVisitorInvitationParams defines parameters for CreateVisitorInvitation.
-type CreateVisitorInvitationParams struct {
-	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-}
-
-// CreateCertificateIssuanceParams defines parameters for CreateCertificateIssuance.
-type CreateCertificateIssuanceParams struct {
-	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-}
-
-// CreateFeedbackReportParams defines parameters for CreateFeedbackReport.
-type CreateFeedbackReportParams struct {
-	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-}
-
-// AppendReviewerFeedbackEventParams defines parameters for AppendReviewerFeedbackEvent.
-type AppendReviewerFeedbackEventParams struct {
-	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-}
-
 // ListPublisherIdentitiesParams defines parameters for ListPublisherIdentities.
 type ListPublisherIdentitiesParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
@@ -5072,6 +4742,16 @@ type DeliverConnectorPeerPairJSONBody struct {
 	DeliveryGeneration int64 `json:"delivery_generation,string"`
 }
 
+// CreateFeedbackReportParams defines parameters for CreateFeedbackReport.
+type CreateFeedbackReportParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// AppendReviewerFeedbackEventParams defines parameters for AppendReviewerFeedbackEvent.
+type AppendReviewerFeedbackEventParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
 // StartServiceRunJSONBody defines parameters for StartServiceRun.
 type StartServiceRunJSONBody struct {
 	RunNumber int64 `json:"run_number,string"`
@@ -5109,20 +4789,12 @@ type EnrollVisitorDeviceJSONBody struct {
 	PublicKey string `json:"public_key"`
 }
 
-// AcceptVisitorInvitationJSONBody defines parameters for AcceptVisitorInvitation.
-type AcceptVisitorInvitationJSONBody struct {
-	Secret string `json:"secret"`
-}
-
-// ListAvailablePublicURLsParams defines parameters for ListAvailablePublicURLs.
-type ListAvailablePublicURLsParams struct {
-	TeamId *string `form:"team_id,omitempty" json:"team_id,omitempty"`
-	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-}
-
 // ListAvailableServicesParams defines parameters for ListAvailableServices.
 type ListAvailableServicesParams struct {
 	Cursor *ServiceCursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// AccessPath Select connector permission or current public endpoint identity permission. Public HTTP preview-team access never grants connector access.
+	AccessPath *ServiceAccessPath `form:"access_path,omitempty" json:"access_path,omitempty"`
 }
 
 // IssueWorkloadServiceClientCertificateJSONBody defines parameters for IssueWorkloadServiceClientCertificate.
@@ -5141,6 +4813,9 @@ type AppendFeedbackEventJSONRequestBody = AppendFeedbackEventRequest
 
 // EnrollGuestPublisherJSONRequestBody defines body for EnrollGuestPublisher for application/json ContentType.
 type EnrollGuestPublisherJSONRequestBody = EnrollGuestPublisherRequest
+
+// AllocateGuestDemoServiceJSONRequestBody defines body for AllocateGuestDemoService for application/json ContentType.
+type AllocateGuestDemoServiceJSONRequestBody = AllocateGuestDemoServiceRequest
 
 // CreatePreviewJSONRequestBody defines body for CreatePreview for application/json ContentType.
 type CreatePreviewJSONRequestBody = CreatePreviewRequest
@@ -5189,66 +4864,6 @@ type RealizeLocalProjectServiceJSONRequestBody = RealizeLocalProjectServiceReque
 
 // RetireProjectJSONRequestBody defines body for RetireProject for application/json ContentType.
 type RetireProjectJSONRequestBody RetireProjectJSONBody
-
-// CreatePublicURLJSONRequestBody defines body for CreatePublicURL for application/json ContentType.
-type CreatePublicURLJSONRequestBody = CreatePublicURLRequest
-
-// UpdatePublicURLJSONRequestBody defines body for UpdatePublicURL for application/json ContentType.
-type UpdatePublicURLJSONRequestBody = UpdatePublicURLRequest
-
-// ReplaceVisitorAccessJSONRequestBody defines body for ReplaceVisitorAccess for application/json ContentType.
-type ReplaceVisitorAccessJSONRequestBody = ReplaceVisitorAccessRequest
-
-// CreatePublishRunJSONRequestBody defines body for CreatePublishRun for application/json ContentType.
-type CreatePublishRunJSONRequestBody = CreatePublishRunRequest
-
-// CreateTeamVisitorGrantJSONRequestBody defines body for CreateTeamVisitorGrant for application/json ContentType.
-type CreateTeamVisitorGrantJSONRequestBody = CreateTeamVisitorGrantRequest
-
-// CreateIdentityVisitorGrantJSONRequestBody defines body for CreateIdentityVisitorGrant for application/json ContentType.
-type CreateIdentityVisitorGrantJSONRequestBody = CreateIdentityVisitorGrantRequest
-
-// CreateVisitorInvitationJSONRequestBody defines body for CreateVisitorInvitation for application/json ContentType.
-type CreateVisitorInvitationJSONRequestBody = CreateVisitorInvitationRequest
-
-// CheckPreviewBrowserAccessJSONRequestBody defines body for CheckPreviewBrowserAccess for application/json ContentType.
-type CheckPreviewBrowserAccessJSONRequestBody = BrowserAccessRequest
-
-// RedeemPreviewBrowserHandoffJSONRequestBody defines body for RedeemPreviewBrowserHandoff for application/json ContentType.
-type RedeemPreviewBrowserHandoffJSONRequestBody = BrowserHandoffRequest
-
-// RevokePreviewBrowserAccessJSONRequestBody defines body for RevokePreviewBrowserAccess for application/json ContentType.
-type RevokePreviewBrowserAccessJSONRequestBody = BrowserAccessRequest
-
-// MarkPublishRunCertificateInstalledJSONRequestBody defines body for MarkPublishRunCertificateInstalled for application/json ContentType.
-type MarkPublishRunCertificateInstalledJSONRequestBody = CertificateInstalledRequest
-
-// CreateCertificateIssuanceJSONRequestBody defines body for CreateCertificateIssuance for application/json ContentType.
-type CreateCertificateIssuanceJSONRequestBody = CreateCertificateIssuanceRequest
-
-// CreateFeedbackReportJSONRequestBody defines body for CreateFeedbackReport for application/json ContentType.
-type CreateFeedbackReportJSONRequestBody = CreateFeedbackReportRequest
-
-// ListPreviewPageFeedbackJSONRequestBody defines body for ListPreviewPageFeedback for application/json ContentType.
-type ListPreviewPageFeedbackJSONRequestBody = PreviewPageFeedbackRequest
-
-// AppendReviewerFeedbackEventJSONRequestBody defines body for AppendReviewerFeedbackEvent for application/json ContentType.
-type AppendReviewerFeedbackEventJSONRequestBody = AppendReviewerFeedbackEventRequest
-
-// ListReviewerFeedbackEventsJSONRequestBody defines body for ListReviewerFeedbackEvents for application/json ContentType.
-type ListReviewerFeedbackEventsJSONRequestBody = ReviewerFeedbackReadRequest
-
-// GetReviewerFeedbackThreadJSONRequestBody defines body for GetReviewerFeedbackThread for application/json ContentType.
-type GetReviewerFeedbackThreadJSONRequestBody = ReviewerFeedbackReadRequest
-
-// MarkPublishRunReadyJSONRequestBody defines body for MarkPublishRunReady for application/json ContentType.
-type MarkPublishRunReadyJSONRequestBody = PublishRunVersionRequest
-
-// RenewPublishRunJSONRequestBody defines body for RenewPublishRun for application/json ContentType.
-type RenewPublishRunJSONRequestBody = PublishRunVersionRequest
-
-// ReportPublishRunServiceObservationsJSONRequestBody defines body for ReportPublishRunServiceObservations for application/json ContentType.
-type ReportPublishRunServiceObservationsJSONRequestBody = PublishRunServiceObservations
 
 // CreatePublisherEnrollmentJSONRequestBody defines body for CreatePublisherEnrollment for application/json ContentType.
 type CreatePublisherEnrollmentJSONRequestBody = CreatePublisherEnrollmentRequest
@@ -5304,6 +4919,9 @@ type RebindConnectorPeerPairJSONRequestBody = ConnectorPeerPairRebindRequest
 // RenewConnectorPeerPairJSONRequestBody defines body for RenewConnectorPeerPair for application/json ContentType.
 type RenewConnectorPeerPairJSONRequestBody = ConnectorPeerPairRequest
 
+// SetServiceEnabledJSONRequestBody defines body for SetServiceEnabled for application/json ContentType.
+type SetServiceEnabledJSONRequestBody = SetServiceEnabledRequest
+
 // ReleaseServiceEndpointJSONRequestBody defines body for ReleaseServiceEndpoint for application/json ContentType.
 type ReleaseServiceEndpointJSONRequestBody = ReleaseServiceEndpointRequest
 
@@ -5346,6 +4964,21 @@ type DeliverConnectorPeerPairJSONRequestBody DeliverConnectorPeerPairJSONBody
 // ConfirmConnectorPeerPairPreparedJSONRequestBody defines body for ConfirmConnectorPeerPairPrepared for application/json ContentType.
 type ConfirmConnectorPeerPairPreparedJSONRequestBody = ConnectorPeerPairPrepared
 
+// CreateFeedbackReportJSONRequestBody defines body for CreateFeedbackReport for application/json ContentType.
+type CreateFeedbackReportJSONRequestBody = CreateFeedbackReportRequest
+
+// ListPreviewPageFeedbackJSONRequestBody defines body for ListPreviewPageFeedback for application/json ContentType.
+type ListPreviewPageFeedbackJSONRequestBody = PreviewPageFeedbackRequest
+
+// AppendReviewerFeedbackEventJSONRequestBody defines body for AppendReviewerFeedbackEvent for application/json ContentType.
+type AppendReviewerFeedbackEventJSONRequestBody = AppendReviewerFeedbackEventRequest
+
+// ListReviewerFeedbackEventsJSONRequestBody defines body for ListReviewerFeedbackEvents for application/json ContentType.
+type ListReviewerFeedbackEventsJSONRequestBody = ReviewerFeedbackReadRequest
+
+// GetReviewerFeedbackThreadJSONRequestBody defines body for GetReviewerFeedbackThread for application/json ContentType.
+type GetReviewerFeedbackThreadJSONRequestBody = ReviewerFeedbackReadRequest
+
 // CreateServiceRunPreviewJSONRequestBody defines body for CreateServiceRunPreview for application/json ContentType.
 type CreateServiceRunPreviewJSONRequestBody = ServiceRunPreviewRequest
 
@@ -5369,9 +5002,6 @@ type CreateServiceShareJSONRequestBody = CreateShareRequest
 
 // EnrollVisitorDeviceJSONRequestBody defines body for EnrollVisitorDevice for application/json ContentType.
 type EnrollVisitorDeviceJSONRequestBody EnrollVisitorDeviceJSONBody
-
-// AcceptVisitorInvitationJSONRequestBody defines body for AcceptVisitorInvitation for application/json ContentType.
-type AcceptVisitorInvitationJSONRequestBody AcceptVisitorInvitationJSONBody
 
 // ReadPublisherVisitorPolicyJSONRequestBody defines body for ReadPublisherVisitorPolicy for application/json ContentType.
 type ReadPublisherVisitorPolicyJSONRequestBody = PublisherVisitorPolicyRequest
@@ -5679,7 +5309,7 @@ type ClientInterface interface {
 
 	// ListMaintenanceControls List maintenance controls
 	//
-	// Read the administrator-controlled gates for public URL creation, publish run creation, and certificate issuance. Reading a gate does not change it.
+	// Read the administrator-controlled gates for service creation, service run creation, and certificate issuance. Reading a gate does not change it.
 	//
 	// Corresponds with GET /v1/admin/maintenance-controls (the `ListMaintenanceControls` operationId).
 	ListMaintenanceControls(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5729,7 +5359,7 @@ type ClientInterface interface {
 
 	// GetAdminServerStatus Read control, ingress, and relay status
 	//
-	// Read control, ingress, relay, and maintenance observations using an administrator's control session. These observations do not renew process leases.
+	// Read canonical service and service run counts plus ingress and relay lease observations using an administrator's control session. Prepared runs are not counted as starting runs. These observations do not renew process leases.
 	//
 	// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 	GetAdminServerStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5741,26 +5371,12 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/browser/callback (the `CompletePreviewBrowserLogin` operationId).
 	CompletePreviewBrowserLogin(ctx context.Context, params *CompletePreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// BeginPreviewBrowserLogin Start sign-in for a preview visitor
-	//
-	// Start browser sign-in for a public URL, optionally within a preview. Navigate to this URL rather than fetching JSON. Current visitor permission is checked before issuing a browser credential.
-	//
-	// Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
-	BeginPreviewBrowserLogin(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// BeginServiceBrowserLogin Start browser sign-in for one HTTP service
 	//
-	// Start browser sign-in for one HTTP service. Navigate to this URL rather than fetching JSON. The common callback preserves the allocated service port and checks current visitor access before issuing a credential.
+	// Start browser sign-in for one HTTP service, optionally within a preview. Navigate to this URL rather than fetching JSON. Sign-in verifies browser identity independently of current visit permission; it does not create a visitor grant.
 	//
 	// Corresponds with GET /v1/browser/service-login (the `BeginServiceBrowserLogin` operationId).
 	BeginServiceBrowserLogin(ctx context.Context, params *BeginServiceBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetCertificateIssuance Read one publish-run certificate issuance
-	//
-	// Poll one public URL certificate issuance using its publish run token. The token must belong to the issuance's current run; a control session alone cannot retrieve the certificate.
-	//
-	// Corresponds with GET /v1/certificate-issuances/{issuance_id} (the `GetCertificateIssuance` operationId).
-	GetCertificateIssuance(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetClientIP Return the requesting client's public IP address
 	//
@@ -5829,30 +5445,41 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/guest-demo (the `CreateGuestDemo` operationId).
 	CreateGuestDemo(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AllocateGuestDemoNumber Allocate a new hostname number for this guest trial
+	// EnrollGuestPublisherWithBody Enroll a publisher key for this trial's exact demo service
 	//
-	// Allocate the next demo hostname number using the guest credential returned by createGuestDemo. Control checks the trial deadline, source address, remaining allowance, and absence of an open demo publish run.
-	//
-	// Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
-	AllocateGuestDemoNumber(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// EnrollGuestPublisherWithBody Enroll a publisher key for the guest trial's assigned demo URL
-	//
-	// Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
+	// Authenticate with the trial credential and bind an Ed25519 key to its actual saved service. Control checks current trial ownership, publication eligibility, and server-observed source. The same enrolled current key recovers its facts; another key cannot take over or revive revoked authority. The exact-service grant carries the real guest_id and fixed expiry, with no team_id, namespace allocation, service management, or connector permission.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId).
 	EnrollGuestPublisherWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// EnrollGuestPublisher Enroll a publisher key for the guest trial's assigned demo URL
+	// EnrollGuestPublisher Enroll a publisher key for this trial's exact demo service
 	//
-	// Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
+	// Authenticate with the trial credential and bind an Ed25519 key to its actual saved service. Control checks current trial ownership, publication eligibility, and server-observed source. The same enrolled current key recovers its facts; another key cannot take over or revive revoked authority. The exact-service grant carries the real guest_id and fixed expiry, with no team_id, namespace allocation, service management, or connector permission.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId).
 	EnrollGuestPublisher(ctx context.Context, body EnrollGuestPublisherJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AllocateGuestDemoServiceWithBody Allocate or recover this trial's exact demo service
+	//
+	// Allocate one ordinary service using the current trial credential and server-observed source. Control captures the fixed approved demo declaration and absolute trial expiry. The same key and normalized request recover only the original live allocation, including cleanup after a lost response; retries never advance the demo number or extend expiry. READY exhaustion blocks new allocation, not recovery for cleanup. A deleted or expired allocation cannot be recreated. Another demo or outstanding offline serving authority blocks new allocation. This operation grants no publisher or connector permission.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/guest-demo/services (the `AllocateGuestDemoService` operationId).
+	AllocateGuestDemoServiceWithBody(ctx context.Context, params *AllocateGuestDemoServiceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AllocateGuestDemoService Allocate or recover this trial's exact demo service
+	//
+	// Allocate one ordinary service using the current trial credential and server-observed source. Control captures the fixed approved demo declaration and absolute trial expiry. The same key and normalized request recover only the original live allocation, including cleanup after a lost response; retries never advance the demo number or extend expiry. READY exhaustion blocks new allocation, not recovery for cleanup. A deleted or expired allocation cannot be recreated. Another demo or outstanding offline serving authority blocks new allocation. This operation grants no publisher or connector permission.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/guest-demo/services (the `AllocateGuestDemoService` operationId).
+	AllocateGuestDemoService(ctx context.Context, params *AllocateGuestDemoServiceParams, body AllocateGuestDemoServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetHealth Confirm that the control HTTP server is serving
 	//
@@ -6261,422 +5888,6 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/projects/{project_key}/status (the `GetProjectStatus` operationId).
 	GetProjectStatus(ctx context.Context, projectKey string, params *GetProjectStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListPublicURLs List public URLs for one team
-	//
-	// Read a cursor-paginated inventory of public URLs the caller may manage in one team. An exact canonical_hostname filter returns zero or one non-deleted URL and cannot be combined with a cursor.
-	//
-	// Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
-	ListPublicURLs(ctx context.Context, params *ListPublicURLsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreatePublicURLWithBody Create one team public URL
-	//
-	// Save an authorized hostname, target, and visitor policy using an idempotency key. A control session selects an authorized team scope; a guest credential can create only its assigned ephemeral demo hostname. Creation does not start a publish run.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
-	CreatePublicURLWithBody(ctx context.Context, params *CreatePublicURLParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreatePublicURL Create one team public URL
-	//
-	// Save an authorized hostname, target, and visitor policy using an idempotency key. A control session selects an authorized team scope; a guest credential can create only its assigned ephemeral demo hostname. Creation does not start a publish run.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
-	CreatePublicURL(ctx context.Context, params *CreatePublicURLParams, body CreatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeletePublicURL Delete one public URL and close its publish run
-	//
-	// Delete the saved public URL under current management authorization and close its active publish run. The hostname cannot keep serving through the deleted URL's old run credentials.
-	//
-	// Corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
-	DeletePublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetPublicURL Read one public URL
-	//
-	// Read one saved public URL under current management authorization. Its saved policy and lifecycle are separate from whether an active publish run is routable.
-	//
-	// Corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
-	GetPublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UpdatePublicURLWithBody Update a public URL's target and IP policy
-	//
-	// Change only the supplied fields using the mutation_revision you read as expected_mutation_revision. Omitted fields keep their saved values; an empty IP list clears the filter. Null values, empty edits, and stale revisions are rejected.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
-	UpdatePublicURLWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UpdatePublicURL Update a public URL's target and IP policy
-	//
-	// Change only the supplied fields using the mutation_revision you read as expected_mutation_revision. Omitted fields keep their saved values; an empty IP list clears the filter. Null values, empty edits, and stale revisions are rejected.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
-	UpdatePublicURL(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ReplaceVisitorAccessWithBody Replace the complete live visitor access policy
-	//
-	// Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
-	ReplaceVisitorAccessWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ReplaceVisitorAccess Replace the complete live visitor access policy
-	//
-	// Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
-	ReplaceVisitorAccess(ctx context.Context, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreatePublishRunWithBody Create a publish run and allocate its publish run number
-	//
-	// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
-	CreatePublishRunWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreatePublishRun Create a publish run and allocate its publish run number
-	//
-	// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
-	CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListVisitorGrants List visitor grants for one manageable public URL
-	//
-	// Read exact-public-URL team and identity visitor grants under current management authorization. Listing a grant is not a substitute for checking the visitor's current access.
-	//
-	// Corresponds with GET /v1/public-urls/{public_url_id}/visitor-grants (the `ListVisitorGrants` operationId).
-	ListVisitorGrants(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateTeamVisitorGrantWithBody Grant current members of a team access to one public URL
-	//
-	// Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId).
-	CreateTeamVisitorGrantWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateTeamVisitorGrant Grant current members of a team access to one public URL
-	//
-	// Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId).
-	CreateTeamVisitorGrant(ctx context.Context, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, body CreateTeamVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RevokeVisitorGrant Revoke one public URL visitor grant
-	//
-	// Revoke the exact grant under current public URL management authorization. Current visitor policy determines access after revocation; other grants for the URL remain separate.
-	//
-	// Corresponds with DELETE /v1/public-urls/{public_url_id}/visitor-grants/{grant_id} (the `RevokeVisitorGrant` operationId).
-	RevokeVisitorGrant(ctx context.Context, publicUrlId PublicURLID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateIdentityVisitorGrantWithBody Create an explicit identity grant, including for the current identity
-	//
-	// Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
-	CreateIdentityVisitorGrantWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateIdentityVisitorGrant Create an explicit identity grant, including for the current identity
-	//
-	// Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
-	CreateIdentityVisitorGrant(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, body CreateIdentityVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListVisitorInvitations List named visitor invitations for one public URL
-	//
-	// Read invitation records using current public URL management authorization. Invitation inventory does not reveal a reusable visitor credential or grant management permission to its recipients.
-	//
-	// Corresponds with GET /v1/public-urls/{public_url_id}/visitor-invitations (the `ListVisitorInvitations` operationId).
-	ListVisitorInvitations(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateVisitorInvitationWithBody Invite a verified email identity to one public URL
-	//
-	// Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId).
-	CreateVisitorInvitationWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateVisitorInvitation Invite a verified email identity to one public URL
-	//
-	// Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId).
-	CreateVisitorInvitation(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, body CreateVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RevokeVisitorInvitation Revoke a public URL invitation and its accepted identity grant
-	//
-	// Revoke the named invitation using current public URL management authorization. If it was accepted, revoke the identity grant created by that invitation as well.
-	//
-	// Corresponds with DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id} (the `RevokeVisitorInvitation` operationId).
-	RevokeVisitorInvitation(ctx context.Context, publicUrlId PublicURLID, invitationId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ClosePublishRun Close and drain a publish run without deleting its public URL
-	//
-	// Close the exact publication using its publish run token. Saved public URLs remain available for a later run; ephemeral public URLs follow their removal lifecycle instead.
-	//
-	// Corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
-	ClosePublishRun(ctx context.Context, publishRunId PublishRunID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CheckPreviewBrowserAccessWithBody Check a browser cookie against current preview access
-	//
-	// Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
-	CheckPreviewBrowserAccessWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CheckPreviewBrowserAccess Check a browser cookie against current preview access
-	//
-	// Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
-	CheckPreviewBrowserAccess(ctx context.Context, publishRunId PublishRunID, body CheckPreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RedeemPreviewBrowserHandoffWithBody Redeem a one-time browser handoff on the publisher
-	//
-	// Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
-	RedeemPreviewBrowserHandoffWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RedeemPreviewBrowserHandoff Redeem a one-time browser handoff on the publisher
-	//
-	// Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
-	RedeemPreviewBrowserHandoff(ctx context.Context, publishRunId PublishRunID, body RedeemPreviewBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RevokePreviewBrowserAccessWithBody Revoke the current browser session
-	//
-	// Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
-	RevokePreviewBrowserAccessWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RevokePreviewBrowserAccess Revoke the current browser session
-	//
-	// Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
-	RevokePreviewBrowserAccess(ctx context.Context, publishRunId PublishRunID, body RevokePreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// MarkPublishRunCertificateInstalledWithBody Record installation of the current public URL certificate
-	//
-	// Acknowledge the exact approved public URL certificate installed by the publisher using this run's token and number. Installation alone does not establish publisher connection readiness.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
-	MarkPublishRunCertificateInstalledWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// MarkPublishRunCertificateInstalled Record installation of the current public URL certificate
-	//
-	// Acknowledge the exact approved public URL certificate installed by the publisher using this run's token and number. Installation alone does not establish publisher connection readiness.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
-	MarkPublishRunCertificateInstalled(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateCertificateIssuanceWithBody Begin issuance for the publish run's certificate plan
-	//
-	// Submit the publisher's CSR under the exact publish run token and approved certificate plan. The idempotency key identifies one issuance attempt; a control session or publisher access token cannot substitute for the run token.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
-	CreateCertificateIssuanceWithBody(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateCertificateIssuance Begin issuance for the publish run's certificate plan
-	//
-	// Submit the publisher's CSR under the exact publish run token and approved certificate plan. The idempotency key identifies one issuance attempt; a control session or publisher access token cannot substitute for the run token.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
-	CreateCertificateIssuance(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateFeedbackReportWithBody Store a reviewer's first report for a preview page
-	//
-	// Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
-	CreateFeedbackReportWithBody(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateFeedbackReport Store a reviewer's first report for a preview page
-	//
-	// Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
-	CreateFeedbackReport(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListPreviewPageFeedbackWithBody List feedback on one page for a reviewer
-	//
-	// Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
-	ListPreviewPageFeedbackWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListPreviewPageFeedback List feedback on one page for a reviewer
-	//
-	// Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
-	ListPreviewPageFeedback(ctx context.Context, publishRunId PublishRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AppendReviewerFeedbackEventWithBody Reply, resolve, or reopen feedback through preview access
-	//
-	// Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
-	AppendReviewerFeedbackEventWithBody(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AppendReviewerFeedbackEvent Reply, resolve, or reopen feedback through preview access
-	//
-	// Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
-	AppendReviewerFeedbackEvent(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListReviewerFeedbackEventsWithBody Read thread events through a current publisher connection
-	//
-	// Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
-	ListReviewerFeedbackEventsWithBody(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListReviewerFeedbackEvents Read thread events through a current publisher connection
-	//
-	// Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
-	ListReviewerFeedbackEvents(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetReviewerFeedbackThreadWithBody Read a feedback thread through a current publisher connection
-	//
-	// Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
-	GetReviewerFeedbackThreadWithBody(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetReviewerFeedbackThread Read a feedback thread through a current publisher connection
-	//
-	// Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
-	GetReviewerFeedbackThread(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// MarkPublishRunReadyWithBody Mark a publish run ready after its certificate and two publisher connections are ready
-	//
-	// Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
-	MarkPublishRunReadyWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// MarkPublishRunReady Mark a publish run ready after its certificate and two publisher connections are ready
-	//
-	// Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
-	MarkPublishRunReady(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RenewPublishRunWithBody Renew a publish run and replace missing publisher connections
-	//
-	// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/renew (the `RenewPublishRun` operationId).
-	RenewPublishRunWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RenewPublishRun Renew a publish run and replace missing publisher connections
-	//
-	// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/renew (the `RenewPublishRun` operationId).
-	RenewPublishRun(ctx context.Context, publishRunId PublishRunID, body RenewPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ReportPublishRunServiceObservationsWithBody Report service observations through a public URL publish run
-	//
-	// Submit bounded connection observations using the exact publish run token. Control checks the current run and counts accepted and duplicate events; observations do not create visitor grants or authorize traffic.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId).
-	ReportPublishRunServiceObservationsWithBody(ctx context.Context, runId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ReportPublishRunServiceObservations Report service observations through a public URL publish run
-	//
-	// Submit bounded connection observations using the exact publish run token. Control checks the current run and counts accepted and duplicate events; observations do not create visitor grants or authorize traffic.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId).
-	ReportPublishRunServiceObservations(ctx context.Context, runId string, body ReportPublishRunServiceObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// CreatePublisherEnrollmentWithBody Issue an expiring one-use publisher enrollment
 	//
 	// Issue an expiring one-use enrollment secret under current management authorization. Enrollment installs a publisher's signing key for the selected scope; it is separate from exchanging signed assertions for short-lived publisher access tokens.
@@ -6812,13 +6023,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/publisher/deployments/verify (the `VerifyDeploymentIdentity` operationId).
 	VerifyDeploymentIdentity(ctx context.Context, body VerifyDeploymentIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetPublisherPublicURL Read the saved URL selected by the current grant
-	//
-	// Read the single saved public URL selected by the publisher access token's exact grant. Namespace allocation grants and control sessions do not substitute for an exact public URL publisher grant.
-	//
-	// Corresponds with GET /v1/publisher/public-url (the `GetPublisherPublicURL` operationId).
-	GetPublisherPublicURL(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// InspectPublisherRuntimeWithBody Inspect a publisher runtime
 	//
@@ -6958,7 +6162,7 @@ type ClientInterface interface {
 
 	// CreateServiceWithBody Create one saved service with approved protocol and placement
 	//
-	// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
+	// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6967,7 +6171,7 @@ type ClientInterface interface {
 
 	// CreateService Create one saved service with approved protocol and placement
 	//
-	// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
+	// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6976,7 +6180,7 @@ type ClientInterface interface {
 
 	// DeleteService Delete a saved service and revoke its active publication
 	//
-	// Revoke access and close any run before tombstoning its ID-keyed ingress projection.
+	// Revoke access and close any run before tombstoning its ID-keyed ingress projection. A current trial credential may delete only its exact owned demo service after control verifies the server-observed source; READY exhaustion does not prevent cleanup within the fixed trial lifetime. A publisher grant, run token, or share is not management permission. Guest cleanup uses this same closure, settlement, and endpoint retirement; outstanding offline serving authority remains fenced.
 	//
 	// Corresponds with DELETE /v1/services/{service_id} (the `DeleteService` operationId).
 	DeleteService(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -6988,18 +6192,18 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/services/{service_id} (the `GetService` operationId).
 	GetService(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ConfigureServiceWithBody Replace a service's approved protocol and target TLS trust
+	// ConfigureServiceWithBody Replace a service's approved settings and standalone declaration
 	//
-	// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs.
+	// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Optional configuration atomically replaces a standalone service declaration, including its target, endpoint selectors, HTTP visitor policy, and request limits, without replacing the service ID. Protocol and target TLS must agree with the declaration. For read/modify/write, also send the unquoted getServiceConfiguration ETag token as expected_configuration_digest; a mismatch conflicts before any service write, independently of expected_trust_revision. Full desired-intent replacements may omit the digest. Omitting configuration retains it. Allocated invocation intent and project-managed definitions remain protected. Endpoint changes preserve authorized connector runs; protocol or target-trust changes fence old runs. Publishers must declare matching trust when preparing later runs.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /v1/services/{service_id} (the `ConfigureService` operationId).
 	ConfigureServiceWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ConfigureService Replace a service's approved protocol and target TLS trust
+	// ConfigureService Replace a service's approved settings and standalone declaration
 	//
-	// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs.
+	// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Optional configuration atomically replaces a standalone service declaration, including its target, endpoint selectors, HTTP visitor policy, and request limits, without replacing the service ID. Protocol and target TLS must agree with the declaration. For read/modify/write, also send the unquoted getServiceConfiguration ETag token as expected_configuration_digest; a mismatch conflicts before any service write, independently of expected_trust_revision. Full desired-intent replacements may omit the digest. Omitting configuration retains it. Allocated invocation intent and project-managed definitions remain protected. Endpoint changes preserve authorized connector runs; protocol or target-trust changes fence old runs. Publishers must declare matching trust when preparing later runs.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7023,6 +6227,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId).
 	IssueServiceClientCertificate(ctx context.Context, serviceId ServiceID, body IssueServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetServiceConfiguration Read one service's protected saved declaration
+	//
+	// Requires current exact-service management permission, including current membership and company sign-in where required. Returns the canonical normalized ProjectServiceConfiguration directly, or 204 when the service legitimately has no declaration. Both successful responses include a strong ETag containing a sha256 digest token; absence has its own deterministic digest. Use the unquoted token as expected_configuration_digest when replacing a read declaration. The digest is independent of trust, endpoint, and visitor-policy revisions. This read does not create state or grant mutation permission for allocated or project-managed declarations. Publisher credentials, visitor grants, shares, and guest credentials do not authorize it. Targets and private configuration never appear in inventory or publisher metadata.
+	//
+	// Corresponds with GET /v1/services/{service_id}/configuration (the `GetServiceConfiguration` operationId).
+	GetServiceConfiguration(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PrepareConnectorPeerPairWithBody Prepare a signed connector pair for an exact ready service run
 	//
@@ -7077,6 +6288,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 	RenewConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetServiceEnabledWithBody Suspend or enable a saved service
+	//
+	// Change operational availability using current stored management authority. Suspension closes current runs while retaining the service ID, declaration, publisher and visitor grants, endpoint reservations, and project or deployment ownership. Enabling allows new authorized runs; it never reopens closed runs or restores revoked permission. Works for project-managed services without editing their declarations. Guest trial credentials and publisher grants do not grant this management operation.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/services/{service_id}/enabled (the `SetServiceEnabled` operationId).
+	SetServiceEnabledWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetServiceEnabled Suspend or enable a saved service
+	//
+	// Change operational availability using current stored management authority. Suspension closes current runs while retaining the service ID, declaration, publisher and visitor grants, endpoint reservations, and project or deployment ownership. Enabling allows new authorized runs; it never reopens closed runs or restores revoked permission. Works for project-managed services without editing their declarations. Guest trial credentials and publisher grants do not grant this management operation.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/services/{service_id}/enabled (the `SetServiceEnabled` operationId).
+	SetServiceEnabled(ctx context.Context, serviceId ServiceID, body SetServiceEnabledJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReleaseServiceEndpointWithBody Retire a disabled service's public port reservation
 	//
@@ -7135,7 +6364,7 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/services/{service_id}/http-grants (the `ListServiceHTTPGrants` operationId).
 	ListServiceHTTPGrants(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateServiceHTTPGrantWithBody Create a service-scoped HTTP visitor token or share
+	// CreateServiceHTTPGrantWithBody Create a service-scoped HTTP visitor token
 	//
 	// Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission.
 	//
@@ -7144,7 +6373,7 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId).
 	CreateServiceHTTPGrantWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateServiceHTTPGrant Create a service-scoped HTTP visitor token or share
+	// CreateServiceHTTPGrant Create a service-scoped HTTP visitor token
 	//
 	// Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission.
 	//
@@ -7155,7 +6384,7 @@ type ClientInterface interface {
 
 	// RevokeServiceHTTPGrant Revoke one service-scoped HTTP visitor credential
 	//
-	// Revoke the named token or share using current service management permission. The credential no longer authorizes new visitor permission; retained summaries remain visible without their secrets.
+	// Revoke the named token using current service management permission. The credential no longer authorizes new visitor permission; retained summaries remain visible without their secrets.
 	//
 	// Corresponds with DELETE /v1/services/{service_id}/http-grants/{grant_id} (the `RevokeServiceHTTPGrant` operationId).
 	RevokeServiceHTTPGrant(ctx context.Context, serviceId ServiceID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -7255,7 +6484,7 @@ type ClientInterface interface {
 
 	// RedeemServiceBrowserHandoffWithBody Exchange a service browser handoff through its publisher run
 	//
-	// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
+	// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a browser identity cookie bound to captured service runs. Visitor permission is optional and checked independently, including any supplied share cookie pair. A visitor's control session cannot substitute for the publisher run token.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -7264,7 +6493,7 @@ type ClientInterface interface {
 
 	// RedeemServiceBrowserHandoff Exchange a service browser handoff through its publisher run
 	//
-	// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
+	// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a browser identity cookie bound to captured service runs. Visitor permission is optional and checked independently, including any supplied share cookie pair. A visitor's control session cannot substitute for the publisher run token.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7273,7 +6502,7 @@ type ClientInterface interface {
 
 	// RevokeServiceBrowserSessionWithBody Revoke a browser session through its service publisher run
 	//
-	// Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
+	// Authenticate the publisher with the exact service run token and prove the body's browser session was installed for that captured service run. Revoke the shared browser session across its hostname handoff chain, including pending handoffs. Other browser sessions and the person's control session remain unchanged.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -7282,7 +6511,7 @@ type ClientInterface interface {
 
 	// RevokeServiceBrowserSession Revoke a browser session through its service publisher run
 	//
-	// Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
+	// Authenticate the publisher with the exact service run token and prove the body's browser session was installed for that captured service run. Revoke the shared browser session across its hostname handoff chain, including pending handoffs. Other browser sessions and the person's control session remain unchanged.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7291,7 +6520,7 @@ type ClientInterface interface {
 
 	// CheckServiceBrowserSessionWithBody Check a browser session through its service publisher run
 	//
-	// Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
+	// Authenticate the publisher with the exact service run token and recheck the body's browser identity cookie for that captured service run. Identity remains authenticated when current visit permission is denied; neither identity nor this check creates a visitor or management grant.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -7300,7 +6529,7 @@ type ClientInterface interface {
 
 	// CheckServiceBrowserSession Check a browser session through its service publisher run
 	//
-	// Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
+	// Authenticate the publisher with the exact service run token and recheck the body's browser identity cookie for that captured service run. Identity remains authenticated when current visit permission is denied; neither identity nor this check creates a visitor or management grant.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7392,6 +6621,96 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId).
 	ConfirmConnectorPeerPairPrepared(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateFeedbackReportWithBody Store a reviewer's first report for a preview page
+	//
+	// Submit the immutable first report through the exact service run token with the reviewer's current access proof in the body. Control verifies browser identity independently of visit permission; publisher authentication alone does not authorize a reviewer report.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback (the `CreateFeedbackReport` operationId).
+	CreateFeedbackReportWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateFeedbackReport Store a reviewer's first report for a preview page
+	//
+	// Submit the immutable first report through the exact service run token with the reviewer's current access proof in the body. Control verifies browser identity independently of visit permission; publisher authentication alone does not authorize a reviewer report.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback (the `CreateFeedbackReport` operationId).
+	CreateFeedbackReport(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPreviewPageFeedbackWithBody List feedback on one page for a reviewer
+	//
+	// Read feedback for one service through the exact service run token and the reviewer's body access proof, optionally filtering by page. The result is limited to the authorized preview context, not a team-wide management inventory.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
+	ListPreviewPageFeedbackWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPreviewPageFeedback List feedback on one page for a reviewer
+	//
+	// Read feedback for one service through the exact service run token and the reviewer's body access proof, optionally filtering by page. The result is limited to the authorized preview context, not a team-wide management inventory.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
+	ListPreviewPageFeedback(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AppendReviewerFeedbackEventWithBody Reply, resolve, or reopen feedback through preview access
+	//
+	// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
+	AppendReviewerFeedbackEventWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AppendReviewerFeedbackEvent Reply, resolve, or reopen feedback through preview access
+	//
+	// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
+	AppendReviewerFeedbackEvent(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListReviewerFeedbackEventsWithBody Read thread events through a current publisher connection
+	//
+	// Read one thread's ordered follow-up history through the exact service run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
+	ListReviewerFeedbackEventsWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListReviewerFeedbackEvents Read thread events through a current publisher connection
+	//
+	// Read one thread's ordered follow-up history through the exact service run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
+	ListReviewerFeedbackEvents(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReviewerFeedbackThreadWithBody Read a feedback thread through a current publisher connection
+	//
+	// Read one thread through the exact service run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
+	GetReviewerFeedbackThreadWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReviewerFeedbackThread Read a feedback thread through a current publisher connection
+	//
+	// Read one thread through the exact service run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
+	GetReviewerFeedbackThread(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateServiceRunPreviewWithBody Create feedback context for one ephemeral service run
 	//
@@ -7572,24 +6891,6 @@ type ClientInterface interface {
 	// Corresponds with DELETE /v1/visitor-devices/{device_id} (the `RevokeVisitorDevice` operationId).
 	RevokeVisitorDevice(ctx context.Context, deviceId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcceptVisitorInvitationWithBody Accept a public URL invitation for the signed-in identity
-	//
-	// Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId).
-	AcceptVisitorInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AcceptVisitorInvitation Accept a public URL invitation for the signed-in identity
-	//
-	// Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId).
-	AcceptVisitorInvitation(ctx context.Context, body AcceptVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// ReadPublisherVisitorPolicyWithBody Refresh the current run's visitor policy and verification keys
 	//
 	// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access.
@@ -7635,13 +6936,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/visitor-tokens (the `IssueVisitorToken` operationId).
 	IssueVisitorToken(ctx context.Context, body IssueVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListAvailablePublicURLs List public URLs available to the signed-in visitor
-	//
-	// Read a cursor-paginated visitor inventory across the identity's current grants, optionally selecting one team. The response omits management policy, targets, and secrets and does not itself grant a visitor token.
-	//
-	// Corresponds with GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId).
-	ListAvailablePublicURLs(ctx context.Context, params *ListAvailablePublicURLsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListAvailableServices List services available to the signed-in visitor
 	//
@@ -7699,7 +6993,7 @@ type ClientInterface interface {
 
 // ListMaintenanceControls List maintenance controls
 //
-// Read the administrator-controlled gates for public URL creation, publish run creation, and certificate issuance. Reading a gate does not change it.
+// Read the administrator-controlled gates for service creation, service run creation, and certificate issuance. Reading a gate does not change it.
 //
 // Corresponds with GET /v1/admin/maintenance-controls (the `ListMaintenanceControls` operationId).
 func (c *Client) ListMaintenanceControls(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7809,7 +7103,7 @@ func (c *Client) DrainAdminRelay(ctx context.Context, relayId RelayID, body Drai
 
 // GetAdminServerStatus Read control, ingress, and relay status
 //
-// Read control, ingress, relay, and maintenance observations using an administrator's control session. These observations do not renew process leases.
+// Read canonical service and service run counts plus ingress and relay lease observations using an administrator's control session. Prepared runs are not counted as starting runs. These observations do not renew process leases.
 //
 // Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 func (c *Client) GetAdminServerStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7841,47 +7135,13 @@ func (c *Client) CompletePreviewBrowserLogin(ctx context.Context, params *Comple
 	return c.Client.Do(req)
 }
 
-// BeginPreviewBrowserLogin Start sign-in for a preview visitor
-//
-// Start browser sign-in for a public URL, optionally within a preview. Navigate to this URL rather than fetching JSON. Current visitor permission is checked before issuing a browser credential.
-//
-// Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
-func (c *Client) BeginPreviewBrowserLogin(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewBeginPreviewBrowserLoginRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // BeginServiceBrowserLogin Start browser sign-in for one HTTP service
 //
-// Start browser sign-in for one HTTP service. Navigate to this URL rather than fetching JSON. The common callback preserves the allocated service port and checks current visitor access before issuing a credential.
+// Start browser sign-in for one HTTP service, optionally within a preview. Navigate to this URL rather than fetching JSON. Sign-in verifies browser identity independently of current visit permission; it does not create a visitor grant.
 //
 // Corresponds with GET /v1/browser/service-login (the `BeginServiceBrowserLogin` operationId).
 func (c *Client) BeginServiceBrowserLogin(ctx context.Context, params *BeginServiceBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewBeginServiceBrowserLoginRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetCertificateIssuance Read one publish-run certificate issuance
-//
-// Poll one public URL certificate issuance using its publish run token. The token must belong to the issuance's current run; a control session alone cannot retrieve the certificate.
-//
-// Corresponds with GET /v1/certificate-issuances/{issuance_id} (the `GetCertificateIssuance` operationId).
-func (c *Client) GetCertificateIssuance(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetCertificateIssuanceRequest(c.Server, issuanceId)
 	if err != nil {
 		return nil, err
 	}
@@ -8049,26 +7309,9 @@ func (c *Client) CreateGuestDemo(ctx context.Context, reqEditors ...RequestEdito
 	return c.Client.Do(req)
 }
 
-// AllocateGuestDemoNumber Allocate a new hostname number for this guest trial
+// EnrollGuestPublisherWithBody Enroll a publisher key for this trial's exact demo service
 //
-// Allocate the next demo hostname number using the guest credential returned by createGuestDemo. Control checks the trial deadline, source address, remaining allowance, and absence of an open demo publish run.
-//
-// Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
-func (c *Client) AllocateGuestDemoNumber(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAllocateGuestDemoNumberRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// EnrollGuestPublisherWithBody Enroll a publisher key for the guest trial's assigned demo URL
-//
-// Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
+// Authenticate with the trial credential and bind an Ed25519 key to its actual saved service. Control checks current trial ownership, publication eligibility, and server-observed source. The same enrolled current key recovers its facts; another key cannot take over or revive revoked authority. The exact-service grant carries the real guest_id and fixed expiry, with no team_id, namespace allocation, service management, or connector permission.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8085,15 +7328,53 @@ func (c *Client) EnrollGuestPublisherWithBody(ctx context.Context, contentType s
 	return c.Client.Do(req)
 }
 
-// EnrollGuestPublisher Enroll a publisher key for the guest trial's assigned demo URL
+// EnrollGuestPublisher Enroll a publisher key for this trial's exact demo service
 //
-// Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
+// Authenticate with the trial credential and bind an Ed25519 key to its actual saved service. Control checks current trial ownership, publication eligibility, and server-observed source. The same enrolled current key recovers its facts; another key cannot take over or revive revoked authority. The exact-service grant carries the real guest_id and fixed expiry, with no team_id, namespace allocation, service management, or connector permission.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId).
 func (c *Client) EnrollGuestPublisher(ctx context.Context, body EnrollGuestPublisherJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewEnrollGuestPublisherRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AllocateGuestDemoServiceWithBody Allocate or recover this trial's exact demo service
+//
+// Allocate one ordinary service using the current trial credential and server-observed source. Control captures the fixed approved demo declaration and absolute trial expiry. The same key and normalized request recover only the original live allocation, including cleanup after a lost response; retries never advance the demo number or extend expiry. READY exhaustion blocks new allocation, not recovery for cleanup. A deleted or expired allocation cannot be recreated. Another demo or outstanding offline serving authority blocks new allocation. This operation grants no publisher or connector permission.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/guest-demo/services (the `AllocateGuestDemoService` operationId).
+func (c *Client) AllocateGuestDemoServiceWithBody(ctx context.Context, params *AllocateGuestDemoServiceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAllocateGuestDemoServiceRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AllocateGuestDemoService Allocate or recover this trial's exact demo service
+//
+// Allocate one ordinary service using the current trial credential and server-observed source. Control captures the fixed approved demo declaration and absolute trial expiry. The same key and normalized request recover only the original live allocation, including cleanup after a lost response; retries never advance the demo number or extend expiry. READY exhaustion blocks new allocation, not recovery for cleanup. A deleted or expired allocation cannot be recreated. Another demo or outstanding offline serving authority blocks new allocation. This operation grants no publisher or connector permission.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/guest-demo/services (the `AllocateGuestDemoService` operationId).
+func (c *Client) AllocateGuestDemoService(ctx context.Context, params *AllocateGuestDemoServiceParams, body AllocateGuestDemoServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAllocateGuestDemoServiceRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -9001,902 +8282,6 @@ func (c *Client) GetProjectStatus(ctx context.Context, projectKey string, params
 	return c.Client.Do(req)
 }
 
-// ListPublicURLs List public URLs for one team
-//
-// Read a cursor-paginated inventory of public URLs the caller may manage in one team. An exact canonical_hostname filter returns zero or one non-deleted URL and cannot be combined with a cursor.
-//
-// Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
-func (c *Client) ListPublicURLs(ctx context.Context, params *ListPublicURLsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListPublicURLsRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreatePublicURLWithBody Create one team public URL
-//
-// Save an authorized hostname, target, and visitor policy using an idempotency key. A control session selects an authorized team scope; a guest credential can create only its assigned ephemeral demo hostname. Creation does not start a publish run.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
-func (c *Client) CreatePublicURLWithBody(ctx context.Context, params *CreatePublicURLParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreatePublicURLRequestWithBody(c.Server, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreatePublicURL Create one team public URL
-//
-// Save an authorized hostname, target, and visitor policy using an idempotency key. A control session selects an authorized team scope; a guest credential can create only its assigned ephemeral demo hostname. Creation does not start a publish run.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
-func (c *Client) CreatePublicURL(ctx context.Context, params *CreatePublicURLParams, body CreatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreatePublicURLRequest(c.Server, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// DeletePublicURL Delete one public URL and close its publish run
-//
-// Delete the saved public URL under current management authorization and close its active publish run. The hostname cannot keep serving through the deleted URL's old run credentials.
-//
-// Corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
-func (c *Client) DeletePublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeletePublicURLRequest(c.Server, publicUrlId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetPublicURL Read one public URL
-//
-// Read one saved public URL under current management authorization. Its saved policy and lifecycle are separate from whether an active publish run is routable.
-//
-// Corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
-func (c *Client) GetPublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetPublicURLRequest(c.Server, publicUrlId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// UpdatePublicURLWithBody Update a public URL's target and IP policy
-//
-// Change only the supplied fields using the mutation_revision you read as expected_mutation_revision. Omitted fields keep their saved values; an empty IP list clears the filter. Null values, empty edits, and stale revisions are rejected.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
-func (c *Client) UpdatePublicURLWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdatePublicURLRequestWithBody(c.Server, publicUrlId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// UpdatePublicURL Update a public URL's target and IP policy
-//
-// Change only the supplied fields using the mutation_revision you read as expected_mutation_revision. Omitted fields keep their saved values; an empty IP list clears the filter. Null values, empty edits, and stale revisions are rejected.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
-func (c *Client) UpdatePublicURL(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdatePublicURLRequest(c.Server, publicUrlId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ReplaceVisitorAccessWithBody Replace the complete live visitor access policy
-//
-// Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
-func (c *Client) ReplaceVisitorAccessWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReplaceVisitorAccessRequestWithBody(c.Server, publicUrlId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ReplaceVisitorAccess Replace the complete live visitor access policy
-//
-// Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
-func (c *Client) ReplaceVisitorAccess(ctx context.Context, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReplaceVisitorAccessRequest(c.Server, publicUrlId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreatePublishRunWithBody Create a publish run and allocate its publish run number
-//
-// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
-func (c *Client) CreatePublishRunWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreatePublishRunRequestWithBody(c.Server, publicUrlId, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreatePublishRun Create a publish run and allocate its publish run number
-//
-// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
-func (c *Client) CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreatePublishRunRequest(c.Server, publicUrlId, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListVisitorGrants List visitor grants for one manageable public URL
-//
-// Read exact-public-URL team and identity visitor grants under current management authorization. Listing a grant is not a substitute for checking the visitor's current access.
-//
-// Corresponds with GET /v1/public-urls/{public_url_id}/visitor-grants (the `ListVisitorGrants` operationId).
-func (c *Client) ListVisitorGrants(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListVisitorGrantsRequest(c.Server, publicUrlId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateTeamVisitorGrantWithBody Grant current members of a team access to one public URL
-//
-// Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId).
-func (c *Client) CreateTeamVisitorGrantWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateTeamVisitorGrantRequestWithBody(c.Server, publicUrlId, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateTeamVisitorGrant Grant current members of a team access to one public URL
-//
-// Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId).
-func (c *Client) CreateTeamVisitorGrant(ctx context.Context, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, body CreateTeamVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateTeamVisitorGrantRequest(c.Server, publicUrlId, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RevokeVisitorGrant Revoke one public URL visitor grant
-//
-// Revoke the exact grant under current public URL management authorization. Current visitor policy determines access after revocation; other grants for the URL remain separate.
-//
-// Corresponds with DELETE /v1/public-urls/{public_url_id}/visitor-grants/{grant_id} (the `RevokeVisitorGrant` operationId).
-func (c *Client) RevokeVisitorGrant(ctx context.Context, publicUrlId PublicURLID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRevokeVisitorGrantRequest(c.Server, publicUrlId, grantId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateIdentityVisitorGrantWithBody Create an explicit identity grant, including for the current identity
-//
-// Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
-func (c *Client) CreateIdentityVisitorGrantWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateIdentityVisitorGrantRequestWithBody(c.Server, publicUrlId, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateIdentityVisitorGrant Create an explicit identity grant, including for the current identity
-//
-// Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
-func (c *Client) CreateIdentityVisitorGrant(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, body CreateIdentityVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateIdentityVisitorGrantRequest(c.Server, publicUrlId, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListVisitorInvitations List named visitor invitations for one public URL
-//
-// Read invitation records using current public URL management authorization. Invitation inventory does not reveal a reusable visitor credential or grant management permission to its recipients.
-//
-// Corresponds with GET /v1/public-urls/{public_url_id}/visitor-invitations (the `ListVisitorInvitations` operationId).
-func (c *Client) ListVisitorInvitations(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListVisitorInvitationsRequest(c.Server, publicUrlId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateVisitorInvitationWithBody Invite a verified email identity to one public URL
-//
-// Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId).
-func (c *Client) CreateVisitorInvitationWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateVisitorInvitationRequestWithBody(c.Server, publicUrlId, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateVisitorInvitation Invite a verified email identity to one public URL
-//
-// Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId).
-func (c *Client) CreateVisitorInvitation(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, body CreateVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateVisitorInvitationRequest(c.Server, publicUrlId, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RevokeVisitorInvitation Revoke a public URL invitation and its accepted identity grant
-//
-// Revoke the named invitation using current public URL management authorization. If it was accepted, revoke the identity grant created by that invitation as well.
-//
-// Corresponds with DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id} (the `RevokeVisitorInvitation` operationId).
-func (c *Client) RevokeVisitorInvitation(ctx context.Context, publicUrlId PublicURLID, invitationId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRevokeVisitorInvitationRequest(c.Server, publicUrlId, invitationId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ClosePublishRun Close and drain a publish run without deleting its public URL
-//
-// Close the exact publication using its publish run token. Saved public URLs remain available for a later run; ephemeral public URLs follow their removal lifecycle instead.
-//
-// Corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
-func (c *Client) ClosePublishRun(ctx context.Context, publishRunId PublishRunID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewClosePublishRunRequest(c.Server, publishRunId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CheckPreviewBrowserAccessWithBody Check a browser cookie against current preview access
-//
-// Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
-func (c *Client) CheckPreviewBrowserAccessWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCheckPreviewBrowserAccessRequestWithBody(c.Server, publishRunId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CheckPreviewBrowserAccess Check a browser cookie against current preview access
-//
-// Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
-func (c *Client) CheckPreviewBrowserAccess(ctx context.Context, publishRunId PublishRunID, body CheckPreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCheckPreviewBrowserAccessRequest(c.Server, publishRunId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RedeemPreviewBrowserHandoffWithBody Redeem a one-time browser handoff on the publisher
-//
-// Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
-func (c *Client) RedeemPreviewBrowserHandoffWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRedeemPreviewBrowserHandoffRequestWithBody(c.Server, publishRunId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RedeemPreviewBrowserHandoff Redeem a one-time browser handoff on the publisher
-//
-// Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
-func (c *Client) RedeemPreviewBrowserHandoff(ctx context.Context, publishRunId PublishRunID, body RedeemPreviewBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRedeemPreviewBrowserHandoffRequest(c.Server, publishRunId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RevokePreviewBrowserAccessWithBody Revoke the current browser session
-//
-// Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
-func (c *Client) RevokePreviewBrowserAccessWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRevokePreviewBrowserAccessRequestWithBody(c.Server, publishRunId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RevokePreviewBrowserAccess Revoke the current browser session
-//
-// Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
-func (c *Client) RevokePreviewBrowserAccess(ctx context.Context, publishRunId PublishRunID, body RevokePreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRevokePreviewBrowserAccessRequest(c.Server, publishRunId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// MarkPublishRunCertificateInstalledWithBody Record installation of the current public URL certificate
-//
-// Acknowledge the exact approved public URL certificate installed by the publisher using this run's token and number. Installation alone does not establish publisher connection readiness.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
-func (c *Client) MarkPublishRunCertificateInstalledWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewMarkPublishRunCertificateInstalledRequestWithBody(c.Server, publishRunId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// MarkPublishRunCertificateInstalled Record installation of the current public URL certificate
-//
-// Acknowledge the exact approved public URL certificate installed by the publisher using this run's token and number. Installation alone does not establish publisher connection readiness.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
-func (c *Client) MarkPublishRunCertificateInstalled(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewMarkPublishRunCertificateInstalledRequest(c.Server, publishRunId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateCertificateIssuanceWithBody Begin issuance for the publish run's certificate plan
-//
-// Submit the publisher's CSR under the exact publish run token and approved certificate plan. The idempotency key identifies one issuance attempt; a control session or publisher access token cannot substitute for the run token.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
-func (c *Client) CreateCertificateIssuanceWithBody(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateCertificateIssuanceRequestWithBody(c.Server, publishRunId, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateCertificateIssuance Begin issuance for the publish run's certificate plan
-//
-// Submit the publisher's CSR under the exact publish run token and approved certificate plan. The idempotency key identifies one issuance attempt; a control session or publisher access token cannot substitute for the run token.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
-func (c *Client) CreateCertificateIssuance(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateCertificateIssuanceRequest(c.Server, publishRunId, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateFeedbackReportWithBody Store a reviewer's first report for a preview page
-//
-// Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
-func (c *Client) CreateFeedbackReportWithBody(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateFeedbackReportRequestWithBody(c.Server, publishRunId, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateFeedbackReport Store a reviewer's first report for a preview page
-//
-// Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
-func (c *Client) CreateFeedbackReport(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateFeedbackReportRequest(c.Server, publishRunId, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListPreviewPageFeedbackWithBody List feedback on one page for a reviewer
-//
-// Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
-func (c *Client) ListPreviewPageFeedbackWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListPreviewPageFeedbackRequestWithBody(c.Server, publishRunId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListPreviewPageFeedback List feedback on one page for a reviewer
-//
-// Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
-func (c *Client) ListPreviewPageFeedback(ctx context.Context, publishRunId PublishRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListPreviewPageFeedbackRequest(c.Server, publishRunId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AppendReviewerFeedbackEventWithBody Reply, resolve, or reopen feedback through preview access
-//
-// Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
-func (c *Client) AppendReviewerFeedbackEventWithBody(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAppendReviewerFeedbackEventRequestWithBody(c.Server, publishRunId, feedbackId, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AppendReviewerFeedbackEvent Reply, resolve, or reopen feedback through preview access
-//
-// Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
-func (c *Client) AppendReviewerFeedbackEvent(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAppendReviewerFeedbackEventRequest(c.Server, publishRunId, feedbackId, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListReviewerFeedbackEventsWithBody Read thread events through a current publisher connection
-//
-// Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
-func (c *Client) ListReviewerFeedbackEventsWithBody(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListReviewerFeedbackEventsRequestWithBody(c.Server, publishRunId, feedbackId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListReviewerFeedbackEvents Read thread events through a current publisher connection
-//
-// Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
-func (c *Client) ListReviewerFeedbackEvents(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListReviewerFeedbackEventsRequest(c.Server, publishRunId, feedbackId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetReviewerFeedbackThreadWithBody Read a feedback thread through a current publisher connection
-//
-// Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
-func (c *Client) GetReviewerFeedbackThreadWithBody(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetReviewerFeedbackThreadRequestWithBody(c.Server, publishRunId, feedbackId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetReviewerFeedbackThread Read a feedback thread through a current publisher connection
-//
-// Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
-func (c *Client) GetReviewerFeedbackThread(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetReviewerFeedbackThreadRequest(c.Server, publishRunId, feedbackId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// MarkPublishRunReadyWithBody Mark a publish run ready after its certificate and two publisher connections are ready
-//
-// Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
-func (c *Client) MarkPublishRunReadyWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewMarkPublishRunReadyRequestWithBody(c.Server, publishRunId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// MarkPublishRunReady Mark a publish run ready after its certificate and two publisher connections are ready
-//
-// Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
-func (c *Client) MarkPublishRunReady(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewMarkPublishRunReadyRequest(c.Server, publishRunId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RenewPublishRunWithBody Renew a publish run and replace missing publisher connections
-//
-// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/renew (the `RenewPublishRun` operationId).
-func (c *Client) RenewPublishRunWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRenewPublishRunRequestWithBody(c.Server, publishRunId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RenewPublishRun Renew a publish run and replace missing publisher connections
-//
-// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/renew (the `RenewPublishRun` operationId).
-func (c *Client) RenewPublishRun(ctx context.Context, publishRunId PublishRunID, body RenewPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRenewPublishRunRequest(c.Server, publishRunId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ReportPublishRunServiceObservationsWithBody Report service observations through a public URL publish run
-//
-// Submit bounded connection observations using the exact publish run token. Control checks the current run and counts accepted and duplicate events; observations do not create visitor grants or authorize traffic.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId).
-func (c *Client) ReportPublishRunServiceObservationsWithBody(ctx context.Context, runId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReportPublishRunServiceObservationsRequestWithBody(c.Server, runId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ReportPublishRunServiceObservations Report service observations through a public URL publish run
-//
-// Submit bounded connection observations using the exact publish run token. Control checks the current run and counts accepted and duplicate events; observations do not create visitor grants or authorize traffic.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId).
-func (c *Client) ReportPublishRunServiceObservations(ctx context.Context, runId string, body ReportPublishRunServiceObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReportPublishRunServiceObservationsRequest(c.Server, runId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // CreatePublisherEnrollmentWithBody Issue an expiring one-use publisher enrollment
 //
 // Issue an expiring one-use enrollment secret under current management authorization. Enrollment installs a publisher's signing key for the selected scope; it is separate from exchanging signed assertions for short-lived publisher access tokens.
@@ -10183,23 +8568,6 @@ func (c *Client) VerifyDeploymentIdentityWithBody(ctx context.Context, contentTy
 // Corresponds with POST /v1/publisher/deployments/verify (the `VerifyDeploymentIdentity` operationId).
 func (c *Client) VerifyDeploymentIdentity(ctx context.Context, body VerifyDeploymentIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewVerifyDeploymentIdentityRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetPublisherPublicURL Read the saved URL selected by the current grant
-//
-// Read the single saved public URL selected by the publisher access token's exact grant. Namespace allocation grants and control sessions do not substitute for an exact public URL publisher grant.
-//
-// Corresponds with GET /v1/publisher/public-url (the `GetPublisherPublicURL` operationId).
-func (c *Client) GetPublisherPublicURL(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetPublisherPublicURLRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -10508,7 +8876,7 @@ func (c *Client) ListServices(ctx context.Context, params *ListServicesParams, r
 
 // CreateServiceWithBody Create one saved service with approved protocol and placement
 //
-// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
+// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
 //
 // Takes any type of body and a specified content type.
 //
@@ -10527,7 +8895,7 @@ func (c *Client) CreateServiceWithBody(ctx context.Context, params *CreateServic
 
 // CreateService Create one saved service with approved protocol and placement
 //
-// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
+// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10546,7 +8914,7 @@ func (c *Client) CreateService(ctx context.Context, params *CreateServiceParams,
 
 // DeleteService Delete a saved service and revoke its active publication
 //
-// Revoke access and close any run before tombstoning its ID-keyed ingress projection.
+// Revoke access and close any run before tombstoning its ID-keyed ingress projection. A current trial credential may delete only its exact owned demo service after control verifies the server-observed source; READY exhaustion does not prevent cleanup within the fixed trial lifetime. A publisher grant, run token, or share is not management permission. Guest cleanup uses this same closure, settlement, and endpoint retirement; outstanding offline serving authority remains fenced.
 //
 // Corresponds with DELETE /v1/services/{service_id} (the `DeleteService` operationId).
 func (c *Client) DeleteService(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -10578,9 +8946,9 @@ func (c *Client) GetService(ctx context.Context, serviceId ServiceID, reqEditors
 	return c.Client.Do(req)
 }
 
-// ConfigureServiceWithBody Replace a service's approved protocol and target TLS trust
+// ConfigureServiceWithBody Replace a service's approved settings and standalone declaration
 //
-// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs.
+// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Optional configuration atomically replaces a standalone service declaration, including its target, endpoint selectors, HTTP visitor policy, and request limits, without replacing the service ID. Protocol and target TLS must agree with the declaration. For read/modify/write, also send the unquoted getServiceConfiguration ETag token as expected_configuration_digest; a mismatch conflicts before any service write, independently of expected_trust_revision. Full desired-intent replacements may omit the digest. Omitting configuration retains it. Allocated invocation intent and project-managed definitions remain protected. Endpoint changes preserve authorized connector runs; protocol or target-trust changes fence old runs. Publishers must declare matching trust when preparing later runs.
 //
 // Takes any type of body and a specified content type.
 //
@@ -10597,9 +8965,9 @@ func (c *Client) ConfigureServiceWithBody(ctx context.Context, serviceId Service
 	return c.Client.Do(req)
 }
 
-// ConfigureService Replace a service's approved protocol and target TLS trust
+// ConfigureService Replace a service's approved settings and standalone declaration
 //
-// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs.
+// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Optional configuration atomically replaces a standalone service declaration, including its target, endpoint selectors, HTTP visitor policy, and request limits, without replacing the service ID. Protocol and target TLS must agree with the declaration. For read/modify/write, also send the unquoted getServiceConfiguration ETag token as expected_configuration_digest; a mismatch conflicts before any service write, independently of expected_trust_revision. Full desired-intent replacements may omit the digest. Omitting configuration retains it. Allocated invocation intent and project-managed definitions remain protected. Endpoint changes preserve authorized connector runs; protocol or target-trust changes fence old runs. Publishers must declare matching trust when preparing later runs.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10644,6 +9012,23 @@ func (c *Client) IssueServiceClientCertificateWithBody(ctx context.Context, serv
 // Corresponds with POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId).
 func (c *Client) IssueServiceClientCertificate(ctx context.Context, serviceId ServiceID, body IssueServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIssueServiceClientCertificateRequest(c.Server, serviceId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetServiceConfiguration Read one service's protected saved declaration
+//
+// Requires current exact-service management permission, including current membership and company sign-in where required. Returns the canonical normalized ProjectServiceConfiguration directly, or 204 when the service legitimately has no declaration. Both successful responses include a strong ETag containing a sha256 digest token; absence has its own deterministic digest. Use the unquoted token as expected_configuration_digest when replacing a read declaration. The digest is independent of trust, endpoint, and visitor-policy revisions. This read does not create state or grant mutation permission for allocated or project-managed declarations. Publisher credentials, visitor grants, shares, and guest credentials do not authorize it. Targets and private configuration never appear in inventory or publisher metadata.
+//
+// Corresponds with GET /v1/services/{service_id}/configuration (the `GetServiceConfiguration` operationId).
+func (c *Client) GetServiceConfiguration(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetServiceConfigurationRequest(c.Server, serviceId)
 	if err != nil {
 		return nil, err
 	}
@@ -10758,6 +9143,44 @@ func (c *Client) RenewConnectorPeerPairWithBody(ctx context.Context, serviceId S
 // Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 func (c *Client) RenewConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenewConnectorPeerPairRequest(c.Server, serviceId, pairId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetServiceEnabledWithBody Suspend or enable a saved service
+//
+// Change operational availability using current stored management authority. Suspension closes current runs while retaining the service ID, declaration, publisher and visitor grants, endpoint reservations, and project or deployment ownership. Enabling allows new authorized runs; it never reopens closed runs or restores revoked permission. Works for project-managed services without editing their declarations. Guest trial credentials and publisher grants do not grant this management operation.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/services/{service_id}/enabled (the `SetServiceEnabled` operationId).
+func (c *Client) SetServiceEnabledWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetServiceEnabledRequestWithBody(c.Server, serviceId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetServiceEnabled Suspend or enable a saved service
+//
+// Change operational availability using current stored management authority. Suspension closes current runs while retaining the service ID, declaration, publisher and visitor grants, endpoint reservations, and project or deployment ownership. Enabling allows new authorized runs; it never reopens closed runs or restores revoked permission. Works for project-managed services without editing their declarations. Guest trial credentials and publisher grants do not grant this management operation.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/services/{service_id}/enabled (the `SetServiceEnabled` operationId).
+func (c *Client) SetServiceEnabled(ctx context.Context, serviceId ServiceID, body SetServiceEnabledJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetServiceEnabledRequest(c.Server, serviceId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10895,7 +9318,7 @@ func (c *Client) ListServiceHTTPGrants(ctx context.Context, serviceId ServiceID,
 	return c.Client.Do(req)
 }
 
-// CreateServiceHTTPGrantWithBody Create a service-scoped HTTP visitor token or share
+// CreateServiceHTTPGrantWithBody Create a service-scoped HTTP visitor token
 //
 // Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission.
 //
@@ -10914,7 +9337,7 @@ func (c *Client) CreateServiceHTTPGrantWithBody(ctx context.Context, serviceId S
 	return c.Client.Do(req)
 }
 
-// CreateServiceHTTPGrant Create a service-scoped HTTP visitor token or share
+// CreateServiceHTTPGrant Create a service-scoped HTTP visitor token
 //
 // Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission.
 //
@@ -10935,7 +9358,7 @@ func (c *Client) CreateServiceHTTPGrant(ctx context.Context, serviceId ServiceID
 
 // RevokeServiceHTTPGrant Revoke one service-scoped HTTP visitor credential
 //
-// Revoke the named token or share using current service management permission. The credential no longer authorizes new visitor permission; retained summaries remain visible without their secrets.
+// Revoke the named token using current service management permission. The credential no longer authorizes new visitor permission; retained summaries remain visible without their secrets.
 //
 // Corresponds with DELETE /v1/services/{service_id}/http-grants/{grant_id} (the `RevokeServiceHTTPGrant` operationId).
 func (c *Client) RevokeServiceHTTPGrant(ctx context.Context, serviceId ServiceID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -11155,7 +9578,7 @@ func (c *Client) AuthorizeServiceHTTPVisitor(ctx context.Context, serviceId Serv
 
 // RedeemServiceBrowserHandoffWithBody Exchange a service browser handoff through its publisher run
 //
-// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
+// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a browser identity cookie bound to captured service runs. Visitor permission is optional and checked independently, including any supplied share cookie pair. A visitor's control session cannot substitute for the publisher run token.
 //
 // Takes any type of body and a specified content type.
 //
@@ -11174,7 +9597,7 @@ func (c *Client) RedeemServiceBrowserHandoffWithBody(ctx context.Context, servic
 
 // RedeemServiceBrowserHandoff Exchange a service browser handoff through its publisher run
 //
-// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
+// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a browser identity cookie bound to captured service runs. Visitor permission is optional and checked independently, including any supplied share cookie pair. A visitor's control session cannot substitute for the publisher run token.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -11193,7 +9616,7 @@ func (c *Client) RedeemServiceBrowserHandoff(ctx context.Context, serviceId Serv
 
 // RevokeServiceBrowserSessionWithBody Revoke a browser session through its service publisher run
 //
-// Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
+// Authenticate the publisher with the exact service run token and prove the body's browser session was installed for that captured service run. Revoke the shared browser session across its hostname handoff chain, including pending handoffs. Other browser sessions and the person's control session remain unchanged.
 //
 // Takes any type of body and a specified content type.
 //
@@ -11212,7 +9635,7 @@ func (c *Client) RevokeServiceBrowserSessionWithBody(ctx context.Context, servic
 
 // RevokeServiceBrowserSession Revoke a browser session through its service publisher run
 //
-// Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
+// Authenticate the publisher with the exact service run token and prove the body's browser session was installed for that captured service run. Revoke the shared browser session across its hostname handoff chain, including pending handoffs. Other browser sessions and the person's control session remain unchanged.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -11231,7 +9654,7 @@ func (c *Client) RevokeServiceBrowserSession(ctx context.Context, serviceId Serv
 
 // CheckServiceBrowserSessionWithBody Check a browser session through its service publisher run
 //
-// Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
+// Authenticate the publisher with the exact service run token and recheck the body's browser identity cookie for that captured service run. Identity remains authenticated when current visit permission is denied; neither identity nor this check creates a visitor or management grant.
 //
 // Takes any type of body and a specified content type.
 //
@@ -11250,7 +9673,7 @@ func (c *Client) CheckServiceBrowserSessionWithBody(ctx context.Context, service
 
 // CheckServiceBrowserSession Check a browser session through its service publisher run
 //
-// Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
+// Authenticate the publisher with the exact service run token and recheck the body's browser identity cookie for that captured service run. Identity remains authenticated when current visit permission is denied; neither identity nor this check creates a visitor or management grant.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -11443,6 +9866,196 @@ func (c *Client) ConfirmConnectorPeerPairPreparedWithBody(ctx context.Context, s
 // Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId).
 func (c *Client) ConfirmConnectorPeerPairPrepared(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewConfirmConnectorPeerPairPreparedRequest(c.Server, serviceId, serviceRunId, pairId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateFeedbackReportWithBody Store a reviewer's first report for a preview page
+//
+// Submit the immutable first report through the exact service run token with the reviewer's current access proof in the body. Control verifies browser identity independently of visit permission; publisher authentication alone does not authorize a reviewer report.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback (the `CreateFeedbackReport` operationId).
+func (c *Client) CreateFeedbackReportWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateFeedbackReportRequestWithBody(c.Server, serviceId, serviceRunId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateFeedbackReport Store a reviewer's first report for a preview page
+//
+// Submit the immutable first report through the exact service run token with the reviewer's current access proof in the body. Control verifies browser identity independently of visit permission; publisher authentication alone does not authorize a reviewer report.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback (the `CreateFeedbackReport` operationId).
+func (c *Client) CreateFeedbackReport(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateFeedbackReportRequest(c.Server, serviceId, serviceRunId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListPreviewPageFeedbackWithBody List feedback on one page for a reviewer
+//
+// Read feedback for one service through the exact service run token and the reviewer's body access proof, optionally filtering by page. The result is limited to the authorized preview context, not a team-wide management inventory.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
+func (c *Client) ListPreviewPageFeedbackWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPreviewPageFeedbackRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListPreviewPageFeedback List feedback on one page for a reviewer
+//
+// Read feedback for one service through the exact service run token and the reviewer's body access proof, optionally filtering by page. The result is limited to the authorized preview context, not a team-wide management inventory.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
+func (c *Client) ListPreviewPageFeedback(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPreviewPageFeedbackRequest(c.Server, serviceId, serviceRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AppendReviewerFeedbackEventWithBody Reply, resolve, or reopen feedback through preview access
+//
+// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
+func (c *Client) AppendReviewerFeedbackEventWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAppendReviewerFeedbackEventRequestWithBody(c.Server, serviceId, serviceRunId, feedbackId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AppendReviewerFeedbackEvent Reply, resolve, or reopen feedback through preview access
+//
+// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
+func (c *Client) AppendReviewerFeedbackEvent(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAppendReviewerFeedbackEventRequest(c.Server, serviceId, serviceRunId, feedbackId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListReviewerFeedbackEventsWithBody Read thread events through a current publisher connection
+//
+// Read one thread's ordered follow-up history through the exact service run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
+func (c *Client) ListReviewerFeedbackEventsWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListReviewerFeedbackEventsRequestWithBody(c.Server, serviceId, serviceRunId, feedbackId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListReviewerFeedbackEvents Read thread events through a current publisher connection
+//
+// Read one thread's ordered follow-up history through the exact service run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
+func (c *Client) ListReviewerFeedbackEvents(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListReviewerFeedbackEventsRequest(c.Server, serviceId, serviceRunId, feedbackId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetReviewerFeedbackThreadWithBody Read a feedback thread through a current publisher connection
+//
+// Read one thread through the exact service run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
+func (c *Client) GetReviewerFeedbackThreadWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReviewerFeedbackThreadRequestWithBody(c.Server, serviceId, serviceRunId, feedbackId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetReviewerFeedbackThread Read a feedback thread through a current publisher connection
+//
+// Read one thread through the exact service run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
+func (c *Client) GetReviewerFeedbackThread(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReviewerFeedbackThreadRequest(c.Server, serviceId, serviceRunId, feedbackId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11842,44 +10455,6 @@ func (c *Client) RevokeVisitorDevice(ctx context.Context, deviceId string, reqEd
 	return c.Client.Do(req)
 }
 
-// AcceptVisitorInvitationWithBody Accept a public URL invitation for the signed-in identity
-//
-// Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId).
-func (c *Client) AcceptVisitorInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAcceptVisitorInvitationRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AcceptVisitorInvitation Accept a public URL invitation for the signed-in identity
-//
-// Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId).
-func (c *Client) AcceptVisitorInvitation(ctx context.Context, body AcceptVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAcceptVisitorInvitationRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // ReadPublisherVisitorPolicyWithBody Refresh the current run's visitor policy and verification keys
 //
 // Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access.
@@ -11956,23 +10531,6 @@ func (c *Client) IssueVisitorTokenWithBody(ctx context.Context, contentType stri
 // Corresponds with POST /v1/visitor-tokens (the `IssueVisitorToken` operationId).
 func (c *Client) IssueVisitorToken(ctx context.Context, body IssueVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIssueVisitorTokenRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListAvailablePublicURLs List public URLs available to the signed-in visitor
-//
-// Read a cursor-paginated visitor inventory across the identity's current grants, optionally selecting one team. The response omits management policy, targets, and secrets and does not itself grant a visitor token.
-//
-// Corresponds with GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId).
-func (c *Client) ListAvailablePublicURLs(ctx context.Context, params *ListAvailablePublicURLsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListAvailablePublicURLsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -12366,88 +10924,6 @@ func NewCompletePreviewBrowserLoginRequest(server string, params *CompletePrevie
 	return req, nil
 }
 
-// NewBeginPreviewBrowserLoginRequest constructs an http.Request for the BeginPreviewBrowserLogin method
-func NewBeginPreviewBrowserLoginRequest(server string, params *BeginPreviewBrowserLoginParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/browser/login")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.PreviewId != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "preview_id", *params.PreviewId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "public_url_id", params.PublicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "return_path", params.ReturnPath, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if params.SwitchAccount != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "switch_account", *params.SwitchAccount, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewBeginServiceBrowserLoginRequest constructs an http.Request for the BeginServiceBrowserLogin method
 func NewBeginServiceBrowserLoginRequest(server string, params *BeginServiceBrowserLoginParams) (*http.Request, error) {
 	var err error
@@ -12484,6 +10960,18 @@ func NewBeginServiceBrowserLoginRequest(server string, params *BeginServiceBrows
 			}
 		}
 
+		if params.PreviewId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "preview_id", *params.PreviewId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "return_path", params.ReturnPath, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 			return nil, err
 		} else {
@@ -12508,40 +10996,6 @@ func NewBeginServiceBrowserLoginRequest(server string, params *BeginServiceBrows
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
 		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetCertificateIssuanceRequest constructs an http.Request for the GetCertificateIssuance method
-func NewGetCertificateIssuanceRequest(server string, issuanceId IssuanceID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "issuance_id", issuanceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/certificate-issuances/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -12912,33 +11366,6 @@ func NewCreateGuestDemoRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
-// NewAllocateGuestDemoNumberRequest constructs an http.Request for the AllocateGuestDemoNumber method
-func NewAllocateGuestDemoNumberRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/guest-demo/number")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewEnrollGuestPublisherRequest calls the generic EnrollGuestPublisher builder with application/json body
 func NewEnrollGuestPublisherRequest(server string, body EnrollGuestPublisherJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -12975,6 +11402,59 @@ func NewEnrollGuestPublisherRequestWithBody(server string, contentType string, b
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAllocateGuestDemoServiceRequest calls the generic AllocateGuestDemoService builder with application/json body
+func NewAllocateGuestDemoServiceRequest(server string, params *AllocateGuestDemoServiceParams, body AllocateGuestDemoServiceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAllocateGuestDemoServiceRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewAllocateGuestDemoServiceRequestWithBody constructs an http.Request for the AllocateGuestDemoService method, with any body, and a specified content type
+func NewAllocateGuestDemoServiceRequestWithBody(server string, params *AllocateGuestDemoServiceParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/guest-demo/services")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
 
 	return req, nil
 }
@@ -15113,1399 +13593,6 @@ func NewGetProjectStatusRequest(server string, projectKey string, params *GetPro
 	return req, nil
 }
 
-// NewListPublicURLsRequest constructs an http.Request for the ListPublicURLs method
-func NewListPublicURLsRequest(server string, params *ListPublicURLsParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if params.Cursor != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.CanonicalHostname != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "canonical_hostname", *params.CanonicalHostname, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreatePublicURLRequest calls the generic CreatePublicURL builder with application/json body
-func NewCreatePublicURLRequest(server string, params *CreatePublicURLParams, body CreatePublicURLJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreatePublicURLRequestWithBody(server, params, "application/json", bodyReader)
-}
-
-// NewCreatePublicURLRequestWithBody constructs an http.Request for the CreatePublicURL method, with any body, and a specified content type
-func NewCreatePublicURLRequestWithBody(server string, params *CreatePublicURLParams, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
-	}
-
-	return req, nil
-}
-
-// NewDeletePublicURLRequest constructs an http.Request for the DeletePublicURL method
-func NewDeletePublicURLRequest(server string, publicUrlId PublicURLID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetPublicURLRequest constructs an http.Request for the GetPublicURL method
-func NewGetPublicURLRequest(server string, publicUrlId PublicURLID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewUpdatePublicURLRequest calls the generic UpdatePublicURL builder with application/json body
-func NewUpdatePublicURLRequest(server string, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewUpdatePublicURLRequestWithBody(server, publicUrlId, "application/json", bodyReader)
-}
-
-// NewUpdatePublicURLRequestWithBody constructs an http.Request for the UpdatePublicURL method, with any body, and a specified content type
-func NewUpdatePublicURLRequestWithBody(server string, publicUrlId PublicURLID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewReplaceVisitorAccessRequest calls the generic ReplaceVisitorAccess builder with application/json body
-func NewReplaceVisitorAccessRequest(server string, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewReplaceVisitorAccessRequestWithBody(server, publicUrlId, "application/json", bodyReader)
-}
-
-// NewReplaceVisitorAccessRequestWithBody constructs an http.Request for the ReplaceVisitorAccess method, with any body, and a specified content type
-func NewReplaceVisitorAccessRequestWithBody(server string, publicUrlId PublicURLID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/access", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewCreatePublishRunRequest calls the generic CreatePublishRun builder with application/json body
-func NewCreatePublishRunRequest(server string, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreatePublishRunRequestWithBody(server, publicUrlId, params, "application/json", bodyReader)
-}
-
-// NewCreatePublishRunRequestWithBody constructs an http.Request for the CreatePublishRun method, with any body, and a specified content type
-func NewCreatePublishRunRequestWithBody(server string, publicUrlId PublicURLID, params *CreatePublishRunParams, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/publish-runs", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
-		var headerParam1 string
-
-		headerParam1, err = runtime.StyleParamWithOptions("simple", false, "Publisher-Run-Proof", params.PublisherRunProof, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Publisher-Run-Proof", headerParam1)
-
-	}
-
-	return req, nil
-}
-
-// NewListVisitorGrantsRequest constructs an http.Request for the ListVisitorGrants method
-func NewListVisitorGrantsRequest(server string, publicUrlId PublicURLID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/visitor-grants", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreateTeamVisitorGrantRequest calls the generic CreateTeamVisitorGrant builder with application/json body
-func NewCreateTeamVisitorGrantRequest(server string, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, body CreateTeamVisitorGrantJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateTeamVisitorGrantRequestWithBody(server, publicUrlId, params, "application/json", bodyReader)
-}
-
-// NewCreateTeamVisitorGrantRequestWithBody constructs an http.Request for the CreateTeamVisitorGrant method, with any body, and a specified content type
-func NewCreateTeamVisitorGrantRequestWithBody(server string, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/visitor-grants", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
-	}
-
-	return req, nil
-}
-
-// NewRevokeVisitorGrantRequest constructs an http.Request for the RevokeVisitorGrant method
-func NewRevokeVisitorGrantRequest(server string, publicUrlId PublicURLID, grantId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "grant_id", grantId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/visitor-grants/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreateIdentityVisitorGrantRequest calls the generic CreateIdentityVisitorGrant builder with application/json body
-func NewCreateIdentityVisitorGrantRequest(server string, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, body CreateIdentityVisitorGrantJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateIdentityVisitorGrantRequestWithBody(server, publicUrlId, params, "application/json", bodyReader)
-}
-
-// NewCreateIdentityVisitorGrantRequestWithBody constructs an http.Request for the CreateIdentityVisitorGrant method, with any body, and a specified content type
-func NewCreateIdentityVisitorGrantRequestWithBody(server string, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/visitor-identity-grants", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
-	}
-
-	return req, nil
-}
-
-// NewListVisitorInvitationsRequest constructs an http.Request for the ListVisitorInvitations method
-func NewListVisitorInvitationsRequest(server string, publicUrlId PublicURLID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/visitor-invitations", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreateVisitorInvitationRequest calls the generic CreateVisitorInvitation builder with application/json body
-func NewCreateVisitorInvitationRequest(server string, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, body CreateVisitorInvitationJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateVisitorInvitationRequestWithBody(server, publicUrlId, params, "application/json", bodyReader)
-}
-
-// NewCreateVisitorInvitationRequestWithBody constructs an http.Request for the CreateVisitorInvitation method, with any body, and a specified content type
-func NewCreateVisitorInvitationRequestWithBody(server string, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/visitor-invitations", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
-	}
-
-	return req, nil
-}
-
-// NewRevokeVisitorInvitationRequest constructs an http.Request for the RevokeVisitorInvitation method
-func NewRevokeVisitorInvitationRequest(server string, publicUrlId PublicURLID, invitationId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "invitation_id", invitationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/visitor-invitations/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewClosePublishRunRequest constructs an http.Request for the ClosePublishRun method
-func NewClosePublishRunRequest(server string, publishRunId PublishRunID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-runs/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCheckPreviewBrowserAccessRequest calls the generic CheckPreviewBrowserAccess builder with application/json body
-func NewCheckPreviewBrowserAccessRequest(server string, publishRunId PublishRunID, body CheckPreviewBrowserAccessJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCheckPreviewBrowserAccessRequestWithBody(server, publishRunId, "application/json", bodyReader)
-}
-
-// NewCheckPreviewBrowserAccessRequestWithBody constructs an http.Request for the CheckPreviewBrowserAccess method, with any body, and a specified content type
-func NewCheckPreviewBrowserAccessRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-runs/%s/browser/access", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewRedeemPreviewBrowserHandoffRequest calls the generic RedeemPreviewBrowserHandoff builder with application/json body
-func NewRedeemPreviewBrowserHandoffRequest(server string, publishRunId PublishRunID, body RedeemPreviewBrowserHandoffJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRedeemPreviewBrowserHandoffRequestWithBody(server, publishRunId, "application/json", bodyReader)
-}
-
-// NewRedeemPreviewBrowserHandoffRequestWithBody constructs an http.Request for the RedeemPreviewBrowserHandoff method, with any body, and a specified content type
-func NewRedeemPreviewBrowserHandoffRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-runs/%s/browser/handoff", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewRevokePreviewBrowserAccessRequest calls the generic RevokePreviewBrowserAccess builder with application/json body
-func NewRevokePreviewBrowserAccessRequest(server string, publishRunId PublishRunID, body RevokePreviewBrowserAccessJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRevokePreviewBrowserAccessRequestWithBody(server, publishRunId, "application/json", bodyReader)
-}
-
-// NewRevokePreviewBrowserAccessRequestWithBody constructs an http.Request for the RevokePreviewBrowserAccess method, with any body, and a specified content type
-func NewRevokePreviewBrowserAccessRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-runs/%s/browser/logout", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewMarkPublishRunCertificateInstalledRequest calls the generic MarkPublishRunCertificateInstalled builder with application/json body
-func NewMarkPublishRunCertificateInstalledRequest(server string, publishRunId PublishRunID, body MarkPublishRunCertificateInstalledJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewMarkPublishRunCertificateInstalledRequestWithBody(server, publishRunId, "application/json", bodyReader)
-}
-
-// NewMarkPublishRunCertificateInstalledRequestWithBody constructs an http.Request for the MarkPublishRunCertificateInstalled method, with any body, and a specified content type
-func NewMarkPublishRunCertificateInstalledRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-runs/%s/certificate-installed", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewCreateCertificateIssuanceRequest calls the generic CreateCertificateIssuance builder with application/json body
-func NewCreateCertificateIssuanceRequest(server string, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateCertificateIssuanceRequestWithBody(server, publishRunId, params, "application/json", bodyReader)
-}
-
-// NewCreateCertificateIssuanceRequestWithBody constructs an http.Request for the CreateCertificateIssuance method, with any body, and a specified content type
-func NewCreateCertificateIssuanceRequestWithBody(server string, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-runs/%s/certificate-issuances", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
-	}
-
-	return req, nil
-}
-
-// NewCreateFeedbackReportRequest calls the generic CreateFeedbackReport builder with application/json body
-func NewCreateFeedbackReportRequest(server string, publishRunId PublishRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateFeedbackReportRequestWithBody(server, publishRunId, params, "application/json", bodyReader)
-}
-
-// NewCreateFeedbackReportRequestWithBody constructs an http.Request for the CreateFeedbackReport method, with any body, and a specified content type
-func NewCreateFeedbackReportRequestWithBody(server string, publishRunId PublishRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-runs/%s/feedback", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
-	}
-
-	return req, nil
-}
-
-// NewListPreviewPageFeedbackRequest calls the generic ListPreviewPageFeedback builder with application/json body
-func NewListPreviewPageFeedbackRequest(server string, publishRunId PublishRunID, body ListPreviewPageFeedbackJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewListPreviewPageFeedbackRequestWithBody(server, publishRunId, "application/json", bodyReader)
-}
-
-// NewListPreviewPageFeedbackRequestWithBody constructs an http.Request for the ListPreviewPageFeedback method, with any body, and a specified content type
-func NewListPreviewPageFeedbackRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-runs/%s/feedback/query", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewAppendReviewerFeedbackEventRequest calls the generic AppendReviewerFeedbackEvent builder with application/json body
-func NewAppendReviewerFeedbackEventRequest(server string, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAppendReviewerFeedbackEventRequestWithBody(server, publishRunId, feedbackId, params, "application/json", bodyReader)
-}
-
-// NewAppendReviewerFeedbackEventRequestWithBody constructs an http.Request for the AppendReviewerFeedbackEvent method, with any body, and a specified content type
-func NewAppendReviewerFeedbackEventRequestWithBody(server string, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-runs/%s/feedback/%s/events", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
-	}
-
-	return req, nil
-}
-
-// NewListReviewerFeedbackEventsRequest calls the generic ListReviewerFeedbackEvents builder with application/json body
-func NewListReviewerFeedbackEventsRequest(server string, publishRunId PublishRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewListReviewerFeedbackEventsRequestWithBody(server, publishRunId, feedbackId, "application/json", bodyReader)
-}
-
-// NewListReviewerFeedbackEventsRequestWithBody constructs an http.Request for the ListReviewerFeedbackEvents method, with any body, and a specified content type
-func NewListReviewerFeedbackEventsRequestWithBody(server string, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-runs/%s/feedback/%s/events/query", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetReviewerFeedbackThreadRequest calls the generic GetReviewerFeedbackThread builder with application/json body
-func NewGetReviewerFeedbackThreadRequest(server string, publishRunId PublishRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewGetReviewerFeedbackThreadRequestWithBody(server, publishRunId, feedbackId, "application/json", bodyReader)
-}
-
-// NewGetReviewerFeedbackThreadRequestWithBody constructs an http.Request for the GetReviewerFeedbackThread method, with any body, and a specified content type
-func NewGetReviewerFeedbackThreadRequestWithBody(server string, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-runs/%s/feedback/%s/query", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewMarkPublishRunReadyRequest calls the generic MarkPublishRunReady builder with application/json body
-func NewMarkPublishRunReadyRequest(server string, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewMarkPublishRunReadyRequestWithBody(server, publishRunId, "application/json", bodyReader)
-}
-
-// NewMarkPublishRunReadyRequestWithBody constructs an http.Request for the MarkPublishRunReady method, with any body, and a specified content type
-func NewMarkPublishRunReadyRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-runs/%s/ready", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewRenewPublishRunRequest calls the generic RenewPublishRun builder with application/json body
-func NewRenewPublishRunRequest(server string, publishRunId PublishRunID, body RenewPublishRunJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRenewPublishRunRequestWithBody(server, publishRunId, "application/json", bodyReader)
-}
-
-// NewRenewPublishRunRequestWithBody constructs an http.Request for the RenewPublishRun method, with any body, and a specified content type
-func NewRenewPublishRunRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-runs/%s/renew", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewReportPublishRunServiceObservationsRequest calls the generic ReportPublishRunServiceObservations builder with application/json body
-func NewReportPublishRunServiceObservationsRequest(server string, runId string, body ReportPublishRunServiceObservationsJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewReportPublishRunServiceObservationsRequestWithBody(server, runId, "application/json", bodyReader)
-}
-
-// NewReportPublishRunServiceObservationsRequestWithBody constructs an http.Request for the ReportPublishRunServiceObservations method, with any body, and a specified content type
-func NewReportPublishRunServiceObservationsRequestWithBody(server string, runId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "run_id", runId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-runs/%s/service-observations", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewCreatePublisherEnrollmentRequest calls the generic CreatePublisherEnrollment builder with application/json body
 func NewCreatePublisherEnrollmentRequest(server string, body CreatePublisherEnrollmentJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -16959,33 +14046,6 @@ func NewVerifyDeploymentIdentityRequestWithBody(server string, contentType strin
 	}
 
 	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetPublisherPublicURLRequest constructs an http.Request for the GetPublisherPublicURL method
-func NewGetPublisherPublicURLRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publisher/public-url")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
 
 	return req, nil
 }
@@ -17630,6 +14690,40 @@ func NewIssueServiceClientCertificateRequestWithBody(server string, serviceId Se
 	return req, nil
 }
 
+// NewGetServiceConfigurationRequest constructs an http.Request for the GetServiceConfiguration method
+func NewGetServiceConfigurationRequest(server string, serviceId ServiceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/configuration", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewPrepareConnectorPeerPairRequest calls the generic PrepareConnectorPeerPair builder with application/json body
 func NewPrepareConnectorPeerPairRequest(server string, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -17776,6 +14870,53 @@ func NewRenewConnectorPeerPairRequestWithBody(server string, serviceId ServiceID
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSetServiceEnabledRequest calls the generic SetServiceEnabled builder with application/json body
+func NewSetServiceEnabledRequest(server string, serviceId ServiceID, body SetServiceEnabledJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetServiceEnabledRequestWithBody(server, serviceId, "application/json", bodyReader)
+}
+
+// NewSetServiceEnabledRequestWithBody constructs an http.Request for the SetServiceEnabled method, with any body, and a specified content type
+func NewSetServiceEnabledRequestWithBody(server string, serviceId ServiceID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/enabled", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -19008,6 +16149,323 @@ func NewConfirmConnectorPeerPairPreparedRequestWithBody(server string, serviceId
 	return req, nil
 }
 
+// NewCreateFeedbackReportRequest calls the generic CreateFeedbackReport builder with application/json body
+func NewCreateFeedbackReportRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateFeedbackReportRequestWithBody(server, serviceId, serviceRunId, params, "application/json", bodyReader)
+}
+
+// NewCreateFeedbackReportRequestWithBody constructs an http.Request for the CreateFeedbackReport method, with any body, and a specified content type
+func NewCreateFeedbackReportRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/feedback", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewListPreviewPageFeedbackRequest calls the generic ListPreviewPageFeedback builder with application/json body
+func NewListPreviewPageFeedbackRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body ListPreviewPageFeedbackJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewListPreviewPageFeedbackRequestWithBody(server, serviceId, serviceRunId, "application/json", bodyReader)
+}
+
+// NewListPreviewPageFeedbackRequestWithBody constructs an http.Request for the ListPreviewPageFeedback method, with any body, and a specified content type
+func NewListPreviewPageFeedbackRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/feedback/query", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAppendReviewerFeedbackEventRequest calls the generic AppendReviewerFeedbackEvent builder with application/json body
+func NewAppendReviewerFeedbackEventRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAppendReviewerFeedbackEventRequestWithBody(server, serviceId, serviceRunId, feedbackId, params, "application/json", bodyReader)
+}
+
+// NewAppendReviewerFeedbackEventRequestWithBody constructs an http.Request for the AppendReviewerFeedbackEvent method, with any body, and a specified content type
+func NewAppendReviewerFeedbackEventRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/feedback/%s/events", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewListReviewerFeedbackEventsRequest calls the generic ListReviewerFeedbackEvents builder with application/json body
+func NewListReviewerFeedbackEventsRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewListReviewerFeedbackEventsRequestWithBody(server, serviceId, serviceRunId, feedbackId, "application/json", bodyReader)
+}
+
+// NewListReviewerFeedbackEventsRequestWithBody constructs an http.Request for the ListReviewerFeedbackEvents method, with any body, and a specified content type
+func NewListReviewerFeedbackEventsRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/feedback/%s/events/query", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetReviewerFeedbackThreadRequest calls the generic GetReviewerFeedbackThread builder with application/json body
+func NewGetReviewerFeedbackThreadRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewGetReviewerFeedbackThreadRequestWithBody(server, serviceId, serviceRunId, feedbackId, "application/json", bodyReader)
+}
+
+// NewGetReviewerFeedbackThreadRequestWithBody constructs an http.Request for the GetReviewerFeedbackThread method, with any body, and a specified content type
+func NewGetReviewerFeedbackThreadRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/feedback/%s/query", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewCreateServiceRunPreviewRequest calls the generic CreateServiceRunPreview builder with application/json body
 func NewCreateServiceRunPreviewRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body CreateServiceRunPreviewJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -19691,46 +17149,6 @@ func NewRevokeVisitorDeviceRequest(server string, deviceId string) (*http.Reques
 	return req, nil
 }
 
-// NewAcceptVisitorInvitationRequest calls the generic AcceptVisitorInvitation builder with application/json body
-func NewAcceptVisitorInvitationRequest(server string, body AcceptVisitorInvitationJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAcceptVisitorInvitationRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewAcceptVisitorInvitationRequestWithBody constructs an http.Request for the AcceptVisitorInvitation method, with any body, and a specified content type
-func NewAcceptVisitorInvitationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/visitor-invitations/accept")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewReadPublisherVisitorPolicyRequest calls the generic ReadPublisherVisitorPolicy builder with application/json body
 func NewReadPublisherVisitorPolicyRequest(server string, body ReadPublisherVisitorPolicyJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -19811,72 +17229,6 @@ func NewIssueVisitorTokenRequestWithBody(server string, contentType string, body
 	return req, nil
 }
 
-// NewListAvailablePublicURLsRequest constructs an http.Request for the ListAvailablePublicURLs method
-func NewListAvailablePublicURLsRequest(server string, params *ListAvailablePublicURLsParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/visitor/public-urls")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.TeamId != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", *params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Cursor != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewListAvailableServicesRequest constructs an http.Request for the ListAvailableServices method
 func NewListAvailableServicesRequest(server string, params *ListAvailableServicesParams) (*http.Request, error) {
 	var err error
@@ -19908,6 +17260,18 @@ func NewListAvailableServicesRequest(server string, params *ListAvailableService
 		if params.Cursor != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.AccessPath != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "access_path", *params.AccessPath, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -20153,7 +17517,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListMaintenanceControlsWithResponse List maintenance controls
 	//
-	// Read the administrator-controlled gates for public URL creation, publish run creation, and certificate issuance. Reading a gate does not change it.
+	// Read the administrator-controlled gates for service creation, service run creation, and certificate issuance. Reading a gate does not change it.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -20207,7 +17571,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetAdminServerStatusWithResponse Read control, ingress, and relay status
 	//
-	// Read control, ingress, relay, and maintenance observations using an administrator's control session. These observations do not renew process leases.
+	// Read canonical service and service run counts plus ingress and relay lease observations using an administrator's control session. Prepared runs are not counted as starting runs. These observations do not renew process leases.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -20223,32 +17587,14 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/browser/callback (the `CompletePreviewBrowserLogin` operationId).
 	CompletePreviewBrowserLoginWithResponse(ctx context.Context, params *CompletePreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*CompletePreviewBrowserLoginResponse, error)
 
-	// BeginPreviewBrowserLoginWithResponse Start sign-in for a preview visitor
-	//
-	// Start browser sign-in for a public URL, optionally within a preview. Navigate to this URL rather than fetching JSON. Current visitor permission is checked before issuing a browser credential.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
-	BeginPreviewBrowserLoginWithResponse(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*BeginPreviewBrowserLoginResponse, error)
-
 	// BeginServiceBrowserLoginWithResponse Start browser sign-in for one HTTP service
 	//
-	// Start browser sign-in for one HTTP service. Navigate to this URL rather than fetching JSON. The common callback preserves the allocated service port and checks current visitor access before issuing a credential.
+	// Start browser sign-in for one HTTP service, optionally within a preview. Navigate to this URL rather than fetching JSON. Sign-in verifies browser identity independently of current visit permission; it does not create a visitor grant.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/browser/service-login (the `BeginServiceBrowserLogin` operationId).
 	BeginServiceBrowserLoginWithResponse(ctx context.Context, params *BeginServiceBrowserLoginParams, reqEditors ...RequestEditorFn) (*BeginServiceBrowserLoginResponse, error)
-
-	// GetCertificateIssuanceWithResponse Read one publish-run certificate issuance
-	//
-	// Poll one public URL certificate issuance using its publish run token. The token must belong to the issuance's current run; a control session alone cannot retrieve the certificate.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/certificate-issuances/{issuance_id} (the `GetCertificateIssuance` operationId).
-	GetCertificateIssuanceWithResponse(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*GetCertificateIssuanceResponse, error)
 
 	// GetClientIPWithResponse Return the requesting client's public IP address
 	//
@@ -20331,32 +17677,41 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/guest-demo (the `CreateGuestDemo` operationId).
 	CreateGuestDemoWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CreateGuestDemoResponse, error)
 
-	// AllocateGuestDemoNumberWithResponse Allocate a new hostname number for this guest trial
+	// EnrollGuestPublisherWithBodyWithResponse Enroll a publisher key for this trial's exact demo service
 	//
-	// Allocate the next demo hostname number using the guest credential returned by createGuestDemo. Control checks the trial deadline, source address, remaining allowance, and absence of an open demo publish run.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
-	AllocateGuestDemoNumberWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AllocateGuestDemoNumberResponse, error)
-
-	// EnrollGuestPublisherWithBodyWithResponse Enroll a publisher key for the guest trial's assigned demo URL
-	//
-	// Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
+	// Authenticate with the trial credential and bind an Ed25519 key to its actual saved service. Control checks current trial ownership, publication eligibility, and server-observed source. The same enrolled current key recovers its facts; another key cannot take over or revive revoked authority. The exact-service grant carries the real guest_id and fixed expiry, with no team_id, namespace allocation, service management, or connector permission.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId).
 	EnrollGuestPublisherWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnrollGuestPublisherResponse, error)
 
-	// EnrollGuestPublisherWithResponse Enroll a publisher key for the guest trial's assigned demo URL
+	// EnrollGuestPublisherWithResponse Enroll a publisher key for this trial's exact demo service
 	//
-	// Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
+	// Authenticate with the trial credential and bind an Ed25519 key to its actual saved service. Control checks current trial ownership, publication eligibility, and server-observed source. The same enrolled current key recovers its facts; another key cannot take over or revive revoked authority. The exact-service grant carries the real guest_id and fixed expiry, with no team_id, namespace allocation, service management, or connector permission.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId).
 	EnrollGuestPublisherWithResponse(ctx context.Context, body EnrollGuestPublisherJSONRequestBody, reqEditors ...RequestEditorFn) (*EnrollGuestPublisherResponse, error)
+
+	// AllocateGuestDemoServiceWithBodyWithResponse Allocate or recover this trial's exact demo service
+	//
+	// Allocate one ordinary service using the current trial credential and server-observed source. Control captures the fixed approved demo declaration and absolute trial expiry. The same key and normalized request recover only the original live allocation, including cleanup after a lost response; retries never advance the demo number or extend expiry. READY exhaustion blocks new allocation, not recovery for cleanup. A deleted or expired allocation cannot be recreated. Another demo or outstanding offline serving authority blocks new allocation. This operation grants no publisher or connector permission.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/guest-demo/services (the `AllocateGuestDemoService` operationId).
+	AllocateGuestDemoServiceWithBodyWithResponse(ctx context.Context, params *AllocateGuestDemoServiceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AllocateGuestDemoServiceResponse, error)
+
+	// AllocateGuestDemoServiceWithResponse Allocate or recover this trial's exact demo service
+	//
+	// Allocate one ordinary service using the current trial credential and server-observed source. Control captures the fixed approved demo declaration and absolute trial expiry. The same key and normalized request recover only the original live allocation, including cleanup after a lost response; retries never advance the demo number or extend expiry. READY exhaustion blocks new allocation, not recovery for cleanup. A deleted or expired allocation cannot be recreated. Another demo or outstanding offline serving authority blocks new allocation. This operation grants no publisher or connector permission.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/guest-demo/services (the `AllocateGuestDemoService` operationId).
+	AllocateGuestDemoServiceWithResponse(ctx context.Context, params *AllocateGuestDemoServiceParams, body AllocateGuestDemoServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*AllocateGuestDemoServiceResponse, error)
 
 	// GetHealthWithResponse Confirm that the control HTTP server is serving
 	//
@@ -20799,438 +18154,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/projects/{project_key}/status (the `GetProjectStatus` operationId).
 	GetProjectStatusWithResponse(ctx context.Context, projectKey string, params *GetProjectStatusParams, reqEditors ...RequestEditorFn) (*GetProjectStatusResponse, error)
 
-	// ListPublicURLsWithResponse List public URLs for one team
-	//
-	// Read a cursor-paginated inventory of public URLs the caller may manage in one team. An exact canonical_hostname filter returns zero or one non-deleted URL and cannot be combined with a cursor.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
-	ListPublicURLsWithResponse(ctx context.Context, params *ListPublicURLsParams, reqEditors ...RequestEditorFn) (*ListPublicURLsResponse, error)
-
-	// CreatePublicURLWithBodyWithResponse Create one team public URL
-	//
-	// Save an authorized hostname, target, and visitor policy using an idempotency key. A control session selects an authorized team scope; a guest credential can create only its assigned ephemeral demo hostname. Creation does not start a publish run.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
-	CreatePublicURLWithBodyWithResponse(ctx context.Context, params *CreatePublicURLParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublicURLResponse, error)
-
-	// CreatePublicURLWithResponse Create one team public URL
-	//
-	// Save an authorized hostname, target, and visitor policy using an idempotency key. A control session selects an authorized team scope; a guest credential can create only its assigned ephemeral demo hostname. Creation does not start a publish run.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
-	CreatePublicURLWithResponse(ctx context.Context, params *CreatePublicURLParams, body CreatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublicURLResponse, error)
-
-	// DeletePublicURLWithResponse Delete one public URL and close its publish run
-	//
-	// Delete the saved public URL under current management authorization and close its active publish run. The hostname cannot keep serving through the deleted URL's old run credentials.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
-	DeletePublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*DeletePublicURLResponse, error)
-
-	// GetPublicURLWithResponse Read one public URL
-	//
-	// Read one saved public URL under current management authorization. Its saved policy and lifecycle are separate from whether an active publish run is routable.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
-	GetPublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*GetPublicURLResponse, error)
-
-	// UpdatePublicURLWithBodyWithResponse Update a public URL's target and IP policy
-	//
-	// Change only the supplied fields using the mutation_revision you read as expected_mutation_revision. Omitted fields keep their saved values; an empty IP list clears the filter. Null values, empty edits, and stale revisions are rejected.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
-	UpdatePublicURLWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePublicURLResponse, error)
-
-	// UpdatePublicURLWithResponse Update a public URL's target and IP policy
-	//
-	// Change only the supplied fields using the mutation_revision you read as expected_mutation_revision. Omitted fields keep their saved values; an empty IP list clears the filter. Null values, empty edits, and stale revisions are rejected.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
-	UpdatePublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePublicURLResponse, error)
-
-	// ReplaceVisitorAccessWithBodyWithResponse Replace the complete live visitor access policy
-	//
-	// Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
-	ReplaceVisitorAccessWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceVisitorAccessResponse, error)
-
-	// ReplaceVisitorAccessWithResponse Replace the complete live visitor access policy
-	//
-	// Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
-	ReplaceVisitorAccessWithResponse(ctx context.Context, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceVisitorAccessResponse, error)
-
-	// CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
-	//
-	// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
-	CreatePublishRunWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublishRunResponse, error)
-
-	// CreatePublishRunWithResponse Create a publish run and allocate its publish run number
-	//
-	// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
-	CreatePublishRunWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublishRunResponse, error)
-
-	// ListVisitorGrantsWithResponse List visitor grants for one manageable public URL
-	//
-	// Read exact-public-URL team and identity visitor grants under current management authorization. Listing a grant is not a substitute for checking the visitor's current access.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/public-urls/{public_url_id}/visitor-grants (the `ListVisitorGrants` operationId).
-	ListVisitorGrantsWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*ListVisitorGrantsResponse, error)
-
-	// CreateTeamVisitorGrantWithBodyWithResponse Grant current members of a team access to one public URL
-	//
-	// Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId).
-	CreateTeamVisitorGrantWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTeamVisitorGrantResponse, error)
-
-	// CreateTeamVisitorGrantWithResponse Grant current members of a team access to one public URL
-	//
-	// Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId).
-	CreateTeamVisitorGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, body CreateTeamVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTeamVisitorGrantResponse, error)
-
-	// RevokeVisitorGrantWithResponse Revoke one public URL visitor grant
-	//
-	// Revoke the exact grant under current public URL management authorization. Current visitor policy determines access after revocation; other grants for the URL remain separate.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /v1/public-urls/{public_url_id}/visitor-grants/{grant_id} (the `RevokeVisitorGrant` operationId).
-	RevokeVisitorGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, grantId string, reqEditors ...RequestEditorFn) (*RevokeVisitorGrantResponse, error)
-
-	// CreateIdentityVisitorGrantWithBodyWithResponse Create an explicit identity grant, including for the current identity
-	//
-	// Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
-	CreateIdentityVisitorGrantWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateIdentityVisitorGrantResponse, error)
-
-	// CreateIdentityVisitorGrantWithResponse Create an explicit identity grant, including for the current identity
-	//
-	// Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
-	CreateIdentityVisitorGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, body CreateIdentityVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateIdentityVisitorGrantResponse, error)
-
-	// ListVisitorInvitationsWithResponse List named visitor invitations for one public URL
-	//
-	// Read invitation records using current public URL management authorization. Invitation inventory does not reveal a reusable visitor credential or grant management permission to its recipients.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/public-urls/{public_url_id}/visitor-invitations (the `ListVisitorInvitations` operationId).
-	ListVisitorInvitationsWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*ListVisitorInvitationsResponse, error)
-
-	// CreateVisitorInvitationWithBodyWithResponse Invite a verified email identity to one public URL
-	//
-	// Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId).
-	CreateVisitorInvitationWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVisitorInvitationResponse, error)
-
-	// CreateVisitorInvitationWithResponse Invite a verified email identity to one public URL
-	//
-	// Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId).
-	CreateVisitorInvitationWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, body CreateVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVisitorInvitationResponse, error)
-
-	// RevokeVisitorInvitationWithResponse Revoke a public URL invitation and its accepted identity grant
-	//
-	// Revoke the named invitation using current public URL management authorization. If it was accepted, revoke the identity grant created by that invitation as well.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id} (the `RevokeVisitorInvitation` operationId).
-	RevokeVisitorInvitationWithResponse(ctx context.Context, publicUrlId PublicURLID, invitationId string, reqEditors ...RequestEditorFn) (*RevokeVisitorInvitationResponse, error)
-
-	// ClosePublishRunWithResponse Close and drain a publish run without deleting its public URL
-	//
-	// Close the exact publication using its publish run token. Saved public URLs remain available for a later run; ephemeral public URLs follow their removal lifecycle instead.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
-	ClosePublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, reqEditors ...RequestEditorFn) (*ClosePublishRunResponse, error)
-
-	// CheckPreviewBrowserAccessWithBodyWithResponse Check a browser cookie against current preview access
-	//
-	// Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
-	CheckPreviewBrowserAccessWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CheckPreviewBrowserAccessResponse, error)
-
-	// CheckPreviewBrowserAccessWithResponse Check a browser cookie against current preview access
-	//
-	// Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
-	CheckPreviewBrowserAccessWithResponse(ctx context.Context, publishRunId PublishRunID, body CheckPreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*CheckPreviewBrowserAccessResponse, error)
-
-	// RedeemPreviewBrowserHandoffWithBodyWithResponse Redeem a one-time browser handoff on the publisher
-	//
-	// Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
-	RedeemPreviewBrowserHandoffWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPreviewBrowserHandoffResponse, error)
-
-	// RedeemPreviewBrowserHandoffWithResponse Redeem a one-time browser handoff on the publisher
-	//
-	// Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
-	RedeemPreviewBrowserHandoffWithResponse(ctx context.Context, publishRunId PublishRunID, body RedeemPreviewBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPreviewBrowserHandoffResponse, error)
-
-	// RevokePreviewBrowserAccessWithBodyWithResponse Revoke the current browser session
-	//
-	// Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
-	RevokePreviewBrowserAccessWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokePreviewBrowserAccessResponse, error)
-
-	// RevokePreviewBrowserAccessWithResponse Revoke the current browser session
-	//
-	// Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
-	RevokePreviewBrowserAccessWithResponse(ctx context.Context, publishRunId PublishRunID, body RevokePreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokePreviewBrowserAccessResponse, error)
-
-	// MarkPublishRunCertificateInstalledWithBodyWithResponse Record installation of the current public URL certificate
-	//
-	// Acknowledge the exact approved public URL certificate installed by the publisher using this run's token and number. Installation alone does not establish publisher connection readiness.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
-	MarkPublishRunCertificateInstalledWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublishRunCertificateInstalledResponse, error)
-
-	// MarkPublishRunCertificateInstalledWithResponse Record installation of the current public URL certificate
-	//
-	// Acknowledge the exact approved public URL certificate installed by the publisher using this run's token and number. Installation alone does not establish publisher connection readiness.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
-	MarkPublishRunCertificateInstalledWithResponse(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublishRunCertificateInstalledResponse, error)
-
-	// CreateCertificateIssuanceWithBodyWithResponse Begin issuance for the publish run's certificate plan
-	//
-	// Submit the publisher's CSR under the exact publish run token and approved certificate plan. The idempotency key identifies one issuance attempt; a control session or publisher access token cannot substitute for the run token.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
-	CreateCertificateIssuanceWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error)
-
-	// CreateCertificateIssuanceWithResponse Begin issuance for the publish run's certificate plan
-	//
-	// Submit the publisher's CSR under the exact publish run token and approved certificate plan. The idempotency key identifies one issuance attempt; a control session or publisher access token cannot substitute for the run token.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
-	CreateCertificateIssuanceWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error)
-
-	// CreateFeedbackReportWithBodyWithResponse Store a reviewer's first report for a preview page
-	//
-	// Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
-	CreateFeedbackReportWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error)
-
-	// CreateFeedbackReportWithResponse Store a reviewer's first report for a preview page
-	//
-	// Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
-	CreateFeedbackReportWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error)
-
-	// ListPreviewPageFeedbackWithBodyWithResponse List feedback on one page for a reviewer
-	//
-	// Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
-	ListPreviewPageFeedbackWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error)
-
-	// ListPreviewPageFeedbackWithResponse List feedback on one page for a reviewer
-	//
-	// Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
-	ListPreviewPageFeedbackWithResponse(ctx context.Context, publishRunId PublishRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error)
-
-	// AppendReviewerFeedbackEventWithBodyWithResponse Reply, resolve, or reopen feedback through preview access
-	//
-	// Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
-	AppendReviewerFeedbackEventWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error)
-
-	// AppendReviewerFeedbackEventWithResponse Reply, resolve, or reopen feedback through preview access
-	//
-	// Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
-	AppendReviewerFeedbackEventWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error)
-
-	// ListReviewerFeedbackEventsWithBodyWithResponse Read thread events through a current publisher connection
-	//
-	// Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
-	ListReviewerFeedbackEventsWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListReviewerFeedbackEventsResponse, error)
-
-	// ListReviewerFeedbackEventsWithResponse Read thread events through a current publisher connection
-	//
-	// Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
-	ListReviewerFeedbackEventsWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*ListReviewerFeedbackEventsResponse, error)
-
-	// GetReviewerFeedbackThreadWithBodyWithResponse Read a feedback thread through a current publisher connection
-	//
-	// Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
-	GetReviewerFeedbackThreadWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error)
-
-	// GetReviewerFeedbackThreadWithResponse Read a feedback thread through a current publisher connection
-	//
-	// Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
-	GetReviewerFeedbackThreadWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error)
-
-	// MarkPublishRunReadyWithBodyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
-	//
-	// Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
-	MarkPublishRunReadyWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublishRunReadyResponse, error)
-
-	// MarkPublishRunReadyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
-	//
-	// Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
-	MarkPublishRunReadyWithResponse(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublishRunReadyResponse, error)
-
-	// RenewPublishRunWithBodyWithResponse Renew a publish run and replace missing publisher connections
-	//
-	// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/renew (the `RenewPublishRun` operationId).
-	RenewPublishRunWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewPublishRunResponse, error)
-
-	// RenewPublishRunWithResponse Renew a publish run and replace missing publisher connections
-	//
-	// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/renew (the `RenewPublishRun` operationId).
-	RenewPublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, body RenewPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewPublishRunResponse, error)
-
-	// ReportPublishRunServiceObservationsWithBodyWithResponse Report service observations through a public URL publish run
-	//
-	// Submit bounded connection observations using the exact publish run token. Control checks the current run and counts accepted and duplicate events; observations do not create visitor grants or authorize traffic.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId).
-	ReportPublishRunServiceObservationsWithBodyWithResponse(ctx context.Context, runId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportPublishRunServiceObservationsResponse, error)
-
-	// ReportPublishRunServiceObservationsWithResponse Report service observations through a public URL publish run
-	//
-	// Submit bounded connection observations using the exact publish run token. Control checks the current run and counts accepted and duplicate events; observations do not create visitor grants or authorize traffic.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId).
-	ReportPublishRunServiceObservationsWithResponse(ctx context.Context, runId string, body ReportPublishRunServiceObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportPublishRunServiceObservationsResponse, error)
-
 	// CreatePublisherEnrollmentWithBodyWithResponse Issue an expiring one-use publisher enrollment
 	//
 	// Issue an expiring one-use enrollment secret under current management authorization. Enrollment installs a publisher's signing key for the selected scope; it is separate from exchanging signed assertions for short-lived publisher access tokens.
@@ -21374,15 +18297,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/publisher/deployments/verify (the `VerifyDeploymentIdentity` operationId).
 	VerifyDeploymentIdentityWithResponse(ctx context.Context, body VerifyDeploymentIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyDeploymentIdentityResponse, error)
-
-	// GetPublisherPublicURLWithResponse Read the saved URL selected by the current grant
-	//
-	// Read the single saved public URL selected by the publisher access token's exact grant. Namespace allocation grants and control sessions do not substitute for an exact public URL publisher grant.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/publisher/public-url (the `GetPublisherPublicURL` operationId).
-	GetPublisherPublicURLWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublisherPublicURLResponse, error)
 
 	// InspectPublisherRuntimeWithBodyWithResponse Inspect a publisher runtime
 	//
@@ -21530,7 +18444,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateServiceWithBodyWithResponse Create one saved service with approved protocol and placement
 	//
-	// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
+	// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21539,7 +18453,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateServiceWithResponse Create one saved service with approved protocol and placement
 	//
-	// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
+	// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21548,7 +18462,7 @@ type ClientWithResponsesInterface interface {
 
 	// DeleteServiceWithResponse Delete a saved service and revoke its active publication
 	//
-	// Revoke access and close any run before tombstoning its ID-keyed ingress projection.
+	// Revoke access and close any run before tombstoning its ID-keyed ingress projection. A current trial credential may delete only its exact owned demo service after control verifies the server-observed source; READY exhaustion does not prevent cleanup within the fixed trial lifetime. A publisher grant, run token, or share is not management permission. Guest cleanup uses this same closure, settlement, and endpoint retirement; outstanding offline serving authority remains fenced.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -21564,18 +18478,18 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/services/{service_id} (the `GetService` operationId).
 	GetServiceWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*GetServiceResponse, error)
 
-	// ConfigureServiceWithBodyWithResponse Replace a service's approved protocol and target TLS trust
+	// ConfigureServiceWithBodyWithResponse Replace a service's approved settings and standalone declaration
 	//
-	// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs.
+	// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Optional configuration atomically replaces a standalone service declaration, including its target, endpoint selectors, HTTP visitor policy, and request limits, without replacing the service ID. Protocol and target TLS must agree with the declaration. For read/modify/write, also send the unquoted getServiceConfiguration ETag token as expected_configuration_digest; a mismatch conflicts before any service write, independently of expected_trust_revision. Full desired-intent replacements may omit the digest. Omitting configuration retains it. Allocated invocation intent and project-managed definitions remain protected. Endpoint changes preserve authorized connector runs; protocol or target-trust changes fence old runs. Publishers must declare matching trust when preparing later runs.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/services/{service_id} (the `ConfigureService` operationId).
 	ConfigureServiceWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfigureServiceResponse, error)
 
-	// ConfigureServiceWithResponse Replace a service's approved protocol and target TLS trust
+	// ConfigureServiceWithResponse Replace a service's approved settings and standalone declaration
 	//
-	// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs.
+	// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Optional configuration atomically replaces a standalone service declaration, including its target, endpoint selectors, HTTP visitor policy, and request limits, without replacing the service ID. Protocol and target TLS must agree with the declaration. For read/modify/write, also send the unquoted getServiceConfiguration ETag token as expected_configuration_digest; a mismatch conflicts before any service write, independently of expected_trust_revision. Full desired-intent replacements may omit the digest. Omitting configuration retains it. Allocated invocation intent and project-managed definitions remain protected. Endpoint changes preserve authorized connector runs; protocol or target-trust changes fence old runs. Publishers must declare matching trust when preparing later runs.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21599,6 +18513,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId).
 	IssueServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, body IssueServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueServiceClientCertificateResponse, error)
+
+	// GetServiceConfigurationWithResponse Read one service's protected saved declaration
+	//
+	// Requires current exact-service management permission, including current membership and company sign-in where required. Returns the canonical normalized ProjectServiceConfiguration directly, or 204 when the service legitimately has no declaration. Both successful responses include a strong ETag containing a sha256 digest token; absence has its own deterministic digest. Use the unquoted token as expected_configuration_digest when replacing a read declaration. The digest is independent of trust, endpoint, and visitor-policy revisions. This read does not create state or grant mutation permission for allocated or project-managed declarations. Publisher credentials, visitor grants, shares, and guest credentials do not authorize it. Targets and private configuration never appear in inventory or publisher metadata.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/services/{service_id}/configuration (the `GetServiceConfiguration` operationId).
+	GetServiceConfigurationWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*GetServiceConfigurationResponse, error)
 
 	// PrepareConnectorPeerPairWithBodyWithResponse Prepare a signed connector pair for an exact ready service run
 	//
@@ -21653,6 +18576,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 	RenewConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error)
+
+	// SetServiceEnabledWithBodyWithResponse Suspend or enable a saved service
+	//
+	// Change operational availability using current stored management authority. Suspension closes current runs while retaining the service ID, declaration, publisher and visitor grants, endpoint reservations, and project or deployment ownership. Enabling allows new authorized runs; it never reopens closed runs or restores revoked permission. Works for project-managed services without editing their declarations. Guest trial credentials and publisher grants do not grant this management operation.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/services/{service_id}/enabled (the `SetServiceEnabled` operationId).
+	SetServiceEnabledWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetServiceEnabledResponse, error)
+
+	// SetServiceEnabledWithResponse Suspend or enable a saved service
+	//
+	// Change operational availability using current stored management authority. Suspension closes current runs while retaining the service ID, declaration, publisher and visitor grants, endpoint reservations, and project or deployment ownership. Enabling allows new authorized runs; it never reopens closed runs or restores revoked permission. Works for project-managed services without editing their declarations. Guest trial credentials and publisher grants do not grant this management operation.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/services/{service_id}/enabled (the `SetServiceEnabled` operationId).
+	SetServiceEnabledWithResponse(ctx context.Context, serviceId ServiceID, body SetServiceEnabledJSONRequestBody, reqEditors ...RequestEditorFn) (*SetServiceEnabledResponse, error)
 
 	// ReleaseServiceEndpointWithBodyWithResponse Retire a disabled service's public port reservation
 	//
@@ -21717,7 +18658,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/services/{service_id}/http-grants (the `ListServiceHTTPGrants` operationId).
 	ListServiceHTTPGrantsWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*ListServiceHTTPGrantsResponse, error)
 
-	// CreateServiceHTTPGrantWithBodyWithResponse Create a service-scoped HTTP visitor token or share
+	// CreateServiceHTTPGrantWithBodyWithResponse Create a service-scoped HTTP visitor token
 	//
 	// Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission.
 	//
@@ -21726,7 +18667,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId).
 	CreateServiceHTTPGrantWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateServiceHTTPGrantResponse, error)
 
-	// CreateServiceHTTPGrantWithResponse Create a service-scoped HTTP visitor token or share
+	// CreateServiceHTTPGrantWithResponse Create a service-scoped HTTP visitor token
 	//
 	// Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission.
 	//
@@ -21737,7 +18678,7 @@ type ClientWithResponsesInterface interface {
 
 	// RevokeServiceHTTPGrantWithResponse Revoke one service-scoped HTTP visitor credential
 	//
-	// Revoke the named token or share using current service management permission. The credential no longer authorizes new visitor permission; retained summaries remain visible without their secrets.
+	// Revoke the named token using current service management permission. The credential no longer authorizes new visitor permission; retained summaries remain visible without their secrets.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -21845,7 +18786,7 @@ type ClientWithResponsesInterface interface {
 
 	// RedeemServiceBrowserHandoffWithBodyWithResponse Exchange a service browser handoff through its publisher run
 	//
-	// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
+	// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a browser identity cookie bound to captured service runs. Visitor permission is optional and checked independently, including any supplied share cookie pair. A visitor's control session cannot substitute for the publisher run token.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21854,7 +18795,7 @@ type ClientWithResponsesInterface interface {
 
 	// RedeemServiceBrowserHandoffWithResponse Exchange a service browser handoff through its publisher run
 	//
-	// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
+	// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a browser identity cookie bound to captured service runs. Visitor permission is optional and checked independently, including any supplied share cookie pair. A visitor's control session cannot substitute for the publisher run token.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21863,7 +18804,7 @@ type ClientWithResponsesInterface interface {
 
 	// RevokeServiceBrowserSessionWithBodyWithResponse Revoke a browser session through its service publisher run
 	//
-	// Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
+	// Authenticate the publisher with the exact service run token and prove the body's browser session was installed for that captured service run. Revoke the shared browser session across its hostname handoff chain, including pending handoffs. Other browser sessions and the person's control session remain unchanged.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21872,7 +18813,7 @@ type ClientWithResponsesInterface interface {
 
 	// RevokeServiceBrowserSessionWithResponse Revoke a browser session through its service publisher run
 	//
-	// Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
+	// Authenticate the publisher with the exact service run token and prove the body's browser session was installed for that captured service run. Revoke the shared browser session across its hostname handoff chain, including pending handoffs. Other browser sessions and the person's control session remain unchanged.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21881,7 +18822,7 @@ type ClientWithResponsesInterface interface {
 
 	// CheckServiceBrowserSessionWithBodyWithResponse Check a browser session through its service publisher run
 	//
-	// Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
+	// Authenticate the publisher with the exact service run token and recheck the body's browser identity cookie for that captured service run. Identity remains authenticated when current visit permission is denied; neither identity nor this check creates a visitor or management grant.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21890,7 +18831,7 @@ type ClientWithResponsesInterface interface {
 
 	// CheckServiceBrowserSessionWithResponse Check a browser session through its service publisher run
 	//
-	// Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
+	// Authenticate the publisher with the exact service run token and recheck the body's browser identity cookie for that captured service run. Identity remains authenticated when current visit permission is denied; neither identity nor this check creates a visitor or management grant.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21986,6 +18927,96 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId).
 	ConfirmConnectorPeerPairPreparedWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmConnectorPeerPairPreparedResponse, error)
+
+	// CreateFeedbackReportWithBodyWithResponse Store a reviewer's first report for a preview page
+	//
+	// Submit the immutable first report through the exact service run token with the reviewer's current access proof in the body. Control verifies browser identity independently of visit permission; publisher authentication alone does not authorize a reviewer report.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback (the `CreateFeedbackReport` operationId).
+	CreateFeedbackReportWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error)
+
+	// CreateFeedbackReportWithResponse Store a reviewer's first report for a preview page
+	//
+	// Submit the immutable first report through the exact service run token with the reviewer's current access proof in the body. Control verifies browser identity independently of visit permission; publisher authentication alone does not authorize a reviewer report.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback (the `CreateFeedbackReport` operationId).
+	CreateFeedbackReportWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error)
+
+	// ListPreviewPageFeedbackWithBodyWithResponse List feedback on one page for a reviewer
+	//
+	// Read feedback for one service through the exact service run token and the reviewer's body access proof, optionally filtering by page. The result is limited to the authorized preview context, not a team-wide management inventory.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
+	ListPreviewPageFeedbackWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error)
+
+	// ListPreviewPageFeedbackWithResponse List feedback on one page for a reviewer
+	//
+	// Read feedback for one service through the exact service run token and the reviewer's body access proof, optionally filtering by page. The result is limited to the authorized preview context, not a team-wide management inventory.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
+	ListPreviewPageFeedbackWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error)
+
+	// AppendReviewerFeedbackEventWithBodyWithResponse Reply, resolve, or reopen feedback through preview access
+	//
+	// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
+	AppendReviewerFeedbackEventWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error)
+
+	// AppendReviewerFeedbackEventWithResponse Reply, resolve, or reopen feedback through preview access
+	//
+	// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
+	AppendReviewerFeedbackEventWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error)
+
+	// ListReviewerFeedbackEventsWithBodyWithResponse Read thread events through a current publisher connection
+	//
+	// Read one thread's ordered follow-up history through the exact service run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
+	ListReviewerFeedbackEventsWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListReviewerFeedbackEventsResponse, error)
+
+	// ListReviewerFeedbackEventsWithResponse Read thread events through a current publisher connection
+	//
+	// Read one thread's ordered follow-up history through the exact service run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
+	ListReviewerFeedbackEventsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*ListReviewerFeedbackEventsResponse, error)
+
+	// GetReviewerFeedbackThreadWithBodyWithResponse Read a feedback thread through a current publisher connection
+	//
+	// Read one thread through the exact service run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
+	GetReviewerFeedbackThreadWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error)
+
+	// GetReviewerFeedbackThreadWithResponse Read a feedback thread through a current publisher connection
+	//
+	// Read one thread through the exact service run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
+	GetReviewerFeedbackThreadWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error)
 
 	// CreateServiceRunPreviewWithBodyWithResponse Create feedback context for one ephemeral service run
 	//
@@ -22176,24 +19207,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /v1/visitor-devices/{device_id} (the `RevokeVisitorDevice` operationId).
 	RevokeVisitorDeviceWithResponse(ctx context.Context, deviceId string, reqEditors ...RequestEditorFn) (*RevokeVisitorDeviceResponse, error)
 
-	// AcceptVisitorInvitationWithBodyWithResponse Accept a public URL invitation for the signed-in identity
-	//
-	// Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId).
-	AcceptVisitorInvitationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcceptVisitorInvitationResponse, error)
-
-	// AcceptVisitorInvitationWithResponse Accept a public URL invitation for the signed-in identity
-	//
-	// Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId).
-	AcceptVisitorInvitationWithResponse(ctx context.Context, body AcceptVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptVisitorInvitationResponse, error)
-
 	// ReadPublisherVisitorPolicyWithBodyWithResponse Refresh the current run's visitor policy and verification keys
 	//
 	// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access.
@@ -22239,15 +19252,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/visitor-tokens (the `IssueVisitorToken` operationId).
 	IssueVisitorTokenWithResponse(ctx context.Context, body IssueVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueVisitorTokenResponse, error)
-
-	// ListAvailablePublicURLsWithResponse List public URLs available to the signed-in visitor
-	//
-	// Read a cursor-paginated visitor inventory across the identity's current grants, optionally selecting one team. The response omits management policy, targets, and secrets and does not itself grant a visitor token.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId).
-	ListAvailablePublicURLsWithResponse(ctx context.Context, params *ListAvailablePublicURLsParams, reqEditors ...RequestEditorFn) (*ListAvailablePublicURLsResponse, error)
 
 	// ListAvailableServicesWithResponse List services available to the signed-in visitor
 	//
@@ -22594,47 +19598,6 @@ func (r CompletePreviewBrowserLoginResponse) ContentType() string {
 	return ""
 }
 
-type BeginPreviewBrowserLoginResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r BeginPreviewBrowserLoginResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r BeginPreviewBrowserLoginResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r BeginPreviewBrowserLoginResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r BeginPreviewBrowserLoginResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r BeginPreviewBrowserLoginResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type BeginServiceBrowserLoginResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -22670,54 +19633,6 @@ func (r BeginServiceBrowserLoginResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r BeginServiceBrowserLoginResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetCertificateIssuanceResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *CertificateIssuance
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetCertificateIssuanceResponse) GetJSON200() *CertificateIssuance {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetCertificateIssuanceResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetCertificateIssuanceResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetCertificateIssuanceResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetCertificateIssuanceResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetCertificateIssuanceResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -23108,65 +20023,17 @@ func (r CreateGuestDemoResponse) ContentType() string {
 	return ""
 }
 
-type AllocateGuestDemoNumberResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *GuestDemoNumber
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AllocateGuestDemoNumberResponse) GetJSON200() *GuestDemoNumber {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AllocateGuestDemoNumberResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AllocateGuestDemoNumberResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AllocateGuestDemoNumberResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AllocateGuestDemoNumberResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AllocateGuestDemoNumberResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type EnrollGuestPublisherResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *GuestPublisherIdentity
+	JSON200 *PublisherEnrollmentResult
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r EnrollGuestPublisherResponse) GetJSON200() *GuestPublisherIdentity {
+func (r EnrollGuestPublisherResponse) GetJSON200() *PublisherEnrollmentResult {
 	return r.JSON200
 }
 
@@ -23198,6 +20065,54 @@ func (r EnrollGuestPublisherResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r EnrollGuestPublisherResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AllocateGuestDemoServiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Service
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r AllocateGuestDemoServiceResponse) GetJSON201() *Service {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AllocateGuestDemoServiceResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AllocateGuestDemoServiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AllocateGuestDemoServiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AllocateGuestDemoServiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AllocateGuestDemoServiceResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -24802,1322 +21717,6 @@ func (r GetProjectStatusResponse) ContentType() string {
 	return ""
 }
 
-type ListPublicURLsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublicURLPage
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListPublicURLsResponse) GetJSON200() *PublicURLPage {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListPublicURLsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ListPublicURLsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListPublicURLsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListPublicURLsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListPublicURLsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreatePublicURLResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *PublicURL
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreatePublicURLResponse) GetJSON201() *PublicURL {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreatePublicURLResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreatePublicURLResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreatePublicURLResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreatePublicURLResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreatePublicURLResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type DeletePublicURLResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r DeletePublicURLResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r DeletePublicURLResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r DeletePublicURLResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DeletePublicURLResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r DeletePublicURLResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetPublicURLResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublicURL
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetPublicURLResponse) GetJSON200() *PublicURL {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetPublicURLResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetPublicURLResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetPublicURLResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetPublicURLResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetPublicURLResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type UpdatePublicURLResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublicURL
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r UpdatePublicURLResponse) GetJSON200() *PublicURL {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r UpdatePublicURLResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r UpdatePublicURLResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r UpdatePublicURLResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r UpdatePublicURLResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r UpdatePublicURLResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ReplaceVisitorAccessResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublicURL
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ReplaceVisitorAccessResponse) GetJSON200() *PublicURL {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ReplaceVisitorAccessResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ReplaceVisitorAccessResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ReplaceVisitorAccessResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ReplaceVisitorAccessResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ReplaceVisitorAccessResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreatePublishRunResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *PublishRunSetup
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreatePublishRunResponse) GetJSON201() *PublishRunSetup {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreatePublishRunResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreatePublishRunResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreatePublishRunResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreatePublishRunResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreatePublishRunResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListVisitorGrantsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]VisitorGrant
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListVisitorGrantsResponse) GetJSON200() *[]VisitorGrant {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListVisitorGrantsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ListVisitorGrantsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListVisitorGrantsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListVisitorGrantsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListVisitorGrantsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateTeamVisitorGrantResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *VisitorGrant
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateTeamVisitorGrantResponse) GetJSON201() *VisitorGrant {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateTeamVisitorGrantResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateTeamVisitorGrantResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateTeamVisitorGrantResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateTeamVisitorGrantResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateTeamVisitorGrantResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RevokeVisitorGrantResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RevokeVisitorGrantResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RevokeVisitorGrantResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RevokeVisitorGrantResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RevokeVisitorGrantResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RevokeVisitorGrantResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateIdentityVisitorGrantResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *VisitorGrant
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateIdentityVisitorGrantResponse) GetJSON201() *VisitorGrant {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateIdentityVisitorGrantResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateIdentityVisitorGrantResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateIdentityVisitorGrantResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateIdentityVisitorGrantResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateIdentityVisitorGrantResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListVisitorInvitationsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]VisitorInvitation
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListVisitorInvitationsResponse) GetJSON200() *[]VisitorInvitation {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListVisitorInvitationsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ListVisitorInvitationsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListVisitorInvitationsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListVisitorInvitationsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListVisitorInvitationsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateVisitorInvitationResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *VisitorInvitationCreation
-	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
-	ApplicationproblemJSON409 *Problem
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateVisitorInvitationResponse) GetJSON201() *VisitorInvitationCreation {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
-func (r CreateVisitorInvitationResponse) GetApplicationproblemJSON409() *Problem {
-	return r.ApplicationproblemJSON409
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateVisitorInvitationResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateVisitorInvitationResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateVisitorInvitationResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateVisitorInvitationResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateVisitorInvitationResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RevokeVisitorInvitationResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RevokeVisitorInvitationResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RevokeVisitorInvitationResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RevokeVisitorInvitationResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RevokeVisitorInvitationResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RevokeVisitorInvitationResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ClosePublishRunResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ClosePublishRunResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ClosePublishRunResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ClosePublishRunResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ClosePublishRunResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ClosePublishRunResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CheckPreviewBrowserAccessResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *BrowserAccessResponse
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r CheckPreviewBrowserAccessResponse) GetJSON200() *BrowserAccessResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CheckPreviewBrowserAccessResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CheckPreviewBrowserAccessResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CheckPreviewBrowserAccessResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CheckPreviewBrowserAccessResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CheckPreviewBrowserAccessResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RedeemPreviewBrowserHandoffResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *BrowserHandoffResponse
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RedeemPreviewBrowserHandoffResponse) GetJSON200() *BrowserHandoffResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RedeemPreviewBrowserHandoffResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RedeemPreviewBrowserHandoffResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RedeemPreviewBrowserHandoffResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RedeemPreviewBrowserHandoffResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RedeemPreviewBrowserHandoffResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RevokePreviewBrowserAccessResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RevokePreviewBrowserAccessResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RevokePreviewBrowserAccessResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RevokePreviewBrowserAccessResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RevokePreviewBrowserAccessResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RevokePreviewBrowserAccessResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type MarkPublishRunCertificateInstalledResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublishRun
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r MarkPublishRunCertificateInstalledResponse) GetJSON200() *PublishRun {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r MarkPublishRunCertificateInstalledResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r MarkPublishRunCertificateInstalledResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r MarkPublishRunCertificateInstalledResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r MarkPublishRunCertificateInstalledResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r MarkPublishRunCertificateInstalledResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateCertificateIssuanceResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *CertificateIssuance
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateCertificateIssuanceResponse) GetJSON201() *CertificateIssuance {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateCertificateIssuanceResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateCertificateIssuanceResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateCertificateIssuanceResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateCertificateIssuanceResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateCertificateIssuanceResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateFeedbackReportResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *FeedbackThread
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateFeedbackReportResponse) GetJSON201() *FeedbackThread {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateFeedbackReportResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateFeedbackReportResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateFeedbackReportResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateFeedbackReportResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateFeedbackReportResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListPreviewPageFeedbackResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *FeedbackThreadPage
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListPreviewPageFeedbackResponse) GetJSON200() *FeedbackThreadPage {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListPreviewPageFeedbackResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ListPreviewPageFeedbackResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListPreviewPageFeedbackResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListPreviewPageFeedbackResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListPreviewPageFeedbackResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AppendReviewerFeedbackEventResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *FeedbackEvent
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r AppendReviewerFeedbackEventResponse) GetJSON201() *FeedbackEvent {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AppendReviewerFeedbackEventResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AppendReviewerFeedbackEventResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AppendReviewerFeedbackEventResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AppendReviewerFeedbackEventResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AppendReviewerFeedbackEventResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListReviewerFeedbackEventsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *FeedbackEventPage
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListReviewerFeedbackEventsResponse) GetJSON200() *FeedbackEventPage {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListReviewerFeedbackEventsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ListReviewerFeedbackEventsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListReviewerFeedbackEventsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListReviewerFeedbackEventsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListReviewerFeedbackEventsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetReviewerFeedbackThreadResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *FeedbackThread
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetReviewerFeedbackThreadResponse) GetJSON200() *FeedbackThread {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetReviewerFeedbackThreadResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetReviewerFeedbackThreadResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetReviewerFeedbackThreadResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetReviewerFeedbackThreadResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetReviewerFeedbackThreadResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type MarkPublishRunReadyResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublishRun
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r MarkPublishRunReadyResponse) GetJSON200() *PublishRun {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r MarkPublishRunReadyResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r MarkPublishRunReadyResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r MarkPublishRunReadyResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r MarkPublishRunReadyResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r MarkPublishRunReadyResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RenewPublishRunResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublishRunHeartbeat
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RenewPublishRunResponse) GetJSON200() *PublishRunHeartbeat {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RenewPublishRunResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RenewPublishRunResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RenewPublishRunResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RenewPublishRunResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RenewPublishRunResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ReportPublishRunServiceObservationsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ServiceObservationResult
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ReportPublishRunServiceObservationsResponse) GetJSON200() *ServiceObservationResult {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ReportPublishRunServiceObservationsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ReportPublishRunServiceObservationsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ReportPublishRunServiceObservationsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ReportPublishRunServiceObservationsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ReportPublishRunServiceObservationsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type CreatePublisherEnrollmentResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -26571,54 +22170,6 @@ func (r VerifyDeploymentIdentityResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r VerifyDeploymentIdentityResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetPublisherPublicURLResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublicURL
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetPublisherPublicURLResponse) GetJSON200() *PublicURL {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetPublisherPublicURLResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetPublisherPublicURLResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetPublisherPublicURLResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetPublisherPublicURLResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetPublisherPublicURLResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -27338,6 +22889,70 @@ func (r IssueServiceClientCertificateResponse) ContentType() string {
 	return ""
 }
 
+// GetServiceConfigurationResponse200Headers the declared response headers of an HTTP 200 response for GetServiceConfiguration
+type GetServiceConfigurationResponse200Headers struct {
+	CacheControl *string
+	ETag         *string
+}
+
+// GetServiceConfigurationResponse204Headers the declared response headers of an HTTP 204 response for GetServiceConfiguration
+type GetServiceConfigurationResponse204Headers struct {
+	CacheControl *string
+	ETag         *string
+}
+
+type GetServiceConfigurationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ProjectServiceConfiguration
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetServiceConfigurationResponse200Headers
+	// Headers204 the parsed response headers for an HTTP 204 response
+	Headers204 *GetServiceConfigurationResponse204Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetServiceConfigurationResponse) GetJSON200() *ProjectServiceConfiguration {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetServiceConfigurationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetServiceConfigurationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetServiceConfigurationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetServiceConfigurationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetServiceConfigurationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type PrepareConnectorPeerPairResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -27476,6 +23091,54 @@ func (r RenewConnectorPeerPairResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RenewConnectorPeerPairResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetServiceEnabledResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Service
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetServiceEnabledResponse) GetJSON200() *Service {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SetServiceEnabledResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SetServiceEnabledResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetServiceEnabledResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetServiceEnabledResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetServiceEnabledResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -28544,6 +24207,246 @@ func (r ConfirmConnectorPeerPairPreparedResponse) ContentType() string {
 	return ""
 }
 
+type CreateFeedbackReportResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *FeedbackThread
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateFeedbackReportResponse) GetJSON201() *FeedbackThread {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateFeedbackReportResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateFeedbackReportResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateFeedbackReportResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateFeedbackReportResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateFeedbackReportResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListPreviewPageFeedbackResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *FeedbackThreadPage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPreviewPageFeedbackResponse) GetJSON200() *FeedbackThreadPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListPreviewPageFeedbackResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPreviewPageFeedbackResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPreviewPageFeedbackResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPreviewPageFeedbackResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPreviewPageFeedbackResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AppendReviewerFeedbackEventResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *FeedbackEvent
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r AppendReviewerFeedbackEventResponse) GetJSON201() *FeedbackEvent {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AppendReviewerFeedbackEventResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AppendReviewerFeedbackEventResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AppendReviewerFeedbackEventResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AppendReviewerFeedbackEventResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AppendReviewerFeedbackEventResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListReviewerFeedbackEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *FeedbackEventPage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListReviewerFeedbackEventsResponse) GetJSON200() *FeedbackEventPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListReviewerFeedbackEventsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListReviewerFeedbackEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListReviewerFeedbackEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListReviewerFeedbackEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListReviewerFeedbackEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetReviewerFeedbackThreadResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *FeedbackThread
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetReviewerFeedbackThreadResponse) GetJSON200() *FeedbackThread {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetReviewerFeedbackThreadResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetReviewerFeedbackThreadResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReviewerFeedbackThreadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReviewerFeedbackThreadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetReviewerFeedbackThreadResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type CreateServiceRunPreviewResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -29168,54 +25071,6 @@ func (r RevokeVisitorDeviceResponse) ContentType() string {
 	return ""
 }
 
-type AcceptVisitorInvitationResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *VisitorGrant
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AcceptVisitorInvitationResponse) GetJSON200() *VisitorGrant {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AcceptVisitorInvitationResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AcceptVisitorInvitationResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AcceptVisitorInvitationResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AcceptVisitorInvitationResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AcceptVisitorInvitationResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ReadPublisherVisitorPolicyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -29306,54 +25161,6 @@ func (r IssueVisitorTokenResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r IssueVisitorTokenResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListAvailablePublicURLsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AvailablePublicURLPage
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListAvailablePublicURLsResponse) GetJSON200() *AvailablePublicURLPage {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListAvailablePublicURLsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ListAvailablePublicURLsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListAvailablePublicURLsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListAvailablePublicURLsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListAvailablePublicURLsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -29658,7 +25465,7 @@ func (r SelectWorkloadServiceRunResponse) ContentType() string {
 
 // ListMaintenanceControlsWithResponse List maintenance controls
 //
-// Read the administrator-controlled gates for public URL creation, publish run creation, and certificate issuance. Reading a gate does not change it.
+// Read the administrator-controlled gates for service creation, service run creation, and certificate issuance. Reading a gate does not change it.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -29748,7 +25555,7 @@ func (c *ClientWithResponses) DrainAdminRelayWithResponse(ctx context.Context, r
 
 // GetAdminServerStatusWithResponse Read control, ingress, and relay status
 //
-// Read control, ingress, relay, and maintenance observations using an administrator's control session. These observations do not renew process leases.
+// Read canonical service and service run counts plus ingress and relay lease observations using an administrator's control session. Prepared runs are not counted as starting runs. These observations do not renew process leases.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -29776,24 +25583,9 @@ func (c *ClientWithResponses) CompletePreviewBrowserLoginWithResponse(ctx contex
 	return ParseCompletePreviewBrowserLoginResponse(rsp)
 }
 
-// BeginPreviewBrowserLoginWithResponse Start sign-in for a preview visitor
-//
-// Start browser sign-in for a public URL, optionally within a preview. Navigate to this URL rather than fetching JSON. Current visitor permission is checked before issuing a browser credential.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
-func (c *ClientWithResponses) BeginPreviewBrowserLoginWithResponse(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*BeginPreviewBrowserLoginResponse, error) {
-	rsp, err := c.BeginPreviewBrowserLogin(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseBeginPreviewBrowserLoginResponse(rsp)
-}
-
 // BeginServiceBrowserLoginWithResponse Start browser sign-in for one HTTP service
 //
-// Start browser sign-in for one HTTP service. Navigate to this URL rather than fetching JSON. The common callback preserves the allocated service port and checks current visitor access before issuing a credential.
+// Start browser sign-in for one HTTP service, optionally within a preview. Navigate to this URL rather than fetching JSON. Sign-in verifies browser identity independently of current visit permission; it does not create a visitor grant.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -29804,21 +25596,6 @@ func (c *ClientWithResponses) BeginServiceBrowserLoginWithResponse(ctx context.C
 		return nil, err
 	}
 	return ParseBeginServiceBrowserLoginResponse(rsp)
-}
-
-// GetCertificateIssuanceWithResponse Read one publish-run certificate issuance
-//
-// Poll one public URL certificate issuance using its publish run token. The token must belong to the issuance's current run; a control session alone cannot retrieve the certificate.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/certificate-issuances/{issuance_id} (the `GetCertificateIssuance` operationId).
-func (c *ClientWithResponses) GetCertificateIssuanceWithResponse(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*GetCertificateIssuanceResponse, error) {
-	rsp, err := c.GetCertificateIssuance(ctx, issuanceId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetCertificateIssuanceResponse(rsp)
 }
 
 // GetClientIPWithResponse Return the requesting client's public IP address
@@ -29956,24 +25733,9 @@ func (c *ClientWithResponses) CreateGuestDemoWithResponse(ctx context.Context, r
 	return ParseCreateGuestDemoResponse(rsp)
 }
 
-// AllocateGuestDemoNumberWithResponse Allocate a new hostname number for this guest trial
+// EnrollGuestPublisherWithBodyWithResponse Enroll a publisher key for this trial's exact demo service
 //
-// Allocate the next demo hostname number using the guest credential returned by createGuestDemo. Control checks the trial deadline, source address, remaining allowance, and absence of an open demo publish run.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
-func (c *ClientWithResponses) AllocateGuestDemoNumberWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AllocateGuestDemoNumberResponse, error) {
-	rsp, err := c.AllocateGuestDemoNumber(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAllocateGuestDemoNumberResponse(rsp)
-}
-
-// EnrollGuestPublisherWithBodyWithResponse Enroll a publisher key for the guest trial's assigned demo URL
-//
-// Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
+// Authenticate with the trial credential and bind an Ed25519 key to its actual saved service. Control checks current trial ownership, publication eligibility, and server-observed source. The same enrolled current key recovers its facts; another key cannot take over or revive revoked authority. The exact-service grant carries the real guest_id and fixed expiry, with no team_id, namespace allocation, service management, or connector permission.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -29986,9 +25748,9 @@ func (c *ClientWithResponses) EnrollGuestPublisherWithBodyWithResponse(ctx conte
 	return ParseEnrollGuestPublisherResponse(rsp)
 }
 
-// EnrollGuestPublisherWithResponse Enroll a publisher key for the guest trial's assigned demo URL
+// EnrollGuestPublisherWithResponse Enroll a publisher key for this trial's exact demo service
 //
-// Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
+// Authenticate with the trial credential and bind an Ed25519 key to its actual saved service. Control checks current trial ownership, publication eligibility, and server-observed source. The same enrolled current key recovers its facts; another key cannot take over or revive revoked authority. The exact-service grant carries the real guest_id and fixed expiry, with no team_id, namespace allocation, service management, or connector permission.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -29999,6 +25761,36 @@ func (c *ClientWithResponses) EnrollGuestPublisherWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseEnrollGuestPublisherResponse(rsp)
+}
+
+// AllocateGuestDemoServiceWithBodyWithResponse Allocate or recover this trial's exact demo service
+//
+// Allocate one ordinary service using the current trial credential and server-observed source. Control captures the fixed approved demo declaration and absolute trial expiry. The same key and normalized request recover only the original live allocation, including cleanup after a lost response; retries never advance the demo number or extend expiry. READY exhaustion blocks new allocation, not recovery for cleanup. A deleted or expired allocation cannot be recreated. Another demo or outstanding offline serving authority blocks new allocation. This operation grants no publisher or connector permission.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/guest-demo/services (the `AllocateGuestDemoService` operationId).
+func (c *ClientWithResponses) AllocateGuestDemoServiceWithBodyWithResponse(ctx context.Context, params *AllocateGuestDemoServiceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AllocateGuestDemoServiceResponse, error) {
+	rsp, err := c.AllocateGuestDemoServiceWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAllocateGuestDemoServiceResponse(rsp)
+}
+
+// AllocateGuestDemoServiceWithResponse Allocate or recover this trial's exact demo service
+//
+// Allocate one ordinary service using the current trial credential and server-observed source. Control captures the fixed approved demo declaration and absolute trial expiry. The same key and normalized request recover only the original live allocation, including cleanup after a lost response; retries never advance the demo number or extend expiry. READY exhaustion blocks new allocation, not recovery for cleanup. A deleted or expired allocation cannot be recreated. Another demo or outstanding offline serving authority blocks new allocation. This operation grants no publisher or connector permission.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/guest-demo/services (the `AllocateGuestDemoService` operationId).
+func (c *ClientWithResponses) AllocateGuestDemoServiceWithResponse(ctx context.Context, params *AllocateGuestDemoServiceParams, body AllocateGuestDemoServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*AllocateGuestDemoServiceResponse, error) {
+	rsp, err := c.AllocateGuestDemoService(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAllocateGuestDemoServiceResponse(rsp)
 }
 
 // GetHealthWithResponse Confirm that the control HTTP server is serving
@@ -30736,726 +26528,6 @@ func (c *ClientWithResponses) GetProjectStatusWithResponse(ctx context.Context, 
 	return ParseGetProjectStatusResponse(rsp)
 }
 
-// ListPublicURLsWithResponse List public URLs for one team
-//
-// Read a cursor-paginated inventory of public URLs the caller may manage in one team. An exact canonical_hostname filter returns zero or one non-deleted URL and cannot be combined with a cursor.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
-func (c *ClientWithResponses) ListPublicURLsWithResponse(ctx context.Context, params *ListPublicURLsParams, reqEditors ...RequestEditorFn) (*ListPublicURLsResponse, error) {
-	rsp, err := c.ListPublicURLs(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListPublicURLsResponse(rsp)
-}
-
-// CreatePublicURLWithBodyWithResponse Create one team public URL
-//
-// Save an authorized hostname, target, and visitor policy using an idempotency key. A control session selects an authorized team scope; a guest credential can create only its assigned ephemeral demo hostname. Creation does not start a publish run.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
-func (c *ClientWithResponses) CreatePublicURLWithBodyWithResponse(ctx context.Context, params *CreatePublicURLParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublicURLResponse, error) {
-	rsp, err := c.CreatePublicURLWithBody(ctx, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreatePublicURLResponse(rsp)
-}
-
-// CreatePublicURLWithResponse Create one team public URL
-//
-// Save an authorized hostname, target, and visitor policy using an idempotency key. A control session selects an authorized team scope; a guest credential can create only its assigned ephemeral demo hostname. Creation does not start a publish run.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
-func (c *ClientWithResponses) CreatePublicURLWithResponse(ctx context.Context, params *CreatePublicURLParams, body CreatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublicURLResponse, error) {
-	rsp, err := c.CreatePublicURL(ctx, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreatePublicURLResponse(rsp)
-}
-
-// DeletePublicURLWithResponse Delete one public URL and close its publish run
-//
-// Delete the saved public URL under current management authorization and close its active publish run. The hostname cannot keep serving through the deleted URL's old run credentials.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
-func (c *ClientWithResponses) DeletePublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*DeletePublicURLResponse, error) {
-	rsp, err := c.DeletePublicURL(ctx, publicUrlId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeletePublicURLResponse(rsp)
-}
-
-// GetPublicURLWithResponse Read one public URL
-//
-// Read one saved public URL under current management authorization. Its saved policy and lifecycle are separate from whether an active publish run is routable.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
-func (c *ClientWithResponses) GetPublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*GetPublicURLResponse, error) {
-	rsp, err := c.GetPublicURL(ctx, publicUrlId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetPublicURLResponse(rsp)
-}
-
-// UpdatePublicURLWithBodyWithResponse Update a public URL's target and IP policy
-//
-// Change only the supplied fields using the mutation_revision you read as expected_mutation_revision. Omitted fields keep their saved values; an empty IP list clears the filter. Null values, empty edits, and stale revisions are rejected.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
-func (c *ClientWithResponses) UpdatePublicURLWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePublicURLResponse, error) {
-	rsp, err := c.UpdatePublicURLWithBody(ctx, publicUrlId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdatePublicURLResponse(rsp)
-}
-
-// UpdatePublicURLWithResponse Update a public URL's target and IP policy
-//
-// Change only the supplied fields using the mutation_revision you read as expected_mutation_revision. Omitted fields keep their saved values; an empty IP list clears the filter. Null values, empty edits, and stale revisions are rejected.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
-func (c *ClientWithResponses) UpdatePublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePublicURLResponse, error) {
-	rsp, err := c.UpdatePublicURL(ctx, publicUrlId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdatePublicURLResponse(rsp)
-}
-
-// ReplaceVisitorAccessWithBodyWithResponse Replace the complete live visitor access policy
-//
-// Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
-func (c *ClientWithResponses) ReplaceVisitorAccessWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceVisitorAccessResponse, error) {
-	rsp, err := c.ReplaceVisitorAccessWithBody(ctx, publicUrlId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseReplaceVisitorAccessResponse(rsp)
-}
-
-// ReplaceVisitorAccessWithResponse Replace the complete live visitor access policy
-//
-// Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
-func (c *ClientWithResponses) ReplaceVisitorAccessWithResponse(ctx context.Context, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceVisitorAccessResponse, error) {
-	rsp, err := c.ReplaceVisitorAccess(ctx, publicUrlId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseReplaceVisitorAccessResponse(rsp)
-}
-
-// CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
-//
-// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
-func (c *ClientWithResponses) CreatePublishRunWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublishRunResponse, error) {
-	rsp, err := c.CreatePublishRunWithBody(ctx, publicUrlId, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreatePublishRunResponse(rsp)
-}
-
-// CreatePublishRunWithResponse Create a publish run and allocate its publish run number
-//
-// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
-func (c *ClientWithResponses) CreatePublishRunWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublishRunResponse, error) {
-	rsp, err := c.CreatePublishRun(ctx, publicUrlId, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreatePublishRunResponse(rsp)
-}
-
-// ListVisitorGrantsWithResponse List visitor grants for one manageable public URL
-//
-// Read exact-public-URL team and identity visitor grants under current management authorization. Listing a grant is not a substitute for checking the visitor's current access.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/public-urls/{public_url_id}/visitor-grants (the `ListVisitorGrants` operationId).
-func (c *ClientWithResponses) ListVisitorGrantsWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*ListVisitorGrantsResponse, error) {
-	rsp, err := c.ListVisitorGrants(ctx, publicUrlId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListVisitorGrantsResponse(rsp)
-}
-
-// CreateTeamVisitorGrantWithBodyWithResponse Grant current members of a team access to one public URL
-//
-// Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId).
-func (c *ClientWithResponses) CreateTeamVisitorGrantWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTeamVisitorGrantResponse, error) {
-	rsp, err := c.CreateTeamVisitorGrantWithBody(ctx, publicUrlId, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateTeamVisitorGrantResponse(rsp)
-}
-
-// CreateTeamVisitorGrantWithResponse Grant current members of a team access to one public URL
-//
-// Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId).
-func (c *ClientWithResponses) CreateTeamVisitorGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, body CreateTeamVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTeamVisitorGrantResponse, error) {
-	rsp, err := c.CreateTeamVisitorGrant(ctx, publicUrlId, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateTeamVisitorGrantResponse(rsp)
-}
-
-// RevokeVisitorGrantWithResponse Revoke one public URL visitor grant
-//
-// Revoke the exact grant under current public URL management authorization. Current visitor policy determines access after revocation; other grants for the URL remain separate.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /v1/public-urls/{public_url_id}/visitor-grants/{grant_id} (the `RevokeVisitorGrant` operationId).
-func (c *ClientWithResponses) RevokeVisitorGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, grantId string, reqEditors ...RequestEditorFn) (*RevokeVisitorGrantResponse, error) {
-	rsp, err := c.RevokeVisitorGrant(ctx, publicUrlId, grantId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRevokeVisitorGrantResponse(rsp)
-}
-
-// CreateIdentityVisitorGrantWithBodyWithResponse Create an explicit identity grant, including for the current identity
-//
-// Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
-func (c *ClientWithResponses) CreateIdentityVisitorGrantWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateIdentityVisitorGrantResponse, error) {
-	rsp, err := c.CreateIdentityVisitorGrantWithBody(ctx, publicUrlId, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateIdentityVisitorGrantResponse(rsp)
-}
-
-// CreateIdentityVisitorGrantWithResponse Create an explicit identity grant, including for the current identity
-//
-// Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
-func (c *ClientWithResponses) CreateIdentityVisitorGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, body CreateIdentityVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateIdentityVisitorGrantResponse, error) {
-	rsp, err := c.CreateIdentityVisitorGrant(ctx, publicUrlId, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateIdentityVisitorGrantResponse(rsp)
-}
-
-// ListVisitorInvitationsWithResponse List named visitor invitations for one public URL
-//
-// Read invitation records using current public URL management authorization. Invitation inventory does not reveal a reusable visitor credential or grant management permission to its recipients.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/public-urls/{public_url_id}/visitor-invitations (the `ListVisitorInvitations` operationId).
-func (c *ClientWithResponses) ListVisitorInvitationsWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*ListVisitorInvitationsResponse, error) {
-	rsp, err := c.ListVisitorInvitations(ctx, publicUrlId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListVisitorInvitationsResponse(rsp)
-}
-
-// CreateVisitorInvitationWithBodyWithResponse Invite a verified email identity to one public URL
-//
-// Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId).
-func (c *ClientWithResponses) CreateVisitorInvitationWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVisitorInvitationResponse, error) {
-	rsp, err := c.CreateVisitorInvitationWithBody(ctx, publicUrlId, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateVisitorInvitationResponse(rsp)
-}
-
-// CreateVisitorInvitationWithResponse Invite a verified email identity to one public URL
-//
-// Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId).
-func (c *ClientWithResponses) CreateVisitorInvitationWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, body CreateVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVisitorInvitationResponse, error) {
-	rsp, err := c.CreateVisitorInvitation(ctx, publicUrlId, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateVisitorInvitationResponse(rsp)
-}
-
-// RevokeVisitorInvitationWithResponse Revoke a public URL invitation and its accepted identity grant
-//
-// Revoke the named invitation using current public URL management authorization. If it was accepted, revoke the identity grant created by that invitation as well.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id} (the `RevokeVisitorInvitation` operationId).
-func (c *ClientWithResponses) RevokeVisitorInvitationWithResponse(ctx context.Context, publicUrlId PublicURLID, invitationId string, reqEditors ...RequestEditorFn) (*RevokeVisitorInvitationResponse, error) {
-	rsp, err := c.RevokeVisitorInvitation(ctx, publicUrlId, invitationId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRevokeVisitorInvitationResponse(rsp)
-}
-
-// ClosePublishRunWithResponse Close and drain a publish run without deleting its public URL
-//
-// Close the exact publication using its publish run token. Saved public URLs remain available for a later run; ephemeral public URLs follow their removal lifecycle instead.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
-func (c *ClientWithResponses) ClosePublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, reqEditors ...RequestEditorFn) (*ClosePublishRunResponse, error) {
-	rsp, err := c.ClosePublishRun(ctx, publishRunId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseClosePublishRunResponse(rsp)
-}
-
-// CheckPreviewBrowserAccessWithBodyWithResponse Check a browser cookie against current preview access
-//
-// Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
-func (c *ClientWithResponses) CheckPreviewBrowserAccessWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CheckPreviewBrowserAccessResponse, error) {
-	rsp, err := c.CheckPreviewBrowserAccessWithBody(ctx, publishRunId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCheckPreviewBrowserAccessResponse(rsp)
-}
-
-// CheckPreviewBrowserAccessWithResponse Check a browser cookie against current preview access
-//
-// Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
-func (c *ClientWithResponses) CheckPreviewBrowserAccessWithResponse(ctx context.Context, publishRunId PublishRunID, body CheckPreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*CheckPreviewBrowserAccessResponse, error) {
-	rsp, err := c.CheckPreviewBrowserAccess(ctx, publishRunId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCheckPreviewBrowserAccessResponse(rsp)
-}
-
-// RedeemPreviewBrowserHandoffWithBodyWithResponse Redeem a one-time browser handoff on the publisher
-//
-// Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
-func (c *ClientWithResponses) RedeemPreviewBrowserHandoffWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPreviewBrowserHandoffResponse, error) {
-	rsp, err := c.RedeemPreviewBrowserHandoffWithBody(ctx, publishRunId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRedeemPreviewBrowserHandoffResponse(rsp)
-}
-
-// RedeemPreviewBrowserHandoffWithResponse Redeem a one-time browser handoff on the publisher
-//
-// Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
-func (c *ClientWithResponses) RedeemPreviewBrowserHandoffWithResponse(ctx context.Context, publishRunId PublishRunID, body RedeemPreviewBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPreviewBrowserHandoffResponse, error) {
-	rsp, err := c.RedeemPreviewBrowserHandoff(ctx, publishRunId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRedeemPreviewBrowserHandoffResponse(rsp)
-}
-
-// RevokePreviewBrowserAccessWithBodyWithResponse Revoke the current browser session
-//
-// Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
-func (c *ClientWithResponses) RevokePreviewBrowserAccessWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokePreviewBrowserAccessResponse, error) {
-	rsp, err := c.RevokePreviewBrowserAccessWithBody(ctx, publishRunId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRevokePreviewBrowserAccessResponse(rsp)
-}
-
-// RevokePreviewBrowserAccessWithResponse Revoke the current browser session
-//
-// Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
-func (c *ClientWithResponses) RevokePreviewBrowserAccessWithResponse(ctx context.Context, publishRunId PublishRunID, body RevokePreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokePreviewBrowserAccessResponse, error) {
-	rsp, err := c.RevokePreviewBrowserAccess(ctx, publishRunId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRevokePreviewBrowserAccessResponse(rsp)
-}
-
-// MarkPublishRunCertificateInstalledWithBodyWithResponse Record installation of the current public URL certificate
-//
-// Acknowledge the exact approved public URL certificate installed by the publisher using this run's token and number. Installation alone does not establish publisher connection readiness.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
-func (c *ClientWithResponses) MarkPublishRunCertificateInstalledWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublishRunCertificateInstalledResponse, error) {
-	rsp, err := c.MarkPublishRunCertificateInstalledWithBody(ctx, publishRunId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseMarkPublishRunCertificateInstalledResponse(rsp)
-}
-
-// MarkPublishRunCertificateInstalledWithResponse Record installation of the current public URL certificate
-//
-// Acknowledge the exact approved public URL certificate installed by the publisher using this run's token and number. Installation alone does not establish publisher connection readiness.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
-func (c *ClientWithResponses) MarkPublishRunCertificateInstalledWithResponse(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublishRunCertificateInstalledResponse, error) {
-	rsp, err := c.MarkPublishRunCertificateInstalled(ctx, publishRunId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseMarkPublishRunCertificateInstalledResponse(rsp)
-}
-
-// CreateCertificateIssuanceWithBodyWithResponse Begin issuance for the publish run's certificate plan
-//
-// Submit the publisher's CSR under the exact publish run token and approved certificate plan. The idempotency key identifies one issuance attempt; a control session or publisher access token cannot substitute for the run token.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
-func (c *ClientWithResponses) CreateCertificateIssuanceWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error) {
-	rsp, err := c.CreateCertificateIssuanceWithBody(ctx, publishRunId, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateCertificateIssuanceResponse(rsp)
-}
-
-// CreateCertificateIssuanceWithResponse Begin issuance for the publish run's certificate plan
-//
-// Submit the publisher's CSR under the exact publish run token and approved certificate plan. The idempotency key identifies one issuance attempt; a control session or publisher access token cannot substitute for the run token.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
-func (c *ClientWithResponses) CreateCertificateIssuanceWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error) {
-	rsp, err := c.CreateCertificateIssuance(ctx, publishRunId, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateCertificateIssuanceResponse(rsp)
-}
-
-// CreateFeedbackReportWithBodyWithResponse Store a reviewer's first report for a preview page
-//
-// Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
-func (c *ClientWithResponses) CreateFeedbackReportWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error) {
-	rsp, err := c.CreateFeedbackReportWithBody(ctx, publishRunId, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateFeedbackReportResponse(rsp)
-}
-
-// CreateFeedbackReportWithResponse Store a reviewer's first report for a preview page
-//
-// Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
-func (c *ClientWithResponses) CreateFeedbackReportWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error) {
-	rsp, err := c.CreateFeedbackReport(ctx, publishRunId, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateFeedbackReportResponse(rsp)
-}
-
-// ListPreviewPageFeedbackWithBodyWithResponse List feedback on one page for a reviewer
-//
-// Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
-func (c *ClientWithResponses) ListPreviewPageFeedbackWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error) {
-	rsp, err := c.ListPreviewPageFeedbackWithBody(ctx, publishRunId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListPreviewPageFeedbackResponse(rsp)
-}
-
-// ListPreviewPageFeedbackWithResponse List feedback on one page for a reviewer
-//
-// Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
-func (c *ClientWithResponses) ListPreviewPageFeedbackWithResponse(ctx context.Context, publishRunId PublishRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error) {
-	rsp, err := c.ListPreviewPageFeedback(ctx, publishRunId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListPreviewPageFeedbackResponse(rsp)
-}
-
-// AppendReviewerFeedbackEventWithBodyWithResponse Reply, resolve, or reopen feedback through preview access
-//
-// Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
-func (c *ClientWithResponses) AppendReviewerFeedbackEventWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error) {
-	rsp, err := c.AppendReviewerFeedbackEventWithBody(ctx, publishRunId, feedbackId, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAppendReviewerFeedbackEventResponse(rsp)
-}
-
-// AppendReviewerFeedbackEventWithResponse Reply, resolve, or reopen feedback through preview access
-//
-// Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
-func (c *ClientWithResponses) AppendReviewerFeedbackEventWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error) {
-	rsp, err := c.AppendReviewerFeedbackEvent(ctx, publishRunId, feedbackId, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAppendReviewerFeedbackEventResponse(rsp)
-}
-
-// ListReviewerFeedbackEventsWithBodyWithResponse Read thread events through a current publisher connection
-//
-// Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
-func (c *ClientWithResponses) ListReviewerFeedbackEventsWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListReviewerFeedbackEventsResponse, error) {
-	rsp, err := c.ListReviewerFeedbackEventsWithBody(ctx, publishRunId, feedbackId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListReviewerFeedbackEventsResponse(rsp)
-}
-
-// ListReviewerFeedbackEventsWithResponse Read thread events through a current publisher connection
-//
-// Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
-func (c *ClientWithResponses) ListReviewerFeedbackEventsWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*ListReviewerFeedbackEventsResponse, error) {
-	rsp, err := c.ListReviewerFeedbackEvents(ctx, publishRunId, feedbackId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListReviewerFeedbackEventsResponse(rsp)
-}
-
-// GetReviewerFeedbackThreadWithBodyWithResponse Read a feedback thread through a current publisher connection
-//
-// Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
-func (c *ClientWithResponses) GetReviewerFeedbackThreadWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error) {
-	rsp, err := c.GetReviewerFeedbackThreadWithBody(ctx, publishRunId, feedbackId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetReviewerFeedbackThreadResponse(rsp)
-}
-
-// GetReviewerFeedbackThreadWithResponse Read a feedback thread through a current publisher connection
-//
-// Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
-func (c *ClientWithResponses) GetReviewerFeedbackThreadWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error) {
-	rsp, err := c.GetReviewerFeedbackThread(ctx, publishRunId, feedbackId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetReviewerFeedbackThreadResponse(rsp)
-}
-
-// MarkPublishRunReadyWithBodyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
-//
-// Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
-func (c *ClientWithResponses) MarkPublishRunReadyWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublishRunReadyResponse, error) {
-	rsp, err := c.MarkPublishRunReadyWithBody(ctx, publishRunId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseMarkPublishRunReadyResponse(rsp)
-}
-
-// MarkPublishRunReadyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
-//
-// Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
-func (c *ClientWithResponses) MarkPublishRunReadyWithResponse(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublishRunReadyResponse, error) {
-	rsp, err := c.MarkPublishRunReady(ctx, publishRunId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseMarkPublishRunReadyResponse(rsp)
-}
-
-// RenewPublishRunWithBodyWithResponse Renew a publish run and replace missing publisher connections
-//
-// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/renew (the `RenewPublishRun` operationId).
-func (c *ClientWithResponses) RenewPublishRunWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewPublishRunResponse, error) {
-	rsp, err := c.RenewPublishRunWithBody(ctx, publishRunId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRenewPublishRunResponse(rsp)
-}
-
-// RenewPublishRunWithResponse Renew a publish run and replace missing publisher connections
-//
-// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/renew (the `RenewPublishRun` operationId).
-func (c *ClientWithResponses) RenewPublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, body RenewPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewPublishRunResponse, error) {
-	rsp, err := c.RenewPublishRun(ctx, publishRunId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRenewPublishRunResponse(rsp)
-}
-
-// ReportPublishRunServiceObservationsWithBodyWithResponse Report service observations through a public URL publish run
-//
-// Submit bounded connection observations using the exact publish run token. Control checks the current run and counts accepted and duplicate events; observations do not create visitor grants or authorize traffic.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId).
-func (c *ClientWithResponses) ReportPublishRunServiceObservationsWithBodyWithResponse(ctx context.Context, runId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportPublishRunServiceObservationsResponse, error) {
-	rsp, err := c.ReportPublishRunServiceObservationsWithBody(ctx, runId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseReportPublishRunServiceObservationsResponse(rsp)
-}
-
-// ReportPublishRunServiceObservationsWithResponse Report service observations through a public URL publish run
-//
-// Submit bounded connection observations using the exact publish run token. Control checks the current run and counts accepted and duplicate events; observations do not create visitor grants or authorize traffic.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId).
-func (c *ClientWithResponses) ReportPublishRunServiceObservationsWithResponse(ctx context.Context, runId string, body ReportPublishRunServiceObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportPublishRunServiceObservationsResponse, error) {
-	rsp, err := c.ReportPublishRunServiceObservations(ctx, runId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseReportPublishRunServiceObservationsResponse(rsp)
-}
-
 // CreatePublisherEnrollmentWithBodyWithResponse Issue an expiring one-use publisher enrollment
 //
 // Issue an expiring one-use enrollment secret under current management authorization. Enrollment installs a publisher's signing key for the selected scope; it is separate from exchanging signed assertions for short-lived publisher access tokens.
@@ -31694,21 +26766,6 @@ func (c *ClientWithResponses) VerifyDeploymentIdentityWithResponse(ctx context.C
 		return nil, err
 	}
 	return ParseVerifyDeploymentIdentityResponse(rsp)
-}
-
-// GetPublisherPublicURLWithResponse Read the saved URL selected by the current grant
-//
-// Read the single saved public URL selected by the publisher access token's exact grant. Namespace allocation grants and control sessions do not substitute for an exact public URL publisher grant.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/publisher/public-url (the `GetPublisherPublicURL` operationId).
-func (c *ClientWithResponses) GetPublisherPublicURLWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublisherPublicURLResponse, error) {
-	rsp, err := c.GetPublisherPublicURL(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetPublisherPublicURLResponse(rsp)
 }
 
 // InspectPublisherRuntimeWithBodyWithResponse Inspect a publisher runtime
@@ -31953,7 +27010,7 @@ func (c *ClientWithResponses) ListServicesWithResponse(ctx context.Context, para
 
 // CreateServiceWithBodyWithResponse Create one saved service with approved protocol and placement
 //
-// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
+// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -31968,7 +27025,7 @@ func (c *ClientWithResponses) CreateServiceWithBodyWithResponse(ctx context.Cont
 
 // CreateServiceWithResponse Create one saved service with approved protocol and placement
 //
-// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
+// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -31983,7 +27040,7 @@ func (c *ClientWithResponses) CreateServiceWithResponse(ctx context.Context, par
 
 // DeleteServiceWithResponse Delete a saved service and revoke its active publication
 //
-// Revoke access and close any run before tombstoning its ID-keyed ingress projection.
+// Revoke access and close any run before tombstoning its ID-keyed ingress projection. A current trial credential may delete only its exact owned demo service after control verifies the server-observed source; READY exhaustion does not prevent cleanup within the fixed trial lifetime. A publisher grant, run token, or share is not management permission. Guest cleanup uses this same closure, settlement, and endpoint retirement; outstanding offline serving authority remains fenced.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -32011,9 +27068,9 @@ func (c *ClientWithResponses) GetServiceWithResponse(ctx context.Context, servic
 	return ParseGetServiceResponse(rsp)
 }
 
-// ConfigureServiceWithBodyWithResponse Replace a service's approved protocol and target TLS trust
+// ConfigureServiceWithBodyWithResponse Replace a service's approved settings and standalone declaration
 //
-// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs.
+// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Optional configuration atomically replaces a standalone service declaration, including its target, endpoint selectors, HTTP visitor policy, and request limits, without replacing the service ID. Protocol and target TLS must agree with the declaration. For read/modify/write, also send the unquoted getServiceConfiguration ETag token as expected_configuration_digest; a mismatch conflicts before any service write, independently of expected_trust_revision. Full desired-intent replacements may omit the digest. Omitting configuration retains it. Allocated invocation intent and project-managed definitions remain protected. Endpoint changes preserve authorized connector runs; protocol or target-trust changes fence old runs. Publishers must declare matching trust when preparing later runs.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -32026,9 +27083,9 @@ func (c *ClientWithResponses) ConfigureServiceWithBodyWithResponse(ctx context.C
 	return ParseConfigureServiceResponse(rsp)
 }
 
-// ConfigureServiceWithResponse Replace a service's approved protocol and target TLS trust
+// ConfigureServiceWithResponse Replace a service's approved settings and standalone declaration
 //
-// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs.
+// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Optional configuration atomically replaces a standalone service declaration, including its target, endpoint selectors, HTTP visitor policy, and request limits, without replacing the service ID. Protocol and target TLS must agree with the declaration. For read/modify/write, also send the unquoted getServiceConfiguration ETag token as expected_configuration_digest; a mismatch conflicts before any service write, independently of expected_trust_revision. Full desired-intent replacements may omit the digest. Omitting configuration retains it. Allocated invocation intent and project-managed definitions remain protected. Endpoint changes preserve authorized connector runs; protocol or target-trust changes fence old runs. Publishers must declare matching trust when preparing later runs.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -32069,6 +27126,21 @@ func (c *ClientWithResponses) IssueServiceClientCertificateWithResponse(ctx cont
 		return nil, err
 	}
 	return ParseIssueServiceClientCertificateResponse(rsp)
+}
+
+// GetServiceConfigurationWithResponse Read one service's protected saved declaration
+//
+// Requires current exact-service management permission, including current membership and company sign-in where required. Returns the canonical normalized ProjectServiceConfiguration directly, or 204 when the service legitimately has no declaration. Both successful responses include a strong ETag containing a sha256 digest token; absence has its own deterministic digest. Use the unquoted token as expected_configuration_digest when replacing a read declaration. The digest is independent of trust, endpoint, and visitor-policy revisions. This read does not create state or grant mutation permission for allocated or project-managed declarations. Publisher credentials, visitor grants, shares, and guest credentials do not authorize it. Targets and private configuration never appear in inventory or publisher metadata.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/services/{service_id}/configuration (the `GetServiceConfiguration` operationId).
+func (c *ClientWithResponses) GetServiceConfigurationWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*GetServiceConfigurationResponse, error) {
+	rsp, err := c.GetServiceConfiguration(ctx, serviceId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetServiceConfigurationResponse(rsp)
 }
 
 // PrepareConnectorPeerPairWithBodyWithResponse Prepare a signed connector pair for an exact ready service run
@@ -32159,6 +27231,36 @@ func (c *ClientWithResponses) RenewConnectorPeerPairWithResponse(ctx context.Con
 		return nil, err
 	}
 	return ParseRenewConnectorPeerPairResponse(rsp)
+}
+
+// SetServiceEnabledWithBodyWithResponse Suspend or enable a saved service
+//
+// Change operational availability using current stored management authority. Suspension closes current runs while retaining the service ID, declaration, publisher and visitor grants, endpoint reservations, and project or deployment ownership. Enabling allows new authorized runs; it never reopens closed runs or restores revoked permission. Works for project-managed services without editing their declarations. Guest trial credentials and publisher grants do not grant this management operation.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/services/{service_id}/enabled (the `SetServiceEnabled` operationId).
+func (c *ClientWithResponses) SetServiceEnabledWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetServiceEnabledResponse, error) {
+	rsp, err := c.SetServiceEnabledWithBody(ctx, serviceId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetServiceEnabledResponse(rsp)
+}
+
+// SetServiceEnabledWithResponse Suspend or enable a saved service
+//
+// Change operational availability using current stored management authority. Suspension closes current runs while retaining the service ID, declaration, publisher and visitor grants, endpoint reservations, and project or deployment ownership. Enabling allows new authorized runs; it never reopens closed runs or restores revoked permission. Works for project-managed services without editing their declarations. Guest trial credentials and publisher grants do not grant this management operation.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/services/{service_id}/enabled (the `SetServiceEnabled` operationId).
+func (c *ClientWithResponses) SetServiceEnabledWithResponse(ctx context.Context, serviceId ServiceID, body SetServiceEnabledJSONRequestBody, reqEditors ...RequestEditorFn) (*SetServiceEnabledResponse, error) {
+	rsp, err := c.SetServiceEnabled(ctx, serviceId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetServiceEnabledResponse(rsp)
 }
 
 // ReleaseServiceEndpointWithBodyWithResponse Retire a disabled service's public port reservation
@@ -32266,7 +27368,7 @@ func (c *ClientWithResponses) ListServiceHTTPGrantsWithResponse(ctx context.Cont
 	return ParseListServiceHTTPGrantsResponse(rsp)
 }
 
-// CreateServiceHTTPGrantWithBodyWithResponse Create a service-scoped HTTP visitor token or share
+// CreateServiceHTTPGrantWithBodyWithResponse Create a service-scoped HTTP visitor token
 //
 // Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission.
 //
@@ -32281,7 +27383,7 @@ func (c *ClientWithResponses) CreateServiceHTTPGrantWithBodyWithResponse(ctx con
 	return ParseCreateServiceHTTPGrantResponse(rsp)
 }
 
-// CreateServiceHTTPGrantWithResponse Create a service-scoped HTTP visitor token or share
+// CreateServiceHTTPGrantWithResponse Create a service-scoped HTTP visitor token
 //
 // Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission.
 //
@@ -32298,7 +27400,7 @@ func (c *ClientWithResponses) CreateServiceHTTPGrantWithResponse(ctx context.Con
 
 // RevokeServiceHTTPGrantWithResponse Revoke one service-scoped HTTP visitor credential
 //
-// Revoke the named token or share using current service management permission. The credential no longer authorizes new visitor permission; retained summaries remain visible without their secrets.
+// Revoke the named token using current service management permission. The credential no longer authorizes new visitor permission; retained summaries remain visible without their secrets.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -32478,7 +27580,7 @@ func (c *ClientWithResponses) AuthorizeServiceHTTPVisitorWithResponse(ctx contex
 
 // RedeemServiceBrowserHandoffWithBodyWithResponse Exchange a service browser handoff through its publisher run
 //
-// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
+// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a browser identity cookie bound to captured service runs. Visitor permission is optional and checked independently, including any supplied share cookie pair. A visitor's control session cannot substitute for the publisher run token.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -32493,7 +27595,7 @@ func (c *ClientWithResponses) RedeemServiceBrowserHandoffWithBodyWithResponse(ct
 
 // RedeemServiceBrowserHandoffWithResponse Exchange a service browser handoff through its publisher run
 //
-// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
+// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a browser identity cookie bound to captured service runs. Visitor permission is optional and checked independently, including any supplied share cookie pair. A visitor's control session cannot substitute for the publisher run token.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -32508,7 +27610,7 @@ func (c *ClientWithResponses) RedeemServiceBrowserHandoffWithResponse(ctx contex
 
 // RevokeServiceBrowserSessionWithBodyWithResponse Revoke a browser session through its service publisher run
 //
-// Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
+// Authenticate the publisher with the exact service run token and prove the body's browser session was installed for that captured service run. Revoke the shared browser session across its hostname handoff chain, including pending handoffs. Other browser sessions and the person's control session remain unchanged.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -32523,7 +27625,7 @@ func (c *ClientWithResponses) RevokeServiceBrowserSessionWithBodyWithResponse(ct
 
 // RevokeServiceBrowserSessionWithResponse Revoke a browser session through its service publisher run
 //
-// Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
+// Authenticate the publisher with the exact service run token and prove the body's browser session was installed for that captured service run. Revoke the shared browser session across its hostname handoff chain, including pending handoffs. Other browser sessions and the person's control session remain unchanged.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -32538,7 +27640,7 @@ func (c *ClientWithResponses) RevokeServiceBrowserSessionWithResponse(ctx contex
 
 // CheckServiceBrowserSessionWithBodyWithResponse Check a browser session through its service publisher run
 //
-// Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
+// Authenticate the publisher with the exact service run token and recheck the body's browser identity cookie for that captured service run. Identity remains authenticated when current visit permission is denied; neither identity nor this check creates a visitor or management grant.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -32553,7 +27655,7 @@ func (c *ClientWithResponses) CheckServiceBrowserSessionWithBodyWithResponse(ctx
 
 // CheckServiceBrowserSessionWithResponse Check a browser session through its service publisher run
 //
-// Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
+// Authenticate the publisher with the exact service run token and recheck the body's browser identity cookie for that captured service run. Identity remains authenticated when current visit permission is denied; neither identity nor this check creates a visitor or management grant.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -32714,6 +27816,156 @@ func (c *ClientWithResponses) ConfirmConnectorPeerPairPreparedWithResponse(ctx c
 		return nil, err
 	}
 	return ParseConfirmConnectorPeerPairPreparedResponse(rsp)
+}
+
+// CreateFeedbackReportWithBodyWithResponse Store a reviewer's first report for a preview page
+//
+// Submit the immutable first report through the exact service run token with the reviewer's current access proof in the body. Control verifies browser identity independently of visit permission; publisher authentication alone does not authorize a reviewer report.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback (the `CreateFeedbackReport` operationId).
+func (c *ClientWithResponses) CreateFeedbackReportWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error) {
+	rsp, err := c.CreateFeedbackReportWithBody(ctx, serviceId, serviceRunId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateFeedbackReportResponse(rsp)
+}
+
+// CreateFeedbackReportWithResponse Store a reviewer's first report for a preview page
+//
+// Submit the immutable first report through the exact service run token with the reviewer's current access proof in the body. Control verifies browser identity independently of visit permission; publisher authentication alone does not authorize a reviewer report.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback (the `CreateFeedbackReport` operationId).
+func (c *ClientWithResponses) CreateFeedbackReportWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error) {
+	rsp, err := c.CreateFeedbackReport(ctx, serviceId, serviceRunId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateFeedbackReportResponse(rsp)
+}
+
+// ListPreviewPageFeedbackWithBodyWithResponse List feedback on one page for a reviewer
+//
+// Read feedback for one service through the exact service run token and the reviewer's body access proof, optionally filtering by page. The result is limited to the authorized preview context, not a team-wide management inventory.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
+func (c *ClientWithResponses) ListPreviewPageFeedbackWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error) {
+	rsp, err := c.ListPreviewPageFeedbackWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPreviewPageFeedbackResponse(rsp)
+}
+
+// ListPreviewPageFeedbackWithResponse List feedback on one page for a reviewer
+//
+// Read feedback for one service through the exact service run token and the reviewer's body access proof, optionally filtering by page. The result is limited to the authorized preview context, not a team-wide management inventory.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
+func (c *ClientWithResponses) ListPreviewPageFeedbackWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error) {
+	rsp, err := c.ListPreviewPageFeedback(ctx, serviceId, serviceRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPreviewPageFeedbackResponse(rsp)
+}
+
+// AppendReviewerFeedbackEventWithBodyWithResponse Reply, resolve, or reopen feedback through preview access
+//
+// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
+func (c *ClientWithResponses) AppendReviewerFeedbackEventWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error) {
+	rsp, err := c.AppendReviewerFeedbackEventWithBody(ctx, serviceId, serviceRunId, feedbackId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAppendReviewerFeedbackEventResponse(rsp)
+}
+
+// AppendReviewerFeedbackEventWithResponse Reply, resolve, or reopen feedback through preview access
+//
+// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
+func (c *ClientWithResponses) AppendReviewerFeedbackEventWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error) {
+	rsp, err := c.AppendReviewerFeedbackEvent(ctx, serviceId, serviceRunId, feedbackId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAppendReviewerFeedbackEventResponse(rsp)
+}
+
+// ListReviewerFeedbackEventsWithBodyWithResponse Read thread events through a current publisher connection
+//
+// Read one thread's ordered follow-up history through the exact service run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
+func (c *ClientWithResponses) ListReviewerFeedbackEventsWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListReviewerFeedbackEventsResponse, error) {
+	rsp, err := c.ListReviewerFeedbackEventsWithBody(ctx, serviceId, serviceRunId, feedbackId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListReviewerFeedbackEventsResponse(rsp)
+}
+
+// ListReviewerFeedbackEventsWithResponse Read thread events through a current publisher connection
+//
+// Read one thread's ordered follow-up history through the exact service run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
+func (c *ClientWithResponses) ListReviewerFeedbackEventsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*ListReviewerFeedbackEventsResponse, error) {
+	rsp, err := c.ListReviewerFeedbackEvents(ctx, serviceId, serviceRunId, feedbackId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListReviewerFeedbackEventsResponse(rsp)
+}
+
+// GetReviewerFeedbackThreadWithBodyWithResponse Read a feedback thread through a current publisher connection
+//
+// Read one thread through the exact service run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
+func (c *ClientWithResponses) GetReviewerFeedbackThreadWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error) {
+	rsp, err := c.GetReviewerFeedbackThreadWithBody(ctx, serviceId, serviceRunId, feedbackId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReviewerFeedbackThreadResponse(rsp)
+}
+
+// GetReviewerFeedbackThreadWithResponse Read a feedback thread through a current publisher connection
+//
+// Read one thread through the exact service run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
+func (c *ClientWithResponses) GetReviewerFeedbackThreadWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error) {
+	rsp, err := c.GetReviewerFeedbackThread(ctx, serviceId, serviceRunId, feedbackId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReviewerFeedbackThreadResponse(rsp)
 }
 
 // CreateServiceRunPreviewWithBodyWithResponse Create feedback context for one ephemeral service run
@@ -33031,36 +28283,6 @@ func (c *ClientWithResponses) RevokeVisitorDeviceWithResponse(ctx context.Contex
 	return ParseRevokeVisitorDeviceResponse(rsp)
 }
 
-// AcceptVisitorInvitationWithBodyWithResponse Accept a public URL invitation for the signed-in identity
-//
-// Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId).
-func (c *ClientWithResponses) AcceptVisitorInvitationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcceptVisitorInvitationResponse, error) {
-	rsp, err := c.AcceptVisitorInvitationWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAcceptVisitorInvitationResponse(rsp)
-}
-
-// AcceptVisitorInvitationWithResponse Accept a public URL invitation for the signed-in identity
-//
-// Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId).
-func (c *ClientWithResponses) AcceptVisitorInvitationWithResponse(ctx context.Context, body AcceptVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptVisitorInvitationResponse, error) {
-	rsp, err := c.AcceptVisitorInvitation(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAcceptVisitorInvitationResponse(rsp)
-}
-
 // ReadPublisherVisitorPolicyWithBodyWithResponse Refresh the current run's visitor policy and verification keys
 //
 // Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access.
@@ -33129,21 +28351,6 @@ func (c *ClientWithResponses) IssueVisitorTokenWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseIssueVisitorTokenResponse(rsp)
-}
-
-// ListAvailablePublicURLsWithResponse List public URLs available to the signed-in visitor
-//
-// Read a cursor-paginated visitor inventory across the identity's current grants, optionally selecting one team. The response omits management policy, targets, and secrets and does not itself grant a visitor token.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId).
-func (c *ClientWithResponses) ListAvailablePublicURLsWithResponse(ctx context.Context, params *ListAvailablePublicURLsParams, reqEditors ...RequestEditorFn) (*ListAvailablePublicURLsResponse, error) {
-	rsp, err := c.ListAvailablePublicURLs(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListAvailablePublicURLsResponse(rsp)
 }
 
 // ListAvailableServicesWithResponse List services available to the signed-in visitor
@@ -33445,35 +28652,6 @@ func ParseCompletePreviewBrowserLoginResponse(rsp *http.Response) (*CompletePrev
 	return response, nil
 }
 
-// ParseBeginPreviewBrowserLoginResponse parses an HTTP response from a BeginPreviewBrowserLoginWithResponse call
-func ParseBeginPreviewBrowserLoginResponse(rsp *http.Response) (*BeginPreviewBrowserLoginResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &BeginPreviewBrowserLoginResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 302:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseBeginServiceBrowserLoginResponse parses an HTTP response from a BeginServiceBrowserLoginWithResponse call
 func ParseBeginServiceBrowserLoginResponse(rsp *http.Response) (*BeginServiceBrowserLoginResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -33490,39 +28668,6 @@ func ParseBeginServiceBrowserLoginResponse(rsp *http.Response) (*BeginServiceBro
 	switch {
 	case rsp.StatusCode == 302:
 		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetCertificateIssuanceResponse parses an HTTP response from a GetCertificateIssuanceWithResponse call
-func ParseGetCertificateIssuanceResponse(rsp *http.Response) (*GetCertificateIssuanceResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetCertificateIssuanceResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest CertificateIssuance
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -33800,22 +28945,22 @@ func ParseCreateGuestDemoResponse(rsp *http.Response) (*CreateGuestDemoResponse,
 	return response, nil
 }
 
-// ParseAllocateGuestDemoNumberResponse parses an HTTP response from a AllocateGuestDemoNumberWithResponse call
-func ParseAllocateGuestDemoNumberResponse(rsp *http.Response) (*AllocateGuestDemoNumberResponse, error) {
+// ParseEnrollGuestPublisherResponse parses an HTTP response from a EnrollGuestPublisherWithResponse call
+func ParseEnrollGuestPublisherResponse(rsp *http.Response) (*EnrollGuestPublisherResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &AllocateGuestDemoNumberResponse{
+	response := &EnrollGuestPublisherResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest GuestDemoNumber
+		var dest PublisherEnrollmentResult
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -33833,26 +28978,26 @@ func ParseAllocateGuestDemoNumberResponse(rsp *http.Response) (*AllocateGuestDem
 	return response, nil
 }
 
-// ParseEnrollGuestPublisherResponse parses an HTTP response from a EnrollGuestPublisherWithResponse call
-func ParseEnrollGuestPublisherResponse(rsp *http.Response) (*EnrollGuestPublisherResponse, error) {
+// ParseAllocateGuestDemoServiceResponse parses an HTTP response from a AllocateGuestDemoServiceWithResponse call
+func ParseAllocateGuestDemoServiceResponse(rsp *http.Response) (*AllocateGuestDemoServiceResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &EnrollGuestPublisherResponse{
+	response := &AllocateGuestDemoServiceResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest GuestPublisherIdentity
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Service
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON200 = &dest
+		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -34993,917 +30138,6 @@ func ParseGetProjectStatusResponse(rsp *http.Response) (*GetProjectStatusRespons
 	return response, nil
 }
 
-// ParseListPublicURLsResponse parses an HTTP response from a ListPublicURLsWithResponse call
-func ParseListPublicURLsResponse(rsp *http.Response) (*ListPublicURLsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListPublicURLsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublicURLPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreatePublicURLResponse parses an HTTP response from a CreatePublicURLWithResponse call
-func ParseCreatePublicURLResponse(rsp *http.Response) (*CreatePublicURLResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreatePublicURLResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest PublicURL
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseDeletePublicURLResponse parses an HTTP response from a DeletePublicURLWithResponse call
-func ParseDeletePublicURLResponse(rsp *http.Response) (*DeletePublicURLResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DeletePublicURLResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetPublicURLResponse parses an HTTP response from a GetPublicURLWithResponse call
-func ParseGetPublicURLResponse(rsp *http.Response) (*GetPublicURLResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetPublicURLResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublicURL
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseUpdatePublicURLResponse parses an HTTP response from a UpdatePublicURLWithResponse call
-func ParseUpdatePublicURLResponse(rsp *http.Response) (*UpdatePublicURLResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &UpdatePublicURLResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublicURL
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseReplaceVisitorAccessResponse parses an HTTP response from a ReplaceVisitorAccessWithResponse call
-func ParseReplaceVisitorAccessResponse(rsp *http.Response) (*ReplaceVisitorAccessResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ReplaceVisitorAccessResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublicURL
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreatePublishRunResponse parses an HTTP response from a CreatePublishRunWithResponse call
-func ParseCreatePublishRunResponse(rsp *http.Response) (*CreatePublishRunResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreatePublishRunResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest PublishRunSetup
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListVisitorGrantsResponse parses an HTTP response from a ListVisitorGrantsWithResponse call
-func ParseListVisitorGrantsResponse(rsp *http.Response) (*ListVisitorGrantsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListVisitorGrantsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []VisitorGrant
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateTeamVisitorGrantResponse parses an HTTP response from a CreateTeamVisitorGrantWithResponse call
-func ParseCreateTeamVisitorGrantResponse(rsp *http.Response) (*CreateTeamVisitorGrantResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateTeamVisitorGrantResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest VisitorGrant
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRevokeVisitorGrantResponse parses an HTTP response from a RevokeVisitorGrantWithResponse call
-func ParseRevokeVisitorGrantResponse(rsp *http.Response) (*RevokeVisitorGrantResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RevokeVisitorGrantResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateIdentityVisitorGrantResponse parses an HTTP response from a CreateIdentityVisitorGrantWithResponse call
-func ParseCreateIdentityVisitorGrantResponse(rsp *http.Response) (*CreateIdentityVisitorGrantResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateIdentityVisitorGrantResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest VisitorGrant
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListVisitorInvitationsResponse parses an HTTP response from a ListVisitorInvitationsWithResponse call
-func ParseListVisitorInvitationsResponse(rsp *http.Response) (*ListVisitorInvitationsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListVisitorInvitationsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []VisitorInvitation
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateVisitorInvitationResponse parses an HTTP response from a CreateVisitorInvitationWithResponse call
-func ParseCreateVisitorInvitationResponse(rsp *http.Response) (*CreateVisitorInvitationResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateVisitorInvitationResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest VisitorInvitationCreation
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRevokeVisitorInvitationResponse parses an HTTP response from a RevokeVisitorInvitationWithResponse call
-func ParseRevokeVisitorInvitationResponse(rsp *http.Response) (*RevokeVisitorInvitationResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RevokeVisitorInvitationResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseClosePublishRunResponse parses an HTTP response from a ClosePublishRunWithResponse call
-func ParseClosePublishRunResponse(rsp *http.Response) (*ClosePublishRunResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ClosePublishRunResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCheckPreviewBrowserAccessResponse parses an HTTP response from a CheckPreviewBrowserAccessWithResponse call
-func ParseCheckPreviewBrowserAccessResponse(rsp *http.Response) (*CheckPreviewBrowserAccessResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CheckPreviewBrowserAccessResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest BrowserAccessResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRedeemPreviewBrowserHandoffResponse parses an HTTP response from a RedeemPreviewBrowserHandoffWithResponse call
-func ParseRedeemPreviewBrowserHandoffResponse(rsp *http.Response) (*RedeemPreviewBrowserHandoffResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RedeemPreviewBrowserHandoffResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest BrowserHandoffResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRevokePreviewBrowserAccessResponse parses an HTTP response from a RevokePreviewBrowserAccessWithResponse call
-func ParseRevokePreviewBrowserAccessResponse(rsp *http.Response) (*RevokePreviewBrowserAccessResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RevokePreviewBrowserAccessResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseMarkPublishRunCertificateInstalledResponse parses an HTTP response from a MarkPublishRunCertificateInstalledWithResponse call
-func ParseMarkPublishRunCertificateInstalledResponse(rsp *http.Response) (*MarkPublishRunCertificateInstalledResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &MarkPublishRunCertificateInstalledResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublishRun
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateCertificateIssuanceResponse parses an HTTP response from a CreateCertificateIssuanceWithResponse call
-func ParseCreateCertificateIssuanceResponse(rsp *http.Response) (*CreateCertificateIssuanceResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateCertificateIssuanceResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest CertificateIssuance
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateFeedbackReportResponse parses an HTTP response from a CreateFeedbackReportWithResponse call
-func ParseCreateFeedbackReportResponse(rsp *http.Response) (*CreateFeedbackReportResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateFeedbackReportResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest FeedbackThread
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListPreviewPageFeedbackResponse parses an HTTP response from a ListPreviewPageFeedbackWithResponse call
-func ParseListPreviewPageFeedbackResponse(rsp *http.Response) (*ListPreviewPageFeedbackResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListPreviewPageFeedbackResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest FeedbackThreadPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAppendReviewerFeedbackEventResponse parses an HTTP response from a AppendReviewerFeedbackEventWithResponse call
-func ParseAppendReviewerFeedbackEventResponse(rsp *http.Response) (*AppendReviewerFeedbackEventResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AppendReviewerFeedbackEventResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest FeedbackEvent
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListReviewerFeedbackEventsResponse parses an HTTP response from a ListReviewerFeedbackEventsWithResponse call
-func ParseListReviewerFeedbackEventsResponse(rsp *http.Response) (*ListReviewerFeedbackEventsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListReviewerFeedbackEventsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest FeedbackEventPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetReviewerFeedbackThreadResponse parses an HTTP response from a GetReviewerFeedbackThreadWithResponse call
-func ParseGetReviewerFeedbackThreadResponse(rsp *http.Response) (*GetReviewerFeedbackThreadResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetReviewerFeedbackThreadResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest FeedbackThread
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseMarkPublishRunReadyResponse parses an HTTP response from a MarkPublishRunReadyWithResponse call
-func ParseMarkPublishRunReadyResponse(rsp *http.Response) (*MarkPublishRunReadyResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &MarkPublishRunReadyResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublishRun
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRenewPublishRunResponse parses an HTTP response from a RenewPublishRunWithResponse call
-func ParseRenewPublishRunResponse(rsp *http.Response) (*RenewPublishRunResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RenewPublishRunResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublishRunHeartbeat
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseReportPublishRunServiceObservationsResponse parses an HTTP response from a ReportPublishRunServiceObservationsWithResponse call
-func ParseReportPublishRunServiceObservationsResponse(rsp *http.Response) (*ReportPublishRunServiceObservationsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ReportPublishRunServiceObservationsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ServiceObservationResult
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseCreatePublisherEnrollmentResponse parses an HTTP response from a CreatePublisherEnrollmentWithResponse call
 func ParseCreatePublisherEnrollmentResponse(rsp *http.Response) (*CreatePublisherEnrollmentResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -36205,39 +30439,6 @@ func ParseVerifyDeploymentIdentityResponse(rsp *http.Response) (*VerifyDeploymen
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest DeploymentPublisherVerification
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetPublisherPublicURLResponse parses an HTTP response from a GetPublisherPublicURLWithResponse call
-func ParseGetPublisherPublicURLResponse(rsp *http.Response) (*GetPublisherPublicURLResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetPublisherPublicURLResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublicURL
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -36749,6 +30950,79 @@ func ParseIssueServiceClientCertificateResponse(rsp *http.Response) (*IssueServi
 	return response, nil
 }
 
+// ParseGetServiceConfigurationResponse parses an HTTP response from a GetServiceConfigurationWithResponse call
+func ParseGetServiceConfigurationResponse(rsp *http.Response) (*GetServiceConfigurationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetServiceConfigurationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ProjectServiceConfiguration
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetServiceConfigurationResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 204:
+		var headers GetServiceConfigurationResponse204Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers204 = &headers
+	}
+
+	return response, nil
+}
+
 // ParsePrepareConnectorPeerPairResponse parses an HTTP response from a PrepareConnectorPeerPairWithResponse call
 func ParsePrepareConnectorPeerPairResponse(rsp *http.Response) (*PrepareConnectorPeerPairResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -36831,6 +31105,39 @@ func ParseRenewConnectorPeerPairResponse(rsp *http.Response) (*RenewConnectorPee
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ConnectorPeerPairRenewal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetServiceEnabledResponse parses an HTTP response from a SetServiceEnabledWithResponse call
+func ParseSetServiceEnabledResponse(rsp *http.Response) (*SetServiceEnabledResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetServiceEnabledResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Service
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -37586,6 +31893,171 @@ func ParseConfirmConnectorPeerPairPreparedResponse(rsp *http.Response) (*Confirm
 	return response, nil
 }
 
+// ParseCreateFeedbackReportResponse parses an HTTP response from a CreateFeedbackReportWithResponse call
+func ParseCreateFeedbackReportResponse(rsp *http.Response) (*CreateFeedbackReportResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateFeedbackReportResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest FeedbackThread
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListPreviewPageFeedbackResponse parses an HTTP response from a ListPreviewPageFeedbackWithResponse call
+func ParseListPreviewPageFeedbackResponse(rsp *http.Response) (*ListPreviewPageFeedbackResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPreviewPageFeedbackResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest FeedbackThreadPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAppendReviewerFeedbackEventResponse parses an HTTP response from a AppendReviewerFeedbackEventWithResponse call
+func ParseAppendReviewerFeedbackEventResponse(rsp *http.Response) (*AppendReviewerFeedbackEventResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AppendReviewerFeedbackEventResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest FeedbackEvent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListReviewerFeedbackEventsResponse parses an HTTP response from a ListReviewerFeedbackEventsWithResponse call
+func ParseListReviewerFeedbackEventsResponse(rsp *http.Response) (*ListReviewerFeedbackEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListReviewerFeedbackEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest FeedbackEventPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetReviewerFeedbackThreadResponse parses an HTTP response from a GetReviewerFeedbackThreadWithResponse call
+func ParseGetReviewerFeedbackThreadResponse(rsp *http.Response) (*GetReviewerFeedbackThreadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReviewerFeedbackThreadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest FeedbackThread
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseCreateServiceRunPreviewResponse parses an HTTP response from a CreateServiceRunPreviewWithResponse call
 func ParseCreateServiceRunPreviewResponse(rsp *http.Response) (*CreateServiceRunPreviewResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -38018,39 +32490,6 @@ func ParseRevokeVisitorDeviceResponse(rsp *http.Response) (*RevokeVisitorDeviceR
 	return response, nil
 }
 
-// ParseAcceptVisitorInvitationResponse parses an HTTP response from a AcceptVisitorInvitationWithResponse call
-func ParseAcceptVisitorInvitationResponse(rsp *http.Response) (*AcceptVisitorInvitationResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AcceptVisitorInvitationResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest VisitorGrant
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseReadPublisherVisitorPolicyResponse parses an HTTP response from a ReadPublisherVisitorPolicyWithResponse call
 func ParseReadPublisherVisitorPolicyResponse(rsp *http.Response) (*ReadPublisherVisitorPolicyResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -38100,39 +32539,6 @@ func ParseIssueVisitorTokenResponse(rsp *http.Response) (*IssueVisitorTokenRespo
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest VisitorTokenResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListAvailablePublicURLsResponse parses an HTTP response from a ListAvailablePublicURLsWithResponse call
-func ParseListAvailablePublicURLsResponse(rsp *http.Response) (*ListAvailablePublicURLsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListAvailablePublicURLsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AvailablePublicURLPage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -38391,15 +32797,9 @@ type ServerInterface interface {
 	// CompletePreviewBrowserLogin Return a signed-in visitor to the preview
 	// (GET /v1/browser/callback)
 	CompletePreviewBrowserLogin(w http.ResponseWriter, r *http.Request, params CompletePreviewBrowserLoginParams)
-	// BeginPreviewBrowserLogin Start sign-in for a preview visitor
-	// (GET /v1/browser/login)
-	BeginPreviewBrowserLogin(w http.ResponseWriter, r *http.Request, params BeginPreviewBrowserLoginParams)
 	// BeginServiceBrowserLogin Start browser sign-in for one HTTP service
 	// (GET /v1/browser/service-login)
 	BeginServiceBrowserLogin(w http.ResponseWriter, r *http.Request, params BeginServiceBrowserLoginParams)
-	// GetCertificateIssuance Read one publish-run certificate issuance
-	// (GET /v1/certificate-issuances/{issuance_id})
-	GetCertificateIssuance(w http.ResponseWriter, r *http.Request, issuanceId IssuanceID)
 	// GetClientIP Return the requesting client's public IP address
 	// (GET /v1/client-ip)
 	GetClientIP(w http.ResponseWriter, r *http.Request)
@@ -38424,12 +32824,12 @@ type ServerInterface interface {
 	// CreateGuestDemo Create a restricted guest credential for the built-in demo
 	// (POST /v1/guest-demo)
 	CreateGuestDemo(w http.ResponseWriter, r *http.Request)
-	// AllocateGuestDemoNumber Allocate a new hostname number for this guest trial
-	// (POST /v1/guest-demo/number)
-	AllocateGuestDemoNumber(w http.ResponseWriter, r *http.Request)
-	// EnrollGuestPublisher Enroll a publisher key for the guest trial's assigned demo URL
+	// EnrollGuestPublisher Enroll a publisher key for this trial's exact demo service
 	// (POST /v1/guest-demo/publisher)
 	EnrollGuestPublisher(w http.ResponseWriter, r *http.Request)
+	// AllocateGuestDemoService Allocate or recover this trial's exact demo service
+	// (POST /v1/guest-demo/services)
+	AllocateGuestDemoService(w http.ResponseWriter, r *http.Request, params AllocateGuestDemoServiceParams)
 	// GetHealth Confirm that the control HTTP server is serving
 	// (GET /v1/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
@@ -38529,90 +32929,6 @@ type ServerInterface interface {
 	// GetProjectStatus Inspect project publications across worktrees and deployments
 	// (GET /v1/projects/{project_key}/status)
 	GetProjectStatus(w http.ResponseWriter, r *http.Request, projectKey string, params GetProjectStatusParams)
-	// ListPublicURLs List public URLs for one team
-	// (GET /v1/public-urls)
-	ListPublicURLs(w http.ResponseWriter, r *http.Request, params ListPublicURLsParams)
-	// CreatePublicURL Create one team public URL
-	// (POST /v1/public-urls)
-	CreatePublicURL(w http.ResponseWriter, r *http.Request, params CreatePublicURLParams)
-	// DeletePublicURL Delete one public URL and close its publish run
-	// (DELETE /v1/public-urls/{public_url_id})
-	DeletePublicURL(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-	// GetPublicURL Read one public URL
-	// (GET /v1/public-urls/{public_url_id})
-	GetPublicURL(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-	// UpdatePublicURL Update a public URL's target and IP policy
-	// (PATCH /v1/public-urls/{public_url_id})
-	UpdatePublicURL(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-	// ReplaceVisitorAccess Replace the complete live visitor access policy
-	// (PUT /v1/public-urls/{public_url_id}/access)
-	ReplaceVisitorAccess(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-	// CreatePublishRun Create a publish run and allocate its publish run number
-	// (POST /v1/public-urls/{public_url_id}/publish-runs)
-	CreatePublishRun(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreatePublishRunParams)
-	// ListVisitorGrants List visitor grants for one manageable public URL
-	// (GET /v1/public-urls/{public_url_id}/visitor-grants)
-	ListVisitorGrants(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-	// CreateTeamVisitorGrant Grant current members of a team access to one public URL
-	// (POST /v1/public-urls/{public_url_id}/visitor-grants)
-	CreateTeamVisitorGrant(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreateTeamVisitorGrantParams)
-	// RevokeVisitorGrant Revoke one public URL visitor grant
-	// (DELETE /v1/public-urls/{public_url_id}/visitor-grants/{grant_id})
-	RevokeVisitorGrant(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, grantId string)
-	// CreateIdentityVisitorGrant Create an explicit identity grant, including for the current identity
-	// (POST /v1/public-urls/{public_url_id}/visitor-identity-grants)
-	CreateIdentityVisitorGrant(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreateIdentityVisitorGrantParams)
-	// ListVisitorInvitations List named visitor invitations for one public URL
-	// (GET /v1/public-urls/{public_url_id}/visitor-invitations)
-	ListVisitorInvitations(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-	// CreateVisitorInvitation Invite a verified email identity to one public URL
-	// (POST /v1/public-urls/{public_url_id}/visitor-invitations)
-	CreateVisitorInvitation(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreateVisitorInvitationParams)
-	// RevokeVisitorInvitation Revoke a public URL invitation and its accepted identity grant
-	// (DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id})
-	RevokeVisitorInvitation(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, invitationId string)
-	// ClosePublishRun Close and drain a publish run without deleting its public URL
-	// (DELETE /v1/publish-runs/{publish_run_id})
-	ClosePublishRun(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
-	// CheckPreviewBrowserAccess Check a browser cookie against current preview access
-	// (POST /v1/publish-runs/{publish_run_id}/browser/access)
-	CheckPreviewBrowserAccess(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
-	// RedeemPreviewBrowserHandoff Redeem a one-time browser handoff on the publisher
-	// (POST /v1/publish-runs/{publish_run_id}/browser/handoff)
-	RedeemPreviewBrowserHandoff(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
-	// RevokePreviewBrowserAccess Revoke the current browser session
-	// (POST /v1/publish-runs/{publish_run_id}/browser/logout)
-	RevokePreviewBrowserAccess(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
-	// MarkPublishRunCertificateInstalled Record installation of the current public URL certificate
-	// (POST /v1/publish-runs/{publish_run_id}/certificate-installed)
-	MarkPublishRunCertificateInstalled(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
-	// CreateCertificateIssuance Begin issuance for the publish run's certificate plan
-	// (POST /v1/publish-runs/{publish_run_id}/certificate-issuances)
-	CreateCertificateIssuance(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, params CreateCertificateIssuanceParams)
-	// CreateFeedbackReport Store a reviewer's first report for a preview page
-	// (POST /v1/publish-runs/{publish_run_id}/feedback)
-	CreateFeedbackReport(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, params CreateFeedbackReportParams)
-	// ListPreviewPageFeedback List feedback on one page for a reviewer
-	// (POST /v1/publish-runs/{publish_run_id}/feedback/query)
-	ListPreviewPageFeedback(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
-	// AppendReviewerFeedbackEvent Reply, resolve, or reopen feedback through preview access
-	// (POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events)
-	AppendReviewerFeedbackEvent(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, feedbackId FeedbackID, params AppendReviewerFeedbackEventParams)
-	// ListReviewerFeedbackEvents Read thread events through a current publisher connection
-	// (POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query)
-	ListReviewerFeedbackEvents(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, feedbackId FeedbackID)
-	// GetReviewerFeedbackThread Read a feedback thread through a current publisher connection
-	// (POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query)
-	GetReviewerFeedbackThread(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, feedbackId FeedbackID)
-	// MarkPublishRunReady Mark a publish run ready after its certificate and two publisher connections are ready
-	// (POST /v1/publish-runs/{publish_run_id}/ready)
-	MarkPublishRunReady(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
-	// RenewPublishRun Renew a publish run and replace missing publisher connections
-	// (POST /v1/publish-runs/{publish_run_id}/renew)
-	RenewPublishRun(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
-	// ReportPublishRunServiceObservations Report service observations through a public URL publish run
-	// (POST /v1/publish-runs/{run_id}/service-observations)
-	ReportPublishRunServiceObservations(w http.ResponseWriter, r *http.Request, runId string)
 	// CreatePublisherEnrollment Issue an expiring one-use publisher enrollment
 	// (POST /v1/publisher-enrollments)
 	CreatePublisherEnrollment(w http.ResponseWriter, r *http.Request)
@@ -38643,9 +32959,6 @@ type ServerInterface interface {
 	// VerifyDeploymentIdentity Verify a replica's deployment membership without acquiring a lease
 	// (POST /v1/publisher/deployments/verify)
 	VerifyDeploymentIdentity(w http.ResponseWriter, r *http.Request)
-	// GetPublisherPublicURL Read the saved URL selected by the current grant
-	// (GET /v1/publisher/public-url)
-	GetPublisherPublicURL(w http.ResponseWriter, r *http.Request)
 	// InspectPublisherRuntime Inspect a publisher runtime
 	// (POST /v1/publisher/runtimes/{publisher_identity_id}/inspect)
 	InspectPublisherRuntime(w http.ResponseWriter, r *http.Request, publisherIdentityId PublisherIdentityID)
@@ -38685,12 +32998,15 @@ type ServerInterface interface {
 	// GetService Read one saved service for management
 	// (GET /v1/services/{service_id})
 	GetService(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
-	// ConfigureService Replace a service's approved protocol and target TLS trust
+	// ConfigureService Replace a service's approved settings and standalone declaration
 	// (PUT /v1/services/{service_id})
 	ConfigureService(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
 	// IssueServiceClientCertificate Issue a service-scoped client certificate for an enrolled device
 	// (POST /v1/services/{service_id}/client-certificates)
 	IssueServiceClientCertificate(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
+	// GetServiceConfiguration Read one service's protected saved declaration
+	// (GET /v1/services/{service_id}/configuration)
+	GetServiceConfiguration(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
 	// PrepareConnectorPeerPair Prepare a signed connector pair for an exact ready service run
 	// (POST /v1/services/{service_id}/connector-peer-pairs)
 	PrepareConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
@@ -38700,6 +33016,9 @@ type ServerInterface interface {
 	// RenewConnectorPeerPair Renew an exact signed connector pair and visitor permission
 	// (POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew)
 	RenewConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID, pairId string)
+	// SetServiceEnabled Suspend or enable a saved service
+	// (PUT /v1/services/{service_id}/enabled)
+	SetServiceEnabled(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
 	// ReleaseServiceEndpoint Retire a disabled service's public port reservation
 	// (POST /v1/services/{service_id}/endpoint/release)
 	ReleaseServiceEndpoint(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
@@ -38715,7 +33034,7 @@ type ServerInterface interface {
 	// ListServiceHTTPGrants List an HTTP service's visitor credentials without secrets
 	// (GET /v1/services/{service_id}/http-grants)
 	ListServiceHTTPGrants(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
-	// CreateServiceHTTPGrant Create a service-scoped HTTP visitor token or share
+	// CreateServiceHTTPGrant Create a service-scoped HTTP visitor token
 	// (POST /v1/services/{service_id}/http-grants)
 	CreateServiceHTTPGrant(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
 	// RevokeServiceHTTPGrant Revoke one service-scoped HTTP visitor credential
@@ -38769,6 +33088,21 @@ type ServerInterface interface {
 	// ConfirmConnectorPeerPairPrepared Confirm an exact connector binding installed by the publisher
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared)
 	ConfirmConnectorPeerPairPrepared(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, pairId string)
+	// CreateFeedbackReport Store a reviewer's first report for a preview page
+	// (POST /v1/services/{service_id}/runs/{service_run_id}/feedback)
+	CreateFeedbackReport(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, params CreateFeedbackReportParams)
+	// ListPreviewPageFeedback List feedback on one page for a reviewer
+	// (POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query)
+	ListPreviewPageFeedback(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
+	// AppendReviewerFeedbackEvent Reply, resolve, or reopen feedback through preview access
+	// (POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events)
+	AppendReviewerFeedbackEvent(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params AppendReviewerFeedbackEventParams)
+	// ListReviewerFeedbackEvents Read thread events through a current publisher connection
+	// (POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query)
+	ListReviewerFeedbackEvents(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID)
+	// GetReviewerFeedbackThread Read a feedback thread through a current publisher connection
+	// (POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query)
+	GetReviewerFeedbackThread(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID)
 	// CreateServiceRunPreview Create feedback context for one ephemeral service run
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/preview)
 	CreateServiceRunPreview(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
@@ -38808,18 +33142,12 @@ type ServerInterface interface {
 	// RevokeVisitorDevice Revoke a visitor device and its connector peer pairs
 	// (DELETE /v1/visitor-devices/{device_id})
 	RevokeVisitorDevice(w http.ResponseWriter, r *http.Request, deviceId string)
-	// AcceptVisitorInvitation Accept a public URL invitation for the signed-in identity
-	// (POST /v1/visitor-invitations/accept)
-	AcceptVisitorInvitation(w http.ResponseWriter, r *http.Request)
 	// ReadPublisherVisitorPolicy Refresh the current run's visitor policy and verification keys
 	// (POST /v1/visitor-policy)
 	ReadPublisherVisitorPolicy(w http.ResponseWriter, r *http.Request)
 	// IssueVisitorToken Prepare or renew an exact-resource visitor permission
 	// (POST /v1/visitor-tokens)
 	IssueVisitorToken(w http.ResponseWriter, r *http.Request)
-	// ListAvailablePublicURLs List public URLs available to the signed-in visitor
-	// (GET /v1/visitor/public-urls)
-	ListAvailablePublicURLs(w http.ResponseWriter, r *http.Request, params ListAvailablePublicURLsParams)
 	// ListAvailableServices List services available to the signed-in visitor
 	// (GET /v1/visitor/services)
 	ListAvailableServices(w http.ResponseWriter, r *http.Request, params ListAvailableServicesParams)
@@ -39008,78 +33336,6 @@ func (siw *ServerInterfaceWrapper) CompletePreviewBrowserLogin(w http.ResponseWr
 	handler.ServeHTTP(w, r)
 }
 
-// BeginPreviewBrowserLogin operation middleware
-func (siw *ServerInterfaceWrapper) BeginPreviewBrowserLogin(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params BeginPreviewBrowserLoginParams
-
-	// ------------- Optional query parameter "preview_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "preview_id", r.URL.Query(), &params.PreviewId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "preview_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "preview_id", Err: err})
-		}
-		return
-	}
-
-	// ------------- Required query parameter "public_url_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "public_url_id", r.URL.Query(), &params.PublicUrlId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "public_url_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		}
-		return
-	}
-
-	// ------------- Required query parameter "return_path" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "return_path", r.URL.Query(), &params.ReturnPath, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "return_path"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "return_path", Err: err})
-		}
-		return
-	}
-
-	// ------------- Optional query parameter "switch_account" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "switch_account", r.URL.Query(), &params.SwitchAccount, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "switch_account"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "switch_account", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.BeginPreviewBrowserLogin(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // BeginServiceBrowserLogin operation middleware
 func (siw *ServerInterfaceWrapper) BeginServiceBrowserLogin(w http.ResponseWriter, r *http.Request) {
 
@@ -39098,6 +33354,19 @@ func (siw *ServerInterfaceWrapper) BeginServiceBrowserLogin(w http.ResponseWrite
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "service_id"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "preview_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "preview_id", r.URL.Query(), &params.PreviewId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "preview_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "preview_id", Err: err})
 		}
 		return
 	}
@@ -39130,32 +33399,6 @@ func (siw *ServerInterfaceWrapper) BeginServiceBrowserLogin(w http.ResponseWrite
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.BeginServiceBrowserLogin(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetCertificateIssuance operation middleware
-func (siw *ServerInterfaceWrapper) GetCertificateIssuance(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "issuance_id" -------------
-	var issuanceId IssuanceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "issuance_id", r.PathValue("issuance_id"), &issuanceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "issuance_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetCertificateIssuance(w, r, issuanceId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -39421,11 +33664,11 @@ func (siw *ServerInterfaceWrapper) CreateGuestDemo(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
-// AllocateGuestDemoNumber operation middleware
-func (siw *ServerInterfaceWrapper) AllocateGuestDemoNumber(w http.ResponseWriter, r *http.Request) {
+// EnrollGuestPublisher operation middleware
+func (siw *ServerInterfaceWrapper) EnrollGuestPublisher(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AllocateGuestDemoNumber(w, r)
+		siw.Handler.EnrollGuestPublisher(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -39435,11 +33678,42 @@ func (siw *ServerInterfaceWrapper) AllocateGuestDemoNumber(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
-// EnrollGuestPublisher operation middleware
-func (siw *ServerInterfaceWrapper) EnrollGuestPublisher(w http.ResponseWriter, r *http.Request) {
+// AllocateGuestDemoService operation middleware
+func (siw *ServerInterfaceWrapper) AllocateGuestDemoService(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params AllocateGuestDemoServiceParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.EnrollGuestPublisher(w, r)
+		siw.Handler.AllocateGuestDemoService(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -41092,1050 +35366,6 @@ func (siw *ServerInterfaceWrapper) GetProjectStatus(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
-// ListPublicURLs operation middleware
-func (siw *ServerInterfaceWrapper) ListPublicURLs(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ListPublicURLsParams
-
-	// ------------- Required query parameter "team_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
-		}
-		return
-	}
-
-	// ------------- Optional query parameter "cursor" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
-		}
-		return
-	}
-
-	// ------------- Optional query parameter "canonical_hostname" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "canonical_hostname", r.URL.Query(), &params.CanonicalHostname, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "canonical_hostname"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "canonical_hostname", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListPublicURLs(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreatePublicURL operation middleware
-func (siw *ServerInterfaceWrapper) CreatePublicURL(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params CreatePublicURLParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreatePublicURL(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DeletePublicURL operation middleware
-func (siw *ServerInterfaceWrapper) DeletePublicURL(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeletePublicURL(w, r, publicUrlId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetPublicURL operation middleware
-func (siw *ServerInterfaceWrapper) GetPublicURL(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetPublicURL(w, r, publicUrlId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// UpdatePublicURL operation middleware
-func (siw *ServerInterfaceWrapper) UpdatePublicURL(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.UpdatePublicURL(w, r, publicUrlId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ReplaceVisitorAccess operation middleware
-func (siw *ServerInterfaceWrapper) ReplaceVisitorAccess(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ReplaceVisitorAccess(w, r, publicUrlId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreatePublishRun operation middleware
-func (siw *ServerInterfaceWrapper) CreatePublishRun(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params CreatePublishRunParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	// ------------- Required header parameter "Publisher-Run-Proof" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Publisher-Run-Proof")]; found {
-		var PublisherRunProof string
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Publisher-Run-Proof", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Publisher-Run-Proof", valueList[0], &PublisherRunProof, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Publisher-Run-Proof", Err: err})
-			return
-		}
-
-		params.PublisherRunProof = PublisherRunProof
-
-	} else {
-		err := fmt.Errorf("header parameter Publisher-Run-Proof is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Publisher-Run-Proof", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreatePublishRun(w, r, publicUrlId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListVisitorGrants operation middleware
-func (siw *ServerInterfaceWrapper) ListVisitorGrants(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListVisitorGrants(w, r, publicUrlId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateTeamVisitorGrant operation middleware
-func (siw *ServerInterfaceWrapper) CreateTeamVisitorGrant(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params CreateTeamVisitorGrantParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateTeamVisitorGrant(w, r, publicUrlId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RevokeVisitorGrant operation middleware
-func (siw *ServerInterfaceWrapper) RevokeVisitorGrant(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "grant_id" -------------
-	var grantId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "grant_id", r.PathValue("grant_id"), &grantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "grant_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RevokeVisitorGrant(w, r, publicUrlId, grantId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateIdentityVisitorGrant operation middleware
-func (siw *ServerInterfaceWrapper) CreateIdentityVisitorGrant(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params CreateIdentityVisitorGrantParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateIdentityVisitorGrant(w, r, publicUrlId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListVisitorInvitations operation middleware
-func (siw *ServerInterfaceWrapper) ListVisitorInvitations(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListVisitorInvitations(w, r, publicUrlId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateVisitorInvitation operation middleware
-func (siw *ServerInterfaceWrapper) CreateVisitorInvitation(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params CreateVisitorInvitationParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateVisitorInvitation(w, r, publicUrlId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RevokeVisitorInvitation operation middleware
-func (siw *ServerInterfaceWrapper) RevokeVisitorInvitation(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "invitation_id" -------------
-	var invitationId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "invitation_id", r.PathValue("invitation_id"), &invitationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "invitation_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RevokeVisitorInvitation(w, r, publicUrlId, invitationId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ClosePublishRun operation middleware
-func (siw *ServerInterfaceWrapper) ClosePublishRun(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "publish_run_id" -------------
-	var publishRunId PublishRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ClosePublishRun(w, r, publishRunId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CheckPreviewBrowserAccess operation middleware
-func (siw *ServerInterfaceWrapper) CheckPreviewBrowserAccess(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "publish_run_id" -------------
-	var publishRunId PublishRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CheckPreviewBrowserAccess(w, r, publishRunId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RedeemPreviewBrowserHandoff operation middleware
-func (siw *ServerInterfaceWrapper) RedeemPreviewBrowserHandoff(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "publish_run_id" -------------
-	var publishRunId PublishRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RedeemPreviewBrowserHandoff(w, r, publishRunId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RevokePreviewBrowserAccess operation middleware
-func (siw *ServerInterfaceWrapper) RevokePreviewBrowserAccess(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "publish_run_id" -------------
-	var publishRunId PublishRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RevokePreviewBrowserAccess(w, r, publishRunId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// MarkPublishRunCertificateInstalled operation middleware
-func (siw *ServerInterfaceWrapper) MarkPublishRunCertificateInstalled(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "publish_run_id" -------------
-	var publishRunId PublishRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.MarkPublishRunCertificateInstalled(w, r, publishRunId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateCertificateIssuance operation middleware
-func (siw *ServerInterfaceWrapper) CreateCertificateIssuance(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "publish_run_id" -------------
-	var publishRunId PublishRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params CreateCertificateIssuanceParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateCertificateIssuance(w, r, publishRunId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateFeedbackReport operation middleware
-func (siw *ServerInterfaceWrapper) CreateFeedbackReport(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "publish_run_id" -------------
-	var publishRunId PublishRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params CreateFeedbackReportParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateFeedbackReport(w, r, publishRunId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListPreviewPageFeedback operation middleware
-func (siw *ServerInterfaceWrapper) ListPreviewPageFeedback(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "publish_run_id" -------------
-	var publishRunId PublishRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListPreviewPageFeedback(w, r, publishRunId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// AppendReviewerFeedbackEvent operation middleware
-func (siw *ServerInterfaceWrapper) AppendReviewerFeedbackEvent(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "publish_run_id" -------------
-	var publishRunId PublishRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "feedback_id" -------------
-	var feedbackId FeedbackID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params AppendReviewerFeedbackEventParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AppendReviewerFeedbackEvent(w, r, publishRunId, feedbackId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListReviewerFeedbackEvents operation middleware
-func (siw *ServerInterfaceWrapper) ListReviewerFeedbackEvents(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "publish_run_id" -------------
-	var publishRunId PublishRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "feedback_id" -------------
-	var feedbackId FeedbackID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListReviewerFeedbackEvents(w, r, publishRunId, feedbackId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetReviewerFeedbackThread operation middleware
-func (siw *ServerInterfaceWrapper) GetReviewerFeedbackThread(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "publish_run_id" -------------
-	var publishRunId PublishRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "feedback_id" -------------
-	var feedbackId FeedbackID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetReviewerFeedbackThread(w, r, publishRunId, feedbackId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// MarkPublishRunReady operation middleware
-func (siw *ServerInterfaceWrapper) MarkPublishRunReady(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "publish_run_id" -------------
-	var publishRunId PublishRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.MarkPublishRunReady(w, r, publishRunId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RenewPublishRun operation middleware
-func (siw *ServerInterfaceWrapper) RenewPublishRun(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "publish_run_id" -------------
-	var publishRunId PublishRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RenewPublishRun(w, r, publishRunId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ReportPublishRunServiceObservations operation middleware
-func (siw *ServerInterfaceWrapper) ReportPublishRunServiceObservations(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "run_id" -------------
-	var runId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "run_id", r.PathValue("run_id"), &runId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "run_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ReportPublishRunServiceObservations(w, r, runId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // CreatePublisherEnrollment operation middleware
 func (siw *ServerInterfaceWrapper) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Request) {
 
@@ -42376,20 +35606,6 @@ func (siw *ServerInterfaceWrapper) VerifyDeploymentIdentity(w http.ResponseWrite
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.VerifyDeploymentIdentity(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetPublisherPublicURL operation middleware
-func (siw *ServerInterfaceWrapper) GetPublisherPublicURL(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetPublisherPublicURL(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -42792,6 +36008,32 @@ func (siw *ServerInterfaceWrapper) IssueServiceClientCertificate(w http.Response
 	handler.ServeHTTP(w, r)
 }
 
+// GetServiceConfiguration operation middleware
+func (siw *ServerInterfaceWrapper) GetServiceConfiguration(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetServiceConfiguration(w, r, serviceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PrepareConnectorPeerPair operation middleware
 func (siw *ServerInterfaceWrapper) PrepareConnectorPeerPair(w http.ResponseWriter, r *http.Request) {
 
@@ -42879,6 +36121,32 @@ func (siw *ServerInterfaceWrapper) RenewConnectorPeerPair(w http.ResponseWriter,
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RenewConnectorPeerPair(w, r, serviceId, pairId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetServiceEnabled operation middleware
+func (siw *ServerInterfaceWrapper) SetServiceEnabled(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetServiceEnabled(w, r, serviceId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -43808,6 +37076,264 @@ func (siw *ServerInterfaceWrapper) ConfirmConnectorPeerPairPrepared(w http.Respo
 	handler.ServeHTTP(w, r)
 }
 
+// CreateFeedbackReport operation middleware
+func (siw *ServerInterfaceWrapper) CreateFeedbackReport(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "service_run_id" -------------
+	var serviceRunId ServiceRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateFeedbackReportParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateFeedbackReport(w, r, serviceId, serviceRunId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListPreviewPageFeedback operation middleware
+func (siw *ServerInterfaceWrapper) ListPreviewPageFeedback(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "service_run_id" -------------
+	var serviceRunId ServiceRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPreviewPageFeedback(w, r, serviceId, serviceRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AppendReviewerFeedbackEvent operation middleware
+func (siw *ServerInterfaceWrapper) AppendReviewerFeedbackEvent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "service_run_id" -------------
+	var serviceRunId ServiceRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "feedback_id" -------------
+	var feedbackId FeedbackID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params AppendReviewerFeedbackEventParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AppendReviewerFeedbackEvent(w, r, serviceId, serviceRunId, feedbackId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListReviewerFeedbackEvents operation middleware
+func (siw *ServerInterfaceWrapper) ListReviewerFeedbackEvents(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "service_run_id" -------------
+	var serviceRunId ServiceRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "feedback_id" -------------
+	var feedbackId FeedbackID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListReviewerFeedbackEvents(w, r, serviceId, serviceRunId, feedbackId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetReviewerFeedbackThread operation middleware
+func (siw *ServerInterfaceWrapper) GetReviewerFeedbackThread(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "service_run_id" -------------
+	var serviceRunId ServiceRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "feedback_id" -------------
+	var feedbackId FeedbackID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetReviewerFeedbackThread(w, r, serviceId, serviceRunId, feedbackId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreateServiceRunPreview operation middleware
 func (siw *ServerInterfaceWrapper) CreateServiceRunPreview(w http.ResponseWriter, r *http.Request) {
 
@@ -44286,20 +37812,6 @@ func (siw *ServerInterfaceWrapper) RevokeVisitorDevice(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
-// AcceptVisitorInvitation operation middleware
-func (siw *ServerInterfaceWrapper) AcceptVisitorInvitation(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AcceptVisitorInvitation(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // ReadPublisherVisitorPolicy operation middleware
 func (siw *ServerInterfaceWrapper) ReadPublisherVisitorPolicy(w http.ResponseWriter, r *http.Request) {
 
@@ -44328,52 +37840,6 @@ func (siw *ServerInterfaceWrapper) IssueVisitorToken(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
-// ListAvailablePublicURLs operation middleware
-func (siw *ServerInterfaceWrapper) ListAvailablePublicURLs(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ListAvailablePublicURLsParams
-
-	// ------------- Optional query parameter "team_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
-		}
-		return
-	}
-
-	// ------------- Optional query parameter "cursor" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListAvailablePublicURLs(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // ListAvailableServices operation middleware
 func (siw *ServerInterfaceWrapper) ListAvailableServices(w http.ResponseWriter, r *http.Request) {
 
@@ -44392,6 +37858,19 @@ func (siw *ServerInterfaceWrapper) ListAvailableServices(w http.ResponseWriter, 
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "access_path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "access_path", r.URL.Query(), &params.AccessPath, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "access_path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "access_path", Err: err})
 		}
 		return
 	}
@@ -44702,7 +38181,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publisher/deployments/assignments", wrapper.GetDeploymentPublisherAssignments)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/deployments/configuration-acknowledgements", wrapper.AcknowledgeDeploymentPublisherConfiguration)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/teams/{team_id}/service-audit", wrapper.ListServiceAudit)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{run_id}/service-observations", wrapper.ReportPublishRunServiceObservations)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/service-observations", wrapper.ReportServiceRunObservations)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publisher/services/{service_id}", wrapper.DeletePublisherService)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publisher/services/{service_id}", wrapper.GetPublisherService)
@@ -44713,6 +38191,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/services/{service_id}", wrapper.DeleteService)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}", wrapper.GetService)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/services/{service_id}", wrapper.ConfigureService)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/configuration", wrapper.GetServiceConfiguration)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/services/{service_id}/enabled", wrapper.SetServiceEnabled)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/grants", wrapper.ListServiceGrants)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/grants", wrapper.CreateServiceGrant)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/endpoint/release", wrapper.ReleaseServiceEndpoint)
@@ -44730,22 +38210,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}", wrapper.CloseServiceRun)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/renew", wrapper.RenewServiceRun)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor", wrapper.AuthorizeServiceHTTPVisitor)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/visitor/public-urls", wrapper.ListAvailablePublicURLs)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants", wrapper.ListVisitorGrants)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants", wrapper.CreateTeamVisitorGrant)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-identity-grants", wrapper.CreateIdentityVisitorGrant)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants/{grant_id}", wrapper.RevokeVisitorGrant)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-invitations", wrapper.ListVisitorInvitations)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-invitations", wrapper.CreateVisitorInvitation)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id}", wrapper.RevokeVisitorInvitation)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/visitor-invitations/accept", wrapper.AcceptVisitorInvitation)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/access", wrapper.ReplaceVisitorAccess)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo/publisher", wrapper.EnrollGuestPublisher)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/login", wrapper.BeginPreviewBrowserLogin)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/callback", wrapper.CompletePreviewBrowserLogin)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/browser/handoff", wrapper.RedeemPreviewBrowserHandoff)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/browser/access", wrapper.CheckPreviewBrowserAccess)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/browser/logout", wrapper.RevokePreviewBrowserAccess)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/preview", wrapper.CreateServiceRunPreview)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/health", wrapper.GetHealth)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/ready", wrapper.GetReadiness)
@@ -44753,7 +38219,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/discovery", wrapper.GetControlDiscovery)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/webhook-providers/{provider}/source", wrapper.GetWebhookProviderSource)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo", wrapper.CreateGuestDemo)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo/number", wrapper.AllocateGuestDemoNumber)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo/services", wrapper.AllocateGuestDemoService)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/previews", wrapper.ListPreviews)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews", wrapper.CreatePreview)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/previews/{preview_id}", wrapper.GetPreview)
@@ -44770,31 +38236,18 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/feedback/{feedback_id}", wrapper.GetFeedbackThread)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/feedback/{feedback_id}/events", wrapper.ListFeedbackThreadEvents)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/feedback/{feedback_id}/events", wrapper.AppendFeedbackEvent)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls", wrapper.ListPublicURLs)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls", wrapper.CreatePublicURL)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.DeletePublicURL)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.GetPublicURL)
-	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.UpdatePublicURL)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/publish-runs", wrapper.CreatePublishRun)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publisher/public-url", wrapper.GetPublisherPublicURL)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-enrollments", wrapper.CreatePublisherEnrollment)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publisher-identities", wrapper.ListPublisherIdentities)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publisher-identities/{publisher_identity_id}", wrapper.RevokePublisherIdentity)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-identities/{publisher_identity_id}/grants", wrapper.CreatePublisherGrant)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publisher-identities/{publisher_identity_id}/grants/{grant_id}", wrapper.RevokePublisherGrant)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/services", wrapper.AllocatePublisherService)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/renew", wrapper.RenewPublishRun)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/share-redemptions", wrapper.RedeemServiceShare)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/feedback", wrapper.CreateFeedbackReport)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/feedback/query", wrapper.ListPreviewPageFeedback)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events", wrapper.AppendReviewerFeedbackEvent)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query", wrapper.GetReviewerFeedbackThread)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query", wrapper.ListReviewerFeedbackEvents)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/ready", wrapper.MarkPublishRunReady)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/certificate-installed", wrapper.MarkPublishRunCertificateInstalled)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}", wrapper.ClosePublishRun)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/certificate-issuances", wrapper.CreateCertificateIssuance)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/certificate-issuances/{issuance_id}", wrapper.GetCertificateIssuance)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/feedback", wrapper.CreateFeedbackReport)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/feedback/query", wrapper.ListPreviewPageFeedback)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events", wrapper.AppendReviewerFeedbackEvent)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query", wrapper.GetReviewerFeedbackThread)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query", wrapper.ListReviewerFeedbackEvents)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/admin/status", wrapper.GetAdminServerStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/admin/relays", wrapper.ListAdminRelays)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/admin/relays/{relay_id}/drain", wrapper.DrainAdminRelay)

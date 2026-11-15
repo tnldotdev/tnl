@@ -31,14 +31,8 @@ func (s *decisionResetStream) Reset(code uint32) error {
 	return err
 }
 
-func decisionPromotion() tunnelv1.AdmissionHeader {
-	h := internalForwardingHeader().Admission()
-	h.Kind, h.RelayID, h.RelayRunID, h.RelayLeaseRevision = tunnelv1.PublisherPromotion, "", "", 0
-	return h
-}
-
 func TestReturnDecisionCancellationAndJoin(t *testing.T) {
-	for _, kind := range []string{"promotion", "accept", "reject", "forward_rejection", "end"} {
+	for _, kind := range []string{"accept", "reject", "forward_rejection", "end"} {
 		for _, contention := range []string{"own_write", "data_writer", "responder"} {
 			for _, preCanceled := range []bool{false, true} {
 				name := kind + "/" + contention + map[bool]string{false: "/after_entry", true: "/pre_canceled"}[preCanceled]
@@ -50,7 +44,7 @@ func TestReturnDecisionCancellationAndJoin(t *testing.T) {
 						wire := &decisionResetStream{Stream: &memoryStream{Conn: local}, resetEntered: make(chan struct{}), resetRelease: make(chan struct{})}
 						release := sync.OnceFunc(func() { close(wire.resetRelease) })
 						defer release()
-						reply := &replyStream{Stream: wire, accepted: true, confirmed: true, promotion: decisionPromotion()}
+						reply := &replyStream{Stream: wire, accepted: true}
 						var prior <-chan error
 						if contention != "own_write" {
 							prior = tunnelWorker(t, func() { _ = local.Close() }, func() error {
@@ -69,8 +63,6 @@ func TestReturnDecisionCancellationAndJoin(t *testing.T) {
 						}
 						result := tunnelWorker(t, func() { _ = local.Close() }, func() error {
 							switch kind {
-							case "promotion":
-								return reply.promote(ctx, reply.promotion)
 							case "accept":
 								return reply.respond(ctx, tunnelv1.StreamResponse{Type: tunnelv1.StreamAccepted})
 							case "reject":
@@ -122,14 +114,13 @@ func TestReturnDecisionCancellationAndJoin(t *testing.T) {
 
 func TestReturnDecisionRealCancellationKeepsSibling(t *testing.T) {
 	for _, transport := range []string{"quic", "tls_yamux"} {
-		for _, decision := range []string{"promotion", "rejection", "end"} {
+		for _, decision := range []string{"rejection", "end"} {
 			t.Run(transport+"/"+decision, func(t *testing.T) {
 				client, server := realTunnelPair(t, transport)
 				_, publisher := realVisitorPair(t, client, server)
 				reply := publisher.(*replyStream)
 				wire := &promotionWriteSignal{Stream: reply.Stream, entered: make(chan struct{})}
 				reply.Stream = wire
-				reply.promotion = decisionPromotion()
 				written := tunnelWorker(t, func() { _ = publisher.Close() }, func() error {
 					_, err := publisher.Write(bytes.Repeat([]byte("x"), 16<<20))
 					return err
@@ -143,8 +134,6 @@ func TestReturnDecisionRealCancellationKeepsSibling(t *testing.T) {
 					err = reply.forwardRejection(ctx, tunnelv1.Unavailable)
 				case "end":
 					err = reply.end(ctx)
-				default:
-					err = reply.promote(ctx, reply.promotion)
 				}
 				if !errors.Is(err, context.DeadlineExceeded) {
 					t.Fatal("decision ignored contended writer deadline", err)

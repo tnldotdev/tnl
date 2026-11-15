@@ -27,6 +27,7 @@ type publicServiceControlFixture struct {
 	service, run                         string
 	traffic                              ingressv1.IngressTrafficLimits
 	anonymous                            bool
+	recoveryEpisodeID                    *int64
 	relays                               []ingressv1.ServiceRelay
 	claimStarted, claimGate              chan struct{}
 	recheckStarted, recheckGate          chan struct{}
@@ -76,7 +77,7 @@ func (c *publicServiceControlFixture) AdmitPublicServiceVisitor(ctx context.Cont
 	if until.IsZero() {
 		until = time.Now().Add(time.Minute)
 	}
-	return ingressv1.PublicServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, Traffic: c.traffic, Anonymous: c.anonymous, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: until, ConnectedRelays: append([]ingressv1.ServiceRelay(nil), c.relays...)}, nil
+	return ingressv1.PublicServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, Traffic: c.traffic, Anonymous: c.anonymous, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: until, ConnectedRelays: append([]ingressv1.ServiceRelay(nil), c.relays...), RecoveryEpisodeId: c.recoveryEpisodeID}, nil
 }
 
 func (c *publicServiceControlFixture) PublicServiceVisitorStatus(ctx context.Context, _ string, _ ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error) {

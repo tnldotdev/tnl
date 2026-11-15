@@ -11,8 +11,8 @@ import (
 func feedbackScope(thread controlstate.FeedbackThread) controlv1.FeedbackScope {
 	return controlv1.FeedbackScope{
 		PageTitle: feedbackPageTitle(thread.PageTitle),
-		PreviewId: thread.PreviewID, PublicUrlId: thread.PublicURLID,
-		PublishRunId: thread.PublishRunID, PublishRunNumber: int64(thread.PublishRunNumber),
+		PreviewId: thread.PreviewID, ServiceId: thread.ServiceID,
+		ServiceRunId: thread.ServiceRunID, RunNumber: thread.RunNumber,
 		PagePath: thread.PagePath, Service: thread.Service,
 	}
 }

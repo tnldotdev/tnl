@@ -15,7 +15,8 @@ func TestPublisherResolvedScopesHaveExclusiveTargets(t *testing.T) {
 		want     PublisherScope
 	}{
 		{savedURLPublisherScope{"team", "url"}, PublisherScope{TeamID: "team", Kind: "saved_public_url", PublicURLID: "url"}},
-		{servicePublisherScope{"team", "private"}, PublisherScope{TeamID: "team", Kind: "service", ServiceID: "private"}},
+		{servicePublisherScope{teamID: "team", serviceID: "private"}, PublisherScope{TeamID: "team", Kind: "service", ServiceID: "private"}},
+		{servicePublisherScope{guestID: "trial", serviceID: "demo"}, PublisherScope{GuestID: "trial", Kind: "service", ServiceID: "demo"}},
 		{namespacePublisherScope{"team", "domain", "member.example", "member", PublicURLScopeMember}, PublisherScope{TeamID: "team", Kind: "namespace", DomainID: "domain", Namespace: "member.example", MembershipID: "member", PublicURLScope: PublicURLScopeMember}},
 	} {
 		if got := check.resolved.publisherScope(); !reflect.DeepEqual(got, check.want) {

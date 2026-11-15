@@ -54,7 +54,7 @@ func TestIntegrationServerDatabaseSpanCausality(t *testing.T) {
 	defer m.Shutdown(t.Context())
 	d.Instrument(m)
 	ctx, root := observability.Start(ctx, "request")
-	ctx, operation := d.observeOperation(ctx, observability.OpCreatePublishRun)
+	ctx, operation := d.observeOperation(ctx, observability.OpCreateServiceRun)
 	conn, err := d.pool.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestIntegrationServerDatabaseSpanCausality(t *testing.T) {
 	defer mu.Unlock()
 	var parent *tracepb.Span
 	for _, span := range spans {
-		if span.Name == "CreatePublishRun" {
+		if span.Name == "CreateServiceRun" {
 			parent = span
 		}
 	}

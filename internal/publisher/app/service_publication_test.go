@@ -32,7 +32,7 @@ func TestPrivateHTTPRunChecksActualTargetAndFencesReplacement(t *testing.T) {
 		return Configuration{Service: &ServicePublication{
 			Options: clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: "https://control.example",
 				Project: w.Manager.Snapshot().Project, Service: service.Name, Target: service.Target, ServiceProtocol: controlv1.ServiceProtocolHTTP},
-			Run: func(ctx context.Context, observe func(uint64, bool) error, _ inspection.Observer) error {
+			Run: func(ctx context.Context, _ *clientstate.Tunnel, observe func(uint64, bool) error, _ inspection.Observer) error {
 				run := number.Add(1)
 				if err := observe(run, false); err != nil {
 					return err
@@ -139,7 +139,7 @@ func TestServicePublicationJournalsProvisioningBeforeManagerObservations(t *test
 			w.Configure = func(_ context.Context, service Service) (Configuration, error) {
 				return Configuration{Service: &ServicePublication{
 					Options: servicePublicationOptions(w, service), URL: tc.url,
-					Run: func(ctx context.Context, observe func(uint64, bool) error, _ inspection.Observer) error {
+					Run: func(ctx context.Context, _ *clientstate.Tunnel, observe func(uint64, bool) error, _ inspection.Observer) error {
 						err := observe(7, false)
 						provisioned <- err
 						if err != nil {
@@ -339,7 +339,7 @@ func TestServicePublicationUnregisterJoinsOperationBeforeDrainingInspection(t *t
 					},
 					Service: &ServicePublication{
 						Options: servicePublicationOptions(w, service),
-						Run: func(ctx context.Context, observe func(uint64, bool) error, summary inspection.Observer) error {
+						Run: func(ctx context.Context, _ *clientstate.Tunnel, observe func(uint64, bool) error, summary inspection.Observer) error {
 							if err := observe(11, false); err != nil {
 								return err
 							}
@@ -412,10 +412,10 @@ func TestServicePublicationUnregisterJoinsOperationBeforeDrainingInspection(t *t
 				t.Fatal("unregister retained live publication facts", service)
 			}
 			w.mu.Lock()
-			proofs := len(w.proofs)
+			checks := len(w.checks)
 			w.mu.Unlock()
-			if proofs != 0 {
-				t.Fatal("unregister retained readiness state", proofs)
+			if checks != 0 {
+				t.Fatal("unregister retained readiness state", checks)
 			}
 		})
 	}
@@ -431,7 +431,7 @@ func TestServicePublicationFailedStartupFinishesJournalAndInspection(t *testing.
 			Inspection: inspection.Policy{Mode: inspection.SummaryMode, Retention: time.Hour, MaxBytes: 1 << 20},
 			Service: &ServicePublication{
 				Options: servicePublicationOptions(w, service),
-				Run: func(ctx context.Context, observe func(uint64, bool) error, summary inspection.Observer) error {
+				Run: func(ctx context.Context, _ *clientstate.Tunnel, observe func(uint64, bool) error, summary inspection.Observer) error {
 					operationContext <- ctx
 					if err := observe(3, false); err != nil {
 						return err
@@ -490,7 +490,7 @@ func TestServicePublicationFailedBindingClosesUnboundJournal(t *testing.T) {
 					},
 					Service: &ServicePublication{
 						Options: servicePublicationOptions(w, service),
-						Run: func(context.Context, func(uint64, bool) error, inspection.Observer) error {
+						Run: func(context.Context, *clientstate.Tunnel, func(uint64, bool) error, inspection.Observer) error {
 							operationCalled = true
 							return nil
 						},
@@ -530,6 +530,47 @@ func TestServicePublicationFailedBindingClosesUnboundJournal(t *testing.T) {
 	}
 }
 
+func TestServicePublicationRequiresOperationAndCheckBeforeJournal(t *testing.T) {
+	for _, missing := range []string{"publication", "operation", "check"} {
+		t.Run(missing, func(t *testing.T) {
+			w, _ := testWorkers(t)
+			cleanupFailure := errors.New("unstarted publication cleanup failed")
+			var cleanupCalls int
+			operationCalled, observationCalled := false, false
+			publication := &ServicePublication{
+				Run: func(context.Context, *clientstate.Tunnel, func(uint64, bool) error, inspection.Observer) error {
+					operationCalled = true
+					return nil
+				},
+				Check: func(context.Context, Service) Observation { return Observation{} },
+			}
+			switch missing {
+			case "publication":
+				publication = nil
+			case "operation":
+				publication.Run = nil
+			case "check":
+				publication.Check = nil
+			}
+			w.Configure = func(context.Context, Service) (Configuration, error) {
+				return Configuration{Service: publication, Cleanup: func() error { cleanupCalls++; return cleanupFailure }}, nil
+			}
+			before := w.Manager.Snapshot()
+			err := w.Run(t.Context(), Service{Name: "web", Target: "http://127.0.0.1:3000"}, func(PublicationUpdate) error {
+				observationCalled = true
+				return nil
+			})
+			if !errors.Is(err, ErrRegistrationStale) || !errors.Is(err, cleanupFailure) || cleanupCalls != 1 || operationCalled || observationCalled {
+				t.Fatal("incomplete service publication started work, skipped cleanup, or lost an independent failure", err)
+			}
+			assertNoServicePublications(t, w)
+			if after := w.Manager.Snapshot(); after.Cursor != before.Cursor {
+				t.Fatal("incomplete service publication created a local journal")
+			}
+		})
+	}
+}
+
 func TestServicePublicationCancellationRetainsOperationAndCleanupFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
@@ -552,7 +593,7 @@ func TestServicePublicationCancellationRetainsOperationAndCleanupFailures(t *tes
 					},
 					Service: &ServicePublication{
 						Options: servicePublicationOptions(w, service),
-						Run: func(ctx context.Context, observe func(uint64, bool) error, _ inspection.Observer) error {
+						Run: func(ctx context.Context, _ *clientstate.Tunnel, observe func(uint64, bool) error, _ inspection.Observer) error {
 							if err := observe(5, true); err != nil {
 								return err
 							}
@@ -623,7 +664,7 @@ func TestServicePublicationRejectsOlderRunBeforeJournalMutation(t *testing.T) {
 			w.Configure = func(_ context.Context, service Service) (Configuration, error) {
 				return Configuration{Service: &ServicePublication{
 					Options: servicePublicationOptions(w, service),
-					Run: func(ctx context.Context, observe func(uint64, bool) error, _ inspection.Observer) error {
+					Run: func(ctx context.Context, _ *clientstate.Tunnel, observe func(uint64, bool) error, _ inspection.Observer) error {
 						callbacks <- observe
 						<-ctx.Done()
 						return ctx.Err()

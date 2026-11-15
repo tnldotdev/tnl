@@ -62,15 +62,15 @@ type Config struct {
 	ManagedDomainMaxMemberChildLabels int                   `name:"managed-domain-max-member-child-labels" env:"TNLD_MANAGED_DOMAIN_MAX_MEMBER_CHILD_LABELS" default:"0" help:"Maximum labels beneath a member namespace on the managed domain; 0 uses DNS length limits only."`
 	CustomDomainsEnabled              bool                  `name:"custom-domains-enabled" env:"TNLD_CUSTOM_DOMAINS_ENABLED" help:"Allow teams to add custom domains; requires managed DNS automation."`
 
-	ControlTLSCertificateFile   string `name:"private-control-tls-certificate-file" env:"TNLD_PRIVATE_CONTROL_TLS_CERTIFICATE_FILE" type:"path" help:"Certificate chain for authenticated internal control HTTPS."`
-	ControlTLSPrivateKeyFile    string `name:"private-control-tls-private-key-file" env:"TNLD_PRIVATE_CONTROL_TLS_PRIVATE_KEY_FILE" type:"path" help:"Private key for authenticated internal control HTTPS."`
-	RelayTLSCertificateFile     string `name:"relay-tls-certificate-file" env:"TNLD_RELAY_TLS_CERTIFICATE_FILE" type:"path" help:"Optional static relay transport certificate chain."`
-	RelayTLSPrivateKeyFile      string `name:"relay-tls-private-key-file" env:"TNLD_RELAY_TLS_PRIVATE_KEY_FILE" type:"path" help:"Optional static relay transport private key."`
-	ACMEDirectoryURL            string `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" help:"ACME directory URL for automatic public certificates."`
-	ACMEEmail                   string `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
-	ACMEAcceptTerms             bool   `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
-	ACMEProfile                 string `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile."`
-	PublicURLCertificateWorkers int    `name:"public-url-certificate-workers" env:"TNLD_PUBLIC_URL_CERTIFICATE_WORKERS" default:"8" help:"Concurrent public URL certificate workers per control process (1-8)."`
+	ControlTLSCertificateFile string `name:"private-control-tls-certificate-file" env:"TNLD_PRIVATE_CONTROL_TLS_CERTIFICATE_FILE" type:"path" help:"Certificate chain for authenticated internal control HTTPS."`
+	ControlTLSPrivateKeyFile  string `name:"private-control-tls-private-key-file" env:"TNLD_PRIVATE_CONTROL_TLS_PRIVATE_KEY_FILE" type:"path" help:"Private key for authenticated internal control HTTPS."`
+	RelayTLSCertificateFile   string `name:"relay-tls-certificate-file" env:"TNLD_RELAY_TLS_CERTIFICATE_FILE" type:"path" help:"Optional static relay transport certificate chain."`
+	RelayTLSPrivateKeyFile    string `name:"relay-tls-private-key-file" env:"TNLD_RELAY_TLS_PRIVATE_KEY_FILE" type:"path" help:"Optional static relay transport private key."`
+	ACMEDirectoryURL          string `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" help:"ACME directory URL for automatic public certificates."`
+	ACMEEmail                 string `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
+	ACMEAcceptTerms           bool   `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
+	ACMEProfile               string `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile."`
+	ServiceCertificateWorkers int    `name:"service-certificate-workers" env:"TNLD_SERVICE_CERTIFICATE_WORKERS" default:"8" help:"Concurrent service certificate workers per control process (1-8)."`
 
 	OIDCIssuer            string            `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used by the authority."`
 	OIDCClientID          string            `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used by the authority."`
@@ -275,8 +275,8 @@ func (c Config) Validate() (retErr error) {
 		c.StandaloneControlConnectionLimit <= 0 || c.StandaloneRelayConnectionLimit <= 0 {
 		return errors.New("ingress admission capacities must be positive")
 	}
-	if c.PublicURLCertificateWorkers < 1 || c.PublicURLCertificateWorkers > 8 {
-		return errors.New("public URL certificate workers must be between 1 and 8")
+	if c.ServiceCertificateWorkers < 1 || c.ServiceCertificateWorkers > 8 {
+		return errors.New("service certificate workers must be between 1 and 8")
 	}
 	if c.VisitorConnectionLimit <= 0 || c.PublisherConnectionLimit <= 0 ||
 		c.RelayStreamCapacity <= 0 || c.QUICMaxIncomingStreams <= 0 {

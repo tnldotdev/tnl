@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
@@ -22,14 +24,21 @@ type serviceConnection struct {
 	packets *connectorPacketSession
 }
 
-// ServiceRegistry contains only exact locally claimed private assignments.
-// public URL references cannot select entries from this registry.
+type RegistryObserver interface {
+	OperationObserver
+	AddRegisteredPublisherConnections(int)
+}
+
+// ServiceRegistry contains exact locally claimed service assignments for every protocol.
 type ServiceRegistry struct {
 	observer    RegistryObserver
 	mu          sync.Mutex
 	connections map[string]*serviceConnection
-	claims      map[string]*privateClaim
+	claims      map[string]*publisherClaim
+	draining    bool
 	closed      bool
+	closeOnce   sync.Once
+	closeErr    error
 }
 
 func NewServiceRegistry() *ServiceRegistry {
@@ -42,10 +51,10 @@ func (r *ServiceRegistry) Instrument(observer RegistryObserver) { r.observer = o
 // reserve holds local ownership from before control's claim through its final
 // disconnect. response-loss retries use the same assignment and process lease;
 // a duplicate handshake must never reach control or clean up the owner's claim.
-func (r *ServiceRegistry) reserve(c *privateClaim) error {
+func (r *ServiceRegistry) reserve(c *publisherClaim) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed {
+	if r.closed || r.draining {
 		return &tunnel.ProtocolError{Code: tunnelv1.DrainingPublisherConnection}
 	}
 	if r.claims[c.ref.PublisherConnectionID] != nil || r.connections[c.ref.PublisherConnectionID] != nil {
@@ -57,13 +66,13 @@ func (r *ServiceRegistry) reserve(c *privateClaim) error {
 		}
 	}
 	if r.claims == nil {
-		r.claims = make(map[string]*privateClaim)
+		r.claims = make(map[string]*publisherClaim)
 	}
 	r.claims[c.ref.PublisherConnectionID] = c
 	return nil
 }
 
-func (r *ServiceRegistry) release(c *privateClaim) {
+func (r *ServiceRegistry) release(c *publisherClaim) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.claims[c.ref.PublisherConnectionID] == c {
@@ -73,9 +82,17 @@ func (r *ServiceRegistry) release(c *privateClaim) {
 
 func (r *ServiceRegistry) insert(c *serviceConnection) error {
 	r.mu.Lock()
-	if r.closed || r.connections[c.ref.PublisherConnectionID] != nil {
+	if r.closed {
 		r.mu.Unlock()
-		return errors.New("relay: private assignment already connected or draining")
+		return net.ErrClosed
+	}
+	if r.draining {
+		r.mu.Unlock()
+		return ErrDraining
+	}
+	if r.connections[c.ref.PublisherConnectionID] != nil {
+		r.mu.Unlock()
+		return &tunnel.ProtocolError{Code: tunnelv1.DuplicatePublisherConnection}
 	}
 	var replaced *serviceConnection
 	for _, old := range r.connections {
@@ -88,7 +105,7 @@ func (r *ServiceRegistry) insert(c *serviceConnection) error {
 			break
 		}
 	}
-	// control checks shared public/private process capacity under its lease lock.
+	// control checks process capacity under its lease lock.
 	if replaced != nil {
 		delete(r.connections, replaced.ref.PublisherConnectionID)
 	}
@@ -108,7 +125,7 @@ func (r *ServiceRegistry) insert(c *serviceConnection) error {
 	return nil
 }
 
-func (r *ServiceRegistry) remove(c *serviceConnection) {
+func (r *ServiceRegistry) remove(c *serviceConnection) error {
 	r.mu.Lock()
 	if r.connections[c.ref.PublisherConnectionID] == c {
 		delete(r.connections, c.ref.PublisherConnectionID)
@@ -120,7 +137,7 @@ func (r *ServiceRegistry) remove(c *serviceConnection) {
 	if c.packets != nil {
 		c.packets.Close()
 	}
-	_ = c.paths.Close()
+	return c.paths.Close()
 }
 
 func (r *ServiceRegistry) candidate(h tunnelv1.ServiceForwardingHeader, lease relayv1.RelayLease, now time.Time) (*serviceConnection, bool) {
@@ -131,7 +148,7 @@ func (r *ServiceRegistry) candidate(h tunnelv1.ServiceForwardingHeader, lease re
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c := r.connections[h.PublisherConnectionID]
-	if c == nil || r.closed || tunnel.ServiceForwardingRef(h) != c.ref ||
+	if c == nil || r.closed || r.draining || tunnel.ServiceForwardingRef(h) != c.ref ||
 		c.lease.RelayServiceId != lease.RelayServiceId || c.lease.RelayId != lease.RelayId ||
 		c.lease.RelayRunId != lease.RelayRunId || c.lease.RelayLeaseRevision != lease.RelayLeaseRevision {
 		return nil, false
@@ -142,6 +159,10 @@ func (r *ServiceRegistry) candidate(h tunnelv1.ServiceForwardingHeader, lease re
 func (r *ServiceRegistry) snapshot() []*serviceConnection {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.snapshotLocked()
+}
+
+func (r *ServiceRegistry) snapshotLocked() []*serviceConnection {
 	var entries []*serviceConnection
 	for _, c := range r.connections {
 		entries = append(entries, c)
@@ -160,26 +181,34 @@ func (r *ServiceRegistry) Load() (connections, streams int64) {
 }
 
 func (r *ServiceRegistry) Close() error {
-	r.mu.Lock()
-	r.closed = true
-	r.mu.Unlock()
-	var result error
-	for _, c := range r.snapshot() {
-		if c.packets != nil {
-			c.packets.Close()
+	r.closeOnce.Do(func() {
+		r.mu.Lock()
+		r.closed, r.draining = true, true
+		connections := r.snapshotLocked()
+		clear(r.connections)
+		if r.observer != nil {
+			r.observer.AddRegisteredPublisherConnections(-len(connections))
 		}
-		result = errors.Join(result, c.paths.Close())
-	}
-	return result
+		r.mu.Unlock()
+		for _, c := range connections {
+			if c.packets != nil {
+				c.packets.Close()
+			}
+			r.closeErr = errors.Join(r.closeErr, c.paths.Close())
+		}
+	})
+	return r.closeErr
 }
 
 func (r *ServiceRegistry) Drain(ctx context.Context) error {
+	finish := startOperation(ctx, r.observer, observability.OpRelayDrain)
+	var result error
+	defer func() { finish(result) }()
 	r.mu.Lock()
-	r.closed = true
+	r.draining = true
 	r.mu.Unlock()
 	var group sync.WaitGroup
 	var mu sync.Mutex
-	var result error
 	for _, c := range r.snapshot() {
 		group.Go(func() {
 			if c.packets != nil {
@@ -204,34 +233,30 @@ type ServicePublisherTarget struct {
 	Control  *Controller
 	Registry *ServiceRegistry
 }
-type ServicePublisherAcceptor struct {
-	Select func(string) (ServicePublisherTarget, bool)
-}
-
-type privateClaim struct {
+type publisherClaim struct {
 	target ServicePublisherTarget
 	ref    tunnelv1.ServicePublisherConnectionRef
 	lease  relayv1.RelayLease
 }
 
-func (a *ServicePublisherAcceptor) claim(ctx context.Context, message tunnelv1.Message) (*privateClaim, error) {
-	if a == nil || a.Select == nil || message.Role != tunnelv1.Publisher || message.ServiceConnection == nil {
+func (a *PublisherAcceptor) claim(ctx context.Context, message tunnelv1.Message, source netip.Addr) (*publisherClaim, error) {
+	if message.Role != tunnelv1.Publisher || message.ServiceConnection == nil {
 		return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 	}
 	ref := *message.ServiceConnection
-	target, ok := a.Select(ref.RelayServiceID)
+	target, ok := a.selectTarget(ref.RelayServiceID)
 	if !ok || target.Control == nil || target.Registry == nil {
 		return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 	}
-	claim := &privateClaim{target: target, ref: ref}
+	claim := &publisherClaim{target: target, ref: ref}
 	if err := target.Registry.reserve(claim); err != nil {
 		return nil, err
 	}
-	lease, err := target.Control.privateClaim(ctx, ref, message.Credential)
+	lease, err := target.Control.claimServiceConnection(ctx, ref, message.Credential, source)
 	if err != nil {
 		target.Registry.release(claim)
 		code := ControlErrorCode(err)
-		var direct *tunnelPrivateControlError
+		var direct *serviceControlError
 		if errors.As(err, &direct) {
 			code = direct.code
 		}
@@ -241,7 +266,7 @@ func (a *ServicePublisherAcceptor) claim(ctx context.Context, message tunnelv1.M
 	return claim, nil
 }
 
-func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, outer muxsession.Session, acceptor *PublisherAcceptor, finishAdmission func(error)) (result error) {
+func (c *publisherClaim) serve(ctx context.Context, session *tunnel.Session, outer muxsession.Session, acceptor *PublisherAcceptor, admissionErr error, finishAdmission func(error)) (result error) {
 	defer c.target.Registry.release(c)
 	ready := false
 	unexpected := false
@@ -258,20 +283,22 @@ func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, outer
 		finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		observe := startOperation(finish, acceptor.observer, observability.OpRelayDisconnectPublisherConnection)
-		err := c.target.Control.privateTransition(finish, c.ref, c.lease, true)
+		err := c.target.Control.transitionServiceConnection(finish, c.ref, c.lease, true, unexpected)
 		observe(err)
 		result = errors.Join(result, err)
 	}()
+	if admissionErr != nil {
+		return admissionErr
+	}
 	if session == nil {
-		return errors.New("relay: private handshake failed after claim")
+		return errors.New("relay: publisher handshake failed after claim")
 	}
 	paths := newStreamLifetime(session)
 	connection := &serviceConnection{ref: c.ref, lease: c.lease, paths: paths}
 	if acceptor.connector != nil {
 		packets, err := newConnectorPacketSession(ctx, outer)
 		if err != nil {
-			_ = session.Close()
-			return err
+			return errors.Join(err, session.Close())
 		}
 		connection.packets = packets
 		defer packets.Close()
@@ -281,11 +308,10 @@ func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, outer
 		if errors.As(err, &protocol) && protocol.Code == tunnelv1.CapacityExceeded {
 			acceptor.capacity()
 		}
-		_ = session.Close()
-		return err
+		return errors.Join(err, session.Close())
 	}
-	defer c.target.Registry.remove(connection)
-	if err := c.target.Control.privateTransition(ctx, c.ref, c.lease, false); err != nil {
+	defer func() { result = errors.Join(result, c.target.Registry.remove(connection)) }()
+	if err := c.target.Control.transitionServiceConnection(ctx, c.ref, c.lease, false, false); err != nil {
 		return err
 	}
 	ready = true
@@ -299,9 +325,15 @@ func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, outer
 		}
 		return paths.Drain(drain)
 	})
-	unexpected = err != nil && ctx.Err() == nil && !errors.Is(err, net.ErrClosed)
+	// drain is an explicit lifecycle fact, not an error classification. failed
+	// cleanup must remain visible without turning a planned drain into recovery.
+	paths.mu.Lock()
+	draining := paths.draining
+	paths.mu.Unlock()
+	unexpected = err != nil && ctx.Err() == nil && !draining
 	if err != nil {
-		if ctx.Err() != nil || errors.Is(err, muxsession.ErrClosed) || errors.Is(err, net.ErrClosed) {
+		if failure.Only(err, muxsession.ErrClosed) || failure.Only(err, net.ErrClosed) ||
+			ctx.Err() != nil && (failure.Only(err, context.Canceled) || failure.Only(err, context.DeadlineExceeded)) {
 			return nil
 		}
 		return err
@@ -328,17 +360,13 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 		}
 	}()
 	defer incoming.Stream().Close()
-	if a.private == nil {
-		rejected = &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
-		return incoming.Reject(tunnelv1.Unauthenticated)
-	}
 	if !a.acquireStream() {
 		rejected = &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
 		return incoming.Reject(tunnelv1.CapacityExceeded)
 	}
 	defer a.releaseStream()
 	header := incoming.Header
-	connection, ok := a.private.candidate(header, a.currentLease(), a.now())
+	connection, ok := a.registry.candidate(header, a.currentLease(), a.now())
 	if !ok {
 		a.streamRejected("stale_assignment")
 		rejected = &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
@@ -356,7 +384,7 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 		return errors.Join(incoming.Reject(tunnelv1.Unavailable), err)
 	}
 	defer publisher.Close()
-	if _, ok := a.private.candidate(header, a.currentLease(), a.now()); !ok {
+	if current, ok := a.registry.candidate(header, a.currentLease(), a.now()); !ok || current != connection {
 		a.streamRejected("stale_assignment")
 		rejected = &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		return incoming.Reject(tunnelv1.StaleConnectionAssignment)
@@ -390,7 +418,7 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 	copied, err := streamcopy.Copy(incoming.Stream(), publisher)
 	finishForward(err)
 	if a.observer != nil {
-		a.observer.ObserveRelayTransfer("service", copied.LeftToRight, copied.RightToLeft, err)
+		a.observer.ObserveRelayTransfer(copied.LeftToRight, copied.RightToLeft, err)
 	}
 	return err
 }

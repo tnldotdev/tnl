@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/publisher/proxy"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -82,6 +83,19 @@ func TestServiceHTTPInlinePreparationDoesNotRequireDummyTarget(t *testing.T) {
 		t.Fatal("inline service silently selected between target modes", err)
 	}
 	cfg.Target = ""
+	cfg.Mounts = []proxy.Mount{{Prefix: "/api", Target: "http://127.0.0.1:3001"}}
+	if _, err := newManagedPrepared(preparation, approved, cfg); !errors.Is(err, ErrPrivateStream) {
+		t.Fatal("inline service accepted path mounts", err)
+	}
+	cfg.Mounts = nil
+	cfg.ResolveHTTPTarget = func(*http.Request) (string, string, error) {
+		t.Error("inline preparation resolved a target")
+		return "", "", nil
+	}
+	if _, err := newManagedPrepared(preparation, approved, cfg); !errors.Is(err, ErrPrivateStream) {
+		t.Fatal("inline service accepted target resolution", err)
+	}
+	cfg.ResolveHTTPTarget = nil
 	approved.Protocol, approved.Endpoint.Port = controlv1.Tcp, 0
 	if _, err := newManagedPrepared(preparation, approved, cfg); !errors.Is(err, ErrPrivateStream) {
 		t.Fatal("non-HTTP service accepted an HTTP handler", err)

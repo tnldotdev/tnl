@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationPublicRunCapacity(t *testing.T) {
@@ -28,23 +28,23 @@ func TestIntegrationPublicRunCapacity(t *testing.T) {
 			t.Run(name+"/"+transport, func(t *testing.T) {
 				const capacity = 4
 				var owner *runtimeTopology
-				var config publisher.Config
+				var identity *integrationPublishingIdentity
 				var visitors []*integrationVisitor
-				var ready func(*testing.T, *integrationPublisher) publisher.Event
+				var ready func(*testing.T, *integrationPublisher) controlv1.ServiceRunPreparation
 				var diagnostics func() string
 				var quic, tcp muxsession.Connector
 				if standalone {
 					f := newStandalonePublishFixture(t, "capacity")
 					owner, ready, diagnostics = f.owner, f.waitReady, f.diagnostics
 					quic, tcp = f.connectors()
-					config = f.identity.publisherConfig("", quic, tcp)
+					identity = f.identity
 					visitors = []*integrationVisitor{f.visitor}
 				} else {
 					f := newSplitPublishFixture(t, "capacity")
 					owner = f.owner
 					diagnostics = func() string { return integrationPublisherDiagnostics(f.inspect, f.pebble.logPath) }
 					quic, tcp = f.connectors()
-					config = f.identity.publisherConfig("", quic, tcp)
+					identity = f.identity
 					second := f.ingressConfig
 					listeners := runtimeListeners{ingress: serviceRuntimeListener(t, owner), metrics: serviceRuntimeListener(t, owner)}
 					second.IngressID = "capacity-second-ingress"
@@ -53,12 +53,12 @@ func TestIntegrationPublicRunCapacity(t *testing.T) {
 						relayClientTLS: f.roots, owner: owner, listeners: listeners})
 					waitForProcessReady(t, process)
 					visitors = []*integrationVisitor{f.visitor, newIntegrationVisitor(t, f.pebble.roots, second.IngressListen, owner)}
-					ready = func(t *testing.T, handle *integrationPublisher) publisher.Event {
+					ready = func(t *testing.T, handle *integrationPublisher) controlv1.ServiceRunPreparation {
 						event := waitForPublisherReady(t, handle)
-						if event.Hostname != f.identity.hostname || event.PublicURL != "https://"+f.identity.hostname {
+						if event.Hostname != f.identity.hostname {
 							t.Fatalf("publisher ready event = %#v", event)
 						}
-						waitForReadyPublisherConnections(t, f.inspect, event.PublicURLID, event.PublishRunNumber, 2)
+						waitForReadyPublisherConnections(t, f.inspect, event.ServiceId, event.RunNumber, 2)
 						waitForIngressRoutingCurrent(t, f.inspect, 2)
 						return event
 					}
@@ -80,25 +80,21 @@ func TestIntegrationPublicRunCapacity(t *testing.T) {
 					}
 				}))
 				cleanupIntegrationHTTPServer(t, target, owner)
-				config.Target = target.URL
 				if transport == "quic" {
-					config.TCPConnector, _ = disabledIntegrationConnector("TLS/TCP disabled by capacity test")
+					tcp, _ = disabledIntegrationConnector("TLS/TCP disabled by capacity test")
 				} else {
-					config.QUICConnector, _ = disabledIntegrationConnector("QUIC disabled by capacity test")
+					quic, _ = disabledIntegrationConnector("QUIC disabled by capacity test")
 				}
-				var err error
-				config, err = prepareIntegrationPublisher(t.Context(), config)
-				if err != nil {
-					t.Fatal(err)
-				}
+				_, config := identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{})
 				native, ok := config.Control.(*publisheridentity.Native)
 				if !ok {
 					t.Fatal("capacity fixture did not prepare a native publisher")
 				}
-				config.Control, err = native.WithTraffic(&trafficlimits.Selection{Connections: new(capacity)})
+				scoped, err := native.WithTraffic(&trafficlimits.Selection{Connections: new(capacity)})
 				if err != nil {
 					t.Fatal(err)
 				}
+				config.Control, config.Access = scoped, scoped.Access
 				handle := startOwnedIntegrationPublisher(t, owner, config, diagnostics)
 				event := ready(t, handle)
 				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -111,7 +107,7 @@ func TestIntegrationPublicRunCapacity(t *testing.T) {
 					}
 				}()
 				for n := range capacity {
-					r, _ := http.NewRequestWithContext(ctx, "GET", event.PublicURL+"/hold", nil)
+					r, _ := http.NewRequestWithContext(ctx, "GET", serviceHTTPAddress(event)+"/hold", nil)
 					response, err := visitors[n%len(visitors)].client.Do(r)
 					if err != nil {
 						t.Fatal(err)
@@ -126,7 +122,7 @@ func TestIntegrationPublicRunCapacity(t *testing.T) {
 					}
 				}
 				for _, visitor := range visitors {
-					response, _, err := visitor.requestURLContext(ctx, "GET", event.PublicURL+"/overflow", nil)
+					response, _, err := visitor.requestURLContext(ctx, "GET", serviceHTTPAddress(event)+"/overflow", nil)
 					if standalone && err != nil {
 						// the one ingress can exhaust its local limit before opening
 						// publisher TLS. split ingress has room locally and reaches

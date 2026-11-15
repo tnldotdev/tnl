@@ -18,7 +18,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func runConnectStdio(ctx context.Context, session *Session, service controlv1.Service, input *os.File, output io.Writer, telemetry *clienttelemetry.Collector) error {
+func runConnectStdio(ctx context.Context, session *Session, service controlv1.ServiceSummary, input *os.File, output io.Writer, telemetry *clienttelemetry.Collector) error {
 	configuration, err := connectConfiguration(ctx, session, installedjobs.Job{ServiceID: service.Id,
 		IdentityID: session.identity.Identity.Id, Protocol: config.ProtocolTCP, TrustRevision: service.TrustRevision, Endpoint: service.Endpoint})
 	if err != nil {

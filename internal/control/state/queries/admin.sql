@@ -1,11 +1,29 @@
 -- name: GetAdminRuntimeCounts :one
+WITH live_services AS (
+    SELECT id,guest_id,enabled FROM control.services
+    WHERE deleted_at IS NULL AND (expires_at IS NULL OR expires_at>sqlc.arg(now))
+), current_runs AS (
+    SELECT run.state,run.healthy,run.certificate_expires_at
+    FROM control.service_runs run
+    JOIN live_services service ON service.id=run.service_id AND service.enabled
+    WHERE run.state IN ('starting','ready') AND run.closed_at IS NULL
+        AND run.publisher_expires_at>sqlc.arg(now)
+        AND EXISTS(SELECT 1 FROM control.publisher_service_permission(
+            run.publisher_identity_id,run.publisher_grant_id,run.service_id,sqlc.arg(now)) permission
+            JOIN control.publisher_grants grant_record ON grant_record.id=run.publisher_grant_id
+            JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id
+                AND signing.publisher_identity_id=run.publisher_identity_id
+                AND (grant_record.kind='service' OR signing.retired_at IS NULL))
+        AND (service.guest_id IS NULL OR EXISTS(SELECT 1 FROM control.guest_trials guest
+            WHERE guest.id=service.guest_id AND guest.active_service_run_id=run.id
+                AND control.guest_serving_deadline(guest.id,sqlc.arg(now))>sqlc.arg(now)))
+)
 SELECT
-    (SELECT count(*) FROM control.public_urls AS routes WHERE routes.lifecycle_state = 'enabled') AS enabled_public_urls,
-    (SELECT count(*) FROM control.public_urls AS routes WHERE routes.lifecycle_state = 'suspended') AS suspended_public_urls,
-    (SELECT count(*) FROM control.publish_runs AS sessions
-        WHERE sessions.state = 'starting' AND sessions.closed_at IS NULL AND sessions.publisher_expires_at > sqlc.arg(now)) AS starting_publish_runs,
-    (SELECT count(*) FROM control.publish_runs AS sessions
-        WHERE sessions.state = 'ready' AND sessions.closed_at IS NULL AND sessions.publisher_expires_at > sqlc.arg(now)) AS ready_publish_runs,
+    (SELECT count(*) FROM live_services WHERE enabled) AS enabled_services,
+    (SELECT count(*) FROM live_services WHERE NOT enabled) AS suspended_services,
+    (SELECT count(*) FROM current_runs WHERE state='starting') AS starting_service_runs,
+    (SELECT count(*) FROM current_runs WHERE state='ready' AND healthy
+        AND certificate_expires_at>sqlc.arg(now)) AS ready_service_runs,
     (SELECT count(*) FROM control.ingress_leases AS ingresses WHERE ingresses.lease_expires_at > sqlc.arg(now)) AS ingress_leases,
     (SELECT count(*) FROM control.relay_leases AS relays WHERE relays.lease_expires_at > sqlc.arg(now)) AS relay_leases;
 
@@ -40,6 +58,11 @@ JOIN control.relay_services AS services USING (relay_service_id);
 SELECT *
 FROM control.maintenance_controls
 ORDER BY operation;
+
+-- name: LockMaintenanceControl :one
+SELECT allowed FROM control.maintenance_controls
+WHERE operation=sqlc.arg(operation)
+FOR SHARE;
 
 -- name: SetMaintenanceControl :one
 UPDATE control.maintenance_controls

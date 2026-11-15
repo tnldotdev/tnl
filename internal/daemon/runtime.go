@@ -113,13 +113,11 @@ func serveRuntime(ctx context.Context, cfg daemonconfig.Config, options runtimeO
 	if cfg.Role.RunsIngress() {
 		metrics.SetCapacityLimit("client_hello_connections", int64(cfg.ClientHelloConnectionLimit))
 		metrics.SetCapacityLimit("public_connections", cfg.VisitorConnectionLimit)
-		metrics.SetCapacityLimit("public_url_connections", int64(cfg.TrafficDefaults().Connections))
 		pending, err := cfg.IngressPending().Resolve()
 		if err != nil {
 			return err
 		}
 		metrics.SetCapacityLimit("denied_connections", int64(pending.Connections))
-		metrics.SetCapacityLimit("denied_public_url_connections", int64(pending.PublicURLConnections))
 	}
 	if cfg.Role.RunsRelay() {
 		relayCount := int64(1)
@@ -138,7 +136,7 @@ func serveRuntime(ctx context.Context, cfg daemonconfig.Config, options runtimeO
 		if err := d.startControlWorkers(ctx, lifetime, cfg, options.acmeHTTPClient, metrics); err != nil {
 			return err
 		}
-		d.startVisitorPermissionWorkers(lifetime)
+		d.startDeviceLoginWorkers(lifetime)
 	}
 
 	controlHandler := http.Handler(nil)

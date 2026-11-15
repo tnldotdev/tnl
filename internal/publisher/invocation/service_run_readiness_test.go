@@ -99,7 +99,7 @@ func TestServiceRunReadinessAvailabilityUsesExactRunAndSerializedPublication(t *
 			Options: clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: "https://control.example",
 				Project: project, Service: service.Name, Target: service.Target, ServiceProtocol: controlv1.ServiceProtocolHTTP},
 			URL: "https://public.example",
-			Run: func(ctx context.Context, observe func(uint64, bool) error, _ inspection.Observer) error {
+			Run: func(ctx context.Context, _ *clientstate.Tunnel, observe func(uint64, bool) error, _ inspection.Observer) error {
 				callbacks <- observe
 				<-ctx.Done()
 				return ctx.Err()

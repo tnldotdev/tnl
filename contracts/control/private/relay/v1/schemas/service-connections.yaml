@@ -18,6 +18,7 @@ schemas:
         relay_run_id,
         relay_lease_revision,
         credential,
+        observed_source_ip,
       ]
     properties:
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
@@ -28,6 +29,11 @@ schemas:
       relay_run_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
       relay_lease_revision: { type: integer, format: int64, minimum: 1 }
       credential: { type: string, minLength: 1, maxLength: 4096 }
+      observed_source_ip:
+        type: string
+        minLength: 2
+        maxLength: 45
+        description: Canonical original publisher peer IP observed by the authenticated relay transport. Never a client-declared source, forwarded header, CIDR, or the relay's own address.
   ServicePublisherConnection:
     type: object
     additionalProperties: false
@@ -60,6 +66,9 @@ schemas:
         relay_lease_revision,
       ]
     properties:
+      unexpected:
+        type: boolean
+        description: Required for disconnect and absent for readiness. True only for an unexpected loss of an admitted publisher connection; intentional drain and failed setup use false.
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
       run_number: { type: integer, format: int64, minimum: 1 }
       connection_assignment_revision: { type: integer, format: int64, minimum: 1 }

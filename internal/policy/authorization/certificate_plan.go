@@ -5,10 +5,17 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 )
 
-// PublicURLCertificatePlan groups sibling URLs beneath the narrowest authorized
+type CertificatePlan struct {
+	CacheKey        string
+	Scope           string
+	Identifiers     []string
+	ChallengeMethod certificateidentity.ChallengeMethod
+}
+
+// ServiceCertificatePlan groups sibling hostnames beneath the narrowest authorized
 // wildcard when DNS automation is available. apexAllowed applies only to the
 // root of a shared custom domain, not to member namespaces.
-func PublicURLCertificatePlan(hostname, namespace string, apexAllowed, dnsAutomation bool) *CertificatePlan {
+func ServiceCertificatePlan(hostname, namespace string, apexAllowed, dnsAutomation bool) *CertificatePlan {
 	plan := &CertificatePlan{
 		CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname},
 		ChallengeMethod: certificateidentity.ChallengeDNS01,

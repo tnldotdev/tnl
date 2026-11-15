@@ -55,7 +55,16 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 		return result, err
 	}
 	defer rollback(ctx, tx, "ingest native service audit", &retErr)()
-	run, err := controlstatedb.New(tx).LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: runID, ServiceID: serviceID})
+	// audit inserts retain foreign keys to the owner. take that parent before
+	// the run, as heartbeat and closure do, even for a report after service deletion.
+	if err := lockServiceOwner(ctx, tx, serviceID); err != nil {
+		return result, err
+	}
+	q := controlstatedb.New(tx)
+	if _, err := q.LockService(ctx, serviceID); err != nil {
+		return result, publisherLookupError(err, ErrServiceAccess)
+	}
+	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: runID, ServiceID: serviceID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
 	}
@@ -71,8 +80,9 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 	}
 	err = tx.QueryRow(ctx, `SELECT LEAST($4::timestamptz,p.revoked_at,g.revoked_at,g.expires_at)
 		FROM control.publisher_identities p JOIN control.publisher_grants g ON g.publisher_identity_id=p.id
-		WHERE p.id=$1 AND g.id=$2 AND p.team_id=$3`,
-		run.PublisherIdentityID, run.PublisherGrantID, run.TeamID, until).Scan(&until)
+		WHERE p.id=$1 AND g.id=$2 AND p.team_id IS NOT DISTINCT FROM $3::text
+		AND p.guest_id IS NOT DISTINCT FROM $5::text`,
+		run.PublisherIdentityID, run.PublisherGrantID, run.TeamID, until, run.GuestID).Scan(&until)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
 	}
@@ -91,7 +101,7 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 			return ServiceObservationResult{}, ErrServiceAuditAccess
 		}
 		e := observationEvent(o)
-		e.TeamID, e.PublisherIdentityID = run.TeamID, run.PublisherIdentityID
+		e.TeamID, e.PublisherIdentityID = run.TeamID.String, run.PublisherIdentityID
 		if o.EventType == "http.decision" {
 			// the HTTP frontend reports request decisions under its exact run
 			// credential. reports never grant access or supply an actor identity.

@@ -20,7 +20,7 @@ func runPrivatePublish(ctx context.Context, flags publishCommand, output, diagno
 	if flags.Install && flags.Output != "" && flags.Output != publishOutputHuman {
 		return publisherCLIError("--install requires --output=human")
 	}
-	protocol, err := privatePublishProtocol(flags.Protocol)
+	protocol, err := publishProtocol(flags.Protocol)
 	if err != nil {
 		return err
 	}

@@ -11,18 +11,18 @@ import (
 )
 
 type AliasInfo struct {
-	Name             string         `json:"name"`
-	Server           string         `json:"server"`
-	Hostname         string         `json:"hostname"`
-	PublicURL        string         `json:"public_url"`
-	Service          string         `json:"service"`
-	SelectedProject  string         `json:"selected_project"`
-	DefaultProject   string         `json:"default_project"`
-	State            string         `json:"state"`
-	PublicURLID      string         `json:"public_url_id,omitempty"`
-	PublishRunNumber uint64         `json:"publish_run_number,omitempty"`
-	Reason           failure.Reason `json:"reason,omitempty"`
-	Action           string         `json:"action,omitempty"`
+	Name            string         `json:"name"`
+	Server          string         `json:"server"`
+	Hostname        string         `json:"hostname"`
+	PublicURL       string         `json:"public_url"`
+	Service         string         `json:"service"`
+	SelectedProject string         `json:"selected_project"`
+	DefaultProject  string         `json:"default_project"`
+	State           string         `json:"state"`
+	ServiceID       string         `json:"service_id,omitempty"`
+	RunNumber       uint64         `json:"run_number,omitempty"`
+	Reason          failure.Reason `json:"reason,omitempty"`
+	Action          string         `json:"action,omitempty"`
 }
 
 func (d *Database) snapshotAliases(ctx context.Context, tx *sql.Tx, project string, at time.Time) ([]AliasInfo, error) {
@@ -51,10 +51,10 @@ func (d *Database) snapshotAliases(ctx context.Context, tx *sql.Tx, project stri
 			reason = failure.AliasReceiverUnready
 		case row.PublisherExpiresAt <= at.UnixNano() || receiver.ID != row.RunTunnelID || row.RunRevision != row.SelectionRevision || row.TargetProject != row.SelectedProjectRoot ||
 			row.TargetState != "ready" || row.TargetExpiresAt <= at.UnixNano() || row.TargetStoppedAt != 0 ||
-			row.TargetPublicURLID != row.RunTargetPublicURLID || row.TargetPublishRunNumber != row.RunTargetPublishRunNumber:
+			row.TargetServiceID != row.RunTargetServiceID || row.TargetRunNumber != row.RunTargetRunNumber:
 			reason = failure.IntegrationURLNotReady
 		default:
-			info.State, info.PublicURLID, info.PublishRunNumber = "ready", row.PublicURLID, uint64(row.PublishRunNumber)
+			info.State, info.ServiceID, info.RunNumber = "ready", row.ServiceID, uint64(row.RunNumber)
 		}
 		if reason != "" {
 			info.Reason, info.Action = statusReason(reason)

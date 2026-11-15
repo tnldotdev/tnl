@@ -158,10 +158,10 @@ func (d *daemon) startControl(settings controlSettings, handler http.Handler) er
 	return nil
 }
 
-// startVisitorPermissionWorkers uses the daemon component lifetime, so expiry
+// startDeviceLoginWorkers uses the daemon component lifetime, so expiry
 // stops before the database pool is closed during shutdown.
-func (d *daemon) startVisitorPermissionWorkers(lifetime context.Context) {
-	d.start("expire visitor IP grants", func() error {
-		return maintenance.RunVisitorPermissionCleanup(lifetime, d.database)
+func (d *daemon) startDeviceLoginWorkers(lifetime context.Context) {
+	d.start("expire device logins", func() error {
+		return maintenance.RunDeviceLoginCleanup(lifetime, d.database)
 	})
 }

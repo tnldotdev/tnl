@@ -17,7 +17,6 @@ import (
 )
 
 type serviceHeartbeatStore struct {
-	PublicURLStore
 	ServiceRunStore
 	service, run, token string
 	health              controlstate.ServiceRunHealth
@@ -61,7 +60,6 @@ func TestServiceHeartbeatPreservesExplicitHealthAndStreamCounts(t *testing.T) {
 }
 
 type privateSelectionResponseStore struct {
-	PublicURLStore
 	ServiceStore
 	issued controlstate.ServiceSelection
 }

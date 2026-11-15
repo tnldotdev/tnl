@@ -1,28 +1,33 @@
 schemas:
-  PublicURLRecoveryObservationRequest:
+  ServiceRecoveryObservationRequest:
     unevaluatedProperties: false
     allOf:
       - $ref: "../openapi.yaml#/components/schemas/IngressLeaseIdentity"
       - type: object
-        required: [public_url_id, publish_run_number, observed_at]
+        required: [service_id, service_run_id, run_number, visitor_connection_id, observed_at]
         properties:
-          public_url_id:
-            $ref: "../openapi.yaml#/components/schemas/Identifier"
-          publish_run_number:
+          service_id:
+            $ref: "../openapi.yaml#/components/schemas/ServiceID"
+          service_run_id:
+            $ref: "../openapi.yaml#/components/schemas/ServiceRunID"
+          visitor_connection_id:
+            $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID"
+          run_number:
             type: integer
             format: int64
             minimum: 1
           observed_at:
             type: string
             format: date-time
-  PublicURLRecoveryObservation:
+  ServiceRecoveryObservation:
     type: object
     additionalProperties: false
     required:
       [
         recovery_episode_id,
-        public_url_id,
-        publish_run_number,
+        service_id,
+        service_run_id,
+        run_number,
         opened_at,
         observed_at,
         observed_seconds,
@@ -32,9 +37,11 @@ schemas:
         type: integer
         format: int64
         minimum: 1
-      public_url_id:
-        $ref: "../openapi.yaml#/components/schemas/Identifier"
-      publish_run_number:
+      service_id:
+        $ref: "../openapi.yaml#/components/schemas/ServiceID"
+      service_run_id:
+        $ref: "../openapi.yaml#/components/schemas/ServiceRunID"
+      run_number:
         type: integer
         format: int64
         minimum: 1

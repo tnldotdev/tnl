@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -40,20 +41,27 @@ func TestShareLifetimeAcceptsDaysAndBoundsExpiration(t *testing.T) {
 func TestHTTPShareGrantsUseSessionAndIdempotencyKey(t *testing.T) {
 	for _, kind := range []string{"invite", "team"} {
 		t.Run(kind, func(t *testing.T) {
-			const id = "url_0123456789abcdefghijkl"
+			const id = "svc_0123456789abcdefghijkl"
+			const team = "tm_0123456789abcdefghijkl"
+			const invitationID = "sivt_0123456789abcdefghijkl"
+			secret := invitationID + "." + strings.Repeat("A", 43)
 			posts := 0
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				if r.Header.Get("Authorization") != "Bearer session" {
 					t.Error("grant management must use the control session")
 				}
-				if r.Method == http.MethodGet && r.URL.Path == "/v1/visitor/public-urls" {
-					_ = json.NewEncoder(w).Encode(controlv1.AvailablePublicURLPage{PublicUrls: []controlv1.AvailablePublicURL{{Id: id, ServiceProtocol: "http", CanonicalHostname: "app.example.test"}}})
+				if r.Method == http.MethodGet && r.URL.Path == "/v1/teams/"+team {
+					_ = json.NewEncoder(w).Encode(authorityv1.Team{Id: team})
 					return
 				}
-				path := "/v1/public-urls/" + id + "/visitor-grants"
+				if r.Method == http.MethodGet && r.URL.Path == "/v1/services" {
+					_ = json.NewEncoder(w).Encode(controlv1.ServicePage{Services: []controlv1.ServiceSummary{{Id: id, TeamId: team, Protocol: controlv1.ServiceProtocolHTTP, Endpoint: &controlv1.ServiceEndpoint{Hostname: "app.example.test", Port: 443, Public: true}}}})
+					return
+				}
+				path := "/v1/services/" + id + "/grants"
 				if kind == "invite" {
-					path = "/v1/public-urls/" + id + "/visitor-invitations"
+					path = "/v1/services/" + id + "/invitations"
 				}
 				if r.Method != http.MethodPost || r.URL.Path != path {
 					t.Errorf("unexpected request: %s %s", r.Method, r.URL)
@@ -74,12 +82,13 @@ func TestHTTPShareGrantsUseSessionAndIdempotencyKey(t *testing.T) {
 				if r.Header.Get("Idempotency-Key") == "" {
 					t.Error("missing idempotency key")
 				}
-				response := map[string]any{"id": "grant_test", "public_url_id": id, "expires_at": time.Now().Add(time.Hour)}
+				response := map[string]any{"id": "sgr_0123456789abcdefghijkl", "service_id": id, "expires_at": body["expires_at"]}
 				if kind == "team" {
 					response["kind"] = "team"
 				} else {
 					response["email"] = body["email"]
-					response = map[string]any{"invitation": response, "credential": "server-issued-credential"}
+					response["id"] = invitationID
+					response = map[string]any{"invitation": response, "credential": secret}
 				}
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(response)
@@ -89,7 +98,12 @@ func TestHTTPShareGrantsUseSessionAndIdempotencyKey(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			session := clientteam.NewSession(nil, nil, &auth.Client{Control: control}, authorityv1.IdentityContext{}, clientteam.Options{})
+			membership := authorityv1.Membership{TeamId: team, Role: "owner"}
+			authority, err := clientauthority.New(server.URL, server.Client(), credentials.AccessToken("session"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			session := clientteam.NewSession(nil, nil, &auth.Client{Control: control, Authority: authority}, authorityv1.IdentityContext{PersonalTeamId: team, Memberships: []authorityv1.Membership{membership}}, clientteam.Options{SelectedTeam: team})
 			var output bytes.Buffer
 			if kind == "invite" {
 				err = createShareInvitation(t.Context(), session, shareInviteCreateCommand{URL: id, Email: "reviewer@example.test"}, time.Hour, &output)
@@ -99,7 +113,7 @@ func TestHTTPShareGrantsUseSessionAndIdempotencyKey(t *testing.T) {
 			if err != nil || posts != 1 {
 				t.Fatalf("grant creation: err=%v, posts=%d", err, posts)
 			}
-			if kind == "invite" && output.String() != "server-issued-credential\n" {
+			if kind == "invite" && output.String() != secret+"\n" {
 				t.Fatal("caller did not use the complete server-issued credential")
 			}
 		})
@@ -107,12 +121,13 @@ func TestHTTPShareGrantsUseSessionAndIdempotencyKey(t *testing.T) {
 }
 
 func TestAnonymousPreviewSharesExcludeUnknownProtocols(t *testing.T) {
-	routes := []controlv1.PublicURL{
-		{Id: "url_web", ServiceProtocol: controlv1.Http},
-		{Id: "url_unknown", ServiceProtocol: "unknown"},
-		{Id: "url_api", ServiceProtocol: controlv1.Http},
+	routes := []controlv1.ServiceSummary{
+		{Id: "svc_web", Protocol: controlv1.ServiceProtocolHTTP, Endpoint: &controlv1.ServiceEndpoint{Public: true}},
+		{Id: "svc_unknown", Protocol: "unknown", Endpoint: &controlv1.ServiceEndpoint{Public: true}},
+		{Id: "svc_api", Protocol: controlv1.ServiceProtocolHTTP, Endpoint: &controlv1.ServiceEndpoint{Public: true}},
+		{Id: "svc_private", Protocol: controlv1.ServiceProtocolHTTP, Endpoint: &controlv1.ServiceEndpoint{Public: false}},
 	}
-	if got := anonymousPreviewPublicURLIDs(routes); strings.Join(got, ",") != "url_api,url_web" {
+	if got := anonymousPreviewServiceIDs(routes); strings.Join(got, ",") != "svc_api,svc_web" {
 		t.Fatalf("anonymous share URLs = %v", got)
 	}
 }
@@ -125,23 +140,23 @@ func TestShareTeamSSHUserIsRejectedBeforeAuthentication(t *testing.T) {
 }
 
 func TestShareSelectsOnlyConfiguredPublicURLFromProject(t *testing.T) {
-	webID := "url_0123456789abcdefghijkl"
-	routes := []controlv1.PublicURL{{Id: webID, CanonicalHostname: "web.example.test"}, {Id: "url_abcdefghijkl0123456789", CanonicalHostname: "api.example.test"}}
+	webID := "svc_0123456789abcdefghijkl"
+	routes := []controlv1.ServiceSummary{{Id: webID, Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.example.test"}}, {Id: "svc_abcdefghijkl0123456789", Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test"}}}
 	for _, selector := range []string{webID, "web.example.test", "https://web.example.test"} {
-		got, err := selectSharePublicURL(selector, routes)
+		got, err := selectShareService(selector, routes)
 		if err != nil || got.Id != webID {
 			t.Fatalf("selector %q = %+v, %v", selector, got, err)
 		}
 	}
-	if _, err := selectSharePublicURL("", routes); err == nil || !strings.Contains(err.Error(), "select the public URL") {
+	if _, err := selectShareService("", routes); err == nil || !strings.Contains(err.Error(), "select the public URL") {
 		t.Fatalf("ambiguous preview page: %v", err)
 	}
 	for _, selector := range []string{"https://web.example.test/path", "http://web.example.test", "web.example.test:443", "https://web.example.test?secret=yes"} {
-		if _, err := selectSharePublicURL(selector, routes); err == nil {
+		if _, err := selectShareService(selector, routes); err == nil {
 			t.Fatalf("invalid page %q was accepted", selector)
 		}
 	}
-	if _, err := selectSharePublicURL("other.example.test", routes); !errors.Is(err, clientcontrol.ErrNotFound) {
+	if _, err := selectShareService("other.example.test", routes); !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatalf("unconfigured hostname = %v", err)
 	}
 }
@@ -155,13 +170,13 @@ func TestShareCreateRejectsInvalidExpiryBeforeAuthentication(t *testing.T) {
 
 func TestShareServiceURLsUseConfiguredNames(t *testing.T) {
 	project := projectConfiguration{}
-	project.Config.Services = config.Services{"web": {Tunnel: &config.Tunnel{}}, "api": {}, "docs": {Tunnel: &config.Tunnel{}}}
-	routes := []controlv1.PublicURL{
-		{Id: "url_web", CanonicalHostname: "web.example.test", ServiceProtocol: controlv1.Http},
-		{Id: "url_docs", CanonicalHostname: "docs.example.test", ServiceProtocol: controlv1.Http},
+	project.Config.Services = config.Services{"web": {Public: new(true)}, "api": {}, "docs": {Public: new(true)}}
+	routes := []controlv1.ServiceSummary{
+		{Id: "svc_web", Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.example.test", Public: true}, Protocol: controlv1.ServiceProtocolHTTP},
+		{Id: "svc_docs", Endpoint: &controlv1.ServiceEndpoint{Hostname: "docs.example.test", Public: true}, Protocol: controlv1.ServiceProtocolHTTP},
 	}
 	services := shareServiceURLs(project, routes, map[string]string{"api": "web.example.test", "web": "web.example.test", "docs": "docs.example.test"})
-	if len(services) != 2 || services["docs"].PublicURL != "https://docs.example.test" || services["web"].PublicURLID != "url_web" {
+	if len(services) != 2 || services["docs"].PublicURL != "https://docs.example.test" || services["web"].ServiceID != "svc_web" {
 		t.Fatalf("unexpected share service mapping: %+v", services)
 	}
 	encoded, err := json.Marshal(services)

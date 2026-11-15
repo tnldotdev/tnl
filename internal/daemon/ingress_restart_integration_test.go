@@ -18,7 +18,7 @@ func TestIntegrationExpiredIngressRestartsAndRecoversVisitors(t *testing.T) {
 	publisher := fixture.startPublisher(t, target.URL, quic, tcp)
 	ready := fixture.waitReady(t, publisher)
 	before := readSplitIngressLease(t, fixture.inspect, fixture.ingressConfig.IngressID)
-	if _, _, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL, nil); err != nil {
+	if _, _, err := fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(ready), nil); err != nil {
 		t.Fatal(err)
 	}
 	// make the next real control operation reject the exact run. the process
@@ -34,7 +34,7 @@ func TestIntegrationExpiredIngressRestartsAndRecoversVisitors(t *testing.T) {
 	retired.mu.Lock()
 	retired.err = nil
 	retired.mu.Unlock()
-	if _, _, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL, nil); err == nil {
+	if _, _, err := fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(ready), nil); err == nil {
 		t.Fatal("stopped ingress still served visitors")
 	}
 	fixture.ingress = startIntegrationProcessWithOptions(t, fixture.ingressConfig, integrationProcessOptions{acmeHTTPClient: fixture.pebble.httpClient, serviceHTTPClient: fixture.serviceHTTP, relayClientTLS: fixture.roots, owner: fixture.owner})
@@ -44,12 +44,12 @@ func TestIntegrationExpiredIngressRestartsAndRecoversVisitors(t *testing.T) {
 	if after.runID == before.runID || after.revision != before.revision+1 {
 		t.Fatalf("restart lease: before=%+v after=%+v", before, after)
 	}
-	response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL, nil)
+	response, body, err := fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(ready), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if response.StatusCode != http.StatusOK || string(body) != "ingress recovered" {
 		t.Fatalf("recovered visitor = %s, %q", response.Status, body)
 	}
-	assertPublishRunNumber(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
+	assertServiceRunNumber(t, fixture.inspect, ready.ServiceId, ready.RunNumber)
 }

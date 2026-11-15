@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -67,15 +69,55 @@ func (n *Native) DeleteAllocatedService(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if err := n.Allocations.DeletePublisherService(ctx, token, id); err != nil {
+	return n.deleteServiceAllocation(ctx, token)
+}
+
+// CleanupServiceAllocation closes this worker's original namespace invocation,
+// including when its allocation reply was lost. recovery establishes cleanup
+// ownership only; it need not prepare a service for publication.
+func (n *Native) CleanupServiceAllocation(ctx context.Context, body controlv1.AllocateServiceRequest) error {
+	if n == nil || n.identity.kind != "namespace" || n.Allocations == nil {
+		return ErrScope
+	}
+	if n.allocationInvocation == "" {
+		return nil
+	}
+	if body.InvocationId != n.allocationInvocation {
+		return ErrScope
+	}
+	if n.allocationFinished {
+		return nil
+	}
+	if n.allocatedServiceID == "" && body.ExpiresAt != nil && !body.ExpiresAt.After(time.Now()) {
+		return allocationRecoveryError(body.InvocationId, context.DeadlineExceeded)
+	}
+	token, err := n.Access(ctx)
+	if err != nil {
+		return err
+	}
+	if n.allocatedServiceID == "" {
+		service, err := n.Allocations.AllocatePublisherService(ctx, token, body)
+		if err != nil {
+			return allocationRecoveryError(body.InvocationId, err)
+		}
+		if err := n.observeServiceAllocation(service); err != nil {
+			return allocationRecoveryError(body.InvocationId, err)
+		}
+	}
+	return n.deleteServiceAllocation(ctx, token)
+}
+
+func (n *Native) deleteServiceAllocation(ctx context.Context, token string) error {
+	if err := n.Allocations.DeletePublisherService(ctx, token, n.allocatedServiceID); err != nil && !failure.Only(err, clientcontrol.ErrNotFound) {
 		return err
 	}
 	n.allocatedServiceID = ""
+	n.allocationFinished = true
 	return nil
 }
 
 func (n *Native) checkAllocationInvocation(invocation string) error {
-	if !opaqueid.Valid(invocation, opaqueid.InvocationPrefix) ||
+	if n.allocationFinished || !opaqueid.Valid(invocation, opaqueid.InvocationPrefix) ||
 		n.allocationInvocation != "" && n.allocationInvocation != invocation ||
 		n.selectedServiceID != "" && (n.allocatedServiceID == "" || n.selectedServiceID != n.allocatedServiceID) {
 		return ErrScope
@@ -132,16 +174,18 @@ func (n *Native) cleanupFailedAllocation(ctx context.Context, access string, ser
 	n.selectedServiceID = ""
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	err := n.Allocations.DeletePublisherService(cleanup, access, n.allocatedServiceID)
+	id := n.allocatedServiceID
+	err := n.deleteServiceAllocation(cleanup, access)
 	if err != nil {
-		return service, errors.Join(primary, fmt.Errorf("delete observed service allocation %s: %w", n.allocatedServiceID, err))
+		return service, errors.Join(primary, fmt.Errorf("delete observed service allocation %s: %w", id, err))
 	}
-	n.allocatedServiceID = ""
 	return controlv1.Service{}, primary
 }
 
 // a registered temporary publication uses the same signed root credential as
 // named selection, without fabricating an enrollment or an exact-service grant.
+// an attempted but uncertain allocation returns its native owner without a
+// service. nil ownership means no attempt or confirmed cleanup, not uncertainty.
 func PrepareDeploymentAllocation(ctx context.Context, control DeploymentAllocationControl, authority AssertionExchanger, approval controlv1.DeploymentCredential, private ed25519.PrivateKey, deployment string, body controlv1.AllocateServiceRequest) (*Native, *controlv1.Service, error) {
 	if control == nil || authority == nil || !validSigningKey(private) || deployment == "" ||
 		!opaqueid.Valid(body.InvocationId, opaqueid.InvocationPrefix) ||
@@ -165,10 +209,10 @@ func PrepareDeploymentAllocation(ctx context.Context, control DeploymentAllocati
 	native.allocationInvocation = body.InvocationId
 	service, err := control.AllocateDeploymentPublication(ctx, token, approval.TeamId, approval.ProjectKey, deployment, body)
 	if err != nil {
-		return nil, nil, allocationRecoveryError(body.InvocationId, err)
+		return native, nil, allocationRecoveryError(body.InvocationId, err)
 	}
 	if err := native.observeServiceAllocation(service); err != nil {
-		return nil, nil, allocationRecoveryError(body.InvocationId, err)
+		return native, nil, allocationRecoveryError(body.InvocationId, err)
 	}
 	selected, saved, err := native.ForService(ctx, service.Id)
 	if err == nil {

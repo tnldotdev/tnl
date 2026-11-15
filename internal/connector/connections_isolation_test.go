@@ -46,11 +46,11 @@ func connectionBackendFixture(t *testing.T, handle func(http.ResponseWriter, *ht
 	if _, err := client.Exchange(t.Context(), team, "project", strings.Repeat("a", 64), "worker", "assertion", []string{"api", "db"}); err != nil {
 		t.Fatal(err)
 	}
-	b := &connectorConnectionBackend{scope: connectorruntime.Context{Services: []string{"api", "db"}}, connectorConnectionSession: connectorConnectionSession{workload: client, deadline: workload.SessionDeadline(session)}, listeners: map[string]*ownedServiceListener{}, services: map[string]controlv1.Service{}, metadata: meta.PublicMetadata{Services: map[string]meta.Service{}}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}, "db": {Protocol: new("postgres")}}}}}}
+	b := &connectorConnectionBackend{scope: connectorruntime.Context{Services: []string{"api", "db"}}, connectorConnectionSession: connectorConnectionSession{workload: client, deadline: workload.SessionDeadline(session)}, listeners: map[string]*ownedServiceListener{}, services: map[string]controlv1.ServiceSummary{}, metadata: meta.PublicMetadata{Services: map[string]meta.Service{}}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}, "db": {Protocol: new("postgres")}}}}}}
 	for i, name := range []string{"api", "db"} {
 		protocol := []controlv1.ServiceProtocol{"http", "postgres"}[i]
 		port := []int{443, 15444}[i]
-		b.services[name] = controlv1.Service{Id: ids[i], Protocol: protocol, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: name + ".example.test", Port: port}}
+		b.services[name] = controlv1.ServiceSummary{Id: ids[i], Protocol: protocol, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: name + ".example.test", Port: port}}
 	}
 	b.listeners["api"] = &ownedServiceListener{attempt: &servicePreparation{service: b.services["api"], state: &servingService{sessionID: id, connection: connectorruntime.Connection{Schema: 1, Protocol: "http", Host: "127.0.0.1", Port: 15443, TransportID: "ctg_aaaaaaaaaaaaaaaaaaaaaa"}}}}
 	return b

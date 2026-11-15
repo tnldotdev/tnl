@@ -5,12 +5,11 @@ import "math"
 type CertificateSubjectKind string
 
 const (
-	CertificateSubjectPublicURL CertificateSubjectKind = "public_url"
-	CertificateSubjectService   CertificateSubjectKind = "service"
+	CertificateSubjectService CertificateSubjectKind = "service"
 )
 
 // CertificateSubject binds one certificate order to exactly one service and run.
-// IDs remain opaque; the discriminator, rather than an ID prefix, selects SQL.
+// IDs remain opaque; the stored run ID and number bind each order to one service.
 type CertificateSubject struct {
 	Kind      CertificateSubjectKind
 	ID        string
@@ -19,20 +18,15 @@ type CertificateSubject struct {
 }
 
 func (s CertificateSubject) Valid() bool {
-	return (s.Kind == CertificateSubjectPublicURL || s.Kind == CertificateSubjectService) &&
+	return s.Kind == CertificateSubjectService &&
 		validStateText(s.ID) && validStateText(s.RunID) && s.RunNumber > 0 && s.RunNumber <= math.MaxInt64
 }
 
-func certificateSubject(publicURL, publicRun string, publicNumber int64, service, serviceRun string, privateNumber int64) (CertificateSubject, error) {
-	var subject CertificateSubject
-	switch {
-	case service == "" && serviceRun == "" && privateNumber == 0 && publicNumber > 0:
-		subject = CertificateSubject{Kind: CertificateSubjectPublicURL, ID: publicURL, RunID: publicRun, RunNumber: uint64(publicNumber)}
-	case publicURL == "" && publicRun == "" && publicNumber == 0 && privateNumber > 0:
-		subject = CertificateSubject{Kind: CertificateSubjectService, ID: service, RunID: serviceRun, RunNumber: uint64(privateNumber)}
-	default:
+func certificateSubject(service, serviceRun string, number int64) (CertificateSubject, error) {
+	if number <= 0 {
 		return CertificateSubject{}, ErrCertificateIssuanceInvalid
 	}
+	subject := CertificateSubject{Kind: CertificateSubjectService, ID: service, RunID: serviceRun, RunNumber: uint64(number)}
 	if !subject.Valid() {
 		return CertificateSubject{}, ErrCertificateIssuanceInvalid
 	}

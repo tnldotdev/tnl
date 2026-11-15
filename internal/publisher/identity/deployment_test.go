@@ -72,7 +72,7 @@ func TestDeploymentHTTPPollAndServiceUseExactAssignment(t *testing.T) {
 	}
 	original := assignments.Services[0]
 	adapter, err := deployment.Service(original)
-	if err != nil || adapter.identity.kind != "service" || adapter.identity.publicURLID != "" || adapter.identity.serviceID != original.ServiceId || adapter.identity.grantID != original.GrantId || adapter.identity.clientID != fake.member.PublisherIdentityId || adapter.identity.keyID != fake.member.KeyId || adapter.identity.teamID != fake.member.TeamId || !bytes.Equal(adapter.private, deployment.private) {
+	if err != nil || adapter.identity.kind != "service" || adapter.identity.serviceID != original.ServiceId || adapter.identity.grantID != original.GrantId || adapter.identity.clientID != fake.member.PublisherIdentityId || adapter.identity.keyID != fake.member.KeyId || adapter.identity.teamID != fake.member.TeamId || !bytes.Equal(adapter.private, deployment.private) {
 		t.Fatal("HTTP adapter changed the exact signing identity or grant", err)
 	}
 	for name, mutate := range map[string]func(*controlv1.DeploymentPublisherServiceAssignment){

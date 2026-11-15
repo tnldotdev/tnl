@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"net/netip"
 	"strings"
 	"testing"
@@ -15,7 +16,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func allocationVisitorMember(t *testing.T, d *Database, team, owner, subject string, role TeamRole, now time.Time) (ControlSession, Membership) {
@@ -73,7 +73,7 @@ func TestIntegrationPublisherNamespaceAllocationVisitorOwnership(t *testing.T) {
 	}
 	r := CreatePublicURLRequest{TeamID: team.ID, ActingIdentityID: member.Identity.Identity.ID, DomainID: domain.ID}
 	enrollment := publisherEnrollment(t, d, r, PublisherScope{TeamID: team.ID, Kind: "namespace", DomainID: domain.ID}, now)
-	public, _, err := ed25519.GenerateKey(rand.Reader)
+	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,10 +87,37 @@ func TestIntegrationPublisherNamespaceAllocationVisitorOwnership(t *testing.T) {
 	}
 	t.Run("member-owner", func(t *testing.T) { assertAllocationHumanVisitor(t, d, service.ID, member, now, true) })
 	t.Run("unrelated-member", func(t *testing.T) { assertAllocationHumanVisitor(t, d, service.ID, unrelated, now, false) })
+	var shared ShareSessionTokenSource
 	t.Run("owner-share", func(t *testing.T) {
 		ctx := WithControlPrincipal(t.Context(), ControlPrincipal{IdentityID: member.Identity.Identity.ID, SessionID: member.SessionID})
-		if _, err := d.CreateServiceHTTPGrant(ctx, service.ID, member.Identity.Identity.ID, controlv1.CreateVisitorCredentialRequest{Kind: "share", ExpiresAt: now.Add(time.Hour)}, now); err != nil {
+		secret, raw, err := randomBrowserSecret()
+		if err != nil {
+			t.Fatal(err)
+		}
+		share, err := d.CreateShare(ctx, CreateShareRequest{TeamID: team.ID, ActingIdentityID: member.Identity.Identity.ID,
+			IdempotencyKey: "owner-share", SecretFingerprint: sha256.Sum256(raw), ExpiresAt: now.Add(time.Hour),
+			ServiceIDs: []string{service.ID}, EntryServiceID: service.ID}, now)
+		if err != nil {
 			t.Fatal("namespace member owner could not share its restricted allocation", err)
+		}
+		if share.EntryServiceID != service.ID || len(share.ServiceIDs) != 1 || share.ServiceIDs[0] != service.ID {
+			t.Fatal("share did not capture the exact allocated service")
+		}
+		_, _, _, leases := publishRunPrerequisitesInDatabase(t, d, now, nil)
+		access := publisherAccess(t, d, publisher, key, "192.0.2.10", now)
+		run := readyAppliedServiceRun(t, d, access, key, service, netip.MustParseAddr("192.0.2.10"), leases, now)
+		auth := ServiceHTTPRun{Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}, RunID: run.RunID, Number: run.RunNumber, Token: credentials.ServiceRunToken(run.Token)}
+		decoded, err := base64.RawURLEncoding.Strict().DecodeString(secret)
+		if err != nil {
+			t.Fatal(err)
+		}
+		redemption, err := d.RedeemShare(t.Context(), auth, share.ID, decoded, nil, now)
+		if err != nil {
+			t.Fatal("namespace owner share could not be redeemed", err)
+		}
+		shared = ShareSessionTokenSource{ShareID: share.ID, Secret: redemption.CookieSecret, RunID: run.RunID}
+		if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, auth.Subject, shared, now); err != nil {
+			t.Fatal("redeemed allocation share did not authorize HTTP", err)
 		}
 	})
 	t.Run("anonymous-does-not-grant-connector", func(t *testing.T) {
@@ -133,6 +160,9 @@ func TestIntegrationPublisherNamespaceAllocationVisitorOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Run("removed-owner", func(t *testing.T) { assertAllocationHumanVisitor(t, d, service.ID, member, now, false) })
+	if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}, shared, now); err == nil {
+		t.Fatal("allocation share survived losing its issuer's management permission")
+	}
 }
 
 func TestIntegrationDeploymentAllocationVisitorOwnership(t *testing.T) {

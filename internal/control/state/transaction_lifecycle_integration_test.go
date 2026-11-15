@@ -521,10 +521,10 @@ func TestIntegrationTransactionDomainReleaseCertificateExpiry(t *testing.T) {
 				t.Fatalf("pending public URL DNS must block release even after certificate expiry: %t, %v", ready, err)
 			}
 			dnsWork, found, err := database.ClaimDNSPublicURLWork(t.Context(), "cleanup", now, time.Minute)
-			if err != nil || !found || dnsWork.PublicURLID != fixture.publicURL.ID || dnsWork.State != PublicURLDNSRemoving {
+			if err != nil || !found || dnsWork.PublicURLID != fixture.publicURL.ID || dnsWork.State != ServiceEndpointDNSRemoving {
 				t.Fatalf("claim route cleanup: %#v, %t, %v", dnsWork, found, err)
 			}
-			dnsWork.State, dnsWork.AvailableAt = PublicURLDNSRemoved, time.Time{}
+			dnsWork.State, dnsWork.AvailableAt = ServiceEndpointDNSRemoved, time.Time{}
 			if _, err := database.SaveDNSPublicURLWork(t.Context(), dnsWork, now); err != nil {
 				t.Fatal(err)
 			}
@@ -747,7 +747,7 @@ func newTransactionAuthorityFixture(t *testing.T) transactionAuthorityFixture {
 	request := CreatePublicURLRequest{
 		TeamID: team.ID, DomainID: domain.ID, MembershipID: member.ID, ActingIdentityID: memberIdentity,
 		IdempotencyKey: "route", RequestDigest: sha256.Sum256([]byte("route")), CanonicalHostname: "api.member." + domain.CanonicalDomain,
-		Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeApp, DNSState: PublicURLDNSPending, DNSAuthorityReference: domain.DNSAuthorityReference,
+		Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeApp, DNSState: ServiceEndpointDNSPending, DNSAuthorityReference: domain.DNSAuthorityReference,
 	}
 	publicURL, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil {

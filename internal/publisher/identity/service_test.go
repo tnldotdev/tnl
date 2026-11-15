@@ -16,8 +16,7 @@ import (
 )
 
 type privateScopeControl struct {
-	unusedControl
-	ServiceControl
+	ServiceOwnerControl
 	service      controlv1.Service
 	declarations []controlv1.ServiceRunDeclaration
 	reads        int
@@ -32,7 +31,7 @@ type privateOwnerControl struct {
 }
 
 func (c *privateOwnerControl) CreatePublisherEnrollment(_ context.Context, request controlv1.CreatePublisherEnrollmentRequest) (controlv1.PublisherEnrollment, error) {
-	if request.ServiceId == nil || *request.ServiceId != c.service.Id || request.PublicUrlId != nil || request.DomainId != nil {
+	if request.ServiceId == nil || *request.ServiceId != c.service.Id || request.DomainId != nil {
 		return controlv1.PublisherEnrollment{}, ErrScope
 	}
 	c.created++
@@ -102,35 +101,37 @@ func privateScopeFixture(t *testing.T) (*Native, *privateScopeControl) {
 		t.Fatal(err)
 	}
 	control := &privateScopeControl{service: controlv1.Service{Id: serviceID, TeamId: "team", Name: "orders", Enabled: true, Protocol: controlv1.Postgres, TrustRevision: 3}}
-	native, err := NewNative(NativeControl{PublicURLControl: control, Services: control}, &lostEnrollmentResponse{}, identity, key)
+	native, err := NewNative(NativeControl{Services: control}, &lostEnrollmentResponse{}, identity, key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return native, control
 }
 
-func TestNativePrivateGrantCannotSelectPublicURLOrAnotherService(t *testing.T) {
+func TestNativeExactServiceGrantCannotSelectAnotherServiceOrNamespace(t *testing.T) {
 	native, control := privateScopeFixture(t)
 	grantID, err := opaqueid.New(opaqueid.PublisherGrantPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	urlID, err := opaqueid.New(opaqueid.PublicURLPrefix)
+	other, err := opaqueid.New(opaqueid.ServicePrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	public, err := native.ForGrant(controlv1.PublisherGrant{Id: grantID, Kind: "saved_public_url", PublicUrlId: &urlID})
-	if err != nil || public.identity.serviceID != "" || public.identity.publicURLID != urlID {
-		t.Fatalf("grant switch retained another scope: %+v, %v", public, err)
+	enrollment := native.identity.enrollment()
+	enrollment.GrantId, enrollment.ServiceId = grantID, &other
+	selected, err := NewNative(native.NativeControl, native.authority, enrollment, native.private)
+	if err != nil || selected.identity.serviceID != other || selected.PublisherGrantID() != grantID {
+		t.Fatal("grant switch did not retain its independently issued exact service", err)
 	}
-	if _, err := public.SavedService(t.Context()); !errors.Is(err, ErrScope) {
-		t.Fatal("public grant retained private discovery", err)
+	if _, err := selected.SavedService(t.Context()); !errors.Is(err, ErrScope) {
+		t.Fatal("another service's grant retained the original service discovery", err)
 	}
-	if _, err := native.SavedPublicURL(t.Context()); !errors.Is(err, ErrScope) {
-		t.Fatal("private grant read a public URL", err)
+	if _, _, err := native.ForService(t.Context(), other); !errors.Is(err, ErrScope) {
+		t.Fatal("exact service grant selected another service without another issued grant", err)
 	}
-	if err := native.SelectPublicURL(controlv1.PublicURL{TeamId: "team", LifecycleState: controlv1.Enabled}); !errors.Is(err, ErrScope) {
-		t.Fatal("private grant selected a public URL", err)
+	if err := native.NamespaceScope(); !errors.Is(err, ErrScope) {
+		t.Fatal("exact service grant retained namespace allocation authority", err)
 	}
 	service, err := native.SavedService(t.Context())
 	if err != nil || service.Id != native.identity.serviceID {

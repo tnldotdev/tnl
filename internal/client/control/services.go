@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/tnldotdev/tnl/internal/region"
 
@@ -51,9 +52,10 @@ func (c *Client) CreateServiceAt(ctx context.Context, team, name, key string, pl
 	})
 }
 
-func (c *Client) ListServices(ctx context.Context, team string) ([]controlv1.Service, error) {
-	var all []controlv1.Service
+func (c *Client) ListServices(ctx context.Context, team string) ([]controlv1.ServiceSummary, error) {
+	all := make([]controlv1.ServiceSummary, 0)
 	var cursor *string
+	seen := map[string]bool{}
 	for {
 		page, err := requestWithAccess[controlv1.ServicePage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 			return c.api.ListServices(ctx, &controlv1.ListServicesParams{TeamId: team, Cursor: cursor}, editors...)
@@ -61,53 +63,44 @@ func (c *Client) ListServices(ctx context.Context, team string) ([]controlv1.Ser
 		if err != nil {
 			return nil, err
 		}
-		for _, summary := range page.Services {
-			all = append(all, serviceInventoryItem(summary))
-		}
+		all = append(all, page.Services...)
 		if page.NextCursor == nil {
 			return all, nil
 		}
-		if len(page.Services) == 0 || cursor != nil && *cursor == *page.NextCursor {
+		if len(page.Services) == 0 || *page.NextCursor == "" || seen[*page.NextCursor] {
 			return nil, failure.Wrap("list services", failure.ServerResponseInvalid, errors.New("control returned an invalid service cursor"))
-		}
-		cursor = page.NextCursor
-	}
-}
-
-// ListAvailableServices returns only services the signed-in identity
-// may visit. publisher inventory and a friendly name are not visitor grants.
-func (c *Client) ListAvailableServices(ctx context.Context) ([]controlv1.Service, error) {
-	var all []controlv1.Service
-	var cursor *controlv1.ServiceCursor
-	seen := map[string]bool{}
-	for {
-		page, err := requestWithAccess[controlv1.ServicePage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-			return c.api.ListAvailableServices(ctx, &controlv1.ListAvailableServicesParams{Cursor: cursor}, editors...)
-		})
-		if err != nil {
-			return nil, err
-		}
-		for _, summary := range page.Services {
-			all = append(all, serviceInventoryItem(summary))
-		}
-		if page.NextCursor == nil {
-			return all, nil
-		}
-		if len(page.Services) == 0 || seen[*page.NextCursor] {
-			return nil, failure.Wrap("list available services", failure.ServerResponseInvalid, errors.New("control returned an invalid service cursor"))
 		}
 		seen[*page.NextCursor] = true
 		cursor = page.NextCursor
 	}
 }
 
-// preserve the native inventory and CLI JSON shape while the HTTP contract names
-// its smaller allowlisted model explicitly.
-func serviceInventoryItem(s controlv1.ServiceSummary) controlv1.Service {
-	return controlv1.Service{Id: s.Id, TeamId: s.TeamId, DomainId: s.DomainId, Name: s.Name,
-		Placement: s.Placement, Source: s.Source, Enabled: s.Enabled, Endpoint: s.Endpoint,
-		Protocol: s.Protocol, KubernetesAuth: s.KubernetesAuth, PublisherPool: s.PublisherPool,
-		TrustRevision: s.TrustRevision, CreatedAt: s.CreatedAt, ServiceRunId: s.ServiceRunId, RunNumber: s.RunNumber}
+// ListAvailableServices requests one explicit visitor access path. a public HTTP
+// preview grant does not authorize connector discovery or traffic.
+func (c *Client) ListAvailableServices(ctx context.Context, path controlv1.ServiceAccessPath) ([]controlv1.ServiceSummary, error) {
+	if !path.Valid() {
+		return nil, failure.Wrap("select service access path", failure.ServerRequestInvalid, errors.New("select connector or public_endpoint access"))
+	}
+	all := make([]controlv1.ServiceSummary, 0)
+	var cursor *controlv1.ServiceCursor
+	seen := map[string]bool{}
+	for {
+		page, err := requestWithAccess[controlv1.ServicePage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+			return c.api.ListAvailableServices(ctx, &controlv1.ListAvailableServicesParams{Cursor: cursor, AccessPath: &path}, editors...)
+		})
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, page.Services...)
+		if page.NextCursor == nil {
+			return all, nil
+		}
+		if len(page.Services) == 0 || *page.NextCursor == "" || seen[*page.NextCursor] {
+			return nil, failure.Wrap("list available services", failure.ServerResponseInvalid, errors.New("control returned an invalid service cursor"))
+		}
+		seen[*page.NextCursor] = true
+		cursor = page.NextCursor
+	}
 }
 
 func (c *Client) PrepareServiceRun(ctx context.Context, serviceID, key, publisherAccess string, declared controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error) {
@@ -136,6 +129,12 @@ func (c *Client) DeleteService(ctx context.Context, id string) error {
 	return err
 }
 
+func (c *Client) SetServiceEnabled(ctx context.Context, id string, enabled bool) (controlv1.Service, error) {
+	return requestWithAccess[controlv1.Service](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.SetServiceEnabled(ctx, id, controlv1.SetServiceEnabledRequest{Enabled: &enabled}, editors...)
+	})
+}
+
 func (c *Client) ReleaseServiceEndpoint(ctx context.Context, id string, body controlv1.ReleaseServiceEndpointRequest) (controlv1.Service, error) {
 	return requestWithAccess[controlv1.Service](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.ReleaseServiceEndpoint(ctx, id, body, editors...)
@@ -146,6 +145,35 @@ func (c *Client) GetService(ctx context.Context, id string) (controlv1.Service, 
 	return requestWithAccess[controlv1.Service](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.GetService(ctx, id, editors...)
 	})
+}
+
+func (c *Client) GetServiceConfiguration(ctx context.Context, id string) (*controlv1.ProjectServiceConfiguration, string, error) {
+	var etags []string
+	var status int
+	declaration, err := requestWithAccess[*controlv1.ProjectServiceConfiguration](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		response, err := c.api.GetServiceConfiguration(ctx, id, editors...)
+		if err == nil {
+			etags, status = response.Header.Values("ETag"), response.StatusCode
+		}
+		return response, err
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	invalid := func() (*controlv1.ProjectServiceConfiguration, string, error) {
+		return nil, "", failure.Wrap("read service configuration", failure.ServerResponseInvalid, errors.New("control returned an invalid service configuration response or ETag"))
+	}
+	if status != http.StatusOK && status != http.StatusNoContent || len(etags) != 1 {
+		return invalid()
+	}
+	tag := etags[0]
+	if len(tag) != 73 || !strings.HasPrefix(tag, `"sha256:`) || tag[72] != '"' || strings.ToLower(tag) != tag {
+		return invalid()
+	}
+	if _, err := hex.DecodeString(tag[8:72]); err != nil {
+		return invalid()
+	}
+	return declaration, tag[1:72], nil
 }
 
 func (c *Client) GetPublisherService(ctx context.Context, serviceID, publisherAccess string) (controlv1.Service, error) {

@@ -12,10 +12,11 @@ import (
 	"testing"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type splitRelayFixture struct {
@@ -45,7 +46,6 @@ type splitPublishFixture struct {
 type splitPublishOptions struct {
 	processContext       func(string) context.Context
 	dns                  *integrationRoute53
-	proxyIngress         bool
 	configureControlHTTP func(*http.Client)
 	configureProcess     func(*daemonconfig.Config)
 }
@@ -72,10 +72,9 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	controlAddress, privateControlAddress, ingressAddress := controlProxyListener.Addr().String(), privateControlListener.Addr().String(), ingressListener.Addr().String()
 	publicIngressAddress := ingressAddress
 	publicIngressListener := ingressListener
-	if options.proxyIngress {
-		ingressListener = serviceRuntimeListener(t, owner)
-		ingressAddress = ingressListener.Addr().String()
-	}
+	// the public https destination remains 443 through the ephemeral backend.
+	ingressListener = serviceRuntimeListener(t, owner)
+	ingressAddress = ingressListener.Addr().String()
 	var dnsAddress string
 	var localDNS *privateFixtureDNS
 	if options.dns != nil {
@@ -134,6 +133,7 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	ingressConfig.ClusterSecret = testClusterSecret
 	ingressConfig.IngressID = "ingress-split"
 	ingressConfig.IngressListen = ingressAddress
+	ingressConfig.RequireProxyHeader, ingressConfig.IngressTrustedProxies = true, []string{"127.0.0.1/32"}
 	relayAConfig, relayASockets := splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-a", "relay-a-1", relayACertificate, owner)
 	relayBConfig, relayBSockets := splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-b", "relay-b-1", relayBCertificate, owner)
 	if options.dns != nil {
@@ -158,9 +158,7 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		t.Fatal(err)
 	}
 	serveIntegrationControlProxy(t, owner, controlProxyListener, controlConfig.ControlListen, controlTLS)
-	if options.proxyIngress {
-		startSplitIngressProxy(t, owner, publicIngressListener, ingressAddress)
-	}
+	startSplitIngressProxy(t, owner, publicIngressListener, ingressAddress)
 	controlOptions := integrationProcessOptions{acmeHTTPClient: pebble.httpClient, serviceHTTPClient: serviceHTTP, owner: owner, listeners: controlSockets}
 	if options.processContext != nil {
 		controlOptions.context = options.processContext("control")
@@ -344,21 +342,22 @@ func (f *splitPublishFixture) contextFor(role string) context.Context {
 func (f *splitPublishFixture) connectors() (muxsession.Connector, muxsession.Connector) {
 	quicAddresses := map[string]string{f.relayA.config.RelayAddress: f.relayA.config.RelayUDPListen, f.relayB.config.RelayAddress: f.relayB.config.RelayUDPListen}
 	tcpAddresses := map[string]string{f.relayA.config.RelayAddress: f.relayA.config.RelayTCPListen, f.relayB.config.RelayAddress: f.relayB.config.RelayTCPListen}
-	return publicURLIntegrationConnector(quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots, Dialer: f.relayTransport}), publicURLIntegrationConnector(tcpAddresses, muxsession.TLSYamuxConnector{TLSConfig: f.roots})
+	return publicURLIntegrationConnector(quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}, Dialer: f.relayTransport}), publicURLIntegrationConnector(tcpAddresses, muxsession.TLSYamuxConnector{TLSConfig: f.roots})
 }
 
 func (f *splitPublishFixture) startPublisher(t *testing.T, target string, quicConnector, tcpConnector muxsession.Connector) *integrationPublisher {
 	t.Helper()
-	return startOwnedIntegrationPublisher(t, f.owner, f.identity.publisherConfig(target, quicConnector, tcpConnector), func() string { return integrationPublisherDiagnostics(f.inspect, f.pebble.logPath) })
+	_, cfg := f.identity.prepareService(t, target, quicConnector, tcpConnector, controlv1.ProjectServiceConfiguration{})
+	return startOwnedIntegrationPublisher(t, f.owner, cfg, func() string { return integrationPublisherDiagnostics(f.inspect, f.pebble.logPath) })
 }
 
-func (f *splitPublishFixture) waitReady(t *testing.T, handle *integrationPublisher) publisher.Event {
+func (f *splitPublishFixture) waitReady(t *testing.T, handle *integrationPublisher) controlv1.ServiceRunPreparation {
 	t.Helper()
 	ready := waitForPublisherReady(t, handle)
-	if ready.Hostname != f.identity.hostname || ready.PublicURL != "https://"+f.identity.hostname {
+	if ready.Hostname != f.identity.hostname {
 		t.Fatalf("publisher ready event = %#v", ready)
 	}
-	waitForReadyPublisherConnections(t, f.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
+	waitForReadyPublisherConnections(t, f.inspect, ready.ServiceId, ready.RunNumber, 2)
 	waitForIngressRoutingCurrent(t, f.inspect, 1)
 	return ready
 }

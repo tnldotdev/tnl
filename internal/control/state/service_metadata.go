@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 )
@@ -80,9 +82,22 @@ func serviceMetadataMatches(saved ServiceMetadata, declared ServiceMetadata) boo
 	return saved.TLS == nil || *saved.TLS == *declared.TLS
 }
 
+// update conditions describe observed state, independently of desired settings.
+type ServiceUpdateConditions struct {
+	ConfigurationDigest string
+	PublisherPool       *bool
+}
+
 // metadata approval serializes with admission and publication. changing trust
 // closes every old run so a visitor cannot receive bytes using old trust.
-func (d *Database) ConfigureService(ctx context.Context, serviceID, actorID string, metadata ServiceMetadata, now time.Time) (result ServiceRecord, retErr error) {
+func (d *Database) ConfigureService(ctx context.Context, serviceID, actorID string, metadata ServiceMetadata, configuration *ProjectServiceConfiguration, conditions ServiceUpdateConditions, now time.Time) (result ServiceRecord, retErr error) {
+	if conditions.PublisherPool != nil {
+		conditions.PublisherPool = new(*conditions.PublisherPool)
+	}
+	clock := newAuthorizationClock(now)
+	if conditions.ConfigurationDigest != "" && (configuration == nil || !ValidServiceConfigurationDigest(conditions.ConfigurationDigest)) {
+		return result, ErrProjectConfigurationInvalid
+	}
 	if err := metadata.Validate(); err != nil {
 		return result, err
 	}
@@ -98,41 +113,66 @@ func (d *Database) ConfigureService(ctx context.Context, serviceID, actorID stri
 	if err = rejectProjectManagedDefinition(ctx, tx, serviceID); err != nil {
 		return result, err
 	}
-	// metadata-only updates cannot contradict a saved declaration. allocations
-	// also retain their immutable invocation intent even if storage is damaged.
+	// allocations retain their immutable invocation intent even if storage is
+	// damaged. project-owned declarations can only change through their owner.
 	var allocated bool
 	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.publisher_namespace_allocations WHERE service_id=$1)`, serviceID).Scan(&allocated); err != nil {
 		return result, err
 	}
-	if allocated || row.ConfigurationCiphertext != nil || row.StorageKeyID.Valid {
+	if allocated {
 		return result, ErrServiceConflict
 	}
 	saved, err := checkedServiceMetadata(row)
 	if err != nil {
 		return result, err
 	}
-	if metadata.TrustRevision != saved.TrustRevision {
+	if metadata.TrustRevision != saved.TrustRevision ||
+		conditions.PublisherPool != nil && *conditions.PublisherPool != saved.PublisherPool {
 		return result, ErrServiceConflict
 	}
-	changed := !serviceMetadataMatches(saved, metadata)
-	if saved.Protocol != metadata.Protocol {
-		var held bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.service_port_claims WHERE service_id=$1 AND state='held')`, serviceID).Scan(&held); err != nil {
+	previous, err := d.serviceConfiguration(ctx, controlstatedb.New(tx), serviceID)
+	if err != nil {
+		return result, err
+	}
+	if conditions.ConfigurationDigest != "" {
+		digest, err := serviceConfigurationDigest(previous)
+		if err != nil {
 			return result, err
 		}
-		if row.Public || held {
+		if digest != conditions.ConfigurationDigest {
 			return result, ErrServiceConflict
 		}
 	}
-	configurationChanged := changed || saved.PublisherPool != metadata.PublisherPool
-	if configurationChanged {
+	declaration := previous
+	if configuration != nil {
+		declaration, err = normalizeServiceConfiguration(row.Name, configuration)
+		if err != nil {
+			return result, err
+		}
+	}
+	if declaration != nil {
+		trust, err := appliedServiceTargetTrust(declaration.TargetTLS)
+		if err != nil {
+			return result, err
+		}
+		if !serviceMetadataMatches(metadata, ServiceMetadata{Protocol: declaration.Protocol, TLS: trust}) {
+			return result, ErrServiceConflict
+		}
+	}
+	declarationChanged := !reflect.DeepEqual(previous, declaration)
+	changed := !serviceMetadataMatches(saved, metadata)
+	if err := requireServiceProtocolChange(ctx, tx, row, metadata.Protocol); err != nil {
+		return result, err
+	}
+	metadataChanged := changed || saved.PublisherPool != metadata.PublisherPool
+	if changed {
 		if _, err = nextPrivateRevision(saved.TrustRevision); err != nil {
 			return result, err
 		}
 	}
 	if !metadata.PublisherPool && saved.PublisherPool {
 		var count int
-		if err = tx.QueryRow(ctx, `SELECT count(*) FROM control.service_runs WHERE service_id=$1 AND closed_at IS NULL AND publisher_expires_at>$2`, serviceID, now).Scan(&count); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT count(*) FROM control.service_runs WHERE service_id=$1 AND closed_at IS NULL AND publisher_expires_at>$2`, serviceID, clock.current()).Scan(&count); err != nil {
 			return result, err
 		}
 		if count > 1 {
@@ -146,13 +186,27 @@ func (d *Database) ConfigureService(ctx context.Context, serviceID, actorID stri
 			return result, err
 		}
 	}
+	now = clock.current()
 	_, err = tx.Exec(ctx, `UPDATE control.services SET protocol=$2, tls_metadata=convert_from($3::bytea,'UTF8')::jsonb, publisher_pool=$4,
 	    service_port=CASE WHEN protocol<>$2 THEN CASE WHEN $2='http' THEN 443 ELSE 0 END ELSE service_port END,
-	    trust_revision=trust_revision+CASE WHEN $5 THEN 1 ELSE 0 END, updated_at=$6 WHERE id=$1`, serviceID, metadata.Protocol, encoded, metadata.PublisherPool, configurationChanged, now)
+	    trust_revision=trust_revision+CASE WHEN $5 THEN 1 ELSE 0 END, updated_at=$6 WHERE id=$1`, serviceID, metadata.Protocol, encoded, metadata.PublisherPool, changed, now)
 	if err != nil {
 		return result, err
 	}
-	if changed {
+	if configuration != nil {
+		if err = d.saveServiceConfiguration(ctx, tx, serviceID, *declaration); err != nil {
+			return result, err
+		}
+		if err = d.configureStandaloneServiceEndpoint(ctx, tx, row, actorID, *declaration, clock.current()); err != nil {
+			return result, err
+		}
+		if _, err = tx.Exec(ctx, `UPDATE control.services SET ephemeral=$2,require_post_quantum=$3 WHERE id=$1`,
+			serviceID, declaration.Ephemeral, declaration.RequirePostQuantum != nil && *declaration.RequirePostQuantum); err != nil {
+			return result, err
+		}
+	}
+	visitorTLSChanged := configuration != nil && row.RequirePostQuantum != (declaration.RequirePostQuantum != nil && *declaration.RequirePostQuantum)
+	if changed || visitorTLSChanged {
 		if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET state='closed', closed_at=$2 WHERE service_id=$1 AND closed_at IS NULL`, serviceID, now); err != nil {
 			return result, err
 		}
@@ -161,8 +215,13 @@ func (d *Database) ConfigureService(ctx context.Context, serviceID, actorID stri
 	if err != nil {
 		return result, err
 	}
-	if configurationChanged {
-		if err = auditPrivateMutation(ctx, tx, serviceID, actorID, "service.update", strconv.FormatInt(row.TrustRevision, 10), now); err != nil {
+	if metadataChanged || declarationChanged {
+		// several pool or declaration edits can share one trust revision.
+		request, err := opaqueid.New(opaqueid.RequestPrefix)
+		if err != nil {
+			return result, err
+		}
+		if err = auditPrivateMutation(ctx, tx, serviceID, actorID, "service.update", request, now); err != nil {
 			return result, err
 		}
 	}
@@ -179,6 +238,23 @@ func (d *Database) ConfigureService(ctx context.Context, serviceID, actorID stri
 		return result, err
 	}
 	return result, nil
+}
+
+func requireServiceProtocolChange(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlService, protocol string) error {
+	if row.Protocol == protocol {
+		return nil
+	}
+	if row.Public {
+		return ErrServiceConflict
+	}
+	var held bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.service_port_claims WHERE service_id=$1 AND state='held')`, row.ID).Scan(&held); err != nil {
+		return err
+	}
+	if held {
+		return ErrServiceConflict
+	}
+	return nil
 }
 
 var ErrServiceMetadata = errors.New("saved service trust is invalid")

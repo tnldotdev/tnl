@@ -38,7 +38,7 @@ func TestServiceRunUsesSeparatePersonPublisherAndRunCredentials(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(controlv1.ServicePage{Services: []controlv1.ServiceSummary{{Id: "svc_service", TeamId: "team", Name: "orders"}}})
 		case "GET /v1/visitor/services":
-			if r.Header.Get("Authorization") != "Bearer person-token" || r.URL.Query().Has("team_id") {
+			if r.Header.Get("Authorization") != "Bearer person-token" || r.URL.Query().Has("team_id") || r.URL.Query().Get("access_path") != "connector" {
 				t.Error("visitor inventory used publisher scope or selected an administrator team")
 			}
 			_ = json.NewEncoder(w).Encode(controlv1.ServicePage{Services: []controlv1.ServiceSummary{{Id: "svc_service", TeamId: "team", Name: "orders"}}})
@@ -88,7 +88,7 @@ func TestServiceRunUsesSeparatePersonPublisherAndRunCredentials(t *testing.T) {
 	if services, err := client.ListServices(ctx, "team"); err != nil || len(services) != 1 {
 		t.Fatalf("list service: %+v %v", services, err)
 	}
-	if services, err := client.ListAvailableServices(ctx); err != nil || len(services) != 1 {
+	if services, err := client.ListAvailableServices(ctx, controlv1.ServiceAccessPathConnector); err != nil || len(services) != 1 {
 		t.Fatalf("list available services: %+v %v", services, err)
 	}
 	if _, err := client.PrepareServiceRun(ctx, "svc_service", "one-run", "publisher-token", controlv1.ServiceRunDeclaration{Protocol: controlv1.Tcp, TrustRevision: 1}); err != nil {

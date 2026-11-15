@@ -113,7 +113,7 @@ func (d *Database) ListPreviews(ctx context.Context, team, actor, cursor string)
 	if err = requireTeamSession(ctx, q, team, actor, time.Now()); err != nil {
 		return result, errors.Join(ErrPreviewAccess, err)
 	}
-	rows, err := q.ListDiscoverablePreviews(ctx, controlstatedb.ListDiscoverablePreviewsParams{TeamID: team, CreatedByIdentityID: actor, AfterID: after})
+	rows, err := q.ListDiscoverablePreviews(ctx, controlstatedb.ListDiscoverablePreviewsParams{TeamID: text(team), CreatedByIdentityID: text(actor), AfterID: after})
 	if err != nil {
 		return result, err
 	}

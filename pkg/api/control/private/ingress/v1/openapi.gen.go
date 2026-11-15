@@ -21,106 +21,17 @@ import (
 	externalRef0 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-// Defines values for HashedIPPrefixFamily.
-const (
-	Ipv4 HashedIPPrefixFamily = "ipv4"
-	Ipv6 HashedIPPrefixFamily = "ipv6"
-)
-
-// Valid indicates whether the value is a known member of the HashedIPPrefixFamily enum.
-func (e HashedIPPrefixFamily) Valid() bool {
-	switch e {
-	case Ipv4:
-		return true
-	case Ipv6:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for IngressRoutingTableEntryAccessMode.
-const (
-	Anonymous  IngressRoutingTableEntryAccessMode = "anonymous"
-	Restricted IngressRoutingTableEntryAccessMode = "restricted"
-)
-
-// Valid indicates whether the value is a known member of the IngressRoutingTableEntryAccessMode enum.
-func (e IngressRoutingTableEntryAccessMode) Valid() bool {
-	switch e {
-	case Anonymous:
-		return true
-	case Restricted:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for IngressRoutingTableEntryIpPolicy.
-const (
-	AllowAll        IngressRoutingTableEntryIpPolicy = "allow_all"
-	HashedAllowlist IngressRoutingTableEntryIpPolicy = "hashed_allowlist"
-)
-
-// Valid indicates whether the value is a known member of the IngressRoutingTableEntryIpPolicy enum.
-func (e IngressRoutingTableEntryIpPolicy) Valid() bool {
-	switch e {
-	case AllowAll:
-		return true
-	case HashedAllowlist:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for IngressRoutingTableEntryServiceProtocol.
-const (
-	Http IngressRoutingTableEntryServiceProtocol = "http"
-)
-
-// Valid indicates whether the value is a known member of the IngressRoutingTableEntryServiceProtocol enum.
-func (e IngressRoutingTableEntryServiceProtocol) Valid() bool {
-	switch e {
-	case Http:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for IngressRoutingTableEventKind.
-const (
-	PublicUrlTombstone IngressRoutingTableEventKind = "public_url_tombstone"
-	PublicUrlUpsert    IngressRoutingTableEventKind = "public_url_upsert"
-)
-
-// Valid indicates whether the value is a known member of the IngressRoutingTableEventKind enum.
-func (e IngressRoutingTableEventKind) Valid() bool {
-	switch e {
-	case PublicUrlTombstone:
-		return true
-	case PublicUrlUpsert:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for ProblemCode.
 const (
-	IngressAlreadyRunning          ProblemCode = "ingress_already_running"
-	IngressLeaseStale              ProblemCode = "ingress_lease_stale"
-	Internal                       ProblemCode = "internal"
-	InvalidJson                    ProblemCode = "invalid_json"
-	InvalidRequest                 ProblemCode = "invalid_request"
-	NotFound                       ProblemCode = "not_found"
-	RecoveryEpisodeStale           ProblemCode = "recovery_episode_stale"
-	RoutingTableResnapshotRequired ProblemCode = "routing_table_resnapshot_required"
-	Unauthenticated                ProblemCode = "unauthenticated"
-	UnsupportedMediaType           ProblemCode = "unsupported_media_type"
-	VisitorPolicyStale             ProblemCode = "visitor_policy_stale"
+	IngressAlreadyRunning ProblemCode = "ingress_already_running"
+	IngressLeaseStale     ProblemCode = "ingress_lease_stale"
+	Internal              ProblemCode = "internal"
+	InvalidJson           ProblemCode = "invalid_json"
+	InvalidRequest        ProblemCode = "invalid_request"
+	NotFound              ProblemCode = "not_found"
+	RecoveryEpisodeStale  ProblemCode = "recovery_episode_stale"
+	Unauthenticated       ProblemCode = "unauthenticated"
+	UnsupportedMediaType  ProblemCode = "unsupported_media_type"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
@@ -140,13 +51,9 @@ func (e ProblemCode) Valid() bool {
 		return true
 	case RecoveryEpisodeStale:
 		return true
-	case RoutingTableResnapshotRequired:
-		return true
 	case Unauthenticated:
 		return true
 	case UnsupportedMediaType:
-		return true
-	case VisitorPolicyStale:
 		return true
 	default:
 		return false
@@ -177,16 +84,6 @@ func (e PublicServiceVisitorStatusState) Valid() bool {
 	}
 }
 
-// HashedIPPrefix defines model for HashedIPPrefix.
-type HashedIPPrefix struct {
-	Digest       string               `json:"digest"`
-	Family       HashedIPPrefixFamily `json:"family"`
-	PrefixLength int                  `json:"prefix_length"`
-}
-
-// HashedIPPrefixFamily defines model for HashedIPPrefix.Family.
-type HashedIPPrefixFamily string
-
 // Identifier defines model for Identifier.
 type Identifier = string
 
@@ -210,11 +107,10 @@ type IngressLease struct {
 	ProtocolVersion      int64      `json:"protocol_version"`
 
 	// Region Exact catalog provider:region identity, such as aws:us-west-2 or fly:sjc. local makes no geographic claim.
-	Region               string    `json:"region"`
-	RegisteredAt         time.Time `json:"registered_at"`
-	RenewedAt            time.Time `json:"renewed_at"`
-	ReportedConnections  int64     `json:"reported_connections"`
-	RoutingTableRevision int64     `json:"routing_table_revision"`
+	Region              string    `json:"region"`
+	RegisteredAt        time.Time `json:"registered_at"`
+	RenewedAt           time.Time `json:"renewed_at"`
+	ReportedConnections int64     `json:"reported_connections"`
 }
 
 // IngressLeaseIdentity defines model for IngressLeaseIdentity.
@@ -222,14 +118,6 @@ type IngressLeaseIdentity struct {
 	IngressId            Identifier `json:"ingress_id"`
 	IngressLeaseRevision int64      `json:"ingress_lease_revision"`
 	IngressRunId         Identifier `json:"ingress_run_id"`
-}
-
-// IngressPublicRunObservation defines model for IngressPublicRunObservation.
-type IngressPublicRunObservation struct {
-	EntryRevision    int64      `json:"entry_revision"`
-	PublishRunId     Identifier `json:"publish_run_id"`
-	PublishRunNumber int64      `json:"publish_run_number"`
-	ValidUntil       time.Time  `json:"valid_until"`
 }
 
 // IngressRegistration defines model for IngressRegistration.
@@ -255,114 +143,11 @@ type IngressRenewal struct {
 	IngressId            Identifier `json:"ingress_id"`
 	IngressLeaseRevision int64      `json:"ingress_lease_revision"`
 	IngressRunId         Identifier `json:"ingress_run_id"`
-
-	// PreparedPublicRuns Installed routing and policy, bounded by their current deadlines; never a promise to install the response.
-	PreparedPublicRuns   *[]IngressPublicRunObservation `json:"prepared_public_runs,omitempty"`
-	ReportedConnections  int64                          `json:"reported_connections"`
-	RoutingTableRevision int64                          `json:"routing_table_revision"`
-}
-
-// IngressRoutingPublisherConnection defines model for IngressRoutingPublisherConnection.
-type IngressRoutingPublisherConnection struct {
-	// AvailableStreams Last relay-reported free stream capacity; the relay enforces its current capacity at open.
-	AvailableStreams             *int64     `json:"available_streams,omitempty"`
-	ConnectionAssignmentRevision int64      `json:"connection_assignment_revision"`
-	ConnectionSlot               int        `json:"connection_slot"`
-	InternalRelayAddress         Identifier `json:"internal_relay_address"`
-	LeaseExpiresAt               time.Time  `json:"lease_expires_at"`
-	PublisherConnectionId        Identifier `json:"publisher_connection_id"`
-	RelayId                      Identifier `json:"relay_id"`
-	RelayLeaseRevision           int64      `json:"relay_lease_revision"`
-	RelayRunId                   Identifier `json:"relay_run_id"`
-	RelayServiceId               Identifier `json:"relay_service_id"`
-	TlsServerName                Identifier `json:"tls_server_name"`
-}
-
-// IngressRoutingTableEntry defines model for IngressRoutingTableEntry.
-type IngressRoutingTableEntry struct {
-	AccessMode        IngressRoutingTableEntryAccessMode `json:"access_mode"`
-	AllowedIpHashes   []HashedIPPrefix                   `json:"allowed_ip_hashes"`
-	CanonicalHostname string                             `json:"canonical_hostname"`
-	IngressPoolId     *Identifier                        `json:"ingress_pool_id,omitempty"`
-	IpPolicy          IngressRoutingTableEntryIpPolicy   `json:"ip_policy"`
-
-	// IpPolicyKey Purpose-specific verifier sent only on the authenticated private API; never persisted with routing events.
-	IpPolicyKey        *[]byte    `json:"ip_policy_key,omitempty"`
-	PolicyRevision     int64      `json:"policy_revision"`
-	PublicUrlExpiresAt time.Time  `json:"public_url_expires_at"`
-	PublicUrlId        Identifier `json:"public_url_id"`
-
-	// PublishRunClosed True only on a tombstone proving this exact publish run is permanently closed. An omitted or false value can mean temporary unroutability and must not retire lifetime traffic totals.
-	PublishRunClosed *bool      `json:"publish_run_closed,omitempty"`
-	PublishRunId     Identifier `json:"publish_run_id"`
-	PublishRunNumber int64      `json:"publish_run_number"`
-
-	// PublishRunReadyAt Existing ready runs must be prepared before a new ingress joins health.
-	PublishRunReadyAt    *time.Time                               `json:"publish_run_ready_at,omitempty"`
-	PublisherConnections []IngressRoutingPublisherConnection      `json:"publisher_connections"`
-	RecoveryEpisodeId    *int64                                   `json:"recovery_episode_id,omitempty"`
-	ServiceProtocol      *IngressRoutingTableEntryServiceProtocol `json:"service_protocol,omitempty"`
-
-	// Traffic Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
-	Traffic *IngressTrafficLimits `json:"traffic,omitempty"`
-}
-
-// IngressRoutingTableEntryAccessMode defines model for IngressRoutingTableEntry.AccessMode.
-type IngressRoutingTableEntryAccessMode string
-
-// IngressRoutingTableEntryIpPolicy defines model for IngressRoutingTableEntry.IpPolicy.
-type IngressRoutingTableEntryIpPolicy string
-
-// IngressRoutingTableEntryServiceProtocol defines model for IngressRoutingTableEntry.ServiceProtocol.
-type IngressRoutingTableEntryServiceProtocol string
-
-// IngressRoutingTableEvent defines model for IngressRoutingTableEvent.
-type IngressRoutingTableEvent struct {
-	CanonicalHostname    string                       `json:"canonical_hostname"`
-	CreatedAt            time.Time                    `json:"created_at"`
-	Entry                IngressRoutingTableEntry     `json:"entry"`
-	EntryRevision        int64                        `json:"entry_revision"`
-	Kind                 IngressRoutingTableEventKind `json:"kind"`
-	PublicUrlExpiresAt   *time.Time                   `json:"public_url_expires_at,omitempty"`
-	PublicUrlId          Identifier                   `json:"public_url_id"`
-	PublishRunNumber     int64                        `json:"publish_run_number"`
-	RoutingTableRevision int64                        `json:"routing_table_revision"`
-}
-
-// IngressRoutingTableEventKind defines model for IngressRoutingTableEvent.Kind.
-type IngressRoutingTableEventKind string
-
-// IngressRoutingTablePage defines model for IngressRoutingTablePage.
-type IngressRoutingTablePage struct {
-	Events                []IngressRoutingTableEvent `json:"events"`
-	More                  bool                       `json:"more"`
-	NextRevision          int64                      `json:"next_revision"`
-	RetainedAfterRevision int64                      `json:"retained_after_revision"`
-	ThroughRevision       int64                      `json:"through_revision"`
-}
-
-// IngressRoutingTableSnapshot defines model for IngressRoutingTableSnapshot.
-type IngressRoutingTableSnapshot struct {
-	Entries               []IngressRoutingTableEvent `json:"entries"`
-	RetainedAfterRevision int64                      `json:"retained_after_revision"`
-	ThroughRevision       int64                      `json:"through_revision"`
+	ReportedConnections  int64      `json:"reported_connections"`
 }
 
 // IngressTrafficLimits Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
 type IngressTrafficLimits = externalRef0.TrafficLimits
-
-// IngressVisitorPolicyRequest defines model for IngressVisitorPolicyRequest.
-type IngressVisitorPolicyRequest struct {
-	AfterRevision        int64      `json:"after_revision"`
-	IngressLeaseRevision int64      `json:"ingress_lease_revision"`
-	IngressRunId         Identifier `json:"ingress_run_id"`
-	PolicyRevision       int64      `json:"policy_revision"`
-	PublishRunId         Identifier `json:"publish_run_id"`
-	PublishRunNumber     int64      `json:"publish_run_number"`
-
-	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
-	Resource externalRef0.VisitorResourceScope `json:"resource"`
-}
 
 // Problem defines model for Problem.
 type Problem struct {
@@ -385,9 +170,12 @@ type PublicServiceVisitorAdmission struct {
 	Anonymous       bool           `json:"anonymous"`
 	ConnectedRelays []ServiceRelay `json:"connected_relays"`
 	ExpiresAt       time.Time      `json:"expires_at"`
-	RunNumber       int64          `json:"run_number"`
-	ServiceId       ServiceID      `json:"service_id"`
-	ServiceRunId    ServiceRunID   `json:"service_run_id"`
+
+	// RecoveryEpisodeId Open recovery episode for this exact service run. Report only after successfully writing a publisher byte to this visitor.
+	RecoveryEpisodeId *int64       `json:"recovery_episode_id,omitempty"`
+	RunNumber         int64        `json:"run_number"`
+	ServiceId         ServiceID    `json:"service_id"`
+	ServiceRunId      ServiceRunID `json:"service_run_id"`
 
 	// Traffic Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
 	Traffic             IngressTrafficLimits `json:"traffic"`
@@ -426,28 +214,31 @@ type PublicServiceVisitorStatus struct {
 // PublicServiceVisitorStatusState defines model for PublicServiceVisitorStatus.State.
 type PublicServiceVisitorStatusState string
 
-// PublicURLRecoveryObservation defines model for PublicURLRecoveryObservation.
-type PublicURLRecoveryObservation struct {
-	ObservedAt        time.Time  `json:"observed_at"`
-	ObservedSeconds   float64    `json:"observed_seconds"`
-	OpenedAt          time.Time  `json:"opened_at"`
-	PublicUrlId       Identifier `json:"public_url_id"`
-	PublishRunNumber  int64      `json:"publish_run_number"`
-	RecoveryEpisodeId int64      `json:"recovery_episode_id"`
-}
-
-// PublicURLRecoveryObservationRequest defines model for PublicURLRecoveryObservationRequest.
-type PublicURLRecoveryObservationRequest struct {
-	IngressId            Identifier `json:"ingress_id"`
-	IngressLeaseRevision int64      `json:"ingress_lease_revision"`
-	IngressRunId         Identifier `json:"ingress_run_id"`
-	ObservedAt           time.Time  `json:"observed_at"`
-	PublicUrlId          Identifier `json:"public_url_id"`
-	PublishRunNumber     int64      `json:"publish_run_number"`
-}
-
 // ServiceID defines model for ServiceID.
 type ServiceID = string
+
+// ServiceRecoveryObservation defines model for ServiceRecoveryObservation.
+type ServiceRecoveryObservation struct {
+	ObservedAt        time.Time    `json:"observed_at"`
+	ObservedSeconds   float64      `json:"observed_seconds"`
+	OpenedAt          time.Time    `json:"opened_at"`
+	RecoveryEpisodeId int64        `json:"recovery_episode_id"`
+	RunNumber         int64        `json:"run_number"`
+	ServiceId         ServiceID    `json:"service_id"`
+	ServiceRunId      ServiceRunID `json:"service_run_id"`
+}
+
+// ServiceRecoveryObservationRequest defines model for ServiceRecoveryObservationRequest.
+type ServiceRecoveryObservationRequest struct {
+	IngressId            Identifier          `json:"ingress_id"`
+	IngressLeaseRevision int64               `json:"ingress_lease_revision"`
+	IngressRunId         Identifier          `json:"ingress_run_id"`
+	ObservedAt           time.Time           `json:"observed_at"`
+	RunNumber            int64               `json:"run_number"`
+	ServiceId            ServiceID           `json:"service_id"`
+	ServiceRunId         ServiceRunID        `json:"service_run_id"`
+	VisitorConnectionId  VisitorConnectionID `json:"visitor_connection_id"`
+}
 
 // ServiceRelay defines model for ServiceRelay.
 type ServiceRelay struct {
@@ -488,9 +279,6 @@ type ServiceRunReference struct {
 // VisitorConnectionID defines model for VisitorConnectionID.
 type VisitorConnectionID = string
 
-// VisitorPolicyUpdate defines model for VisitorPolicyUpdate.
-type VisitorPolicyUpdate = externalRef0.VisitorPolicyUpdate
-
 // IngressID defines model for IngressID.
 type IngressID = Identifier
 
@@ -499,23 +287,6 @@ type IngressLeaseRevision = int64
 
 // IngressRunID defines model for IngressRunID.
 type IngressRunID = Identifier
-
-// GetIngressRoutingTableEventsParams defines parameters for GetIngressRoutingTableEvents.
-type GetIngressRoutingTableEventsParams struct {
-	IngressRunId         IngressRunID         `form:"ingress_run_id" json:"ingress_run_id"`
-	IngressLeaseRevision IngressLeaseRevision `form:"ingress_lease_revision" json:"ingress_lease_revision"`
-	After                int64                `form:"after" json:"after"`
-	Limit                *int                 `form:"limit,omitempty" json:"limit,omitempty"`
-
-	// Wait Maximum long-poll wait as a whole-second duration.
-	Wait *string `form:"wait,omitempty" json:"wait,omitempty"`
-}
-
-// GetIngressRoutingTableSnapshotParams defines parameters for GetIngressRoutingTableSnapshot.
-type GetIngressRoutingTableSnapshotParams struct {
-	IngressRunId         IngressRunID         `form:"ingress_run_id" json:"ingress_run_id"`
-	IngressLeaseRevision IngressLeaseRevision `form:"ingress_lease_revision" json:"ingress_lease_revision"`
-}
 
 // ReportIngressServiceObservationsJSONBody defines parameters for ReportIngressServiceObservations.
 type ReportIngressServiceObservationsJSONBody struct {
@@ -549,17 +320,14 @@ type PromotePublicServiceVisitorJSONRequestBody = PublicServiceVisitorLookup
 // PublicServiceVisitorStatusJSONRequestBody defines body for PublicServiceVisitorStatus for application/json ContentType.
 type PublicServiceVisitorStatusJSONRequestBody = PublicServiceVisitorLookup
 
-// ObservePublicURLRecoveryJSONRequestBody defines body for ObservePublicURLRecovery for application/json ContentType.
-type ObservePublicURLRecoveryJSONRequestBody = PublicURLRecoveryObservationRequest
-
 // RenewIngressJSONRequestBody defines body for RenewIngress for application/json ContentType.
 type RenewIngressJSONRequestBody = IngressRenewal
 
 // ReportIngressServiceObservationsJSONRequestBody defines body for ReportIngressServiceObservations for application/json ContentType.
 type ReportIngressServiceObservationsJSONRequestBody ReportIngressServiceObservationsJSONBody
 
-// ReadIngressVisitorPolicyJSONRequestBody defines body for ReadIngressVisitorPolicy for application/json ContentType.
-type ReadIngressVisitorPolicyJSONRequestBody = IngressVisitorPolicyRequest
+// ObserveServiceRecoveryJSONRequestBody defines body for ObserveServiceRecovery for application/json ContentType.
+type ObserveServiceRecoveryJSONRequestBody = ServiceRecoveryObservationRequest
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -703,20 +471,6 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	PublicServiceVisitorStatus(ctx context.Context, ingressId IngressID, body PublicServiceVisitorStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ObservePublicURLRecoveryWithBody Record the first publisher byte after public URL recovery
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed (the `ObservePublicURLRecovery` operationId).
-	ObservePublicURLRecoveryWithBody(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ObservePublicURLRecovery Record the first publisher byte after public URL recovery
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed (the `ObservePublicURLRecovery` operationId).
-	ObservePublicURLRecovery(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, body ObservePublicURLRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// RenewIngressWithBody Renew a matching ingress lease
 	//
 	// Takes any type of body and a specified content type.
@@ -731,16 +485,6 @@ type ClientInterface interface {
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/renew (the `RenewIngress` operationId).
 	RenewIngress(ctx context.Context, ingressId IngressID, body RenewIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetIngressRoutingTableEvents Wait for ordered ingress routing-table events
-	//
-	// Corresponds with GET /internal/v1/ingresses/{ingress_id}/routing-table/events (the `GetIngressRoutingTableEvents` operationId).
-	GetIngressRoutingTableEvents(ctx context.Context, ingressId IngressID, params *GetIngressRoutingTableEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetIngressRoutingTableSnapshot Load a consistent ingress routing-table snapshot
-	//
-	// Corresponds with GET /internal/v1/ingresses/{ingress_id}/routing-table/snapshot (the `GetIngressRoutingTableSnapshot` operationId).
-	GetIngressRoutingTableSnapshot(ctx context.Context, ingressId IngressID, params *GetIngressRoutingTableSnapshotParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// ReportIngressServiceObservationsWithBody performs a POST /internal/v1/ingresses/{ingress_id}/service-observations (the `ReportIngressServiceObservations` operationId) request,
 	// with any type of body and a specified content type.
 	ReportIngressServiceObservationsWithBody(ctx context.Context, ingressId IngressID, params *ReportIngressServiceObservationsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -749,17 +493,19 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	ReportIngressServiceObservations(ctx context.Context, ingressId IngressID, params *ReportIngressServiceObservationsParams, body ReportIngressServiceObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReadIngressVisitorPolicyWithBody performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request,
-	// with any type of body and a specified content type.
+	// ObserveServiceRecoveryWithBody Record the first publisher byte written to a visitor after service recovery
 	//
-	// Prepare current visitor policy for one exact public URL run in this ingress lease's pool. Process renewal never extends installed policy authority.
-	ReadIngressVisitorPolicyWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/service-recovery/{recovery_episode_id}/observed (the `ObserveServiceRecovery` operationId).
+	ObserveServiceRecoveryWithBody(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReadIngressVisitorPolicy performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request.
+	// ObserveServiceRecovery Record the first publisher byte written to a visitor after service recovery
+	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Prepare current visitor policy for one exact public URL run in this ingress lease's pool. Process renewal never extends installed policy authority.
-	ReadIngressVisitorPolicy(ctx context.Context, ingressId IngressID, body ReadIngressVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/service-recovery/{recovery_episode_id}/observed (the `ObserveServiceRecovery` operationId).
+	ObserveServiceRecovery(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, body ObserveServiceRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // RegisterIngressWithBody Register one ingress process run
@@ -970,40 +716,6 @@ func (c *Client) PublicServiceVisitorStatus(ctx context.Context, ingressId Ingre
 	return c.Client.Do(req)
 }
 
-// ObservePublicURLRecoveryWithBody Record the first publisher byte after public URL recovery
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed (the `ObservePublicURLRecovery` operationId).
-func (c *Client) ObservePublicURLRecoveryWithBody(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewObservePublicURLRecoveryRequestWithBody(c.Server, ingressId, recoveryEpisodeId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ObservePublicURLRecovery Record the first publisher byte after public URL recovery
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed (the `ObservePublicURLRecovery` operationId).
-func (c *Client) ObservePublicURLRecovery(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, body ObservePublicURLRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewObservePublicURLRecoveryRequest(c.Server, ingressId, recoveryEpisodeId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // RenewIngressWithBody Renew a matching ingress lease
 //
 // Takes any type of body and a specified content type.
@@ -1028,36 +740,6 @@ func (c *Client) RenewIngressWithBody(ctx context.Context, ingressId IngressID, 
 // Corresponds with POST /internal/v1/ingresses/{ingress_id}/renew (the `RenewIngress` operationId).
 func (c *Client) RenewIngress(ctx context.Context, ingressId IngressID, body RenewIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenewIngressRequest(c.Server, ingressId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetIngressRoutingTableEvents Wait for ordered ingress routing-table events
-//
-// Corresponds with GET /internal/v1/ingresses/{ingress_id}/routing-table/events (the `GetIngressRoutingTableEvents` operationId).
-func (c *Client) GetIngressRoutingTableEvents(ctx context.Context, ingressId IngressID, params *GetIngressRoutingTableEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetIngressRoutingTableEventsRequest(c.Server, ingressId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetIngressRoutingTableSnapshot Load a consistent ingress routing-table snapshot
-//
-// Corresponds with GET /internal/v1/ingresses/{ingress_id}/routing-table/snapshot (the `GetIngressRoutingTableSnapshot` operationId).
-func (c *Client) GetIngressRoutingTableSnapshot(ctx context.Context, ingressId IngressID, params *GetIngressRoutingTableSnapshotParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetIngressRoutingTableSnapshotRequest(c.Server, ingressId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1096,12 +778,13 @@ func (c *Client) ReportIngressServiceObservations(ctx context.Context, ingressId
 	return c.Client.Do(req)
 }
 
-// ReadIngressVisitorPolicyWithBody performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request,
-// with any type of body and a specified content type.
+// ObserveServiceRecoveryWithBody Record the first publisher byte written to a visitor after service recovery
 //
-// Prepare current visitor policy for one exact public URL run in this ingress lease's pool. Process renewal never extends installed policy authority.
-func (c *Client) ReadIngressVisitorPolicyWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReadIngressVisitorPolicyRequestWithBody(c.Server, ingressId, contentType, body)
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /internal/v1/ingresses/{ingress_id}/service-recovery/{recovery_episode_id}/observed (the `ObserveServiceRecovery` operationId).
+func (c *Client) ObserveServiceRecoveryWithBody(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewObserveServiceRecoveryRequestWithBody(c.Server, ingressId, recoveryEpisodeId, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1112,12 +795,13 @@ func (c *Client) ReadIngressVisitorPolicyWithBody(ctx context.Context, ingressId
 	return c.Client.Do(req)
 }
 
-// ReadIngressVisitorPolicy performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request.
+// ObserveServiceRecovery Record the first publisher byte written to a visitor after service recovery
+//
 // Takes a body of the `application/json` content type.
 //
-// Prepare current visitor policy for one exact public URL run in this ingress lease's pool. Process renewal never extends installed policy authority.
-func (c *Client) ReadIngressVisitorPolicy(ctx context.Context, ingressId IngressID, body ReadIngressVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReadIngressVisitorPolicyRequest(c.Server, ingressId, body)
+// Corresponds with POST /internal/v1/ingresses/{ingress_id}/service-recovery/{recovery_episode_id}/observed (the `ObserveServiceRecovery` operationId).
+func (c *Client) ObserveServiceRecovery(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, body ObserveServiceRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewObserveServiceRecoveryRequest(c.Server, ingressId, recoveryEpisodeId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1450,60 +1134,6 @@ func NewPublicServiceVisitorStatusRequestWithBody(server string, ingressId Ingre
 	return req, nil
 }
 
-// NewObservePublicURLRecoveryRequest calls the generic ObservePublicURLRecovery builder with application/json body
-func NewObservePublicURLRecoveryRequest(server string, ingressId IngressID, recoveryEpisodeId int64, body ObservePublicURLRecoveryJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewObservePublicURLRecoveryRequestWithBody(server, ingressId, recoveryEpisodeId, "application/json", bodyReader)
-}
-
-// NewObservePublicURLRecoveryRequestWithBody constructs an http.Request for the ObservePublicURLRecovery method, with any body, and a specified content type
-func NewObservePublicURLRecoveryRequestWithBody(server string, ingressId IngressID, recoveryEpisodeId int64, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "recovery_episode_id", recoveryEpisodeId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/public-url-recovery/%s/observed", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewRenewIngressRequest calls the generic RenewIngress builder with application/json body
 func NewRenewIngressRequest(server string, ingressId IngressID, body RenewIngressJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -1547,168 +1177,6 @@ func NewRenewIngressRequestWithBody(server string, ingressId IngressID, contentT
 	}
 
 	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetIngressRoutingTableEventsRequest constructs an http.Request for the GetIngressRoutingTableEvents method
-func NewGetIngressRoutingTableEventsRequest(server string, ingressId IngressID, params *GetIngressRoutingTableEventsParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/routing-table/events", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ingress_run_id", params.IngressRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ingress_lease_revision", params.IngressLeaseRevision, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Wait != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "wait", *params.Wait, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetIngressRoutingTableSnapshotRequest constructs an http.Request for the GetIngressRoutingTableSnapshot method
-func NewGetIngressRoutingTableSnapshotRequest(server string, ingressId IngressID, params *GetIngressRoutingTableSnapshotParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/routing-table/snapshot", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ingress_run_id", params.IngressRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ingress_lease_revision", params.IngressLeaseRevision, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
 
 	return req, nil
 }
@@ -1791,19 +1259,19 @@ func NewReportIngressServiceObservationsRequestWithBody(server string, ingressId
 	return req, nil
 }
 
-// NewReadIngressVisitorPolicyRequest calls the generic ReadIngressVisitorPolicy builder with application/json body
-func NewReadIngressVisitorPolicyRequest(server string, ingressId IngressID, body ReadIngressVisitorPolicyJSONRequestBody) (*http.Request, error) {
+// NewObserveServiceRecoveryRequest calls the generic ObserveServiceRecovery builder with application/json body
+func NewObserveServiceRecoveryRequest(server string, ingressId IngressID, recoveryEpisodeId int64, body ObserveServiceRecoveryJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewReadIngressVisitorPolicyRequestWithBody(server, ingressId, "application/json", bodyReader)
+	return NewObserveServiceRecoveryRequestWithBody(server, ingressId, recoveryEpisodeId, "application/json", bodyReader)
 }
 
-// NewReadIngressVisitorPolicyRequestWithBody constructs an http.Request for the ReadIngressVisitorPolicy method, with any body, and a specified content type
-func NewReadIngressVisitorPolicyRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
+// NewObserveServiceRecoveryRequestWithBody constructs an http.Request for the ObserveServiceRecovery method, with any body, and a specified content type
+func NewObserveServiceRecoveryRequestWithBody(server string, ingressId IngressID, recoveryEpisodeId int64, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -1813,12 +1281,19 @@ func NewReadIngressVisitorPolicyRequestWithBody(server string, ingressId Ingress
 		return nil, err
 	}
 
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "recovery_episode_id", recoveryEpisodeId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
 	serverURL, err := url.Parse(server)
 	if err != nil {
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/visitor-policy", pathParam0)
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/service-recovery/%s/observed", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1960,20 +1435,6 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	PublicServiceVisitorStatusWithResponse(ctx context.Context, ingressId IngressID, body PublicServiceVisitorStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*PublicServiceVisitorStatusResponse, error)
 
-	// ObservePublicURLRecoveryWithBodyWithResponse Record the first publisher byte after public URL recovery
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed (the `ObservePublicURLRecovery` operationId).
-	ObservePublicURLRecoveryWithBodyWithResponse(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ObservePublicURLRecoveryResponse, error)
-
-	// ObservePublicURLRecoveryWithResponse Record the first publisher byte after public URL recovery
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed (the `ObservePublicURLRecovery` operationId).
-	ObservePublicURLRecoveryWithResponse(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, body ObservePublicURLRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*ObservePublicURLRecoveryResponse, error)
-
 	// RenewIngressWithBodyWithResponse Renew a matching ingress lease
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -1988,20 +1449,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/renew (the `RenewIngress` operationId).
 	RenewIngressWithResponse(ctx context.Context, ingressId IngressID, body RenewIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewIngressResponse, error)
 
-	// GetIngressRoutingTableEventsWithResponse Wait for ordered ingress routing-table events
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /internal/v1/ingresses/{ingress_id}/routing-table/events (the `GetIngressRoutingTableEvents` operationId).
-	GetIngressRoutingTableEventsWithResponse(ctx context.Context, ingressId IngressID, params *GetIngressRoutingTableEventsParams, reqEditors ...RequestEditorFn) (*GetIngressRoutingTableEventsResponse, error)
-
-	// GetIngressRoutingTableSnapshotWithResponse Load a consistent ingress routing-table snapshot
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /internal/v1/ingresses/{ingress_id}/routing-table/snapshot (the `GetIngressRoutingTableSnapshot` operationId).
-	GetIngressRoutingTableSnapshotWithResponse(ctx context.Context, ingressId IngressID, params *GetIngressRoutingTableSnapshotParams, reqEditors ...RequestEditorFn) (*GetIngressRoutingTableSnapshotResponse, error)
-
 	// ReportIngressServiceObservationsWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/service-observations (the `ReportIngressServiceObservations` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -2012,19 +1459,19 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	ReportIngressServiceObservationsWithResponse(ctx context.Context, ingressId IngressID, params *ReportIngressServiceObservationsParams, body ReportIngressServiceObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportIngressServiceObservationsResponse, error)
 
-	// ReadIngressVisitorPolicyWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request,
-	// with any type of body and a specified content type.
+	// ObserveServiceRecoveryWithBodyWithResponse Record the first publisher byte written to a visitor after service recovery
 	//
-	// Prepare current visitor policy for one exact public URL run in this ingress lease's pool. Process renewal never extends installed policy authority.
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Returns a wrapper object for the known response body format(s).
-	ReadIngressVisitorPolicyWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadIngressVisitorPolicyResponse, error)
+	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/service-recovery/{recovery_episode_id}/observed (the `ObserveServiceRecovery` operationId).
+	ObserveServiceRecoveryWithBodyWithResponse(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ObserveServiceRecoveryResponse, error)
 
-	// ReadIngressVisitorPolicyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request.
+	// ObserveServiceRecoveryWithResponse Record the first publisher byte written to a visitor after service recovery
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Prepare current visitor policy for one exact public URL run in this ingress lease's pool. Process renewal never extends installed policy authority.
-	ReadIngressVisitorPolicyWithResponse(ctx context.Context, ingressId IngressID, body ReadIngressVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadIngressVisitorPolicyResponse, error)
+	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/service-recovery/{recovery_episode_id}/observed (the `ObserveServiceRecovery` operationId).
+	ObserveServiceRecoveryWithResponse(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, body ObserveServiceRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*ObserveServiceRecoveryResponse, error)
 }
 
 type RegisterIngressResponse struct {
@@ -2349,54 +1796,6 @@ func (r PublicServiceVisitorStatusResponse) ContentType() string {
 	return ""
 }
 
-type ObservePublicURLRecoveryResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublicURLRecoveryObservation
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ObservePublicURLRecoveryResponse) GetJSON200() *PublicURLRecoveryObservation {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ObservePublicURLRecoveryResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ObservePublicURLRecoveryResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ObservePublicURLRecoveryResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ObservePublicURLRecoveryResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ObservePublicURLRecoveryResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type RenewIngressResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2439,109 +1838,6 @@ func (r RenewIngressResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RenewIngressResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetIngressRoutingTableEventsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *IngressRoutingTablePage
-	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
-	ApplicationproblemJSON409 *Problem
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetIngressRoutingTableEventsResponse) GetJSON200() *IngressRoutingTablePage {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
-func (r GetIngressRoutingTableEventsResponse) GetApplicationproblemJSON409() *Problem {
-	return r.ApplicationproblemJSON409
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetIngressRoutingTableEventsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetIngressRoutingTableEventsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetIngressRoutingTableEventsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetIngressRoutingTableEventsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetIngressRoutingTableEventsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetIngressRoutingTableSnapshotResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *IngressRoutingTableSnapshot
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetIngressRoutingTableSnapshotResponse) GetJSON200() *IngressRoutingTableSnapshot {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetIngressRoutingTableSnapshotResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetIngressRoutingTableSnapshotResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetIngressRoutingTableSnapshotResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetIngressRoutingTableSnapshotResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetIngressRoutingTableSnapshotResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -2596,32 +1892,32 @@ func (r ReportIngressServiceObservationsResponse) ContentType() string {
 	return ""
 }
 
-type ReadIngressVisitorPolicyResponse struct {
+type ObserveServiceRecoveryResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *VisitorPolicyUpdate
+	JSON200 *ServiceRecoveryObservation
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ReadIngressVisitorPolicyResponse) GetJSON200() *VisitorPolicyUpdate {
+func (r ObserveServiceRecoveryResponse) GetJSON200() *ServiceRecoveryObservation {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ReadIngressVisitorPolicyResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r ObserveServiceRecoveryResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r ReadIngressVisitorPolicyResponse) GetBody() []byte {
+func (r ObserveServiceRecoveryResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r ReadIngressVisitorPolicyResponse) Status() string {
+func (r ObserveServiceRecoveryResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -2629,7 +1925,7 @@ func (r ReadIngressVisitorPolicyResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ReadIngressVisitorPolicyResponse) StatusCode() int {
+func (r ObserveServiceRecoveryResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -2637,7 +1933,7 @@ func (r ReadIngressVisitorPolicyResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ReadIngressVisitorPolicyResponse) ContentType() string {
+func (r ObserveServiceRecoveryResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -2806,32 +2102,6 @@ func (c *ClientWithResponses) PublicServiceVisitorStatusWithResponse(ctx context
 	return ParsePublicServiceVisitorStatusResponse(rsp)
 }
 
-// ObservePublicURLRecoveryWithBodyWithResponse Record the first publisher byte after public URL recovery
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed (the `ObservePublicURLRecovery` operationId).
-func (c *ClientWithResponses) ObservePublicURLRecoveryWithBodyWithResponse(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ObservePublicURLRecoveryResponse, error) {
-	rsp, err := c.ObservePublicURLRecoveryWithBody(ctx, ingressId, recoveryEpisodeId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseObservePublicURLRecoveryResponse(rsp)
-}
-
-// ObservePublicURLRecoveryWithResponse Record the first publisher byte after public URL recovery
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed (the `ObservePublicURLRecovery` operationId).
-func (c *ClientWithResponses) ObservePublicURLRecoveryWithResponse(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, body ObservePublicURLRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*ObservePublicURLRecoveryResponse, error) {
-	rsp, err := c.ObservePublicURLRecovery(ctx, ingressId, recoveryEpisodeId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseObservePublicURLRecoveryResponse(rsp)
-}
-
 // RenewIngressWithBodyWithResponse Renew a matching ingress lease
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -2858,32 +2128,6 @@ func (c *ClientWithResponses) RenewIngressWithResponse(ctx context.Context, ingr
 	return ParseRenewIngressResponse(rsp)
 }
 
-// GetIngressRoutingTableEventsWithResponse Wait for ordered ingress routing-table events
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /internal/v1/ingresses/{ingress_id}/routing-table/events (the `GetIngressRoutingTableEvents` operationId).
-func (c *ClientWithResponses) GetIngressRoutingTableEventsWithResponse(ctx context.Context, ingressId IngressID, params *GetIngressRoutingTableEventsParams, reqEditors ...RequestEditorFn) (*GetIngressRoutingTableEventsResponse, error) {
-	rsp, err := c.GetIngressRoutingTableEvents(ctx, ingressId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetIngressRoutingTableEventsResponse(rsp)
-}
-
-// GetIngressRoutingTableSnapshotWithResponse Load a consistent ingress routing-table snapshot
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /internal/v1/ingresses/{ingress_id}/routing-table/snapshot (the `GetIngressRoutingTableSnapshot` operationId).
-func (c *ClientWithResponses) GetIngressRoutingTableSnapshotWithResponse(ctx context.Context, ingressId IngressID, params *GetIngressRoutingTableSnapshotParams, reqEditors ...RequestEditorFn) (*GetIngressRoutingTableSnapshotResponse, error) {
-	rsp, err := c.GetIngressRoutingTableSnapshot(ctx, ingressId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetIngressRoutingTableSnapshotResponse(rsp)
-}
-
 // ReportIngressServiceObservationsWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/service-observations (the `ReportIngressServiceObservations` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -2906,30 +2150,30 @@ func (c *ClientWithResponses) ReportIngressServiceObservationsWithResponse(ctx c
 	return ParseReportIngressServiceObservationsResponse(rsp)
 }
 
-// ReadIngressVisitorPolicyWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request,
-// with any type of body and a specified content type.
+// ObserveServiceRecoveryWithBodyWithResponse Record the first publisher byte written to a visitor after service recovery
 //
-// Prepare current visitor policy for one exact public URL run in this ingress lease's pool. Process renewal never extends installed policy authority.
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ReadIngressVisitorPolicyWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadIngressVisitorPolicyResponse, error) {
-	rsp, err := c.ReadIngressVisitorPolicyWithBody(ctx, ingressId, contentType, body, reqEditors...)
+// Corresponds with POST /internal/v1/ingresses/{ingress_id}/service-recovery/{recovery_episode_id}/observed (the `ObserveServiceRecovery` operationId).
+func (c *ClientWithResponses) ObserveServiceRecoveryWithBodyWithResponse(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ObserveServiceRecoveryResponse, error) {
+	rsp, err := c.ObserveServiceRecoveryWithBody(ctx, ingressId, recoveryEpisodeId, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseReadIngressVisitorPolicyResponse(rsp)
+	return ParseObserveServiceRecoveryResponse(rsp)
 }
 
-// ReadIngressVisitorPolicyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request.
+// ObserveServiceRecoveryWithResponse Record the first publisher byte written to a visitor after service recovery
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Prepare current visitor policy for one exact public URL run in this ingress lease's pool. Process renewal never extends installed policy authority.
-func (c *ClientWithResponses) ReadIngressVisitorPolicyWithResponse(ctx context.Context, ingressId IngressID, body ReadIngressVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadIngressVisitorPolicyResponse, error) {
-	rsp, err := c.ReadIngressVisitorPolicy(ctx, ingressId, body, reqEditors...)
+// Corresponds with POST /internal/v1/ingresses/{ingress_id}/service-recovery/{recovery_episode_id}/observed (the `ObserveServiceRecovery` operationId).
+func (c *ClientWithResponses) ObserveServiceRecoveryWithResponse(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, body ObserveServiceRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*ObserveServiceRecoveryResponse, error) {
+	rsp, err := c.ObserveServiceRecovery(ctx, ingressId, recoveryEpisodeId, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseReadIngressVisitorPolicyResponse(rsp)
+	return ParseObserveServiceRecoveryResponse(rsp)
 }
 
 // ParseRegisterIngressResponse parses an HTTP response from a RegisterIngressWithResponse call
@@ -3155,39 +2399,6 @@ func ParsePublicServiceVisitorStatusResponse(rsp *http.Response) (*PublicService
 	return response, nil
 }
 
-// ParseObservePublicURLRecoveryResponse parses an HTTP response from a ObservePublicURLRecoveryWithResponse call
-func ParseObservePublicURLRecoveryResponse(rsp *http.Response) (*ObservePublicURLRecoveryResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ObservePublicURLRecoveryResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublicURLRecoveryObservation
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseRenewIngressResponse parses an HTTP response from a RenewIngressWithResponse call
 func ParseRenewIngressResponse(rsp *http.Response) (*RenewIngressResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -3204,79 +2415,6 @@ func ParseRenewIngressResponse(rsp *http.Response) (*RenewIngressResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest IngressLease
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetIngressRoutingTableEventsResponse parses an HTTP response from a GetIngressRoutingTableEventsWithResponse call
-func ParseGetIngressRoutingTableEventsResponse(rsp *http.Response) (*GetIngressRoutingTableEventsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetIngressRoutingTableEventsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest IngressRoutingTablePage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetIngressRoutingTableSnapshotResponse parses an HTTP response from a GetIngressRoutingTableSnapshotWithResponse call
-func ParseGetIngressRoutingTableSnapshotResponse(rsp *http.Response) (*GetIngressRoutingTableSnapshotResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetIngressRoutingTableSnapshotResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest IngressRoutingTableSnapshot
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -3327,22 +2465,22 @@ func ParseReportIngressServiceObservationsResponse(rsp *http.Response) (*ReportI
 	return response, nil
 }
 
-// ParseReadIngressVisitorPolicyResponse parses an HTTP response from a ReadIngressVisitorPolicyWithResponse call
-func ParseReadIngressVisitorPolicyResponse(rsp *http.Response) (*ReadIngressVisitorPolicyResponse, error) {
+// ParseObserveServiceRecoveryResponse parses an HTTP response from a ObserveServiceRecoveryWithResponse call
+func ParseObserveServiceRecoveryResponse(rsp *http.Response) (*ObserveServiceRecoveryResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ReadIngressVisitorPolicyResponse{
+	response := &ObserveServiceRecoveryResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest VisitorPolicyUpdate
+		var dest ServiceRecoveryObservation
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -3383,24 +2521,15 @@ type ServerInterface interface {
 
 	// (POST /internal/v1/ingresses/{ingress_id}/public-services/status)
 	PublicServiceVisitorStatus(w http.ResponseWriter, r *http.Request, ingressId IngressID)
-	// ObservePublicURLRecovery Record the first publisher byte after public URL recovery
-	// (POST /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed)
-	ObservePublicURLRecovery(w http.ResponseWriter, r *http.Request, ingressId IngressID, recoveryEpisodeId int64)
 	// RenewIngress Renew a matching ingress lease
 	// (POST /internal/v1/ingresses/{ingress_id}/renew)
 	RenewIngress(w http.ResponseWriter, r *http.Request, ingressId IngressID)
-	// GetIngressRoutingTableEvents Wait for ordered ingress routing-table events
-	// (GET /internal/v1/ingresses/{ingress_id}/routing-table/events)
-	GetIngressRoutingTableEvents(w http.ResponseWriter, r *http.Request, ingressId IngressID, params GetIngressRoutingTableEventsParams)
-	// GetIngressRoutingTableSnapshot Load a consistent ingress routing-table snapshot
-	// (GET /internal/v1/ingresses/{ingress_id}/routing-table/snapshot)
-	GetIngressRoutingTableSnapshot(w http.ResponseWriter, r *http.Request, ingressId IngressID, params GetIngressRoutingTableSnapshotParams)
 
 	// (POST /internal/v1/ingresses/{ingress_id}/service-observations)
 	ReportIngressServiceObservations(w http.ResponseWriter, r *http.Request, ingressId IngressID, params ReportIngressServiceObservationsParams)
-
-	// (POST /internal/v1/ingresses/{ingress_id}/visitor-policy)
-	ReadIngressVisitorPolicy(w http.ResponseWriter, r *http.Request, ingressId IngressID)
+	// ObserveServiceRecovery Record the first publisher byte written to a visitor after service recovery
+	// (POST /internal/v1/ingresses/{ingress_id}/service-recovery/{recovery_episode_id}/observed)
+	ObserveServiceRecovery(w http.ResponseWriter, r *http.Request, ingressId IngressID, recoveryEpisodeId int64)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -3582,41 +2711,6 @@ func (siw *ServerInterfaceWrapper) PublicServiceVisitorStatus(w http.ResponseWri
 	handler.ServeHTTP(w, r)
 }
 
-// ObservePublicURLRecovery operation middleware
-func (siw *ServerInterfaceWrapper) ObservePublicURLRecovery(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "ingress_id" -------------
-	var ingressId IngressID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "recovery_episode_id" -------------
-	var recoveryEpisodeId int64
-
-	err = runtime.BindStyledParameterWithOptions("simple", "recovery_episode_id", r.PathValue("recovery_episode_id"), &recoveryEpisodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "recovery_episode_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ObservePublicURLRecovery(w, r, ingressId, recoveryEpisodeId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // RenewIngress operation middleware
 func (siw *ServerInterfaceWrapper) RenewIngress(w http.ResponseWriter, r *http.Request) {
 
@@ -3634,155 +2728,6 @@ func (siw *ServerInterfaceWrapper) RenewIngress(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RenewIngress(w, r, ingressId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetIngressRoutingTableEvents operation middleware
-func (siw *ServerInterfaceWrapper) GetIngressRoutingTableEvents(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "ingress_id" -------------
-	var ingressId IngressID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetIngressRoutingTableEventsParams
-
-	// ------------- Required query parameter "ingress_run_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "ingress_run_id", r.URL.Query(), &params.IngressRunId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ingress_run_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_run_id", Err: err})
-		}
-		return
-	}
-
-	// ------------- Required query parameter "ingress_lease_revision" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "ingress_lease_revision", r.URL.Query(), &params.IngressLeaseRevision, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ingress_lease_revision"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_lease_revision", Err: err})
-		}
-		return
-	}
-
-	// ------------- Required query parameter "after" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "after", r.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
-		}
-		return
-	}
-
-	// ------------- Optional query parameter "limit" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
-		}
-		return
-	}
-
-	// ------------- Optional query parameter "wait" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "wait", r.URL.Query(), &params.Wait, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "wait"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "wait", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetIngressRoutingTableEvents(w, r, ingressId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetIngressRoutingTableSnapshot operation middleware
-func (siw *ServerInterfaceWrapper) GetIngressRoutingTableSnapshot(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "ingress_id" -------------
-	var ingressId IngressID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetIngressRoutingTableSnapshotParams
-
-	// ------------- Required query parameter "ingress_run_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "ingress_run_id", r.URL.Query(), &params.IngressRunId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ingress_run_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_run_id", Err: err})
-		}
-		return
-	}
-
-	// ------------- Required query parameter "ingress_lease_revision" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "ingress_lease_revision", r.URL.Query(), &params.IngressLeaseRevision, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ingress_lease_revision"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_lease_revision", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetIngressRoutingTableSnapshot(w, r, ingressId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3847,8 +2792,8 @@ func (siw *ServerInterfaceWrapper) ReportIngressServiceObservations(w http.Respo
 	handler.ServeHTTP(w, r)
 }
 
-// ReadIngressVisitorPolicy operation middleware
-func (siw *ServerInterfaceWrapper) ReadIngressVisitorPolicy(w http.ResponseWriter, r *http.Request) {
+// ObserveServiceRecovery operation middleware
+func (siw *ServerInterfaceWrapper) ObserveServiceRecovery(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
@@ -3862,8 +2807,17 @@ func (siw *ServerInterfaceWrapper) ReadIngressVisitorPolicy(w http.ResponseWrite
 		return
 	}
 
+	// ------------- Path parameter "recovery_episode_id" -------------
+	var recoveryEpisodeId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "recovery_episode_id", r.PathValue("recovery_episode_id"), &recoveryEpisodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "recovery_episode_id", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ReadIngressVisitorPolicy(w, r, ingressId)
+		siw.Handler.ObserveServiceRecovery(w, r, ingressId, recoveryEpisodeId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3993,7 +2947,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/visitor-policy", wrapper.ReadIngressVisitorPolicy)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-services/admit", wrapper.AdmitPublicServiceVisitor)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-services/status", wrapper.PublicServiceVisitorStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-services/promote", wrapper.PromotePublicServiceVisitor)
@@ -4003,9 +2956,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/register", wrapper.RegisterIngress)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/renew", wrapper.RenewIngress)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/drain", wrapper.DrainIngress)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/routing-table/snapshot", wrapper.GetIngressRoutingTableSnapshot)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/routing-table/events", wrapper.GetIngressRoutingTableEvents)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed", wrapper.ObservePublicURLRecovery)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/service-recovery/{recovery_episode_id}/observed", wrapper.ObserveServiceRecovery)
 
 	return m
 }

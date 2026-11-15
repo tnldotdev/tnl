@@ -16,9 +16,9 @@ type runtimeJSONClient struct {
 
 func TestBrowserAndSharesJSONKeepsRuntimeCredentialsPrivate(t *testing.T) {
 	client := &runtimeJSONClient{Secret: "fixture-client-secret"}
-	token := credentials.PublishRunToken("fixture-publish-run-secret")
+	token := credentials.ServiceRunToken("fixture-service-run-secret")
 	browser := httpaccess.Browser{Client: client, Token: token, Tokens: &httpaccess.Tokens{}, Policy: &httpaccess.Policy{}}
-	shares := httpaccess.Shares{Client: client, Token: token, Browser: &browser, Logf: func(string, ...any) {
+	shares := httpaccess.Shares{Client: client, Browser: &browser, Logf: func(string, ...any) {
 		t.Error("JSON encoding called the run logger")
 	}}
 	for _, test := range []struct {
@@ -45,7 +45,7 @@ func TestBrowserAndSharesJSONKeepsRuntimeCredentialsPrivate(t *testing.T) {
 			}
 		})
 	}
-	if browser.Token.String() != string(token) || shares.Token.String() != string(token) {
+	if browser.Token.String() != string(token) || shares.Browser.Token.String() != string(token) {
 		t.Fatal("snapshot redaction changed the token used for authentication")
 	}
 }

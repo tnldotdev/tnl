@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"strconv"
 	"strings"
@@ -15,16 +14,17 @@ import (
 	"testing/synctest"
 	"time"
 
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
-	"github.com/tnldotdev/tnl/internal/publisher/target"
 )
 
 const automaticTestDelay = 10 * time.Millisecond
 
-func automaticWorkers(t *testing.T, budget time.Duration) (*Workers, <-chan func(uint64, bool) error, <-chan struct{}) {
+type readinessTransport struct{ transport http.RoundTripper }
+
+func automaticWorkers(t *testing.T, budget time.Duration) (*Workers, <-chan func(uint64, bool) error, <-chan struct{}, *readinessTransport) {
 	t.Helper()
 	w, _ := testWorkers(t)
 	w.AutomaticReadiness = true
@@ -32,10 +32,11 @@ func automaticWorkers(t *testing.T, budget time.Duration) (*Workers, <-chan func
 	w.readinessDelay = func(int) time.Duration { return automaticTestDelay }
 	ready := make(chan func(uint64, bool) error, 8)
 	exited := make(chan struct{}, 8)
+	probe := &readinessTransport{}
 	w.Configure = func(_ context.Context, service Service) (Configuration, error) {
 		return Configuration{Service: &ServicePublication{
 			Options: servicePublicationOptions(w, service), URL: "https://public.example",
-			Run: func(ctx context.Context, observe func(uint64, bool) error, _ inspection.Observer) error {
+			Run: func(ctx context.Context, _ *clientstate.Tunnel, observe func(uint64, bool) error, _ inspection.Observer) error {
 				defer func() { exited <- struct{}{} }()
 				if err := observe(1, false); err != nil {
 					return err
@@ -56,29 +57,17 @@ func automaticWorkers(t *testing.T, budget time.Duration) (*Workers, <-chan func
 					t.Error(err)
 					return Observation{}
 				}
-				return ProbeWithProof(ctx, current, w.HTTPTransport, proof.HeaderValue())
+				return ProbeWithProof(ctx, current, probe.transport, proof.HeaderValue())
 			},
 		}}, nil
 	}
-	return w, ready, exited
+	return w, ready, exited, probe
 }
 
 func registerAutomaticService(t *testing.T, w *Workers, ready <-chan func(uint64, bool) error) (func(uint64, bool) error, string) {
 	t.Helper()
 	id := registerServicePublication(t, w, "http://127.0.0.1:3000", "https://public.example")
 	return receiveServicePublication(t, ready), id
-}
-
-func registerAutomaticWorker(t *testing.T, w *Workers, ready <-chan publisher.Config) (publisher.Config, string) {
-	t.Helper()
-	id, err := w.Manager.Reserve("web", "owner", 1, "https://public.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := w.Manager.Register(id, "owner", "http://127.0.0.1:3000", "node"); err != nil {
-		t.Fatal(err)
-	}
-	return receiveConfig(t, ready), id
 }
 
 func automaticResponse(status int) *http.Response {
@@ -124,9 +113,9 @@ func expectNoAutomaticGET(t *testing.T, gets <-chan string) {
 }
 
 func TestAutomaticReadinessStopsAfterSuccessAndOnlyRearmsForNewRun(t *testing.T) {
-	w, ready, _ := automaticWorkers(t, time.Second)
+	w, ready, _, probe := automaticWorkers(t, time.Second)
 	gets := make(chan string, 32)
-	w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
+	probe.transport = trip(func(r *http.Request) (*http.Response, error) {
 		gets <- r.Header.Get(ProbeHeader)
 		return automaticResponse(200), nil
 	})
@@ -167,10 +156,10 @@ func TestAutomaticReadinessStopsAfterSuccessAndOnlyRearmsForNewRun(t *testing.T)
 }
 
 func TestAutomaticReadinessDisabledKeepsManualCheck(t *testing.T) {
-	w, ready, _ := automaticWorkers(t, time.Second)
+	w, ready, _, probe := automaticWorkers(t, time.Second)
 	w.AutomaticReadiness = false
 	gets := make(chan string, 8)
-	w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
+	probe.transport = trip(func(r *http.Request) (*http.Response, error) {
 		gets <- r.Header.Get(ProbeHeader)
 		return automaticResponse(http.StatusNoContent), nil
 	})
@@ -187,7 +176,7 @@ func TestAutomaticReadinessDisabledKeepsManualCheck(t *testing.T) {
 }
 
 func TestAutomaticReadinessWaitsForCompletedPublicationObservation(t *testing.T) {
-	w, ready, _ := automaticWorkers(t, time.Second)
+	w, ready, _, probe := automaticWorkers(t, time.Second)
 	observed, release := make(chan struct{}), make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
 	defer unblock()
@@ -202,7 +191,7 @@ func TestAutomaticReadinessWaitsForCompletedPublicationObservation(t *testing.T)
 		})
 	}
 	gets := make(chan string, 8)
-	w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
+	probe.transport = trip(func(r *http.Request) (*http.Response, error) {
 		gets <- r.Header.Get(ProbeHeader)
 		return automaticResponse(http.StatusNoContent), nil
 	})
@@ -223,13 +212,13 @@ func TestAutomaticReadinessWaitsForCompletedPublicationObservation(t *testing.T)
 func TestAutomaticReadinessBudgetCancelsProbeWithoutStoppingPublication(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const budget = 250 * time.Millisecond
-		w, ready, exited := automaticWorkers(t, budget)
+		w, ready, exited, probe := automaticWorkers(t, budget)
 		var gets atomic.Int32
 		deadlineReached := make(chan struct{})
 		var deadlineOnce sync.Once
 		retries := make(chan int, 8)
 		w.readinessDelay = func(attempt int) time.Duration { retries <- attempt; return automaticTestDelay }
-		w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
+		probe.transport = trip(func(r *http.Request) (*http.Response, error) {
 			if gets.Add(1) <= 2 {
 				return automaticResponse(503), nil
 			}
@@ -289,14 +278,14 @@ func TestAutomaticReadinessBudgetCancelsProbeWithoutStoppingPublication(t *testi
 func TestAutomaticReadinessBudgetExpiresBeforeNextProbe(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const budget = 250 * time.Millisecond
-		w, ready, exited := automaticWorkers(t, budget)
+		w, ready, exited, probe := automaticWorkers(t, budget)
 		var gets atomic.Int32
 		retries := make(chan int, 8)
 		w.readinessDelay = func(attempt int) time.Duration {
 			retries <- attempt
 			return 2 * budget
 		}
-		w.HTTPTransport = trip(func(*http.Request) (*http.Response, error) {
+		probe.transport = trip(func(*http.Request) (*http.Response, error) {
 			gets.Add(1)
 			return automaticResponse(503), nil
 		})
@@ -349,14 +338,14 @@ func TestAutomaticReadinessReplacementJoinsOldRunBeforeCheckingNewRun(t *testing
 			name = "prepared"
 		}
 		t.Run(name, func(t *testing.T) {
-			w, ready, _ := automaticWorkers(t, time.Second)
+			w, ready, _, probe := automaticWorkers(t, time.Second)
 			started, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			var once sync.Once
 			unblock := func() { once.Do(func() { close(release) }) }
 			defer unblock()
 			var count atomic.Int32
 			gets := make(chan string, 8)
-			w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
+			probe.transport = trip(func(r *http.Request) (*http.Response, error) {
 				gets <- r.Header.Get(ProbeHeader)
 				if count.Add(1) == 1 {
 					close(started)
@@ -420,13 +409,13 @@ func TestAutomaticReadinessReplacementJoinsOldRunBeforeCheckingNewRun(t *testing
 }
 
 func TestAutomaticReadinessStaleRunDoesNotCancelCurrentCheck(t *testing.T) {
-	w, ready, _ := automaticWorkers(t, time.Second)
+	w, ready, _, probe := automaticWorkers(t, time.Second)
 	gets := make(chan string, 8)
 	canceled, release := make(chan struct{}), make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
 	defer unblock()
 	var count atomic.Int32
-	w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
+	probe.transport = trip(func(r *http.Request) (*http.Response, error) {
 		gets <- r.Header.Get(ProbeHeader)
 		if count.Add(1) == 1 {
 			return automaticResponse(http.StatusNoContent), nil
@@ -462,7 +451,7 @@ func TestAutomaticReadinessStaleRunDoesNotCancelCurrentCheck(t *testing.T) {
 }
 
 func TestAutomaticReadinessOperationReturnJoinsBeforeCleanup(t *testing.T) {
-	w, _, _ := automaticWorkers(t, time.Second)
+	w, _, _, _ := automaticWorkers(t, time.Second)
 	started, canceled, release, joined := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
 	finishOperation, cleaned := make(chan struct{}), make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
@@ -474,7 +463,7 @@ func TestAutomaticReadinessOperationReturnJoinsBeforeCleanup(t *testing.T) {
 		if err != nil {
 			return cfg, err
 		}
-		cfg.Service.Run = func(ctx context.Context, observe func(uint64, bool) error, _ inspection.Observer) error {
+		cfg.Service.Run = func(ctx context.Context, _ *clientstate.Tunnel, observe func(uint64, bool) error, _ inspection.Observer) error {
 			if err := observe(1, true); err != nil {
 				return err
 			}
@@ -533,12 +522,12 @@ func TestAutomaticReadinessOperationReturnJoinsBeforeCleanup(t *testing.T) {
 func TestAutomaticReadinessCancellationIsJoined(t *testing.T) {
 	for _, action := range []string{"unavailable", "shutdown"} {
 		t.Run(action, func(t *testing.T) {
-			w, ready, _ := automaticWorkers(t, time.Second)
+			w, ready, _, probe := automaticWorkers(t, time.Second)
 			started, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			var once sync.Once
 			unblock := func() { once.Do(func() { close(release) }) }
 			defer unblock()
-			w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
+			probe.transport = trip(func(r *http.Request) (*http.Response, error) {
 				close(started)
 				<-r.Context().Done()
 				close(canceled)
@@ -585,30 +574,17 @@ func TestAutomaticReadinessCancellationIsJoined(t *testing.T) {
 }
 
 func TestAutomaticReadinessTargetChangeNeedsExplicitCheckAfterSuccess(t *testing.T) {
-	w, ready := testWorkers(t)
-	w.AutomaticReadiness = true
-	w.readinessBudget = time.Second
-	w.readinessDelay = func(int) time.Duration { return automaticTestDelay }
-	var identity atomic.Value
-	identity.Store("container-a")
-	configure := w.Configure
-	w.Configure = func(ctx context.Context, service Service) (Configuration, error) {
-		cfg, err := configure(ctx, service)
-		cfg.TargetBinding = &target.TargetBinding{Resolve: func(context.Context) (target.TargetSnapshot, error) {
-			return target.TargetSnapshot{Address: service.Target, Identity: identity.Load().(string)}, nil
-		}}
-		return cfg, err
-	}
+	w, ready, _, probe := automaticWorkers(t, time.Second)
 	gets := make(chan string, 32)
-	w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
+	probe.transport = trip(func(r *http.Request) (*http.Response, error) {
 		gets <- r.Header.Get(ProbeHeader)
 		return automaticResponse(200), nil
 	})
-	cfg, _ := registerAutomaticWorker(t, w, ready)
+	observe, id := registerAutomaticService(t, w, ready)
 	expectAutomaticGET(t, gets)
 	waitAutomaticReady(t, w, 1)
-	identity.Store("container-b")
-	if err := cfg.AdmitRequest(httptest.NewRequest("GET", "https://public.example/", nil), publisher.PublishRunIdentity{Number: 1}); err != nil {
+	w.Manager.TargetChanged("web", id, "http://127.0.0.1:3000")
+	if err := observe(1, true); err != nil {
 		t.Fatal(err)
 	}
 	if service := w.Manager.Snapshot().Services[0]; service.Ready || service.Observation == nil || service.Observation.Reason != "runtime.target_changed" {
@@ -623,9 +599,9 @@ func TestAutomaticReadinessTargetChangeNeedsExplicitCheckAfterSuccess(t *testing
 }
 
 func TestAutomaticReadinessAcceptedSuccessStopsAfterImmediateInvalidation(t *testing.T) {
-	w, ready, _ := automaticWorkers(t, time.Second)
+	w, ready, _, probe := automaticWorkers(t, time.Second)
 	gets := make(chan string, 8)
-	w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
+	probe.transport = trip(func(r *http.Request) (*http.Response, error) {
 		gets <- r.Header.Get(ProbeHeader)
 		return automaticResponse(200), nil
 	})
@@ -651,9 +627,9 @@ func TestAutomaticReadinessAcceptedSuccessStopsAfterImmediateInvalidation(t *tes
 }
 
 func TestAutomaticReadinessReplacementBeforeAcceptanceRejectsOldSuccess(t *testing.T) {
-	w, ready, _ := automaticWorkers(t, time.Second)
+	w, ready, _, probe := automaticWorkers(t, time.Second)
 	gets := make(chan string, 8)
-	w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
+	probe.transport = trip(func(r *http.Request) (*http.Response, error) {
 		gets <- r.Header.Get(ProbeHeader)
 		return automaticResponse(200), nil
 	})

@@ -71,3 +71,35 @@ func TestStateRejectsEncodedIntegrationBaselineWithoutMigratingIt(t *testing.T) 
 		}
 	}
 }
+
+func TestStateRejectsURLBoundIntegrationBaseline(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	options := OpenOptions{Protection: ProtectionFile}
+	database, err := OpenWithOptions(t.Context(), root, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`DROP TABLE baseline_identity`,
+		`CREATE TABLE baseline_identity (id INTEGER PRIMARY KEY CHECK (id = 1), identity TEXT NOT NULL CHECK (identity = 'tnl-client-fresh-v1-telemetry')) STRICT`,
+		`INSERT INTO baseline_identity VALUES (1, 'tnl-client-fresh-v1-telemetry')`,
+	} {
+		if _, err := database.db.ExecContext(t.Context(), statement); err != nil {
+			_ = database.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if reopened, err := OpenWithOptions(t.Context(), root, options); err == nil {
+		_ = reopened.Close()
+		t.Fatal("accepted URL-bound integration state")
+	} else if !strings.Contains(err.Error(), "select a fresh state directory") {
+		t.Fatalf("predecessor rejection = %v", err)
+	}
+	if reopened, err := openReadOnlySQLite(t.Context(), DatabasePath(root)); err == nil {
+		_ = reopened.Close()
+		t.Fatal("read-only state accepted URL-bound integrations")
+	}
+}

@@ -1,0 +1,36 @@
+schemas:
+  GuestID:
+    type: string
+    pattern: "^gst_[A-Za-z0-9]{22}$"
+  GuestDemoSession:
+    type: object
+    additionalProperties: false
+    required: [access_token, guest_id, expires_at]
+    description: Source-bound trial management credential, not a control session or publisher grant. Allocation returns the actual service and its address. The trial's absolute expiry never renews.
+    properties:
+      access_token: { type: string, minLength: 1 }
+      guest_id: { $ref: "../openapi.yaml#/components/schemas/GuestID" }
+      expires_at: { type: string, format: date-time }
+  AllocateGuestDemoServiceRequest:
+    type: object
+    additionalProperties: false
+    required: [target]
+    description: Bound listener for the built-in demo. Control supplies the fixed HTTP declaration, visitor policy, assigned hostname, shared ingress 443, and trial-bound expiry. Source is observed by the server, never supplied in this body.
+    properties:
+      target:
+        type: string
+        minLength: 1
+        maxLength: 256
+        description: Actual bound HTTP loopback listener origin with an explicit port. No credentials, path other than /, query, fragment, or remote host.
+      require_post_quantum: { type: boolean, default: false }
+  EnrollGuestPublisherRequest:
+    type: object
+    additionalProperties: false
+    required: [service_id, public_key]
+    properties:
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      public_key:
+        type: string
+        minLength: 43
+        maxLength: 43
+        description: Unpadded base64url Ed25519 public key. The caller keeps the private key.

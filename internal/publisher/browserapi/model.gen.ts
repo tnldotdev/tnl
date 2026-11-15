@@ -2,6 +2,10 @@
 
 import * as z from "zod";
 
+export const serviceIdSchema = z.string().regex(/^svc_[A-Za-z0-9]{22}$/);
+
+export const serviceRunIdSchema = z.string().regex(/^srun_[A-Za-z0-9]{22}$/);
+
 export const resourceIdSchema = z
   .string()
   .min(1)
@@ -9,7 +13,7 @@ export const resourceIdSchema = z
   .regex(/^\S(?:.*\S)?$/);
 
 /**
- * Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+ * Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
  */
 export const reviewSchemaVersionSchema = z.int().gte(1);
 
@@ -25,9 +29,9 @@ export const feedbackEventTypeSchema = z.enum([
 
 export const feedbackScopeSchema = z.strictObject({
   preview_id: resourceIdSchema,
-  public_url_id: resourceIdSchema,
-  publish_run_id: resourceIdSchema,
-  publish_run_number: z.string().regex(/^[0-9]+$/),
+  service_id: serviceIdSchema,
+  service_run_id: serviceRunIdSchema,
+  run_number: z.string().regex(/^[0-9]+$/),
   page_path: z.string().min(1).max(2048).regex(/^\//),
   page_title: z.string().max(256).optional(),
   service: z.string().min(1).max(32),
@@ -182,8 +186,9 @@ export const browserAccessStatusSchema = z.strictObject({
   schema_version: reviewSchemaVersionSchema,
   allowed: z.boolean(),
   preview_id: resourceIdSchema,
-  public_url_id: resourceIdSchema,
-  publish_run_number: z.string().regex(/^[0-9]+$/),
+  service_id: serviceIdSchema,
+  service_run_id: serviceRunIdSchema,
+  run_number: z.string().regex(/^[0-9]+$/),
   access_method: z.enum(["anonymous", "share", "team", "visitor"]).optional(),
   expires_at: z.iso.datetime().optional(),
   reason: z.enum(["TNL_VISITOR_ACCESS_DENIED"]).optional(),

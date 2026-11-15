@@ -23,7 +23,7 @@ func TestConnectorLocalPortIgnoresPublicEndpoint(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Name: "orders", Protocol: protocol,
+			service := controlv1.ServiceSummary{Id: "svc_0123456789ABCDEFGHIJKL", Name: "orders", Protocol: protocol,
 				Endpoint: &controlv1.ServiceEndpoint{Hostname: "orders.example.test", Port: 25443}}
 			// an existing assignment must survive the cutover, even if it was
 			// originally selected from the public endpoint port.
@@ -92,7 +92,7 @@ func TestConnectorFirstPortDoesNotBindPublicPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer public.Close()
-	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: "http",
+	service := controlv1.ServiceSummary{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: "http",
 		Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test", Port: public.Addr().(*net.TCPAddr).Port, Public: true}}
 	listener, err := listenConnector(ctx, store, "identity", service, "")
 	if err != nil {

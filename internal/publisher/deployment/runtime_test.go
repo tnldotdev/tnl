@@ -131,7 +131,7 @@ func TestWorkerMeasurementsKeepAcceptedDeploymentAndReplicaScope(t *testing.T) {
 	}()
 	select {
 	case id := <-identities:
-		if id.TeamID != member.TeamId || id.DeploymentID != member.DeploymentId || id.PublisherIdentityID != member.PublisherIdentityId || id.ReportedDeploymentID != report.DeploymentId || id.ReplicaKey != report.ReplicaKey || id.ServiceID != "private-one" || id.PublicURLID != "" {
+		if id.TeamID != member.TeamId || id.DeploymentID != member.DeploymentId || id.PublisherIdentityID != member.PublisherIdentityId || id.ReportedDeploymentID != report.DeploymentId || id.ReplicaKey != report.ReplicaKey || id.ServiceID != "private-one" {
 			t.Fatal("worker lost accepted deployment scope", id)
 		}
 	case err := <-done:

@@ -303,6 +303,11 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	}
 	_, managedErr := owner.ConfigureService(ctx, web.ServiceId, controlv1.UpdateServiceRequest{Protocol: controlv1.ServiceProtocolHTTP, PublisherPool: true, ExpectedTrustRevision: web.TrustRevision})
 	assertManaged(managedErr)
+	_, managedErr = owner.ConfigureService(ctx, web.ServiceId, controlv1.UpdateServiceRequest{
+		Protocol: controlv1.ServiceProtocolHTTP, PublisherPool: true, ExpectedTrustRevision: web.TrustRevision,
+		Configuration: &controlv1.ProjectServiceConfiguration{Target: "localhost:4000"},
+	})
+	assertManaged(managedErr)
 	assertManaged(owner.DeleteService(ctx, web.ServiceId))
 	assertManaged(owner.RevokePublisherGrant(ctx, team, member.PublisherIdentityId, web.GrantId))
 	_, managedErr = owner.CreatePublisherGrant(ctx, member.PublisherIdentityId, controlv1.CreatePublisherGrantRequest{TeamId: team, ServiceId: &web.ServiceId})
@@ -315,11 +320,37 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if projected.Service != "public" || projected.ServiceId != pub.ServiceId || projected.Port != 443 {
 		t.Fatal("public service projection changed resource identity or port", projected)
 	}
-	local, err := owner.RealizeLocalProjectService(ctx, project, "local-app", controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: applied.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: localBody.Configuration.Services["local-app"]})
-	if err == nil || local.ServiceId != "" {
-		t.Fatal("public realization accepted a missing exact public URL ID")
+	publicRequest := controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: applied.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: localBody.Configuration.Services["local-app"]}
+	publicLocal, err := owner.RealizeLocalProjectService(ctx, project, "local-app", publicRequest)
+	if err != nil || publicLocal.ServiceId == "" || publicLocal.Metadata == nil || publicLocal.Metadata.Endpoint == nil ||
+		!publicLocal.Metadata.Endpoint.Public || publicLocal.Metadata.Endpoint.Port != 443 || publicLocal.Metadata.Endpoint.Hostname == "" {
+		t.Fatal("public realization lost its server-selected service identity or exact endpoint", err)
 	}
-	local, err = owner.RealizeLocalProjectService(ctx, project, "local-private", controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: applied.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: localBody.Configuration.Services["local-private"]})
+	retriedPublic, err := owner.RealizeLocalProjectService(ctx, project, "local-app", publicRequest)
+	if err != nil || retriedPublic.ServiceId != publicLocal.ServiceId || retriedPublic.Metadata == nil ||
+		retriedPublic.Metadata.Endpoint == nil || *retriedPublic.Metadata.Endpoint != *publicLocal.Metadata.Endpoint {
+		t.Fatal("public realization retry replaced the saved service or endpoint", err)
+	}
+	for _, field := range []string{"service_id", "public_url_id"} {
+		encoded, err := json.Marshal(publicRequest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var spoofed map[string]any
+		if err := json.Unmarshal(encoded, &spoofed); err != nil {
+			t.Fatal(err)
+		}
+		spoofed[field] = pub.ServiceId
+		encoded, err = json.Marshal(spoofed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := rawAPI.RealizeLocalProjectServiceWithBodyWithResponse(ctx, project, "local-app", "application/json", bytes.NewReader(encoded), auth)
+		if err != nil || response.StatusCode() != http.StatusBadRequest {
+			t.Fatal("local realization accepted caller-selected resource identity", field, err)
+		}
+	}
+	local, err := owner.RealizeLocalProjectService(ctx, project, "local-private", controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: applied.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: localBody.Configuration.Services["local-private"]})
 	if err != nil || local.ServiceId == "" || local.Metadata == nil || local.Metadata.Protocol != controlv1.ServiceProtocolHTTP {
 		t.Fatal("local realization wire lost its approved resource metadata", local, err)
 	}

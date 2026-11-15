@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
@@ -71,7 +72,7 @@ func TestIntegrationPrivateMixedProcessClaimCapacity(t *testing.T) {
 				t.Fatal(err)
 			}
 			claimPrivate := func(ctx context.Context, lease RelayLeaseIdentity) error {
-				_, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now)
+				_, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), lease, now)
 				return err
 			}
 			claimPublic := func(ctx context.Context, lease RelayLeaseIdentity) error {
@@ -125,7 +126,7 @@ func TestIntegrationPrivateClaimExpiredResponseRecovery(t *testing.T) {
 	run := privateClaimRun(t, f)
 	for index, slot := range run.Connections {
 		lease := f.leases[slot.RelayServiceID].RelayLeaseIdentity
-		if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+		if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), lease, now); err != nil {
 			t.Fatal(err)
 		}
 		if index == 1 {
@@ -156,17 +157,17 @@ func TestIntegrationPrivateClaimExpiredResponseRecovery(t *testing.T) {
 		t.Fatal("expired connected claim recovery replaced the ready sibling")
 	}
 	lease := f.leases[replacement.RelayServiceID].RelayLeaseIdentity
-	if _, err := d.ClaimServicePublisherConnection(ctx, replacement.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, replacement.Revision, lost.Credential, lease, later); !errors.Is(err, ErrServiceAccess) {
+	if _, err := d.ClaimServicePublisherConnection(ctx, replacement.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, replacement.Revision, lost.Credential, netip.MustParseAddr("127.0.0.1"), lease, later); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("old credential claimed replacement: %v", err)
 	}
-	if _, err := d.ClaimServicePublisherConnection(ctx, replacement.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, replacement.Revision, replacement.Credential, lease, later); err != nil {
+	if _, err := d.ClaimServicePublisherConnection(ctx, replacement.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, replacement.Revision, replacement.Credential, netip.MustParseAddr("127.0.0.1"), lease, later); err != nil {
 		t.Fatal(err)
 	}
 	oldLease := f.leases[lost.RelayServiceID].RelayLeaseIdentity
 	if _, err := d.ReadyServicePublisherConnection(ctx, lost.PublisherConnectionID, run.RunID, run.RunNumber, lost.Revision, oldLease, later); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("late old handshake became ready after replacement: %v", err)
 	}
-	if _, err := d.DisconnectServicePublisherConnection(ctx, lost.PublisherConnectionID, run.RunID, run.RunNumber, lost.Revision, oldLease, later); !errors.Is(err, ErrServiceAccess) {
+	if _, err := d.DisconnectServicePublisherConnection(ctx, lost.PublisherConnectionID, run.RunID, run.RunNumber, lost.Revision, oldLease, later, true); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("late old disconnect modified replacement: %v", err)
 	}
 	if _, err := d.ReadyServicePublisherConnection(ctx, replacement.PublisherConnectionID, run.RunID, run.RunNumber, replacement.Revision, lease, later); err != nil {

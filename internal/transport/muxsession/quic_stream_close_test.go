@@ -67,3 +67,43 @@ func TestQUICStreamSessionClosureKeepsClassificationAndCause(t *testing.T) {
 		}
 	}
 }
+
+func TestQUICStreamCloseAfterResetRetainsOnlyAbnormalPeerFailure(t *testing.T) {
+	for _, remote := range []bool{false, true} {
+		for _, code := range []uint32{0, 17} {
+			t.Run(fmt.Sprintf("remote=%t/code=%d", remote, code), func(t *testing.T) {
+				client, server := newQUICPair(t)
+				outbound, err := client.OpenStream(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := outbound.Write([]byte("ready")); err != nil {
+					t.Fatal(err)
+				}
+				inbound, err := server.AcceptStream(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				var ready [5]byte
+				if _, err := io.ReadFull(inbound, ready[:]); err != nil {
+					t.Fatal(err)
+				}
+				if remote {
+					inbound.(*quicStream).Stream.CancelRead(quic.StreamErrorCode(code))
+				} else if err := outbound.Reset(code); err != nil {
+					t.Fatal(err)
+				}
+				muxAwait(t, outbound.(*quicStream).Stream.Context().Done())
+				err = outbound.Close()
+				if remote && code != 0 {
+					var reset *quic.StreamError
+					if !errors.As(err, &reset) || !reset.Remote || reset.ErrorCode != quic.StreamErrorCode(code) {
+						t.Fatal("close lost abnormal peer reset", err)
+					}
+				} else if err != nil {
+					t.Fatal("close invented a cleanup failure after reset", err)
+				}
+			})
+		}
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -67,7 +68,7 @@ func TestIntegrationProjectRetirement(t *testing.T) {
 		t.Fatal(err)
 	}
 	access := publisherAccess(t, d, publisher, key, "", now)
-	run := readyAppliedServiceRun(t, d, access, key, service, leases, now)
+	run := readyAppliedServiceRun(t, d, access, key, service, netip.MustParseAddr("127.0.0.1"), leases, now)
 	before, err := d.GetProjectStatus(ctx, r.TeamID, r.ProjectKey, r.ActorID, "", now)
 	if err != nil {
 		t.Fatal(err)

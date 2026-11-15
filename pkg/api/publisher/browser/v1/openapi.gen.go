@@ -83,16 +83,17 @@ func (e BrowserFeedbackEventRequestType) Valid() bool {
 
 // BrowserAccessStatus defines model for BrowserAccessStatus.
 type BrowserAccessStatus struct {
-	AccessMethod     *BrowserAccessStatusAccessMethod `json:"access_method,omitempty"`
-	Allowed          bool                             `json:"allowed"`
-	ExpiresAt        *time.Time                       `json:"expires_at,omitempty"`
-	PreviewId        externalRef0.PreviewID           `json:"preview_id"`
-	PublicUrlId      externalRef0.PublicURLID         `json:"public_url_id"`
-	PublishRunNumber int64                            `json:"publish_run_number,string"`
-	Reason           *BrowserAccessStatusReason       `json:"reason,omitempty"`
+	AccessMethod *BrowserAccessStatusAccessMethod `json:"access_method,omitempty"`
+	Allowed      bool                             `json:"allowed"`
+	ExpiresAt    *time.Time                       `json:"expires_at,omitempty"`
+	PreviewId    externalRef0.PreviewID           `json:"preview_id"`
+	Reason       *BrowserAccessStatusReason       `json:"reason,omitempty"`
+	RunNumber    int64                            `json:"run_number,string"`
 
-	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 	SchemaVersion externalRef0.ReviewSchemaVersion `json:"schema_version"`
+	ServiceId     externalRef0.ServiceID           `json:"service_id"`
+	ServiceRunId  externalRef0.ServiceRunID        `json:"service_run_id"`
 }
 
 // BrowserAccessStatusAccessMethod defines model for BrowserAccessStatus.AccessMethod.
@@ -113,7 +114,7 @@ type BrowserFailedRequest struct {
 
 // BrowserFeedbackEventRequest defines model for BrowserFeedbackEventRequest.
 type BrowserFeedbackEventRequest struct {
-	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 	SchemaVersion externalRef0.ReviewSchemaVersion `json:"schema_version"`
 	Text          *string                          `json:"text,omitempty"`
 	Type          BrowserFeedbackEventRequestType  `json:"type"`
@@ -126,7 +127,7 @@ type BrowserFeedbackEventRequestType string
 type BrowserFeedbackEvidence struct {
 	FailedRequests []BrowserFailedRequest `json:"failed_requests"`
 
-	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 	SchemaVersion externalRef0.ReviewSchemaVersion `json:"schema_version"`
 }
 
@@ -138,7 +139,7 @@ type BrowserFeedbackReportRequest struct {
 	PagePath    string                        `json:"page_path"`
 	PageTitle   *string                       `json:"page_title,omitempty"`
 
-	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 	SchemaVersion externalRef0.ReviewSchemaVersion `json:"schema_version"`
 	Text          string                           `json:"text"`
 }
@@ -253,9 +254,9 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
-	// GetBrowserAccessStatus Check whether this browser can visit the current public URL
+	// GetBrowserAccessStatus Check whether this browser can visit the current service run
 	//
-	// Uses the same IP, share cookie, and team session decision as forwarding on this hostname. The response contains no share or session secrets. Denied visitors have only the bounded denied-connection budget. This endpoint does not reach the local service.
+	// Uses the same prepared visitor permission, anonymous policy, and IP filter as forwarding on this hostname. The response contains no share or session secrets. This endpoint does not reach the local service.
 	//
 	// Corresponds with GET /__tnl/access (the `GetBrowserAccessStatus` operationId).
 	GetBrowserAccessStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -325,9 +326,9 @@ type ClientInterface interface {
 	AppendBrowserFeedbackEvent(ctx context.Context, feedbackId FeedbackID, params *AppendBrowserFeedbackEventParams, body AppendBrowserFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
-// GetBrowserAccessStatus Check whether this browser can visit the current public URL
+// GetBrowserAccessStatus Check whether this browser can visit the current service run
 //
-// Uses the same IP, share cookie, and team session decision as forwarding on this hostname. The response contains no share or session secrets. Denied visitors have only the bounded denied-connection budget. This endpoint does not reach the local service.
+// Uses the same prepared visitor permission, anonymous policy, and IP filter as forwarding on this hostname. The response contains no share or session secrets. This endpoint does not reach the local service.
 //
 // Corresponds with GET /__tnl/access (the `GetBrowserAccessStatus` operationId).
 func (c *Client) GetBrowserAccessStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -870,9 +871,9 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
-	// GetBrowserAccessStatusWithResponse Check whether this browser can visit the current public URL
+	// GetBrowserAccessStatusWithResponse Check whether this browser can visit the current service run
 	//
-	// Uses the same IP, share cookie, and team session decision as forwarding on this hostname. The response contains no share or session secrets. Denied visitors have only the bounded denied-connection budget. This endpoint does not reach the local service.
+	// Uses the same prepared visitor permission, anonymous policy, and IP filter as forwarding on this hostname. The response contains no share or session secrets. This endpoint does not reach the local service.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -1246,9 +1247,9 @@ func (r AppendBrowserFeedbackEventResponse) ContentType() string {
 	return ""
 }
 
-// GetBrowserAccessStatusWithResponse Check whether this browser can visit the current public URL
+// GetBrowserAccessStatusWithResponse Check whether this browser can visit the current service run
 //
-// Uses the same IP, share cookie, and team session decision as forwarding on this hostname. The response contains no share or session secrets. Denied visitors have only the bounded denied-connection budget. This endpoint does not reach the local service.
+// Uses the same prepared visitor permission, anonymous policy, and IP filter as forwarding on this hostname. The response contains no share or session secrets. This endpoint does not reach the local service.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -1572,7 +1573,7 @@ func ParseAppendBrowserFeedbackEventResponse(rsp *http.Response) (*AppendBrowser
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// GetBrowserAccessStatus Check whether this browser can visit the current public URL
+	// GetBrowserAccessStatus Check whether this browser can visit the current service run
 	// (GET /__tnl/access)
 	GetBrowserAccessStatus(w http.ResponseWriter, r *http.Request)
 	// ListBrowserFeedback List feedback on the current hostname

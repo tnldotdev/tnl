@@ -21,6 +21,7 @@ type PublicServiceVisitorAdmission struct {
 	Relays                         []ServiceRelay
 	Traffic                        trafficlimits.Limits
 	Anonymous                      bool
+	RecoveryEpisodeID              *int64
 }
 
 // AdmitPublicServiceVisitor reserves bounded pre-authentication capacity. HTTP
@@ -153,6 +154,12 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 		return PublicServiceVisitorAdmission{}, ErrServiceAccess
 	}
 	result.ConnectionID = visitor
+	episode, err := q.GetOpenServiceRecoveryEpisode(ctx, result.RunID)
+	if err == nil {
+		result.RecoveryEpisodeID = &episode.ID
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return PublicServiceVisitorAdmission{}, err
+	}
 	return result, tx.Commit(ctx)
 }
 

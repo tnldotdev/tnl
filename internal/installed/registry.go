@@ -347,7 +347,7 @@ func matches(job Job, identity authorityv1.PublisherEnrollmentResult) bool {
 	}
 	switch job.Kind {
 	case KindService:
-		return identity.Kind == authorityv1.Service && identity.ServiceId != nil && *identity.ServiceId == job.ServiceID && identity.PublicUrlId == nil && identity.Namespace == nil && identity.DomainId == nil
+		return identity.Kind == authorityv1.Service && identity.ServiceId != nil && *identity.ServiceId == job.ServiceID && identity.Namespace == nil && identity.DomainId == nil
 	default:
 		return false
 	}

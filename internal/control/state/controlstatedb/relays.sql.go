@@ -180,31 +180,31 @@ func (q *Queries) CleanupSupersededRelayRunSigningKeys(ctx context.Context, arg 
 	return result.RowsAffected(), nil
 }
 
-const countOpenPublishRunAssignmentsByRelayService = `-- name: CountOpenPublishRunAssignmentsByRelayService :many
+const countOpenServiceRunAssignmentsByRelayService = `-- name: CountOpenServiceRunAssignmentsByRelayService :many
 SELECT connections.relay_service_id,
     count(*) AS assignment_count
-FROM control.publish_run_connection_slots AS connections
-JOIN control.publish_runs AS sessions ON sessions.id = connections.publish_run_id
-WHERE sessions.closed_at IS NULL
+FROM control.service_connection_slots AS connections
+JOIN control.service_runs AS sessions ON sessions.id = connections.service_run_id
+WHERE sessions.closed_at IS NULL AND connections.session_open
   AND connections.state IN ('assigned', 'connected', 'ready', 'draining')
 GROUP BY connections.relay_service_id
 `
 
-type CountOpenPublishRunAssignmentsByRelayServiceRow struct {
+type CountOpenServiceRunAssignmentsByRelayServiceRow struct {
 	RelayServiceID  string
 	AssignmentCount int64
 }
 
 // diagnostic/test oracle only; placement reads trigger-maintained totals.
-func (q *Queries) CountOpenPublishRunAssignmentsByRelayService(ctx context.Context) ([]CountOpenPublishRunAssignmentsByRelayServiceRow, error) {
-	rows, err := q.db.Query(ctx, countOpenPublishRunAssignmentsByRelayService)
+func (q *Queries) CountOpenServiceRunAssignmentsByRelayService(ctx context.Context) ([]CountOpenServiceRunAssignmentsByRelayServiceRow, error) {
+	rows, err := q.db.Query(ctx, countOpenServiceRunAssignmentsByRelayService)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []CountOpenPublishRunAssignmentsByRelayServiceRow
+	var items []CountOpenServiceRunAssignmentsByRelayServiceRow
 	for rows.Next() {
-		var i CountOpenPublishRunAssignmentsByRelayServiceRow
+		var i CountOpenServiceRunAssignmentsByRelayServiceRow
 		if err := rows.Scan(&i.RelayServiceID, &i.AssignmentCount); err != nil {
 			return nil, err
 		}
@@ -218,10 +218,10 @@ func (q *Queries) CountOpenPublishRunAssignmentsByRelayService(ctx context.Conte
 
 const countRelayActiveConnections = `-- name: CountRelayActiveConnections :one
 SELECT count(*)
-FROM control.publisher_service_connection_slots
-WHERE connected_relay_id = $1
-  AND connected_relay_run_id = $2
-  AND connected_relay_lease_revision = $3
+FROM control.service_connection_slots
+WHERE relay_id = $1
+  AND relay_run_id = $2
+  AND relay_lease_revision = $3
   AND session_open
   AND state IN ('connected', 'ready', 'draining')
 `
@@ -596,9 +596,8 @@ ORDER BY services.relay_service_id
 FOR UPDATE OF services
 `
 
-// callers hold the affected public URL and existing publish run rows, or the
-// affected service and existing service run rows. take the assignment-total
-// guard before relay service guards and lease rows; lock every relay service
+// callers hold the affected service and existing service run rows. take the
+// assignment-total guard before relay service guards and lease rows; lock every relay service
 // before checking capacity or locking leases.
 func (q *Queries) LockRelayServicesForPlacement(ctx context.Context) ([]string, error) {
 	rows, err := q.db.Query(ctx, lockRelayServicesForPlacement)

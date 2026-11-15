@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/netip"
 	"reflect"
 	"slices"
 	"testing"
@@ -100,7 +101,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 				}
 				access := publisherAccess(t, d, publisher, key, "", now)
 				resource.access = append(resource.access, access)
-				resource.runs = append(resource.runs, readyAppliedServiceRun(t, d, access, key, resource.record, leases, now))
+				resource.runs = append(resource.runs, readyAppliedServiceRun(t, d, access, key, resource.record, netip.MustParseAddr("127.0.0.1"), leases, now))
 			}
 			resources = append(resources, resource)
 		}
@@ -164,7 +165,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 			t.Fatal("assignment did not authorize exact saved metadata", approved, err)
 		}
 		if active {
-			shared.runs = append(shared.runs, readyAppliedServiceRun(t, d, access, replica.private, approved, leases, now))
+			shared.runs = append(shared.runs, readyAppliedServiceRun(t, d, access, replica.private, approved, netip.MustParseAddr("127.0.0.1"), leases, now))
 		}
 	}
 	assertPrivateOwnershipAssignments(t, d, replicas, deployment, now)
@@ -360,13 +361,17 @@ func assertPrivateOwnershipAssignments(t *testing.T, d *Database, replicas []enr
 
 func assertPrivateOwnershipInventory(t *testing.T, d *Database, actor string, resources []appliedPrivateResource, ready bool, now time.Time) {
 	t.Helper()
-	items, _, err := d.ListAvailableServices(t.Context(), actor, "", now)
+	items, _, err := d.ListAvailableServices(t.Context(), actor, "", "connector", now)
 	if err != nil || len(items) != len(resources) {
 		t.Fatal("visitor inventory retained old resources or lost current resources", items, err)
 	}
 	for _, resource := range resources {
 		index := slices.IndexFunc(items, func(item ServiceInventory) bool { return item.ID == resource.record.ID })
-		if index < 0 || !reflect.DeepEqual(items[index].ServiceMetadata, resource.record.ServiceMetadata) || (items[index].ServiceRunID != "") != ready {
+		// visitor inventory retains protocol, pool, trust revision and endpoint,
+		// not the publisher's target TLS declaration.
+		want := resource.record.ServiceMetadata
+		want.TLS = nil
+		if index < 0 || !reflect.DeepEqual(items[index].ServiceMetadata, want) || (items[index].ServiceRunID != "") != ready {
 			t.Fatal("authorized inventory lost exact metadata or readiness", items)
 		}
 	}
@@ -413,7 +418,7 @@ func assertAppliedPrivateRetired(t *testing.T, d *Database, r ApplyProjectConfig
 	}
 }
 
-func readyAppliedServiceRun(t *testing.T, d *Database, access PublisherAccess, key ed25519.PrivateKey, service ServiceRecord, leases map[string]RelayLease, now time.Time, certificateLifetime ...time.Duration) ServiceRunState {
+func readyAppliedServiceRun(t *testing.T, d *Database, access PublisherAccess, key ed25519.PrivateKey, service ServiceRecord, observedSourceIP netip.Addr, leases map[string]RelayLease, now time.Time, certificateLifetime ...time.Duration) ServiceRunState {
 	t.Helper()
 	prepared, err := d.PrepareServiceRun(t.Context(), service.ID, access.PublisherIdentity, "ownership", now, ServiceRunRequest{Metadata: service.ServiceMetadata})
 	if err != nil {
@@ -426,7 +431,7 @@ func readyAppliedServiceRun(t *testing.T, d *Database, access PublisherAccess, k
 	installPrivateTestCertificate(t, d, prepared, run, now, certificateLifetime...)
 	for _, slot := range run.Connections {
 		lease := leases[slot.RelayServiceID].RelayLeaseIdentity
-		if _, err = d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+		if _, err = d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, observedSourceIP, lease, now); err != nil {
 			t.Fatal(err)
 		}
 		if _, err = d.ReadyServicePublisherConnection(t.Context(), slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {

@@ -1,7 +1,9 @@
 -- name: MarkIntegrationURLReady :exec
-INSERT INTO integration_url_leases (server_origin, hostname, publisher_instance_id, expires_at)
-VALUES (sqlc.arg(server_origin), sqlc.arg(hostname), sqlc.arg(publisher_instance_id), sqlc.arg(expires_at))
-ON CONFLICT(server_origin, hostname) DO UPDATE SET publisher_instance_id = excluded.publisher_instance_id, expires_at = excluded.expires_at;
+INSERT INTO integration_url_leases (server_origin, hostname, publisher_instance_id, service_id, run_number, expires_at)
+VALUES (sqlc.arg(server_origin), sqlc.arg(hostname), sqlc.arg(publisher_instance_id),
+    sqlc.arg(service_id), sqlc.arg(run_number), sqlc.arg(expires_at))
+ON CONFLICT(server_origin, hostname) DO UPDATE SET publisher_instance_id = excluded.publisher_instance_id,
+    service_id = excluded.service_id, run_number = excluded.run_number, expires_at = excluded.expires_at;
 
 -- name: IntegrationURLReady :one
 SELECT count(*) FROM integration_url_leases

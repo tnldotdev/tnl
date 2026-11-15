@@ -12,8 +12,9 @@ import (
 	"testing"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/integrations"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -26,12 +27,11 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 	t.Cleanup(func() { _ = state.Close() })
 	server, oauthHost := fixture.identity.controlOrigin, fixture.identity.hostname
 	quic, tcp := fixture.connectors()
-	oauth := fixture.identity.publisherConfig("", quic, tcp)
-	oauth.Purpose = controlv1.Oauth
+	oauthService, oauth := fixture.identity.prepareService(t, "", quic, tcp, controlv1.ProjectServiceConfiguration{})
 	oauth.Handler = integrations.OAuthHandler(state, server, oauthHost, nil)
 	oauthPublisher := startOwnedIntegrationPublisher(t, fixture.owner, oauth, fixture.diagnostics)
 	oauthReady := waitForPublisherReady(t, oauthPublisher)
-	waitForReadyPublisherConnections(t, fixture.inspect, oauthReady.PublicURLID, oauthReady.PublishRunNumber, 2)
+	waitForReadyPublisherConnections(t, fixture.inspect, oauthReady.ServiceId, oauthReady.RunNumber, 2)
 	project := t.TempDir()
 	_, namespace, found := strings.Cut(oauthHost, ".")
 	if !found || namespace == "" {
@@ -66,35 +66,34 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 			}
 		}))
 		t.Cleanup(target.Close)
+		saved, config := fixture.identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{Hostname: &hostname})
 		tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
 			Command: clientstate.TunnelCommandPublish, Server: server, Project: project,
-			Service: name, Target: target.URL, IntegrationScope: integrationScope,
+			Service: name, ServiceID: saved.Id, ServiceProtocol: "http", Target: target.URL, IntegrationScope: integrationScope,
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = tunnel.Finish(context.Background(), nil) })
-		config := fixture.identity.publisherConfig(target.URL, quic, tcp)
-		config.Hostname = hostname
-		config.ObserveResponse = integrations.Observer(state, server, oauthHost, integrationScope, tunnel.ID())
-		config.Observe = func(event publisher.Event) error {
-			switch event.Type {
-			case publisher.EventPublicURLAssigned:
-				return tunnel.SetPublicURL(context.Background(), event.PublicURLID, event.Hostname)
-			case publisher.EventProvisioning:
-				return tunnel.SetProvisioning(context.Background(), event.PublishRunNumber)
-			case publisher.EventReady:
-				return tunnel.SetReady(context.Background(), event.PublicURL, event.PublishRunNumber)
-			}
-			return nil
+		observe := integrations.Observer(state, server, oauthHost, integrationScope, tunnel.ID())
+		config.HTTPResponseHooks = func(run publisherservice.HTTPRun) httpstream.ResponseHooks {
+			return httpstream.ResponseHooks{Observe: func(response *http.Response) error { return observe(response, run) }}
+		}
+		var binding controlv1.ServiceRunPreparation
+		config.Prepared = func(run controlv1.ServiceRunPreparation) error {
+			binding = run
+			return tunnel.SetProvisioning(t.Context(), uint64(run.RunNumber))
+		}
+		config.Ready = func() error {
+			return tunnel.SetReady(t.Context(), serviceHTTPAddress(binding), uint64(binding.RunNumber))
 		}
 		handle := startOwnedIntegrationPublisher(t, fixture.owner, config, fixture.diagnostics)
 		ready := waitForPublisherReady(t, handle)
-		waitForReadyPublisherConnections(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
+		waitForReadyPublisherConnections(t, fixture.inspect, ready.ServiceId, ready.RunNumber, 2)
 		apps = append(apps, app{name: name, hostname: hostname, callbacks: observed, tunnel: tunnel})
 	}
 	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
-	if err := state.MarkIntegrationURLReady(t.Context(), server, oauthHost, "test-publisher"); err != nil {
+	if err := state.MarkIntegrationURLReady(t.Context(), server, oauthHost, "test-publisher", oauthReady.ServiceId, uint64(oauthReady.RunNumber)); err != nil {
 		t.Fatal(err)
 	}
 	jar, err := cookiejar.New(nil)
@@ -129,12 +128,16 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 	stopIntegrationPublisher(t, oauthPublisher)
 	oauthPublisher = startOwnedIntegrationPublisher(t, fixture.owner, oauth, fixture.diagnostics)
 	restarted := fixture.waitReady(t, oauthPublisher)
-	if restarted.PublicURLID != oauthReady.PublicURLID || restarted.PublishRunNumber <= oauthReady.PublishRunNumber {
+	if restarted.ServiceId != oauthReady.ServiceId || restarted.ServiceRunId == oauthReady.ServiceRunId || restarted.RunNumber <= oauthReady.RunNumber {
 		t.Fatalf("OAuth restart replaced saved URL or reused a run: %+v -> %+v", oauthReady, restarted)
 	}
-	saved, err := fixture.identity.routes.GetPublicURLByHostname(t.Context(), fixture.identity.teamID, oauthHost)
-	if err != nil || saved.Target != "" || saved.Ephemeral || saved.Purpose != controlv1.Oauth {
+	saved, err := fixture.identity.routes.GetService(t.Context(), oauthService.Id)
+	declaration, _, declarationErr := fixture.identity.routes.GetServiceConfiguration(t.Context(), oauthService.Id)
+	if err != nil || declarationErr != nil || declaration == nil || declaration.Target != "app" || saved.Ephemeral || saved.Endpoint == nil || saved.Endpoint.Hostname != oauthHost {
 		t.Fatalf("OAuth reload = %+v, %v", saved, err)
+	}
+	if err := state.MarkIntegrationURLReady(t.Context(), server, oauthHost, "test-publisher", restarted.ServiceId, uint64(restarted.RunNumber)); err != nil {
+		t.Fatal(err)
 	}
 	// return callbacks in the opposite order: the shared hostname must use the
 	// observed state, not the currently active service or the latest login.

@@ -248,16 +248,15 @@ FOR KEY SHARE OF leases;
 
 -- name: CountRelayActiveConnections :one
 SELECT count(*)
-FROM control.publisher_service_connection_slots
-WHERE connected_relay_id = sqlc.arg(relay_id)
-  AND connected_relay_run_id = sqlc.arg(relay_run_id)
-  AND connected_relay_lease_revision = sqlc.arg(relay_lease_revision)
+FROM control.service_connection_slots
+WHERE relay_id = sqlc.arg(relay_id)
+  AND relay_run_id = sqlc.arg(relay_run_id)
+  AND relay_lease_revision = sqlc.arg(relay_lease_revision)
   AND session_open
   AND state IN ('connected', 'ready', 'draining');
 
--- callers hold the affected public URL and existing publish run rows, or the
--- affected service and existing service run rows. take the assignment-total
--- guard before relay service guards and lease rows; lock every relay service
+-- callers hold the affected service and existing service run rows. take the
+-- assignment-total guard before relay service guards and lease rows; lock every relay service
 -- before checking capacity or locking leases.
 -- name: LockRelayServicesForPlacement :many
 WITH assignment_guard AS MATERIALIZED (
@@ -300,12 +299,12 @@ WHERE services.relay_service_id = sqlc.arg(relay_service_id)
 FOR UPDATE OF services;
 
 -- diagnostic/test oracle only; placement reads trigger-maintained totals.
--- name: CountOpenPublishRunAssignmentsByRelayService :many
+-- name: CountOpenServiceRunAssignmentsByRelayService :many
 SELECT connections.relay_service_id,
     count(*) AS assignment_count
-FROM control.publish_run_connection_slots AS connections
-JOIN control.publish_runs AS sessions ON sessions.id = connections.publish_run_id
-WHERE sessions.closed_at IS NULL
+FROM control.service_connection_slots AS connections
+JOIN control.service_runs AS sessions ON sessions.id = connections.service_run_id
+WHERE sessions.closed_at IS NULL AND connections.session_open
   AND connections.state IN ('assigned', 'connected', 'ready', 'draining')
 GROUP BY connections.relay_service_id;
 

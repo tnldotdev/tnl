@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -36,9 +37,8 @@ func TestDirectClaimProblemsPreserveProtocolCodesAndClearStaleLease(t *testing.T
 		failure error
 		code    tunnelv1.ErrorCode
 	}{
-		{controlstate.ErrPublisherConnectionCredential, tunnelv1.Unauthenticated},
-		{controlstate.ErrPublisherConnectionAlreadyClaimed, tunnelv1.DuplicatePublisherConnection},
-		{controlstate.ErrConnectionAssignmentStale, tunnelv1.StaleConnectionAssignment},
+		{credentials.ErrInvalidPublisherConnectionCredential, tunnelv1.Unauthenticated},
+		{controlstate.ErrServiceAccess, tunnelv1.StaleConnectionAssignment},
 		{controlstate.ErrRelayLeaseStale, tunnelv1.StaleConnectionAssignment},
 		{controlstate.ErrRelayDraining, tunnelv1.DrainingPublisherConnection},
 		{controlstate.ErrRelayConnectionCapacity, tunnelv1.CapacityExceeded},
@@ -49,11 +49,10 @@ func TestDirectClaimProblemsPreserveProtocolCodesAndClearStaleLease(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = client.ClaimPublisherConnection(t.Context(), "connection-1", relayv1.PublisherConnectionClaim{
-			PublishRunId: "session-1", PublicUrlId: "route-1", PublisherConnectionId: "connection-1",
-			RelayServiceId: "service-1", RelayId: "relay-1", RelayRunId: "run-1", ClaimId: "claim-1",
-			PublishRunNumber: 1, ConnectionSlot: 0, ConnectionAssignmentRevision: 1, RelayLeaseRevision: 1,
-			PublisherConnectionCredential: credential.String(),
+		_, err = client.ClaimServicePublisherConnection(t.Context(), "pc_0123456789abcdefghijkl", relayv1.ServicePublisherConnectionClaim{
+			ServiceId: "svc_0123456789abcdefghijkl", ServiceRunId: "srun_0123456789abcdefghijkl",
+			RelayId: "relay-1", RelayRunId: "run-1", RunNumber: 1, ConnectionAssignmentRevision: 1, RelayLeaseRevision: 1,
+			Credential: credential.String(), ObservedSourceIp: "192.0.2.1",
 		})
 		if err == nil {
 			t.Fatalf("direct adapter accepted store error %v", test.failure)
@@ -76,8 +75,8 @@ type directClaimStore struct {
 	failure error
 }
 
-func (s directClaimStore) ClaimPublisherConnection(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time) (controlstate.ClaimedPublisherConnection, error) {
-	return controlstate.ClaimedPublisherConnection{}, s.failure
+func (s directClaimStore) ClaimServicePublisherConnection(context.Context, string, string, string, int64, int64, string, netip.Addr, controlstate.RelayLeaseIdentity, time.Time) (controlstate.ServicePublisherConnection, error) {
+	return controlstate.ServicePublisherConnection{}, s.failure
 }
 
 func TestControllerInstallsCertificateBeforeReady(t *testing.T) {

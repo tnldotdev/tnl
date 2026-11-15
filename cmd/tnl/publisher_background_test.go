@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,12 +21,12 @@ import (
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -35,6 +36,8 @@ type backgroundAuthority struct {
 	public      ed25519.PublicKey
 	redemptions int
 }
+
+const backgroundTeamID = "tm_0123456789abcdefghijkl"
 
 func (a *backgroundAuthority) RedeemPublisherEnrollment(_ context.Context, _ string, public ed25519.PublicKey) (authorityv1.PublisherEnrollmentResult, error) {
 	a.redemptions++
@@ -49,18 +52,27 @@ func (a *backgroundAuthority) ExchangePublisherAssertion(_ context.Context, clie
 }
 
 type backgroundControl struct {
-	publisheridentity.PublicURLControl
-	publicURL controlv1.PublicURL
+	publisheridentity.ServiceControl
+	service controlv1.Service
+	server  string
 }
 
-func (*backgroundControl) ControlURL() string { return "https://control.example" }
+func (c *backgroundControl) ControlURL() string {
+	if c.server != "" {
+		return c.server
+	}
+	return "https://control.example"
+}
 
 func backgroundClients(c *backgroundControl) installedjobs.PublisherClients {
-	return installedjobs.PublisherClients{NativeControl: publisheridentity.NativeControl{PublicURLControl: c}}
+	return installedjobs.PublisherClients{NativeControl: publisheridentity.NativeControl{Services: c}}
 }
 
-func (c *backgroundControl) PublisherPublicURL(context.Context, string) (controlv1.PublicURL, error) {
-	return c.publicURL, nil
+func (c *backgroundControl) GetPublisherService(_ context.Context, id, access string) (controlv1.Service, error) {
+	if id != c.service.Id || access != "access-secret" {
+		return controlv1.Service{}, publisheridentity.ErrScope
+	}
+	return c.service, nil
 }
 
 func backgroundFixture(t *testing.T) (*installedjobs.Registry, *backgroundAuthority, *backgroundControl, enrolledPublishSelection) {
@@ -82,15 +94,18 @@ func backgroundFixture(t *testing.T) (*installedjobs.Registry, *backgroundAuthor
 		}
 		return result
 	}
-	url := id(opaqueid.PublicURLPrefix)
-	a := &backgroundAuthority{identity: authorityv1.PublisherEnrollmentResult{ClientId: id(opaqueid.PublisherIdentityPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix), GrantId: id(opaqueid.PublisherGrantPrefix), TeamId: "team", Kind: "saved_public_url", PublicUrlId: &url}}
-	c := &backgroundControl{publicURL: controlv1.PublicURL{Id: url, TeamId: "team", CanonicalHostname: "web.example", LifecycleState: controlv1.Enabled, Purpose: controlv1.App, ServiceProtocol: controlv1.Http}}
+	service := id(opaqueid.ServicePrefix)
+	a := &backgroundAuthority{identity: authorityv1.PublisherEnrollmentResult{ClientId: id(opaqueid.PublisherIdentityPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix), GrantId: id(opaqueid.PublisherGrantPrefix), TeamId: backgroundTeamID, Kind: "service", ServiceId: &service}}
+	c := &backgroundControl{service: controlv1.Service{Id: service, TeamId: backgroundTeamID, Name: "web", Enabled: true, Protocol: controlv1.ServiceProtocolHTTP, TrustRevision: 1,
+		Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.example", Port: 443, Public: true}}}
 	return r, a, c, enrolledPublishSelection{EnrollmentKey: id(opaqueid.PublisherEnrollmentPrefix) + ".enrollment-secret"}
 }
 
 func TestBackgroundInstallsEnrolledHTTPJobWithLocalTarget(t *testing.T) {
 	r, a, c, selection := backgroundFixture(t)
-	flags := publishCommand{Target: "https://127.0.0.1:5432", TargetTLSName: "web.internal"}
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer target.Close()
+	flags := publishCommand{Target: target.URL}
 	flags.ServerURL = "https://control.example"
 	bg := backgroundPublishFlags{Install: true, ServiceName: "database"}
 	clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
@@ -104,11 +119,8 @@ func TestBackgroundInstallsEnrolledHTTPJobWithLocalTarget(t *testing.T) {
 		t.Fatalf("installed jobs: %+v, %v", jobs, err)
 	}
 	job := jobs[0]
-	if job.ID != installedjobs.PublicURLJobKey(flags.ServerURL, c.publicURL.Id) || job.Name != "database" || job.Protocol != config.ProtocolHTTP || job.Target != flags.Target || job.TargetTLSName != "web.internal" || job.PublisherIdentityID != a.identity.ClientId {
+	if job.ID != installedjobs.ServiceJobKey(flags.ServerURL, c.service.Id) || job.Name != "database" || job.Protocol != config.ProtocolHTTP || job.Target != flags.Target || job.Trust != nil || job.PublisherIdentityID != a.identity.ClientId {
 		t.Fatalf("private target settings: %+v", job)
-	}
-	if c.publicURL.Target != "" {
-		t.Fatal("local target was sent to control")
 	}
 	if a.redemptions != 1 {
 		t.Fatal("enrollment was not redeemed once")
@@ -139,11 +151,13 @@ func TestAppWorkflowInstallLoadsExplicitPublisherFromClientState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, identity, err := publisheridentity.EnrollNative(t.Context(), profile, publisheridentity.NativeControl{PublicURLControl: c}, a, selection.EnrollmentKey)
+	_, identity, err := publisheridentity.EnrollNative(t.Context(), profile, publisheridentity.NativeControl{Services: c}, a, selection.EnrollmentKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	flags := publishCommand{Target: "http://127.0.0.1:3000", remoteFlags: remoteFlags{ServerURL: "https://control.example", StateDir: state.Root()}}
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer target.Close()
+	flags := publishCommand{Target: target.URL, remoteFlags: remoteFlags{ServerURL: "https://control.example", StateDir: state.Root()}}
 	clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		return backgroundClients(c), a, nil
 	}
@@ -175,7 +189,9 @@ func TestBackgroundImportsPortableFileWithoutRedeemingEnrollment(t *testing.T) {
 	if err := credentialfile.Write(path, f); err != nil {
 		t.Fatal(err)
 	}
-	flags := publishCommand{Target: "http://127.0.0.1:5432"}
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer target.Close()
+	flags := publishCommand{Target: target.URL}
 	flags.ServerURL = f.ControlURL
 	clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		return backgroundClients(c), a, nil
@@ -197,11 +213,11 @@ func TestBackgroundRejectsNamespaceEphemeralAndImplicitServer(t *testing.T) {
 			flags.ServerURL = "https://control.example"
 			switch kind {
 			case "namespace":
-				a.identity.Kind, a.identity.PublicUrlId = "namespace", nil
+				a.identity.Kind, a.identity.ServiceId = "namespace", nil
 				namespace, domain := "member.example", func() string { v, _ := opaqueid.New(opaqueid.DomainPrefix); return v }()
 				a.identity.Namespace, a.identity.DomainId = &namespace, &domain
 			case "ephemeral":
-				c.publicURL.Ephemeral = true
+				c.service.Ephemeral = true
 			case "implicit server":
 				flags.ServerURL = ""
 			case "policy":
@@ -225,65 +241,149 @@ func TestBackgroundRejectsNamespaceEphemeralAndImplicitServer(t *testing.T) {
 }
 
 func TestInstallPreflightLeavesEnrollmentAndStateUntouched(t *testing.T) {
-	_, a, _, selection := backgroundFixture(t)
-	root := filepath.Join(t.TempDir(), "not-installed")
-	flags := publishCommand{Target: unavailableInstalledTarget(t)}
-	flags.ServerURL = "https://control.example"
-	err := runEnrolledBackgroundPublish(t.Context(), flags, selection, backgroundPublishFlags{Install: true, SystemStateDir: root}, io.Discard, strings.NewReader(""), installedjobs.ExecutorFunc(func(context.Context, installedjobs.Command) error {
+	selection := enrolledPublishSelection{EnrollmentKey: "pen_0123456789abcdefghijkl.enrollment-secret"}
+	requests := make(chan string, 1)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case requests <- r.Method + " " + r.URL.Path:
+		default:
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"code":"unavailable","detail":"target preflight must run first"}`)
+	}))
+	defer server.Close()
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, clientRoot := filepath.Join(parent, "not-installed"), filepath.Join(parent, "no-client-state")
+	ca := filepath.Join(parent, "control.pem")
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	flags := publishCommand{Target: unavailableInstalledTarget(t), Protocol: "http", TargetTLS: new(true),
+		remoteFlags: remoteFlags{ServerURL: server.URL, StateDir: clientRoot}}
+	err = runEnrolledBackgroundPublish(t.Context(), flags, selection, backgroundPublishFlags{Install: true, SystemStateDir: root, ServerCAFile: ca}, io.Discard, strings.NewReader(""), installedjobs.ExecutorFunc(func(context.Context, installedjobs.Command) error {
 		t.Fatal("missing service reached the manager")
 		return nil
 	}))
-	if err == nil || a.redemptions != 0 {
-		t.Fatalf("preflight: err=%v redemptions=%d", err, a.redemptions)
+	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.TargetUnavailable {
+		t.Errorf("unavailable target used the wrong failure reason: %v", err)
 	}
-	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.TargetUnavailable {
-		t.Fatalf("unavailable target used the wrong failure reason: %v", err)
+	select {
+	case request := <-requests:
+		t.Errorf("unavailable target contacted control before preflight: %s", request)
+	default:
 	}
-	if _, statErr := os.Lstat(root); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("preflight created state: %v", statErr)
+	for _, path := range []string{clientRoot, root} {
+		if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
+			t.Errorf("preflight created state at %s: %v", path, statErr)
+		}
 	}
 }
 
 func configuredInstallFixture(t *testing.T) (projectConfiguration, publishCommand) {
 	t.Helper()
-	server, target, name, hostname := "https://control.example", config.Target("http://127.0.0.1:5432"), "orders", "https://orders.example"
+	access, _, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := configuredInstallTeam()
+	authority := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/v1/discovery" && r.Header.Get("Authorization") != "Bearer "+access.String() {
+			t.Error("configured selection lost its actual operator authentication")
+		}
+		switch r.URL.Path {
+		case "/v1/discovery":
+			_ = json.NewEncoder(w).Encode(controlv1.ControlDiscovery{ManagedDomain: "example", ManagedUrlMode: "generated",
+				Authentication: controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{"oidc"}, Oidc: &controlv1.OIDCAuthenticationFacts{Issuer: "https://identity.example.test", LoginFlow: "device_code"}}})
+		case "/v1/identity":
+			_ = json.NewEncoder(w).Encode(authorityv1.IdentityContext{PersonalTeamId: backgroundTeamID,
+				Memberships: []authorityv1.Membership{current.Membership()}})
+		case "/v1/teams/" + backgroundTeamID:
+			_ = json.NewEncoder(w).Encode(current.Team())
+		case "/v1/teams/" + backgroundTeamID + "/domains":
+			_ = json.NewEncoder(w).Encode(authorityv1.DomainPage{Domains: current.Domains()})
+		default:
+			t.Errorf("configured selection mutated or used another authority: %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(authority.Close)
+	original := http.DefaultTransport
+	http.DefaultTransport = authority.Client().Transport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	t.Setenv("TNL_SERVER", authority.URL)
+	t.Setenv("TNL_ACCESS_TOKEN", access.String())
+	listener := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	t.Cleanup(listener.Close)
+	server, target, name, hostname := authority.URL, config.Target(listener.URL), "orders", "orders.example"
 	protocol := "http"
-	project := projectConfiguration{Project: clientproject.Project{Root: t.TempDir(), Config: config.TNL{
+	root := t.TempDir()
+	project := projectConfiguration{Project: clientproject.Project{Root: root, Worktree: namedTestWorktree(root, "shop"), Config: config.TNL{
 		Server: &server, Services: config.Services{
-			"orders": {Protocol: &protocol, Tunnel: &config.Tunnel{PublicURL: &hostname}, Target: &config.ServiceTarget{Type: "address", Address: &target}, HTTP: &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}}},
+			"orders": {Protocol: &protocol, Public: new(true), Hostname: &hostname, Target: &config.ServiceTarget{Type: "address", Address: &target}, HTTP: &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}}},
 			"api":    {Target: &config.ServiceTarget{Type: "app"}},
 		},
 	}}}
-	flags := publishCommand{Target: name}
+	flags := publishCommand{Target: name, remoteFlags: remoteFlags{StateDir: filepath.Join(t.TempDir(), "operator")}}
 	if err := project.applyInstalledService(&flags); err != nil {
 		t.Fatal(err)
 	}
 	return project, flags
 }
 
+func configuredInstallTeam() clientteam.Context {
+	return clientteam.NewContext(
+		authorityv1.Team{Id: backgroundTeamID, DisplayName: "install-team", DefaultDomainId: "dom_0123456789abcdefghijkl"},
+		authorityv1.Membership{TeamId: backgroundTeamID, Role: "owner", ManagedLabel: "member", MemberSlug: "member"},
+		[]authorityv1.Domain{{Id: "dom_0123456789abcdefghijkl", CanonicalDomain: "example", Kind: "custom", State: "ready"}}, "",
+	)
+}
+
+func backgroundScopeService(scope invocation.InstallScope, id string) controlv1.Service {
+	return controlv1.Service{Id: id, TeamId: scope.TeamID, DomainId: &scope.DomainID, Name: scope.Service, Enabled: true, Protocol: controlv1.ServiceProtocol(scope.Protocol), TrustRevision: 1,
+		Source:   &controlv1.LocalServiceSource{ProjectKey: scope.ProjectKey, SourceFingerprint: scope.SourceFingerprint, WorktreeKey: scope.WorktreeKey, Service: scope.Service},
+		Endpoint: &controlv1.ServiceEndpoint{Hostname: scope.Hostname, Port: 443, Public: true}}
+}
+
+func bindConfiguredBackgroundService(t *testing.T, c *backgroundControl, flags publishCommand) invocation.InstallScope {
+	t.Helper()
+	scope, err := invocation.ConfiguredInstallScopeForTeam(flags.project.Project, flags.Service, invocation.FromTeamContext(configuredInstallTeam()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.service, c.server = backgroundScopeService(scope, c.service.Id), flags.ServerURL
+	return scope
+}
+
 func TestConfiguredInstallUsesOnlySelectedStableService(t *testing.T) {
 	project, flags := configuredInstallFixture(t)
-	if flags.Service != "orders" || flags.ServiceName != "orders" || flags.ServerURL != "https://control.example" || flags.Target != "http://127.0.0.1:5432" || flags.Protocol != "http" || flags.projectRoot != project.Root {
+	if flags.Service != "orders" || flags.ServiceName != "orders" || flags.ServerURL != *project.Config.Server || flags.Target != string(*project.Config.Services["orders"].Target.Address) || flags.Protocol != "http" || flags.projectRoot != project.Root {
 		t.Fatalf("wrong configured service: %+v", flags)
 	}
 	scope, err := invocation.ResolveConfiguredInstallScope(t.Context(), backgroundOptions(flags), nil)
-	if err != nil || scope.Hostname != "orders.example" || scope.TeamID != "" {
-		t.Fatalf("explicit configured public URL did not select an exact hostname: %+v %v", scope, err)
+	if err != nil || scope.Hostname != "orders.example" || scope.TeamID != backgroundTeamID || scope.DomainID != configuredInstallTeam().Team().DefaultDomainId {
+		t.Fatalf("configured service did not bind its exact hostname, team, and domain: %+v %v", scope, err)
 	}
-	urlID := "url_selected"
-	identity := authorityv1.PublisherEnrollmentResult{TeamId: "team_selected", PublicUrlId: &urlID}
+	serviceID := "svc_0123456789abcdefghijkl"
+	identity := authorityv1.PublisherEnrollmentResult{TeamId: scope.TeamID, Kind: authorityv1.Service, ServiceId: &serviceID}
 	for _, hostname := range []string{"orders.other-team.example", "orders.other-domain.example", "orders.example.other-checkout"} {
-		if scope.Matches(controlv1.PublicURL{Id: urlID, CanonicalHostname: hostname, TeamId: identity.TeamId}, identity) {
-			t.Fatalf("same prefix on a different URL was selected: %s", hostname)
+		other := backgroundScopeService(scope, serviceID)
+		other.Endpoint.Hostname = hostname
+		if scope.Matches(other, identity) {
+			t.Fatalf("same prefix on a different endpoint was selected: %s", hostname)
 		}
 	}
-	if !scope.Matches(controlv1.PublicURL{Id: urlID, CanonicalHostname: "orders.example", TeamId: identity.TeamId}, identity) {
-		t.Fatal("explicit public URL did not match its exact saved grant")
+	if !scope.Matches(backgroundScopeService(scope, serviceID), identity) {
+		t.Fatal("configured service did not match its exact saved grant")
 	}
-	staleID := "url_previous"
-	identity.PublicUrlId = &staleID
-	if scope.Matches(controlv1.PublicURL{Id: urlID, CanonicalHostname: "orders.example", TeamId: identity.TeamId}, identity) {
-		t.Fatal("mismatched grant selected the configured public URL")
+	staleID := "svc_abcdefghijkl0123456789"
+	identity.ServiceId = &staleID
+	if scope.Matches(backgroundScopeService(scope, serviceID), identity) {
+		t.Fatal("mismatched grant selected the configured service")
 	}
 	renamed := publishCommand{Target: "orders", backgroundPublishFlags: backgroundPublishFlags{ServiceName: "different"}}
 	if err := project.applyInstalledService(&renamed); err == nil {
@@ -304,7 +404,7 @@ func TestConfiguredInstallUsesOnlySelectedStableService(t *testing.T) {
 func TestConfiguredInstallPersistsReadinessWithExactGrant(t *testing.T) {
 	r, a, c, selection := backgroundFixture(t)
 	_, flags := configuredInstallFixture(t)
-	c.publicURL.CanonicalHostname = "orders.example"
+	bindConfiguredBackgroundService(t, c, flags)
 	clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		return backgroundClients(c), a, nil
 	}
@@ -361,11 +461,7 @@ func TestConfiguredInstallSelectsSavedExactGrantWithoutEnrollment(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.publicURL.CanonicalHostname = "orders.example"
-	scope, err := invocation.ResolveConfiguredInstallScope(t.Context(), backgroundOptions(flags), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scope := bindConfiguredBackgroundService(t, c, flags)
 	store := func(identity authorityv1.PublisherEnrollmentResult, private ed25519.PrivateKey) {
 		document, err := json.Marshal(identity)
 		if err != nil {
@@ -374,7 +470,7 @@ func TestConfiguredInstallSelectsSavedExactGrantWithoutEnrollment(t *testing.T) 
 		if err := profile.ImportPublisherIdentity(t.Context(), clientstate.PublisherIdentity{ID: identity.ClientId, PublicDocument: document, SigningKey: private}); err != nil {
 			t.Fatal(err)
 		}
-		if err := profile.SelectPublisherIdentity(t.Context(), "project", invocation.ProjectPublisherScope(flags.ServerURL, *identity.PublicUrlId), identity.ClientId); err != nil {
+		if err := profile.SelectPublisherIdentity(t.Context(), "project", "project-publisher:service:"+*identity.ServiceId, identity.ClientId); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -387,11 +483,11 @@ func TestConfiguredInstallSelectsSavedExactGrantWithoutEnrollment(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	unrelatedURL, err := opaqueid.New(opaqueid.PublicURLPrefix)
+	unrelatedService, err := opaqueid.New(opaqueid.ServicePrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	unrelated.PublicUrlId = &unrelatedURL
+	unrelated.ServiceId = &unrelatedService
 	store(unrelated, unrelatedKey)
 	_, private, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -399,17 +495,17 @@ func TestConfiguredInstallSelectsSavedExactGrantWithoutEnrollment(t *testing.T) 
 	}
 	a.public = private.Public().(ed25519.PublicKey)
 	store(a.identity, private)
-	native, selected, key, savedPublicURL, err := invocation.SelectConfiguredPublisherCandidates(t.Context(), flags.ServerURL, profile, []string{unrelatedURL, c.publicURL.Id}, scope, publisheridentity.NativeControl{PublicURLControl: c}, a)
-	if err != nil || native == nil || selected.ClientId != a.identity.ClientId || savedPublicURL.Id != c.publicURL.Id || !key.Public().(ed25519.PublicKey).Equal(a.public) || a.redemptions != 0 {
+	native, selected, key, savedService, err := invocation.SelectConfiguredPublisherCandidates(t.Context(), flags.ServerURL, profile, []string{unrelatedService, c.service.Id}, scope, publisheridentity.NativeControl{Services: c}, a)
+	if err != nil || native == nil || selected.ClientId != a.identity.ClientId || savedService.Id != c.service.Id || !key.Public().(ed25519.PublicKey).Equal(a.public) || a.redemptions != 0 {
 		t.Fatalf("selected wrong scoped grant or redeemed enrollment: %+v %v", selected, err)
 	}
-	if _, _, _, _, err := invocation.SelectConfiguredPublisherCandidates(t.Context(), flags.ServerURL, profile, []string{unrelatedURL}, scope, publisheridentity.NativeControl{PublicURLControl: c}, a); err == nil {
+	if _, _, _, _, err := invocation.SelectConfiguredPublisherCandidates(t.Context(), flags.ServerURL, profile, []string{unrelatedService}, scope, publisheridentity.NativeControl{Services: c}, a); err == nil {
 		t.Fatal("missing matching grant fell back to a different service")
 	} else if classified, ok := failure.Of(err); !ok || classified.Reason() != failure.InstalledPublisherSelectionMissing {
 		t.Fatalf("missing selection has no authored next step: %v", err)
 	}
-	if !scope.Matches(savedPublicURL, selected) || project.Root != flags.projectRoot {
-		t.Fatal("saved URL does not match project")
+	if !scope.Matches(savedService, selected) || project.Root != flags.projectRoot {
+		t.Fatal("saved service does not match project")
 	}
 	jobs, err := r.List(t.Context())
 	if err != nil || len(jobs) != 0 {
@@ -417,7 +513,7 @@ func TestConfiguredInstallSelectsSavedExactGrantWithoutEnrollment(t *testing.T) 
 	}
 }
 
-func TestConfiguredWorktreeHostnameBindsTeamDomainAndGrant(t *testing.T) {
+func TestConfiguredWorktreeSourceBindsTeamDomainAndGrant(t *testing.T) {
 	root := t.TempDir()
 	worktree := namedTestWorktree(root, "shop")
 	protocol := "http"
@@ -435,41 +531,62 @@ func TestConfiguredWorktreeHostnameBindsTeamDomainAndGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := clientproject.ServiceWorktreeLabel("orders", worktree) + ".ecstatic-penguin.tnl.dev"
-	if scope.Hostname != want || scope.TeamID != current.Team().Id || scope.DomainID != current.Domains()[0].Id {
-		t.Fatalf("wrong advertised worktree URL: %+v, want %s", scope, want)
+	source := project.LocalPublicationIdentity()
+	if scope.Hostname != "" || scope.TeamID != current.Team().Id || scope.DomainID != current.Domains()[0].Id ||
+		scope.ProjectKey != source.Key || scope.SourceFingerprint != source.Fingerprint || scope.WorktreeKey != project.LocalWorktreeKey() {
+		t.Fatalf("selection reconstructed an endpoint or lost its source binding: %+v", scope)
 	}
-	urlID := "url_selected"
-	identity := authorityv1.PublisherEnrollmentResult{TeamId: current.Team().Id, PublicUrlId: &urlID}
-	item := controlv1.PublicURL{Id: urlID, CanonicalHostname: want, TeamId: current.Team().Id, DomainId: current.Domains()[0].Id}
+	serviceID := "svc_0123456789abcdefghijkl"
+	identity := authorityv1.PublisherEnrollmentResult{TeamId: current.Team().Id, Kind: authorityv1.Service, ServiceId: &serviceID}
+	item := backgroundScopeService(scope, serviceID)
+	item.Endpoint.Hostname = "assigned-by-control.ecstatic-penguin.tnl.dev"
 	if !scope.Matches(item, identity) {
-		t.Fatal("saved URL with matching team, domain and grant was rejected")
+		t.Fatal("saved service with matching source, team, domain and grant was rejected")
 	}
-	for name, mutate := range map[string]func(*controlv1.PublicURL, *authorityv1.PublisherEnrollmentResult){
-		"other team": func(url *controlv1.PublicURL, grant *authorityv1.PublisherEnrollmentResult) {
-			url.TeamId, grant.TeamId = "team_other", "team_other"
+	for name, mutate := range map[string]func(*controlv1.Service, *authorityv1.PublisherEnrollmentResult){
+		"other team": func(service *controlv1.Service, grant *authorityv1.PublisherEnrollmentResult) {
+			service.TeamId, grant.TeamId = "team_other", "team_other"
 		},
-		"other domain": func(url *controlv1.PublicURL, _ *authorityv1.PublisherEnrollmentResult) {
-			url.DomainId = "domain_other"
+		"other domain": func(service *controlv1.Service, _ *authorityv1.PublisherEnrollmentResult) {
+			service.DomainId = new("domain_other")
 		},
-		"old grant": func(_ *controlv1.PublicURL, grant *authorityv1.PublisherEnrollmentResult) {
-			old := "url_previous"
-			grant.PublicUrlId = &old
+		"old grant": func(_ *controlv1.Service, grant *authorityv1.PublisherEnrollmentResult) {
+			grant.ServiceId = new("svc_abcdefghijkl0123456789")
+		},
+		"missing source": func(service *controlv1.Service, _ *authorityv1.PublisherEnrollmentResult) {
+			service.Source = nil
+		},
+		"other project": func(service *controlv1.Service, _ *authorityv1.PublisherEnrollmentResult) {
+			service.Source.ProjectKey += "-other"
+		},
+		"other fingerprint": func(service *controlv1.Service, _ *authorityv1.PublisherEnrollmentResult) {
+			service.Source.SourceFingerprint = strings.Repeat("a", 64)
+		},
+		"other worktree": func(service *controlv1.Service, _ *authorityv1.PublisherEnrollmentResult) {
+			service.Source.WorktreeKey = strings.Repeat("b", 64)
+		},
+		"other service": func(service *controlv1.Service, _ *authorityv1.PublisherEnrollmentResult) {
+			service.Source.Service = "api"
+		},
+		"other protocol": func(service *controlv1.Service, _ *authorityv1.PublisherEnrollmentResult) {
+			service.Protocol = controlv1.Tcp
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			otherURL, otherGrant := item, identity
-			mutate(&otherURL, &otherGrant)
-			if scope.Matches(otherURL, otherGrant) {
-				t.Fatal("saved URL outside selected service scope was accepted")
+			otherService, otherGrant := backgroundScopeService(scope, serviceID), identity
+			otherService.Endpoint.Hostname = item.Endpoint.Hostname
+			mutate(&otherService, &otherGrant)
+			if scope.Matches(otherService, otherGrant) {
+				t.Fatal("saved service outside selected source scope was accepted")
 			}
 		})
 	}
 	other := project
-	other.Worktree = namedTestWorktree(filepath.Join(root, "other-checkout"), "shop")
+	other.Root = filepath.Join(root, "other-checkout")
+	other.Worktree = namedTestWorktree(other.Root, "shop")
 	otherScope, err := invocation.ConfiguredInstallScopeForTeam(other.Project, "orders", invocation.FromTeamContext(current))
-	if err != nil || otherScope.Hostname == want || otherScope.Matches(item, identity) {
-		t.Fatalf("another checkout selected this worktree's URL: %+v %v", otherScope, err)
+	if err != nil || otherScope.WorktreeKey == scope.WorktreeKey || otherScope.Matches(item, identity) {
+		t.Fatalf("another checkout selected this worktree's service: %+v %v", otherScope, err)
 	}
 }
 
@@ -478,6 +595,7 @@ func TestConfiguredInstallPreflightDoesNotOpenProjectOrServiceState(t *testing.T
 	target := config.Target(unavailableInstalledTarget(t))
 	service := flags.project.Config.Services[flags.Service]
 	service.Target.Address = &target
+	service.Target.TLS = &config.TargetTLS{}
 	flags.project.Config.Services[flags.Service] = service
 	flags.Target = string(target)
 	// macOS exposes its temporary directory through a /var symlink; installed
@@ -496,7 +614,7 @@ func TestConfiguredInstallPreflightDoesNotOpenProjectOrServiceState(t *testing.T
 		t.Fatal("missing supervisor reached the manager")
 		return nil
 	}))
-	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.TargetUnavailable {
+	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.TargetUnavailable {
 		t.Fatalf("configured install skipped target preflight: %v", err)
 	}
 	for _, path := range []string{flags.StateDir, serviceRoot} {
@@ -508,28 +626,34 @@ func TestConfiguredInstallPreflightDoesNotOpenProjectOrServiceState(t *testing.T
 
 func unavailableInstalledTarget(t *testing.T) string {
 	t.Helper()
-	// an HTTP-only listener always fails the HTTPS target preflight, even if a
-	// developer happens to have PostgreSQL listening on port 5432.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(server.Close)
-	return strings.Replace(server.URL, "http://", "https://", 1)
+	// use an unbound ephemeral port, not an available listener with invalid tls:
+	// refusal is target_unavailable; failed verification has its own diagnostic.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return "https://" + address
 }
 
-func TestInstalledConfiguredServiceRejectsStaleSavedTarget(t *testing.T) {
+func TestInstalledConfiguredServiceRejectsStaleSavedTrust(t *testing.T) {
 	r, a, c, selection := backgroundFixture(t)
 	_, flags := configuredInstallFixture(t)
-	flags.Protocol, flags.Target = "http", "3000"
-	c.publicURL.ServiceProtocol = controlv1.Http
-	c.publicURL.CanonicalHostname = "orders.example"
-	c.publicURL.Target = "http://127.0.0.1:5000"
+	bindConfiguredBackgroundService(t, c, flags)
+	trust, err := captureServiceTargetTrust(t.Context(), publishCommand{Target: flags.Target, TargetTLSName: "old.internal"}, controlv1.ServiceProtocolHTTP, flags.Target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.service.TargetTls = publisheridentity.ServiceTargetTLS(trust)
 	clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		return backgroundClients(c), a, nil
 	}
-	err := installBackgroundJob(t.Context(), r, flags, selection, backgroundPublishFlags{Install: true}, strings.NewReader(""), clients, nil)
+	err = installBackgroundJob(t.Context(), r, flags, selection, backgroundPublishFlags{Install: true}, strings.NewReader(""), clients, nil)
 	if err == nil {
-		t.Fatal("outdated saved HTTP target installed")
+		t.Fatal("outdated saved HTTP target trust installed")
 	}
 	jobs, err := r.List(t.Context())
 	if err != nil || len(jobs) != 0 {
@@ -537,15 +661,16 @@ func TestInstalledConfiguredServiceRejectsStaleSavedTarget(t *testing.T) {
 	}
 }
 
-func TestExplicitPublisherCannotInstallAnotherServiceURL(t *testing.T) {
+func TestExplicitPublisherCannotInstallAnotherServiceEndpoint(t *testing.T) {
 	r, a, c, selection := backgroundFixture(t)
 	_, flags := configuredInstallFixture(t)
-	c.publicURL.CanonicalHostname = "orders.other-domain.example"
+	bindConfiguredBackgroundService(t, c, flags)
+	c.service.Endpoint.Hostname = "orders.other-domain.example"
 	clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		return backgroundClients(c), a, nil
 	}
 	if err := installBackgroundJob(t.Context(), r, flags, selection, backgroundPublishFlags{Install: true}, strings.NewReader(""), clients, nil); err == nil {
-		t.Fatal("explicit enrollment installed a same-prefix URL from another domain")
+		t.Fatal("explicit enrollment installed a same-prefix endpoint from another domain")
 	}
 	jobs, err := r.List(t.Context())
 	if err != nil || len(jobs) != 0 {
@@ -555,40 +680,44 @@ func TestExplicitPublisherCannotInstallAnotherServiceURL(t *testing.T) {
 
 func TestConfiguredInstallSnapshotsTargetTrust(t *testing.T) {
 	r, a, c, selection := backgroundFixture(t)
-	project, flags := configuredInstallFixture(t)
-	caPath := filepath.Join(project.Root, "target.pem")
+	_, flags := configuredInstallFixture(t)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	t.Cleanup(server.Close)
 	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
-	if err := os.WriteFile(caPath, certificate, 0o600); err != nil {
+	flags.Target = server.URL
+	service := flags.project.Config.Services[flags.Service]
+	service.Target.Address = new(config.Target(server.URL))
+	service.Target.TLS = &config.TargetTLS{CA: new(string(certificate)), Hostname: new(server.Certificate().DNSNames[0])}
+	flags.project.Config.Services[flags.Service] = service
+	bindConfiguredBackgroundService(t, c, flags)
+	trust, err := captureServiceTargetTrust(t.Context(), flags, controlv1.ServiceProtocolHTTP, flags.Target)
+	if err != nil {
 		t.Fatal(err)
 	}
-	flags.TargetCAFile, flags.TargetTLSName = "target.pem", "db.internal"
-	flags.Target = "https://127.0.0.1:5432"
-	c.publicURL.CanonicalHostname = "orders.example"
+	c.service.TargetTls = publisheridentity.ServiceTargetTLS(trust)
 	clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		return backgroundClients(c), a, nil
 	}
 	if err := installBackgroundJob(t.Context(), r, flags, selection, backgroundPublishFlags{Install: true}, strings.NewReader(""), clients, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(caPath, []byte("changed file"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	service.Target.TLS.CA = new("changed configuration")
 	jobs, err := r.List(t.Context())
-	if err != nil || len(jobs) != 1 || !bytes.Equal(jobs[0].TargetCAPEM, certificate) || jobs[0].TargetTLSName != "db.internal" {
-		t.Fatalf("installed trust followed a mutable project file: %+v %v", jobs, err)
+	if err != nil || len(jobs) != 1 || jobs[0].Trust == nil || !bytes.Equal(jobs[0].Trust.PEM, certificate) || jobs[0].Trust.Hostname != server.Certificate().DNSNames[0] {
+		t.Fatalf("installed trust followed mutable project configuration: %+v %v", jobs, err)
+	}
+	encoded, err := json.Marshal(jobs[0])
+	if err != nil || bytes.Contains(encoded, []byte(`"target_ca_pem"`)) || bytes.Contains(encoded, []byte(`"target_tls_name"`)) {
+		t.Fatal("installed trust retained a second trust representation", err)
 	}
 }
 
 func TestInvalidConfiguredCARejectsBeforeEnrollment(t *testing.T) {
 	r, a, c, selection := backgroundFixture(t)
 	_, flags := configuredInstallFixture(t)
-	path := filepath.Join(flags.projectRoot, "invalid.pem")
-	if err := os.WriteFile(path, []byte("not a CA certificate"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	flags.TargetCAFile = path
+	service := flags.project.Config.Services[flags.Service]
+	service.Target.TLS = &config.TargetTLS{CA: new("not a CA certificate")}
+	flags.project.Config.Services[flags.Service] = service
 	clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		t.Fatal("invalid trust reached the control API")
 		return backgroundClients(c), a, nil

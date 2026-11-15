@@ -2972,9 +2972,9 @@
           "description": "ACME certificate profile.",
           "default": "tlsserver"
         },
-        "public_url_certificate_workers": {
+        "service_certificate_workers": {
           "type": "integer",
-          "description": "Concurrent public URL certificate workers per control process (1-8).",
+          "description": "Concurrent service certificate workers per control process (1-8).",
           "default": 8
         },
         "oidc_issuer": {

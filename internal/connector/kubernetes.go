@@ -26,7 +26,7 @@ func WriteKubeCredential(ctx context.Context, path string, output io.Writer) err
 	return json.NewEncoder(output).Encode(credential)
 }
 
-func prepareKubernetesConnection(ctx context.Context, session *Session, flags StartOptions, service controlv1.Service, profile *Profile, listen string) error {
+func prepareKubernetesConnection(ctx context.Context, session *Session, flags StartOptions, service controlv1.ServiceSummary, profile *Profile, listen string) error {
 	key, err := ConfiguredService(flags.project.Project, flags.Name)
 	if err != nil {
 		return err

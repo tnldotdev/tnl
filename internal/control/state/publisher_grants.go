@@ -18,7 +18,7 @@ func (d *Database) CreatePublisherGrant(ctx context.Context, r CreatePublisherGr
 	}
 	defer rollback(ctx, tx, "create publisher grant", &retErr)()
 	q := controlstatedb.New(tx)
-	resolved, err := d.authorizePublisherScope(ctx, q, r.Scope, r.EditorID, r.EditorMembershipID, r.PolicyRevision)
+	resolved, err := d.authorizePublisherScope(ctx, tx, q, r.Scope, r.EditorID, r.EditorMembershipID, r.PolicyRevision)
 	if err != nil {
 		return "", err
 	}
@@ -27,29 +27,20 @@ func (d *Database) CreatePublisherGrant(ctx context.Context, r CreatePublisherGr
 	if err != nil {
 		return "", publisherLookupError(err, ErrPublisherIdentity)
 	}
-	if i.TeamID != s.TeamID || i.RevokedAt.Valid || i.Kind == "guest" {
+	if i.TeamID.String != s.TeamID || i.RevokedAt.Valid || i.Kind == "guest" {
 		return "", ErrPublisherIdentity
 	}
 	if i.Ownership == "team" {
-		if s.Kind == "namespace" && s.PublicURLScope != PublicURLScopeShared {
+		if s.Kind == "namespace" && s.NamespaceScope != NamespaceScopeShared {
 			return "", ErrPublisherIdentity
-		}
-		if s.Kind == "saved_public_url" {
-			u, err := q.LockPublicURLForRun(ctx, s.PublicURLID)
-			if err != nil {
-				return "", err
-			}
-			if u.PublicURLScope != "shared" {
-				return "", ErrPublisherIdentity
-			}
 		}
 	}
 	if i.Ownership != "member" || i.OwnerMembershipID.String != r.EditorMembershipID {
-		m, err := q.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{TeamID: s.TeamID, IdentityID: r.EditorID})
+		m, err := q.GetTeamActorContext(ctx, controlstatedb.GetTeamActorContextParams{TeamID: s.TeamID, IdentityID: r.EditorID})
 		if err != nil {
 			return "", err
 		}
-		if m.Role != "admin" && m.Role != "owner" {
+		if m.ActorRole != "admin" && m.ActorRole != "owner" {
 			return "", ErrPublisherIdentity
 		}
 	}
@@ -97,10 +88,7 @@ func revokePublisherIdentity(ctx context.Context, tx pgx.Tx, q *controlstatedb.Q
 	if err := closePublisherServiceRuns(ctx, tx, q, id, "", now); err != nil {
 		return err
 	}
-	if err := closeRevokedPublicPublications(ctx, tx, q, id, "", now); err != nil {
-		return err
-	}
-	n, err := q.RevokePublisherIdentity(ctx, controlstatedb.RevokePublisherIdentityParams{ID: id, TeamID: team, Now: timestamptz(now)})
+	n, err := q.RevokePublisherIdentity(ctx, controlstatedb.RevokePublisherIdentityParams{ID: id, TeamID: text(team), Now: timestamptz(now)})
 	if err != nil {
 		return err
 	}
@@ -138,7 +126,7 @@ func (d *Database) RevokePublisherGrant(ctx context.Context, team, id, grant, ed
 	if err := authorizePublisherManagement(ctx, q, team, id, editor); err != nil {
 		return err
 	}
-	selected, err := q.GetPublisherGrant(ctx, controlstatedb.GetPublisherGrantParams{ID: grant, PublisherIdentityID: id})
+	_, err = q.GetPublisherGrant(ctx, controlstatedb.GetPublisherGrantParams{ID: grant, PublisherIdentityID: id})
 	if err != nil {
 		return publisherLookupError(err, ErrPublisherIdentity)
 	}
@@ -147,11 +135,6 @@ func (d *Database) RevokePublisherGrant(ctx context.Context, team, id, grant, ed
 	}
 	if err = closePublisherServiceRuns(ctx, tx, q, id, grant, now); err != nil {
 		return err
-	}
-	if selected.Kind != "service" {
-		if err = closeRevokedPublicPublications(ctx, tx, q, id, grant, now); err != nil {
-			return err
-		}
 	}
 	n, err := q.RevokePublisherGrant(ctx, controlstatedb.RevokePublisherGrantParams{ID: grant, PublisherIdentityID: id, Now: timestamptz(now)})
 	if err != nil {

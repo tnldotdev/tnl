@@ -1,30 +1,11 @@
 package ingress
 
 import (
-	"net/netip"
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/ingress/clienthello"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 )
-
-func TestNetworkPolicyDenialAuditedAtIngress(t *testing.T) {
-	var events []serviceaudit.Observation
-	metrics := &testMetrics{visitorOutcomes: make(chan string, 1)}
-	route := PublicURL{ID: "url_0123456789ABCDEFGHIJKL", PublishRunID: "pr_0123456789ABCDEFGHIJKL", PublishRunNumber: 1, Backends: []Backend{&singleBackend{}}, AttestSource: testBackendSourceProof}
-	s, _ := startIngress(t, Config{Metrics: metrics, Lookup: func(string) ([]PublicURL, LookupReason) { return []PublicURL{route}, LookupCurrent }, AuditSink: auditSinkFunc(func(o serviceaudit.Observation) bool { events = append(events, o); return true })})
-	if err := s.forward(nil, netip.MustParseAddrPort("192.0.2.8:1234"), netip.MustParseAddrPort("203.0.113.1:443"), clienthello.ClientHello{ServerName: "private.example"}); err != nil {
-		t.Fatal(err)
-	}
-	if len(events) != 1 || events[0].Validate() != nil || events[0].Outcome != "denied" || events[0].Reason != "ip_policy" || events[0].SourceIP != "192.0.2.8" {
-		t.Fatalf("network rejection lost: %+v", events)
-	}
-	if outcome := ingressAwait(t, metrics.visitorOutcomes); outcome != "policy_denied" || metrics.ipAllowlistDenials.Load() != 1 ||
-		metrics.visitorOpenSuccesses.Load() != 0 || metrics.visitorOpenFailures.Load() != 0 {
-		t.Fatal("IP denial was counted as a relay open", outcome, metrics.ipAllowlistDenials.Load())
-	}
-}
 
 func TestPublicServiceVisitorAuditCorrelatesAdmissionAndRevocationClose(t *testing.T) {
 	connector, control, forwarder, _ := publicServiceTestSetup(t)
@@ -55,18 +36,5 @@ func TestPublicServiceVisitorAuditCorrelatesAdmissionAndRevocationClose(t *testi
 		}
 	case <-time.After(time.Second):
 		t.Fatal("private revocation did not emit close")
-	}
-}
-
-func TestKnownUnavailableServiceIsAuditedWithoutInventingARun(t *testing.T) {
-	var events []serviceaudit.Observation
-	s, _ := startIngress(t, Config{Lookup: func(string) ([]PublicURL, LookupReason) {
-		return []PublicURL{{ID: "url_0123456789ABCDEFGHIJKL", PublishRunID: "pr_0123456789ABCDEFGHIJKL", PublishRunNumber: 1}}, LookupCurrent
-	}, AuditSink: auditSinkFunc(func(o serviceaudit.Observation) bool { events = append(events, o); return true })})
-	if err := s.forward(nil, netip.MustParseAddrPort("192.0.2.8:1234"), netip.MustParseAddrPort("203.0.113.1:443"), clienthello.ClientHello{ServerName: "private.example"}); err != nil {
-		t.Fatal(err)
-	}
-	if len(events) != 1 || events[0].Validate() != nil || events[0].RunID != "" || events[0].RunNumber != 0 || events[0].Reason != "unavailable" {
-		t.Fatalf("lost service-level denial: %+v", events)
 	}
 }

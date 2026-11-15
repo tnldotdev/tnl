@@ -20,11 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/observability/inspection"
-	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/integrations"
-	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
@@ -36,8 +32,8 @@ func projectIntegrationScope(project clientproject.Project, namespace string) cl
 // overrides its domain. the provider registers only one callback URL.
 func projectOAuthPublisher(ctx context.Context, state *clientstate.Database, project clientproject.Project, server, team string, authenticated *auth.Client) (meta.IntegrationOrigin, publisherServices, error) {
 	domain := ""
-	if project.Config.Tunnel != nil && project.Config.Tunnel.Domain != nil {
-		domain = *project.Config.Tunnel.Domain
+	if project.Config.DeploymentSettings.Domain != nil {
+		domain = *project.Config.DeploymentSettings.Domain
 	}
 	services, err := preparePublisherServices(ctx, state, server, "", "", domain, team, false, authenticated)
 	if err != nil {
@@ -45,13 +41,6 @@ func projectOAuthPublisher(ctx context.Context, state *clientstate.Database, pro
 	}
 	origin, err := resolve.IntegrationOrigin(ctx, state, project, server, services.namespace, "oauth")
 	return origin, services, err
-}
-
-func integrationURLConfig(services publisherServices, hostname string, purpose controlv1.PublicURLPurpose) publisher.Config {
-	config := services.config("", []string{}, applicationlimits.Limits{Concurrency: 32})
-	config.Hostname, config.PublicURLScope, config.Ephemeral = hostname, services.publicURLScope, false
-	config.Purpose, config.ServiceProtocol, config.InspectionMode = purpose, controlv1.Http, inspection.None
-	return config
 }
 
 func reportIntegrationURL(tunnel *clientstate.Tunnel, output *Presentation, state, footer string, blocks ...clioutput.Block) {
@@ -68,17 +57,16 @@ func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, 
 	integrationURLPublisher := integrations.Publisher{
 		State: state, Store: services.state, Server: services.authenticated.ServerEndpoint, Hostname: oauth.Hostname,
 		Prepare: func(ctx context.Context) (integrations.Snapshot, error) {
-			config, err := nativeIntegrationConfig(ctx, state, services, oauth.Hostname, controlv1.Oauth)
+			config, saved, err := nativeIntegrationConfig(ctx, services, oauth.Hostname, nil)
 			if err != nil {
 				return integrations.Snapshot{}, err
 			}
-			config.OnWarning = publishWarning(tunnel, output)
 			config.Handler = integrations.OAuthHandler(state, services.authenticated.ServerEndpoint, oauth.Hostname, func() {
 				telemetry.Integration(telemetryv1.IntegrationOutcome{Kind: "oauth", Outcome: telemetryv1.Redirected})
 			})
-			return integrations.Snapshot{Config: config}, nil
+			return integrations.Snapshot{Config: config, Service: saved}, nil
 		},
-		Report: func(event publisher.Event, err error) {
+		Report: func(ready bool, err error) {
 			reportMu.Lock()
 			defer reportMu.Unlock()
 			if err != nil {
@@ -86,7 +74,7 @@ func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, 
 					lastReport = time.Now()
 					reportIntegrationURL(tunnel, output, "oauth unavailable", "app tunnel continues; retry sign-in shortly", clioutput.Text("the callback publisher could not become ready"))
 				}
-			} else if event.Type == publisher.EventReady {
+			} else if ready {
 				telemetry.Integration(telemetryv1.IntegrationOutcome{Kind: "oauth", Outcome: telemetryv1.Ready})
 				reportIntegrationURL(tunnel, output, "oauth ready", "", clioutput.Fields(clioutput.Field{Label: "oauth origin", Value: oauth.URL}))
 			}
@@ -257,22 +245,21 @@ func webhookURLPublisher(state *clientstate.Database, services publisherServices
 					telemetry.Integration(telemetryv1.IntegrationOutcome{Kind: "webhook", Outcome: telemetryv1.ReachedReceiver, Delivery: &delivery})
 				}
 			}
-			config, err := nativeIntegrationConfig(ctx, state, services, origin.Hostname, controlv1.Webhooks, prefixes)
+			config, saved, err := nativeIntegrationConfig(ctx, services, origin.Hostname, prefixes)
 			if err != nil {
 				return integrations.Snapshot{}, err
 			}
-			config.Handler, config.AllowedIPPrefixes = handler, prefixes
-			config.OnWarning = publishWarning(tunnel, output)
-			return integrations.Snapshot{Config: config, Revision: revision}, nil
+			config.Handler = handler
+			return integrations.Snapshot{Config: config, Service: saved, Revision: revision}, nil
 		},
 		Revision: func(ctx context.Context) (string, error) {
 			_, revision, err := definitionsAt(ctx)
 			return revision, err
 		},
-		Report: func(event publisher.Event, err error) {
+		Report: func(ready bool, err error) {
 			if err != nil {
 				failure("the stable webhook publisher could not become ready")
-			} else if event.Type == publisher.EventReady {
+			} else if ready {
 				reportIntegrationURL(tunnel, output, "webhooks ready", "", clioutput.Fields(clioutput.Field{Label: "webhook origin", Value: origin.URL}))
 			}
 		},

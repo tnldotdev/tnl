@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -31,7 +30,7 @@ func testIntegrationPublicStreamTransports(t *testing.T, restricted bool) {
 				var identity *integrationPublishingIdentity
 				var visitor *integrationVisitor
 				var quic, tcp muxsession.Connector
-				var ready func(*testing.T, *integrationPublisher) publisher.Event
+				var ready func(*testing.T, *integrationPublisher) controlv1.ServiceRunPreparation
 				var diagnostics func() string
 				if role == "split" {
 					f := newSplitPublishFixture(t, "stream")
@@ -76,20 +75,23 @@ func testIntegrationPublicStreamTransports(t *testing.T, restricted bool) {
 					_, _ = io.Copy(w, r.Body)
 				}))
 				cleanupIntegrationHTTPServer(t, target, owner)
-				config := identity.publisherConfig(target.URL, quic, tcp)
+				mode := controlv1.Anonymous
 				if restricted {
-					config.AccessMode = controlv1.Restricted
+					mode = controlv1.Restricted
 				}
+				_, config := identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{
+					Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}},
+				})
 				handle := startOwnedIntegrationPublisher(t, owner, config, diagnostics)
 				event := ready(t, handle)
 				var token, shareID string
 				if restricted {
-					response, _, err := visitor.requestURL(http.MethodGet, event.PublicURL, nil)
+					response, _, err := visitor.requestURL(http.MethodGet, serviceHTTPAddress(event), nil)
 					if err != nil || response.StatusCode != http.StatusForbidden || requests.Load() != 0 {
 						t.Fatalf("restricted visitor reached target: %v, %v", response, err)
 					}
 					visitor.transport.CloseIdleConnections()
-					share, err := identity.routes.CreateURLShare(t.Context(), "stream-promotion", controlv1.CreateShareRequest{PublicUrlIds: []string{event.PublicURLID}, EntryPublicUrlId: event.PublicURLID, ExpiresAt: time.Now().Add(time.Minute)})
+					share, err := identity.routes.CreateServiceShare(t.Context(), "stream-promotion", controlv1.CreateShareRequest{ServiceIds: []string{event.ServiceId}, EntryServiceId: event.ServiceId, ExpiresAt: time.Now().Add(time.Minute)})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -118,7 +120,7 @@ func testIntegrationPublicStreamTransports(t *testing.T, restricted bool) {
 					visitor.transport.CloseIdleConnections()
 				}
 				for range 3 {
-					request, err := http.NewRequest(http.MethodGet, event.PublicURL, nil)
+					request, err := http.NewRequest(http.MethodGet, serviceHTTPAddress(event), nil)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -142,7 +144,7 @@ func testIntegrationPublicStreamTransports(t *testing.T, restricted bool) {
 					openHeld := func(path string) (*http.Response, context.CancelFunc) {
 						ctx, cancel := context.WithCancel(t.Context())
 						t.Cleanup(cancel)
-						request, err := http.NewRequestWithContext(ctx, http.MethodGet, event.PublicURL+path, nil)
+						request, err := http.NewRequestWithContext(ctx, http.MethodGet, serviceHTTPAddress(event)+path, nil)
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -180,7 +182,7 @@ func testIntegrationPublicStreamTransports(t *testing.T, restricted bool) {
 					}
 					_ = response.Body.Close()
 					visitor.transport.CloseIdleConnections()
-					request, err := http.NewRequest(http.MethodGet, event.PublicURL, nil)
+					request, err := http.NewRequest(http.MethodGet, serviceHTTPAddress(event), nil)
 					if err != nil {
 						t.Fatal(err)
 					}

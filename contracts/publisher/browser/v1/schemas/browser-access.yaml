@@ -2,21 +2,23 @@ schemas:
   BrowserAccessStatus:
     type: object
     additionalProperties: false
-    required: [schema_version, allowed, preview_id, public_url_id, publish_run_number]
+    required: [schema_version, allowed, preview_id, service_id, service_run_id, run_number]
     properties:
       schema_version:
         $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/ReviewSchemaVersion"
       allowed: { type: boolean }
       preview_id:
         $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/PreviewID"
-      public_url_id:
-        $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/PublicURLID"
-      publish_run_number:
+      service_id:
+        $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/ServiceID"
+      service_run_id:
+        $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/ServiceRunID"
+      run_number:
         {
           type: string,
           pattern: "^[0-9]+$",
           x-go-type: int64,
-          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
         }
       access_method: { type: string, enum: [anonymous, share, team, visitor] }
       expires_at: { type: string, format: date-time }

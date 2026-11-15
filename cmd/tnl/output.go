@@ -10,11 +10,9 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/detached"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/demo"
 )
 
@@ -391,32 +389,4 @@ func boundedOutputError(err error) string {
 		return message[:1024]
 	}
 	return message
-}
-
-// handlePublisherEvent is where the CLI handles publisher status and policy
-// totals.
-func handlePublisherEvent(ctx context.Context, tunnel *clientstate.Tunnel, output *publishOutput, event publisher.Event) error {
-	switch event.Type {
-	case publisher.EventPublicURLAssigned:
-		return tunnel.SetPublicURL(ctx, event.PublicURLID, event.Hostname)
-	case publisher.EventProvisioning:
-		if err := tunnel.SetProvisioning(ctx, event.PublishRunNumber); err != nil {
-			return err
-		}
-		return output.provisioning(event.Hostname, event.PublishRunNumber)
-	case publisher.EventProvisioningStalled:
-		return output.provisioningStalled(event.PublishRunNumber)
-	case publisher.EventReady:
-		if err := tunnel.SetReady(ctx, event.PublicURL, event.PublishRunNumber); err != nil {
-			return err
-		}
-		return output.ready(event.PublicURL, event.PublishRunNumber)
-	case publisher.EventDraining:
-		return tunnel.SetDraining(context.WithoutCancel(ctx))
-	case publisher.EventTransportFallback:
-		return output.transportFallback(event.PublishRunNumber, string(event.Transport))
-	case publisher.EventTargetUnavailable:
-		return output.targetUnavailable()
-	}
-	return nil
 }

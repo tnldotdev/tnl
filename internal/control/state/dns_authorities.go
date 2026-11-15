@@ -163,7 +163,7 @@ func (d *Database) DNSAuthorityReleaseReady(ctx context.Context, domainID string
 		return false, err
 	}
 	ready, err := controlstatedb.New(d.pool).DNSAuthorityReleaseReady(ctx, controlstatedb.DNSAuthorityReleaseReadyParams{
-		AuthorityDomainID: domainID, ObservedAt: timestamptz(now),
+		AuthorityDomainID: text(domainID), ObservedAt: timestamptz(now),
 	})
 	if err != nil {
 		return false, fmt.Errorf("controlstate: check DNS authority release readiness: %w", err)

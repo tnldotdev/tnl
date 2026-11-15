@@ -109,7 +109,7 @@ func TestPublicServiceSelectionDoesNotSearchOnNonRunRejection(t *testing.T) {
 				case "pending source rate":
 					source.pending.last = time.Now()
 				case "ordinary process connections":
-					release, reason := server.admitClass(visitorConnection, "another-service")
+					release, reason := server.admitClass(visitorConnection)
 					if release == nil {
 						t.Fatal(reason)
 					}
@@ -337,7 +337,7 @@ func TestFailedServiceSelectionLeavesAdmissionUnselectedAndPendingRatesAtomic(t 
 		limits := server.config.Traffic.Default
 		source := netip.MustParseAddr("192.0.2.4")
 		if reason := first.selectRun(selectionRunKey(control.runs[0]), limits, source, false); reason != "pending_service_rate" ||
-			first.key != (trafficKey{}) || first.runID != "" || first.limits != (TrafficLimits{}) || first.source.IsValid() || first.ordinary || first.metered ||
+			first.key != (trafficKey{}) || first.limits != (TrafficLimits{}) || first.source.IsValid() || first.ordinary || first.metered ||
 			!first.deadline.Equal(deadline) {
 			t.Fatal("failed selection retained its run or changed pending accounting", reason, first)
 		}

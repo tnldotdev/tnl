@@ -92,8 +92,21 @@ func (s *service) AdmitPublicServiceVisitor(ctx context.Context, id string, body
 	if !admitted.Traffic.Valid() || admitted.Traffic.RatePer == 0 {
 		return result, serverhttp.NewProblemError(500, "internal", "invalid service traffic approval")
 	}
-	traffic := ingressTraffic(&admitted.Traffic)
-	return ingressv1.PublicServiceVisitorAdmission{ServiceId: admitted.ServiceID, ServiceRunId: admitted.RunID, RunNumber: admitted.RunNumber, VisitorConnectionId: admitted.ConnectionID, ExpiresAt: admitted.ExpiresAt, ConnectedRelays: privateRelayResponses(admitted.Relays), Traffic: *traffic, Anonymous: admitted.Anonymous}, nil
+	traffic := ingressv1.IngressTrafficLimits{
+		Connections: admitted.Traffic.Connections, Rate: admitted.Traffic.Rate,
+		RatePerNs: int64(admitted.Traffic.Period()), Burst: admitted.Traffic.Burst,
+		UploadBytes: admitted.Traffic.UploadBytes, DownloadBytes: admitted.Traffic.DownloadBytes,
+	}
+	if admitted.Traffic.TotalConnections > 0 {
+		traffic.TotalConnections = &admitted.Traffic.TotalConnections
+	}
+	if admitted.Traffic.TotalUploadBytes > 0 {
+		traffic.TotalUploadBytes = &admitted.Traffic.TotalUploadBytes
+	}
+	if admitted.Traffic.TotalDownloadBytes > 0 {
+		traffic.TotalDownloadBytes = &admitted.Traffic.TotalDownloadBytes
+	}
+	return ingressv1.PublicServiceVisitorAdmission{ServiceId: admitted.ServiceID, ServiceRunId: admitted.RunID, RunNumber: admitted.RunNumber, VisitorConnectionId: admitted.ConnectionID, ExpiresAt: admitted.ExpiresAt, ConnectedRelays: privateRelayResponses(admitted.Relays), Traffic: traffic, Anonymous: admitted.Anonymous, RecoveryEpisodeId: admitted.RecoveryEpisodeID}, nil
 }
 
 func (s *service) PublicServiceVisitorStatus(ctx context.Context, id string, body ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error) {

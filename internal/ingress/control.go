@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"net/http"
 	"slices"
@@ -19,20 +18,15 @@ import (
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
-const routingTablePageSize = 1000
-
 // ErrIngressLeaseLost ends this process run. its lease identity cannot be
 // reused after expiry; the process supervisor must start a new run.
 var ErrIngressLeaseLost = errors.New("ingress: lease lost; restart the process with a new run ID")
 
 type ControlClient interface {
-	visitorPolicyClient
 	RegisterIngress(context.Context, ingressv1.IngressRegistration) (ingressv1.IngressLease, error)
 	RenewIngress(context.Context, ingressv1.IngressID, ingressv1.IngressRenewal) (ingressv1.IngressLease, error)
 	DrainIngress(context.Context, ingressv1.IngressID, ingressv1.IngressDrainRequest) (ingressv1.IngressLease, error)
-	GetIngressRoutingTableSnapshot(context.Context, ingressv1.IngressID, ingressv1.GetIngressRoutingTableSnapshotParams) (ingressv1.IngressRoutingTableSnapshot, error)
-	GetIngressRoutingTableEvents(context.Context, ingressv1.IngressID, ingressv1.GetIngressRoutingTableEventsParams) (ingressv1.IngressRoutingTablePage, error)
-	ObservePublicURLRecovery(context.Context, ingressv1.IngressID, int64, ingressv1.PublicURLRecoveryObservationRequest) (ingressv1.PublicURLRecoveryObservation, error)
+	ObserveServiceRecovery(context.Context, ingressv1.IngressID, int64, ingressv1.ServiceRecoveryObservationRequest) (ingressv1.ServiceRecoveryObservation, error)
 }
 
 type IngressLoadFunc func() int64
@@ -46,57 +40,40 @@ type ControllerConfig struct {
 	// renewal never replaces a process run's lease or audit identity.
 	LeaseEstablished func(ingressv1.IngressLease) error
 	Client           ControlClient
-	RoutingTable     *RoutingTable
 	Registration     ingressv1.IngressRegistration
 	RenewalInterval  time.Duration
 	RetryInterval    time.Duration
-	RoutingWait      time.Duration
 	Load             IngressLoadFunc
 	Now              func() time.Time
 	Report           func(error)
 	Observer         OperationObserver
 }
 
-// Controller maintains one exact ingress lease and its routing table.
+// Controller maintains one exact ingress lease.
 type Controller struct {
-	client            ControlClient
-	routingTable      *RoutingTable
-	registration      ingressv1.IngressRegistration
-	renewalInterval   time.Duration
-	retryInterval     time.Duration
-	routingWait       string
-	load              IngressLoadFunc
-	now               func() time.Time
-	report            func(error)
-	observer          OperationObserver
-	leaseEstablished  func(ingressv1.IngressLease) error
-	publicRunPrepared publicRunPreparedFunc
-	servingChanged    chan struct{}
-	publicPolicies    map[string]*publicRunPolicy
-	policyCancel      context.CancelFunc
-	policyDone        chan struct{}
-	sourceSequences   map[string]*publicRunSequence
-
-	mu                  sync.RWMutex
-	lease               ingressv1.IngressLease
-	routingTableCurrent bool
-	leaseLost           bool
-	routingStatus       observability.IngressRoutingSnapshot
-	servingJoined       bool
+	client           ControlClient
+	registration     ingressv1.IngressRegistration
+	renewalInterval  time.Duration
+	retryInterval    time.Duration
+	load             IngressLoadFunc
+	now              func() time.Time
+	report           func(error)
+	observer         OperationObserver
+	leaseEstablished func(ingressv1.IngressLease) error
+	mu               sync.RWMutex
+	lease            ingressv1.IngressLease
+	leaseLost        bool
 }
 
 func NewController(config ControllerConfig) (*Controller, error) {
-	if config.Client == nil || config.RoutingTable == nil {
-		return nil, errors.New("ingress: control client and routing table are required")
+	if config.Client == nil {
+		return nil, errors.New("ingress: control client is required")
 	}
 	if err := validateIngressRegistration(config.Registration); err != nil {
 		return nil, err
 	}
 	if config.RenewalInterval <= 0 || config.RetryInterval <= 0 {
 		return nil, errors.New("ingress: control renewal and retry intervals must be positive")
-	}
-	if config.RoutingWait <= 0 || config.RoutingWait > 25*time.Second || config.RoutingWait%time.Second != 0 {
-		return nil, errors.New("ingress: routing wait must be a whole-second duration between 1s and 25s")
 	}
 	if config.Load == nil {
 		config.Load = func() int64 { return 0 }
@@ -111,33 +88,16 @@ func NewController(config ControllerConfig) (*Controller, error) {
 	}
 	config.Registration.ServicePorts = slices.Clone(config.Registration.ServicePorts)
 	c := &Controller{
-		client: config.Client, routingTable: config.RoutingTable, registration: config.Registration,
+		client: config.Client, registration: config.Registration,
 		renewalInterval: config.RenewalInterval, retryInterval: config.RetryInterval,
-		routingWait: config.RoutingWait.String(), load: config.Load, now: config.Now, report: config.Report,
+		load: config.Load, now: config.Now, report: config.Report,
 		observer: config.Observer, leaseEstablished: config.LeaseEstablished,
-		servingChanged: make(chan struct{}, 1), publicPolicies: make(map[string]*publicRunPolicy),
 	}
-	c.publicRunPrepared = c.installedPublicPolicy
 	return c, nil
 }
 
 func (c *Controller) Run(ctx context.Context) error {
-	// policy work stops at drain; lease renewal and audit live until shutdown.
-	policyCtx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
-	c.mu.Lock()
-	c.policyCancel, c.policyDone = cancel, done
-	if c.lease.Draining {
-		cancel()
-	}
-	c.mu.Unlock()
-	go func() {
-		defer close(done)
-		_ = c.publicPolicyLoop(policyCtx)
-	}()
 	err := runUntilEitherStops(ctx, c.run, c.watchLease)
-	cancel()
-	<-done
 	c.clearLease()
 	return err
 }
@@ -153,7 +113,7 @@ func runUntilEitherStops(ctx context.Context, first, second func(context.Context
 	err := <-results
 	cancel()
 	err = errors.Join(err, <-results)
-	if ctx.Err() != nil {
+	if ctx.Err() != nil && failure.Only(err, ctx.Err()) {
 		return nil
 	}
 	return err
@@ -212,13 +172,7 @@ func (c *Controller) runOnce(ctx context.Context) error {
 	if err := c.register(ctx); err != nil {
 		return err
 	}
-	if err := c.loadSnapshot(ctx); err != nil {
-		return err
-	}
-	return runUntilEitherStops(ctx,
-		c.renewLoop,
-		c.routingLoop,
-	)
+	return c.renewLoop(ctx)
 }
 
 func (c *Controller) register(ctx context.Context) (retErr error) {
@@ -237,147 +191,34 @@ func (c *Controller) register(ctx context.Context) (retErr error) {
 func (c *Controller) renewLoop(ctx context.Context) error {
 	periodic := time.NewTimer(c.renewalInterval)
 	defer periodic.Stop()
-	acknowledged := c.Lease().RoutingTableRevision
-	var pending []publicRunObservation
 	for {
-		if ctx.Err() != nil {
+		select {
+		case <-ctx.Done():
 			return nil
-		}
-		if len(pending) == 0 {
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-periodic.C:
-			case <-c.servingChanged:
-			}
-			pending = c.publicRunObservations(c.Lease(), c.now())
+		case <-periodic.C:
 		}
 		lease := c.Lease()
-		revision, initialized := c.routingTable.Revision()
-		if !initialized {
-			return ErrRoutingTableNotInitialized
-		}
 		connections := c.load()
 		if connections < 0 {
 			return errors.New("ingress: reported connection count cannot be negative")
 		}
 		started := time.Now()
-		// each page renews the lease. finish this snapshot before consuming a
-		// coalesced installation notification so churn cannot starve its tail.
-		// recheck bounded pages without rescanning or sorting the whole table.
-		end := min(1000, len(pending))
-		observations := c.publicRunObservationPage(pending[:end], lease, c.now())
-		pending = pending[end:]
 		lease, err := c.client.RenewIngress(ctx, c.registration.IngressId, ingressv1.IngressRenewal{
 			IngressId: c.registration.IngressId, IngressRunId: c.registration.IngressRunId,
 			IngressLeaseRevision: lease.IngressLeaseRevision, ReportedConnections: connections,
-			RoutingTableRevision: revision,
-			PreparedPublicRuns:   &observations,
 		})
 		c.observeOperation(ctx, observability.OpIngressRenewLease, err, started)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
-			log.Printf("ingress routing acknowledgment failed ingress_id=%s ingress_run_id=%s applied_revision=%d acknowledged_revision=%d",
-				c.registration.IngressId, c.registration.IngressRunId, revision, acknowledged)
 			return c.responseError("renew ingress", err)
 		}
 		if err := c.setLease(lease); err != nil {
 			return err
 		}
-		acknowledged = revision
-		c.mu.Lock()
-		c.routingStatus.AcknowledgedRevision = revision
-		c.routingStatus.LastAcknowledged = c.now()
-		c.mu.Unlock()
 		periodic.Reset(c.renewalInterval)
 	}
-}
-
-func (c *Controller) routingLoop(ctx context.Context) error {
-	for {
-		revision, initialized := c.routingTable.Revision()
-		if !initialized {
-			return ErrRoutingTableNotInitialized
-		}
-		limit, wait := routingTablePageSize, c.routingWait
-		lease := c.Lease()
-		started := time.Now()
-		page, err := c.client.GetIngressRoutingTableEvents(
-			ctx,
-			c.registration.IngressId,
-			ingressv1.GetIngressRoutingTableEventsParams{
-				IngressRunId: c.registration.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision,
-				After: revision, Limit: &limit, Wait: &wait,
-			},
-		)
-		c.observeOperation(ctx, observability.OpIngressFetchEvents, err, started)
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			var problem *serverhttp.ProblemError
-			if errors.As(err, &problem) && problem.Status == http.StatusConflict &&
-				problem.Code == string(ingressv1.RoutingTableResnapshotRequired) {
-				c.mu.Lock()
-				c.routingStatus.Resnapshots++
-				c.routingStatus.CaughtUp = false
-				c.mu.Unlock()
-				c.markRoutingTableCurrent(false)
-				if err := c.loadSnapshot(ctx); err != nil {
-					return err
-				}
-				continue
-			}
-			c.routingUpdateFailed()
-			return c.responseError("read ingress routing table", err)
-		}
-		started = time.Now()
-		err = c.routingTable.ApplyPage(revision, page)
-		c.observeOperation(ctx, observability.OpIngressApplyEvents, err, started)
-		if err != nil {
-			c.routingUpdateFailed()
-			return fmt.Errorf("ingress: apply routing-table page: %w", err)
-		}
-		c.routingChecked(page.ThroughRevision, page.NextRevision, !page.More)
-		for _, event := range page.Events {
-			if event.Kind == ingressv1.PublicUrlUpsert && event.Entry.PublishRunReadyAt == nil {
-				c.ServingStateChanged()
-				break
-			}
-		}
-	}
-}
-
-func (c *Controller) loadSnapshot(ctx context.Context) error {
-	lease := c.Lease()
-	started := time.Now()
-	snapshot, err := c.client.GetIngressRoutingTableSnapshot(
-		ctx,
-		c.registration.IngressId,
-		ingressv1.GetIngressRoutingTableSnapshotParams{
-			IngressRunId: c.registration.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision,
-		},
-	)
-	c.observeOperation(ctx, observability.OpIngressFetchSnapshot, err, started)
-	if err != nil {
-		if ctx.Err() == nil {
-			c.routingUpdateFailed()
-		}
-		return c.responseError("read ingress routing-table snapshot", err)
-	}
-	started = time.Now()
-	err = c.routingTable.ApplySnapshot(snapshot)
-	c.observeOperation(ctx, observability.OpIngressApplySnapshot, err, started)
-	if err != nil {
-		c.routingUpdateFailed()
-		return fmt.Errorf("ingress: apply routing-table snapshot: %w", err)
-	}
-	c.routingChecked(snapshot.ThroughRevision, snapshot.ThroughRevision, false)
-	c.markRoutingTableCurrent(true)
-	c.ServingStateChanged()
-	return nil
 }
 
 func (c *Controller) observeOperation(ctx context.Context, operation observability.ServerOperation, err error, started time.Time) {
@@ -386,69 +227,12 @@ func (c *Controller) observeOperation(ctx context.Context, operation observabili
 	}
 }
 
-func (c *Controller) routingChecked(latest, applied int64, caughtUp bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.routingStatus.Initialized = true
-	c.routingStatus.LastSuccessfulCheck = c.now()
-	c.routingStatus.LatestRevision = max(c.routingStatus.LatestRevision, latest)
-	c.routingStatus.AppliedRevision = applied
-	c.routingStatus.CaughtUp = caughtUp && applied == c.routingStatus.LatestRevision
-	if c.routingStatus.CaughtUp {
-		c.routingStatus.LastCaughtUp = c.routingStatus.LastSuccessfulCheck
-	}
-}
-
-func (c *Controller) routingUpdateFailed() {
-	c.mu.Lock()
-	c.routingStatus.UpdateFailures++
-	c.routingStatus.CaughtUp = false
-	c.mu.Unlock()
-}
-
-// RoutingStatus reads only local controller state, even during a blocked fetch.
-// lease renewal never advances routing freshness or the observed revision.
-func (c *Controller) RoutingStatus() observability.IngressRoutingSnapshot {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.routingStatus
-}
-
 func (c *Controller) Ready(now time.Time) bool {
 	c.mu.RLock()
 	lease := c.lease
-	routingTableCurrent := c.routingTableCurrent
 	lost := c.leaseLost
 	c.mu.RUnlock()
-	return !lost && routingTableCurrent && lease.IngressLeaseRevision > 0 && !lease.Draining &&
-		lease.LeaseExpiresAt.After(now) && c.publicServingJoined(lease, now)
-}
-
-func (c *Controller) Lookup(host string, now time.Time) ([]ingressv1.IngressRoutingTableEntry, LookupReason) {
-	if !c.Ready(now) {
-		return nil, LookupIngressUnavailable
-	}
-	entries, reason := c.routingTable.Lookup(host, now)
-	if reason != LookupCurrent {
-		return nil, reason
-	}
-	process := c.Lease()
-	prepared := entries[:0]
-	for _, entry := range entries {
-		c.mu.RLock()
-		policy := c.publicPolicies[entry.PublishRunId]
-		c.mu.RUnlock()
-		if policy != nil && policy.preparationOnly(entry) {
-			continue
-		}
-		if _, ok := c.publicRunInstalled(entry, process, now); ok {
-			prepared = append(prepared, entry)
-		}
-	}
-	if len(prepared) == 0 {
-		return nil, LookupNoBackends
-	}
-	return prepared, LookupCurrent
+	return !lost && lease.IngressLeaseRevision > 0 && !lease.Draining && lease.LeaseExpiresAt.After(now)
 }
 
 func (c *Controller) Lease() ingressv1.IngressLease {
@@ -464,16 +248,7 @@ func (c *Controller) Drain(ctx context.Context, deadline time.Time) error {
 	}
 	c.mu.Lock()
 	c.lease.Draining = true
-	cancel, done := c.policyCancel, c.policyDone
 	c.mu.Unlock()
-	if cancel != nil {
-		cancel()
-		select {
-		case <-done:
-		case <-ctx.Done():
-			return context.Cause(ctx)
-		}
-	}
 	updated, err := c.client.DrainIngress(ctx, c.registration.IngressId, ingressv1.IngressDrainRequest{
 		IngressId: c.registration.IngressId, IngressRunId: c.registration.IngressRunId,
 		IngressLeaseRevision: lease.IngressLeaseRevision, Deadline: deadline,
@@ -486,32 +261,33 @@ func (c *Controller) Drain(ctx context.Context, deadline time.Time) error {
 
 func (c *Controller) ObserveRecovery(
 	ctx context.Context,
-	publicURLID string,
-	publishRunNumber, recoveryEpisodeID uint64,
+	run ingressv1.ServiceRunReference,
+	visitor string,
+	recoveryEpisodeID uint64,
 	observedAt time.Time,
-) (ingressv1.PublicURLRecoveryObservation, error) {
-	if publicURLID == "" || publishRunNumber == 0 || publishRunNumber > math.MaxInt64 || recoveryEpisodeID == 0 ||
+) (ingressv1.ServiceRecoveryObservation, error) {
+	if run.ServiceId == "" || run.ServiceRunId == "" || run.RunNumber <= 0 || visitor == "" || recoveryEpisodeID == 0 ||
 		recoveryEpisodeID > math.MaxInt64 || observedAt.IsZero() {
-		return ingressv1.PublicURLRecoveryObservation{}, errors.New("ingress: route recovery observation is invalid")
+		return ingressv1.ServiceRecoveryObservation{}, errors.New("ingress: service recovery observation is invalid")
 	}
 	lease := c.Lease()
 	if lease.IngressLeaseRevision <= 0 || !lease.LeaseExpiresAt.After(c.now()) {
-		return ingressv1.PublicURLRecoveryObservation{}, errors.New("ingress: control lease is unavailable")
+		return ingressv1.ServiceRecoveryObservation{}, errors.New("ingress: control lease is unavailable")
 	}
-	observation, err := c.client.ObservePublicURLRecovery(
-		ctx, c.registration.IngressId, int64(recoveryEpisodeID), ingressv1.PublicURLRecoveryObservationRequest{
+	observation, err := c.client.ObserveServiceRecovery(
+		ctx, c.registration.IngressId, int64(recoveryEpisodeID), ingressv1.ServiceRecoveryObservationRequest{
 			IngressId: c.registration.IngressId, IngressRunId: c.registration.IngressRunId,
-			IngressLeaseRevision: lease.IngressLeaseRevision, PublicUrlId: publicURLID,
-			PublishRunNumber: int64(publishRunNumber), ObservedAt: observedAt,
+			IngressLeaseRevision: lease.IngressLeaseRevision, ServiceId: run.ServiceId, ServiceRunId: run.ServiceRunId,
+			RunNumber: run.RunNumber, VisitorConnectionId: visitor, ObservedAt: observedAt,
 		},
 	)
 	if err != nil {
-		return ingressv1.PublicURLRecoveryObservation{}, ingressControlError("observe route recovery", err)
+		return ingressv1.ServiceRecoveryObservation{}, ingressControlError("observe service recovery", err)
 	}
-	if observation.RecoveryEpisodeId != int64(recoveryEpisodeID) || observation.PublicUrlId != publicURLID ||
-		observation.PublishRunNumber != int64(publishRunNumber) || observation.OpenedAt.IsZero() ||
+	if observation.RecoveryEpisodeId != int64(recoveryEpisodeID) || observation.ServiceId != run.ServiceId || observation.ServiceRunId != run.ServiceRunId ||
+		observation.RunNumber != run.RunNumber || observation.OpenedAt.IsZero() ||
 		observation.ObservedAt.IsZero() || observation.ObservedSeconds < 0 {
-		return ingressv1.PublicURLRecoveryObservation{}, errors.New("ingress: control returned an invalid route recovery observation")
+		return ingressv1.ServiceRecoveryObservation{}, errors.New("ingress: control returned an invalid service recovery observation")
 	}
 	return observation, nil
 }
@@ -551,15 +327,6 @@ func (c *Controller) setLease(lease ingressv1.IngressLease) error {
 func (c *Controller) clearLease() {
 	c.mu.Lock()
 	c.lease = ingressv1.IngressLease{}
-	c.routingTableCurrent = false
-	c.servingJoined = false
-	c.routingStatus.CaughtUp = false
-	c.mu.Unlock()
-}
-
-func (c *Controller) markRoutingTableCurrent(current bool) {
-	c.mu.Lock()
-	c.routingTableCurrent = current
 	c.mu.Unlock()
 }
 
@@ -654,7 +421,7 @@ func validateIngressLease(
 		lease.ProtocolVersion != registration.ProtocolVersion || lease.ConnectionCapacity != registration.ConnectionCapacity {
 		return errors.New("ingress: control lease does not match registration")
 	}
-	if lease.IngressLeaseRevision <= 0 || lease.RoutingTableRevision < 0 || lease.RegisteredAt.IsZero() ||
+	if lease.IngressLeaseRevision <= 0 || lease.RegisteredAt.IsZero() ||
 		lease.RenewedAt.Before(lease.RegisteredAt) || !lease.LeaseExpiresAt.After(now) ||
 		lease.Draining != (lease.DrainDeadline != nil) {
 		return errors.New("ingress: control returned an invalid ingress lease")

@@ -5,165 +5,206 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"slices"
+	"reflect"
 
-	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func protocolForService(service config.Service) controlv1.PublicURLServiceProtocol {
-	return controlv1.PublicURLServiceProtocol(config.Protocol(service))
-}
-
-func ProjectPublisherScope(server, publicURLID string) string {
-	digest := sha256.Sum256([]byte(server + "\x00" + publicURLID))
-	return "project-publisher:" + hex.EncodeToString(digest[:])
-}
-
-// reserveConfiguredURL uses team authority only to create or edit saved state.
-// HTTP app and alias targets stay private to the connector owner.
-func reserveConfiguredURL(ctx context.Context, services publisherServices, cfg publisher.Config) (controlv1.PublicURL, error) {
-	if cfg.Purpose != controlv1.App && cfg.Purpose != controlv1.Alias || cfg.Ephemeral || cfg.ServiceProtocol != controlv1.Http {
-		return controlv1.PublicURL{}, publisherCLIError("project publications require a saved HTTP app or alias public URL")
+// reserveConfiguredService uses management authority for one exact saved HTTP
+// service. the declaration is ordinary service intent, not a runtime config or
+// a synthetic project binding. declaration is complete desired intent. an
+// optional selector rebuilds it from current configuration for a partial update;
+// nil retains it unchanged. selection never performs remote setup. this operation
+// owns scope checks, current reads, declaration CAS, and recovery on one ID.
+func reserveConfiguredService(ctx context.Context, services publisherServices, declaration controlv1.ProjectServiceConfiguration, selectIntent ...func(controlv1.Service, *controlv1.ProjectServiceConfiguration) (*controlv1.ProjectServiceConfiguration, error)) (_ controlv1.Service, result error) {
+	if services.authenticated == nil || services.routes == nil || services.state == nil || services.ephemeral ||
+		services.teamID == "" || services.domainID == "" || services.hostname == "" ||
+		len(selectIntent) > 1 || len(selectIntent) == 1 && selectIntent[0] == nil {
+		return controlv1.Service{}, publisheridentity.ErrScope
 	}
-	// an unchanged saved URL can be read while its publisher holds the
-	// hostname lock. only creation and edits need exclusive access.
-	publicURL, err := services.routes.GetPublicURLByHostname(ctx, services.teamID, cfg.Hostname)
-	if err == nil {
-		prefixes, checkErr := checkedConfiguredURL(publicURL, services, cfg)
-		if checkErr != nil {
-			return controlv1.PublicURL{}, checkErr
+	digest := sha256.Sum256([]byte(services.authenticated.ServerEndpoint + "\x00" + services.teamID + "\x00" + services.domainID + "\x00" + services.hostname))
+	name := "service-" + hex.EncodeToString(digest[:12])
+	normalize := func(desired controlv1.ProjectServiceConfiguration) (controlv1.ProjectServiceConfiguration, *targettrust.Snapshot, error) {
+		if desired.Protocol != nil && *desired.Protocol != controlv1.ServiceProtocolHTTP ||
+			desired.Ephemeral != nil && *desired.Ephemeral ||
+			desired.Hostname != nil && *desired.Hostname != services.hostname ||
+			desired.DomainId != nil && *desired.DomainId != services.domainID {
+			return desired, nil, publisheridentity.ErrScope
 		}
-		if publicURL.Target == "" && configuredURLAccessMatches(publicURL, prefixes, cfg) {
-			return publicURL, nil
+		desired.Name, desired.DomainId, desired.Hostname = &name, &services.domainID, &services.hostname
+		desired.Protocol, desired.Ephemeral, desired.Public = new(controlv1.ServiceProtocolHTTP), new(false), new(true)
+		var trust *targettrust.Snapshot
+		if tls := desired.TargetTls; tls != nil {
+			pem := ""
+			if tls.CaPem != nil {
+				pem = *tls.CaPem
+			}
+			captured, err := targettrust.NewDeclaration(tls.Hostname, []byte(pem))
+			if err != nil {
+				return desired, nil, err
+			}
+			if tls.Digest != "" && tls.Digest != captured.Digest {
+				return desired, nil, publisheridentity.ErrScope
+			}
+			trust, err = captured.Snapshot()
+			if err != nil {
+				return desired, nil, err
+			}
 		}
-	} else if !errors.Is(err, clientcontrol.ErrNotFound) {
-		return publicURL, err
+		return desired, trust, nil
 	}
-	lock, err := clientstate.LockHostnameContext(ctx, services.state, cfg.Hostname)
+	declaration, trust, err := normalize(declaration)
 	if err != nil {
-		return controlv1.PublicURL{}, err
+		return controlv1.Service{}, err
 	}
-	defer lock.Close()
-	publicURL, err = services.routes.GetPublicURLByHostname(ctx, services.teamID, cfg.Hostname)
-	if errors.Is(err, clientcontrol.ErrNotFound) {
-		key, keyErr := opaqueid.New(opaqueid.IdempotencyPrefix)
-		if keyErr != nil {
-			return publicURL, keyErr
+	check := func(saved controlv1.Service) error {
+		if !opaqueid.Valid(saved.Id, opaqueid.ServicePrefix) || saved.TeamId != services.teamID || saved.Name != name || saved.DomainId == nil || *saved.DomainId != services.domainID ||
+			!saved.Enabled || saved.Ephemeral || saved.Source != nil || saved.Endpoint == nil || saved.Protocol != controlv1.ServiceProtocolHTTP ||
+			saved.Placement != nil && saved.Placement.WorktreeKey != nil ||
+			saved.Endpoint.Hostname != services.hostname || saved.Endpoint.Port != 443 || !saved.Endpoint.Public {
+			return failure.Wrap("reserve project service", failure.ServerResponseInvalid, errors.New("saved service differs from the exact selected endpoint"))
 		}
-		protocol := cfg.ServiceProtocol
-		body := controlv1.CreatePublicURLRequest{TeamId: services.teamID, DomainId: services.domainID, CanonicalHostname: cfg.Hostname, PublicUrlScope: services.publicURLScope, Purpose: cfg.Purpose, ServiceProtocol: &protocol, AllowedIpPrefixes: &cfg.AllowedIPPrefixes}
-		body.RequirePostQuantum = cfg.RequirePostQuantum
-		if cfg.AccessMode != "" {
-			mode := cfg.AccessMode
-			body.AccessMode = &mode
+		return nil
+	}
+	approved := func(saved controlv1.Service, desired controlv1.ProjectServiceConfiguration, trust *targettrust.Snapshot) (controlv1.Service, error) {
+		if err := check(saved); err != nil {
+			return controlv1.Service{}, err
 		}
-		if services.publicURLScope == controlv1.Member && services.membershipID != "" {
-			body.MembershipId = &services.membershipID
+		if err := publisheridentity.MatchServiceDeclaration(saved, "http", trust); err != nil {
+			return controlv1.Service{}, err
 		}
-		publicURL, err = services.routes.CreatePublicURL(ctx, body, key)
+		if desired.RequirePostQuantum != nil && saved.RequirePostQuantum != *desired.RequirePostQuantum {
+			return controlv1.Service{}, publisheridentity.ErrScope
+		}
+		return saved, nil
 	}
-	if err != nil {
-		return publicURL, err
-	}
-	prefixes, err := checkedConfiguredURL(publicURL, services, cfg)
-	if err != nil {
-		return controlv1.PublicURL{}, err
-	}
-	if cfg.AccessMode != "" && (publicURL.AccessMode != cfg.AccessMode || !slices.Equal(prefixes, cfg.AllowedIPPrefixes)) {
-		publicURL, err = services.routes.ReplaceVisitorAccess(ctx, publicURL.Id, controlv1.ReplaceVisitorAccessRequest{
-			Mode: cfg.AccessMode, Ip: append([]string{}, cfg.AllowedIPPrefixes...), ExpectedRevision: publicURL.MutationRevision,
-		})
+	lookup := func() (controlv1.Service, error) {
+		inventory, err := services.routes.ListServices(ctx, services.teamID)
 		if err != nil {
-			return controlv1.PublicURL{}, err
+			return controlv1.Service{}, err
 		}
-		prefixes = cfg.AllowedIPPrefixes
-	}
-	if publicURL.Target != "" || cfg.RequirePostQuantum != nil && *cfg.RequirePostQuantum != publicURL.RequirePostQuantum || cfg.AccessMode == "" && cfg.AllowedIPPrefixes != nil && !slices.Equal(prefixes, cfg.AllowedIPPrefixes) {
-		if cfg.AccessMode == "" && cfg.AllowedIPPrefixes != nil {
-			prefixes = cfg.AllowedIPPrefixes
+		for _, service := range inventory {
+			if service.Name != name && (service.Endpoint == nil || service.Endpoint.Hostname != services.hostname) {
+				continue
+			}
+			saved, err := services.routes.GetService(ctx, service.Id)
+			if err == nil && saved.Id != service.Id {
+				err = publisheridentity.ErrScope
+			}
+			if err == nil {
+				err = check(saved)
+			}
+			return saved, err
 		}
-		return services.routes.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{AllowedIpPrefixes: new(append([]string{}, prefixes...)), RequirePostQuantum: cfg.RequirePostQuantum, ExpectedMutationRevision: publicURL.MutationRevision})
+		return controlv1.Service{}, clientcontrol.ErrNotFound
 	}
-	return publicURL, nil
+	current, err := lookup()
+	if failure.Only(err, clientcontrol.ErrNotFound) {
+		// creation alone needs the local hostname lock. configured declarations
+		// are compared and replaced by control, including unchanged live retries.
+		lock, lockErr := clientstate.LockHostnameContext(ctx, services.state, services.hostname)
+		if lockErr != nil {
+			return controlv1.Service{}, lockErr
+		}
+		defer func() { result = errors.Join(result, lock.Close()) }()
+		current, err = lookup()
+		if failure.Only(err, clientcontrol.ErrNotFound) {
+			current, err = services.routes.CreateServiceAt(ctx, services.teamID, name, "configured-service:"+hex.EncodeToString(digest[:]),
+				&controlv1.ServicePlacement{DomainId: &services.domainID, Hostname: &services.hostname},
+				controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP, TargetTls: publisheridentity.ServiceTargetTLS(trust)}, &declaration)
+			if err == nil {
+				return approved(current, declaration, trust)
+			}
+			if !retryServiceReservation(ctx, err) {
+				return controlv1.Service{}, err
+			}
+			// a conflict or lost reply can mean creation committed. recover the
+			// exact saved service before doing anything else; never replace it.
+			recovered, readErr := lookup()
+			if readErr != nil {
+				return controlv1.Service{}, errors.Join(err, readErr)
+			}
+			current, err = recovered, nil
+		}
+	}
+	if err != nil {
+		return controlv1.Service{}, err
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		desired, desiredTrust := declaration, trust
+		var configurationDigest *string
+		if len(selectIntent) != 0 {
+			configured, digest, readErr := services.routes.GetServiceConfiguration(ctx, current.Id)
+			if readErr != nil {
+				return controlv1.Service{}, readErr
+			}
+			selected, selectErr := selectIntent[0](current, configured)
+			if selectErr != nil {
+				return controlv1.Service{}, selectErr
+			}
+			if selected == nil {
+				return current, nil
+			}
+			desired, desiredTrust, selectErr = normalize(*selected)
+			if selectErr != nil {
+				return controlv1.Service{}, selectErr
+			}
+			if configured != nil && reflect.DeepEqual(*configured, desired) {
+				return approved(current, desired, desiredTrust)
+			}
+			configurationDigest = &digest
+		}
+		saved, updateErr := services.routes.ConfigureService(ctx, current.Id, controlv1.UpdateServiceRequest{
+			ExpectedTrustRevision: current.TrustRevision, ExpectedConfigurationDigest: configurationDigest,
+			ExpectedPublisherPool: new(current.PublisherPool),
+			Protocol:              controlv1.ServiceProtocolHTTP, TargetTls: publisheridentity.ServiceTargetTLS(desiredTrust),
+			PublisherPool: current.PublisherPool, Configuration: &desired})
+		if updateErr == nil {
+			if saved.Id != current.Id || saved.PublisherPool != current.PublisherPool {
+				return controlv1.Service{}, publisheridentity.ErrScope
+			}
+			return approved(saved, desired, desiredTrust)
+		}
+		err = updateErr
+		if !retryServiceReservation(ctx, err) {
+			return controlv1.Service{}, err
+		}
+		// control owns declaration equality and no-op policy changes. reread
+		// after conflict or response loss, then retry on the same service ID.
+		selectedID := current.Id
+		current, updateErr = services.routes.GetService(ctx, selectedID)
+		if updateErr == nil && current.Id != selectedID {
+			updateErr = publisheridentity.ErrScope
+		}
+		if updateErr == nil {
+			updateErr = check(current)
+		}
+		if updateErr != nil {
+			return controlv1.Service{}, errors.Join(err, updateErr)
+		}
+	}
+	return controlv1.Service{}, err
 }
 
-func configuredURLAccessMatches(publicURL controlv1.PublicURL, prefixes []string, cfg publisher.Config) bool {
-	if cfg.RequirePostQuantum != nil && *cfg.RequirePostQuantum != publicURL.RequirePostQuantum {
+func retryServiceReservation(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
 		return false
 	}
-	if cfg.AccessMode != "" {
-		return publicURL.AccessMode == cfg.AccessMode && slices.Equal(prefixes, cfg.AllowedIPPrefixes)
-	}
-	return cfg.AllowedIPPrefixes == nil || slices.Equal(prefixes, cfg.AllowedIPPrefixes)
+	reason, _ := failure.ReasonOf(err)
+	return reason == failure.ServerConflict || reason == failure.ServerUnavailable
 }
 
-func checkedConfiguredURL(publicURL controlv1.PublicURL, services publisherServices, cfg publisher.Config) ([]string, error) {
-	if publicURL.TeamId != services.teamID || publicURL.DomainId != services.domainID || publicURL.CanonicalHostname != cfg.Hostname || publicURL.Purpose != cfg.Purpose || publicURL.ServiceProtocol != cfg.ServiceProtocol || publicURL.Ephemeral || publicURL.LifecycleState != controlv1.Enabled || publicURL.PublicUrlScope != services.publicURLScope ||
-		services.publicURLScope == controlv1.Member && (publicURL.MembershipId == nil || *publicURL.MembershipId != services.membershipID) || services.publicURLScope == controlv1.Shared && publicURL.MembershipId != nil {
-		return nil, failure.Wrap("reserve project public URL", failure.ServerResponseInvalid, errors.New("saved public URL differs from the selected service"))
-	}
-	prefixes := []string{}
-	if publicURL.AllowedIpPrefixes != nil {
-		prefixes = *publicURL.AllowedIpPrefixes
-	}
-	return prefixes, nil
-}
-
-func selectNativeProjectPublisher(ctx context.Context, services publisherServices, cfg publisher.Config) (*publisheridentity.Native, error) {
-	publicURL, err := reserveConfiguredURL(ctx, services, cfg)
+func selectNativeProjectPublisher(ctx context.Context, services publisherServices, declaration controlv1.ProjectServiceConfiguration) (*publisheridentity.Native, controlv1.Service, error) {
+	saved, err := reserveConfiguredService(ctx, services, declaration)
 	if err != nil {
-		return nil, err
+		return nil, controlv1.Service{}, err
 	}
-	server := services.authenticated.ServerEndpoint
-	scope := ProjectPublisherScope(server, publicURL.Id)
-	lock, err := services.state.LockPublisherSigningIdentity(ctx, scope)
-	if err != nil {
-		return nil, err
-	}
-	defer lock.Close()
-	control, err := clientcontrol.New(server, nil, "")
-	if err != nil {
-		return nil, err
-	}
-	authority, err := clientauthority.New(server, nil, "")
-	if err != nil {
-		return nil, err
-	}
-	var native *publisheridentity.Native
-	if selected, found, err := services.state.SelectedPublisherIdentity(ctx, "project", scope); err != nil {
-		return nil, err
-	} else if found {
-		native, _, err = publisheridentity.LoadNative(ctx, services.state, publisheridentity.NativeControl{PublicURLControl: control}, authority, selected.ID)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		enrollment, err := services.authenticated.Control.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: publicURL.TeamId, PublicUrlId: &publicURL.Id, Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled, Name: "project-owner"})
-		if err != nil {
-			return nil, err
-		}
-		native, identity, err := publisheridentity.EnrollNative(ctx, services.state, publisheridentity.NativeControl{PublicURLControl: control}, authority, enrollment.EnrollmentKey)
-		if err != nil {
-			return nil, err
-		}
-		if err := services.state.SelectPublisherIdentity(ctx, "project", scope, identity.ClientId); err != nil {
-			return nil, err
-		}
-		if err := native.SelectPublicURL(publicURL); err != nil {
-			return nil, err
-		}
-		return native, nil
-	}
-	if err := native.SelectPublicURL(publicURL); err != nil {
-		return nil, err
-	}
-	return native, nil
+	native, _, err := publisheridentity.EnsureServiceOwner(ctx, services.state, services.authenticated.Control, services.authenticated.Authority, saved)
+	return native, saved, err
 }

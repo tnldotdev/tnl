@@ -37,7 +37,7 @@ func serviceReleaseProject(t *testing.T, protocol string, automation bool) (*Dat
 	return d, now, r, applied, service
 }
 
-func setReleaseProjectExposure(t *testing.T, d *Database, r *ApplyProjectConfigurationRequest, applied *AppliedProjectConfiguration, public bool) {
+func setReleaseProjectExposure(t *testing.T, d *Database, r *ApplyProjectConfigurationRequest, applied *AppliedProjectConfiguration, public bool) ServiceRecord {
 	t.Helper()
 	r.ExpectedRevision = applied.Revision
 	binding := r.Configuration.Services["app"]
@@ -48,6 +48,11 @@ func setReleaseProjectExposure(t *testing.T, d *Database, r *ApplyProjectConfigu
 	if err != nil {
 		t.Fatal(err)
 	}
+	service, err := d.GetService(t.Context(), applied.Services[0].ServiceID, r.ActorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service
 }
 
 func serviceReleasePublisher(t *testing.T, d *Database, r ApplyProjectConfigurationRequest, now time.Time) PublisherIdentity {
@@ -68,7 +73,7 @@ func TestIntegrationServiceEndpointReleasePreservesServiceAndHistoricalClaims(t 
 			if _, err := d.ReleaseServiceEndpoint(ctx, service.ID, r.ActorID, service.EndpointRevision, service.Endpoint.Port, now); !errors.Is(err, ErrServiceEndpointPublic) {
 				t.Fatal("release silently disabled exposure", err)
 			}
-			setReleaseProjectExposure(t, d, &r, &applied, false)
+			service = setReleaseProjectExposure(t, d, &r, &applied, false)
 			publisher := serviceReleasePublisher(t, d, r, now)
 			prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "before-release", now, ServiceRunRequest{Metadata: service.ServiceMetadata})
 			if err != nil {
@@ -184,7 +189,7 @@ func TestIntegrationLocalServiceEndpointReleaseRetainsCapturedIdentity(t *testin
 
 func TestIntegrationServiceEndpointReleaseRequiresSettledDNS(t *testing.T) {
 	d, now, r, applied, service := serviceReleaseProject(t, "postgres", true)
-	setReleaseProjectExposure(t, d, &r, &applied, false)
+	service = setReleaseProjectExposure(t, d, &r, &applied, false)
 	release := func() error {
 		_, err := d.ReleaseServiceEndpoint(t.Context(), service.ID, r.ActorID, service.EndpointRevision, service.Endpoint.Port, now)
 		return err
@@ -199,21 +204,21 @@ func TestIntegrationServiceEndpointReleaseRequiresSettledDNS(t *testing.T) {
 	if err := release(); !errors.Is(err, ErrServiceEndpointDNSPending) {
 		t.Fatal("in-flight DNS was treated as a completed receipt", err)
 	}
-	work.State, work.AvailableAt = PublicURLDNSPublished, time.Time{}
+	work.State, work.AvailableAt = ServiceEndpointDNSPublished, time.Time{}
 	if _, err := d.SaveServiceEndpointDNSWork(t.Context(), work, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := release(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.SaveServiceEndpointDNSWork(t.Context(), work, now); !errors.Is(err, ErrDNSPublicURLWorkStale) {
+	if _, err := d.SaveServiceEndpointDNSWork(t.Context(), work, now); !errors.Is(err, ErrServiceEndpointDNSWorkStale) {
 		t.Fatal("old worker rewrote the release receipt", err)
 	}
 }
 
 func TestIntegrationServiceEndpointReleaseQuarantineTracksLateIssuance(t *testing.T) {
 	d, now, r, applied, service := serviceReleaseProject(t, "postgres", false)
-	setReleaseProjectExposure(t, d, &r, &applied, false)
+	service = setReleaseProjectExposure(t, d, &r, &applied, false)
 	ctx := t.Context()
 	publisher := serviceReleasePublisher(t, d, r, now)
 	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "release-issuance", now, ServiceRunRequest{Metadata: service.ServiceMetadata})
@@ -295,7 +300,7 @@ func TestIntegrationServiceEndpointReleaseSerializesWithReenable(t *testing.T) {
 	for _, releaseFirst := range []bool{false, true} {
 		t.Run(map[bool]string{true: "release-first", false: "reenable-first"}[releaseFirst], func(t *testing.T) {
 			d, now, r, applied, service := serviceReleaseProject(t, "postgres", false)
-			setReleaseProjectExposure(t, d, &r, &applied, false)
+			service = setReleaseProjectExposure(t, d, &r, &applied, false)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			workers := newIntegrationWorkers(t, cancel)
@@ -340,7 +345,7 @@ func TestIntegrationServiceEndpointReleaseSerializesWithReenable(t *testing.T) {
 				t.Fatal(err)
 			}
 			releaseErr, enableErr := awaitIntegrationResult(t, ctx, release), awaitIntegrationResult(t, ctx, enable)
-			if enableErr != nil || releaseFirst && releaseErr != nil || !releaseFirst && !errors.Is(releaseErr, ErrServiceEndpointPublic) {
+			if enableErr != nil || releaseFirst && releaseErr != nil || !releaseFirst && !errors.Is(releaseErr, ErrServiceConflict) {
 				t.Fatal("release and enable did not serialize", releaseErr, enableErr)
 			}
 			current, err := d.GetService(ctx, service.ID, r.ActorID)
@@ -353,7 +358,7 @@ func TestIntegrationServiceEndpointReleaseSerializesWithReenable(t *testing.T) {
 
 func TestIntegrationServiceEndpointReleaseRechecksWaitingManager(t *testing.T) {
 	d, now, r, applied, service := serviceReleaseProject(t, "postgres", false)
-	setReleaseProjectExposure(t, d, &r, &applied, false)
+	service = setReleaseProjectExposure(t, d, &r, &applied, false)
 	if _, err := d.pool.Exec(t.Context(), `UPDATE control.teams SET kind='organization' WHERE id=$1`, r.TeamID); err != nil {
 		t.Fatal(err)
 	}

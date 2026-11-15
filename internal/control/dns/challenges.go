@@ -224,7 +224,7 @@ func (m *ChallengeManager) recordForChallenge(ctx context.Context, challenge con
 		ZoneDomain: challenge.CanonicalDomain, TeamID: challenge.TeamID, DomainID: challenge.DomainID,
 		RecordName: "_acme-challenge." + baseIdentifier,
 	}
-	if (challenge.CanonicalDomain == "" || challenge.CanonicalDomain == m.config.ManagedDomain) &&
+	if challenge.CanonicalDomain == m.config.ManagedDomain &&
 		(baseIdentifier == m.config.ManagedDomain || strings.HasSuffix(baseIdentifier, "."+m.config.ManagedDomain)) {
 		record.ZoneID, record.ZoneDomain = m.config.ManagedZoneID, m.config.ManagedDomain
 	} else {

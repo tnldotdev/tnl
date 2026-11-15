@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 )
@@ -28,14 +29,16 @@ type HTTPFrontend interface {
 }
 
 type HTTPTarget struct {
-	Drain     httpstream.Drain
-	Address   string
-	Handler   http.Handler
-	Transport targettransport.Transport
-	connector ConnectorAdmission
-	lifetime  context.Context
-	track     func(net.Conn)
-	enter     func() (func(), bool)
+	Drain         httpstream.Drain
+	Address       string
+	Handler       http.Handler
+	Mounts        []proxy.Mount
+	ResolveTarget func(*http.Request) (address, identity string, err error)
+	Transport     targettransport.Transport
+	connector     ConnectorAdmission
+	lifetime      context.Context
+	track         func(net.Conn) net.Conn
+	enter         func() (func(), bool)
 }
 
 type HTTPVisitor struct{ Frontend HTTPFrontend }
@@ -61,7 +64,10 @@ type ConnectorAdmission interface {
 
 // ConnectorVisitor is supplied by a real, stream-owned service admission after
 // signed possession verification. HTTP request guards do not implement admission.
-type ConnectorVisitor struct{ Admission ConnectorAdmission }
+type ConnectorVisitor struct {
+	Admission ConnectorAdmission
+	HTTPProof ConnectorHTTPProof
+}
 
 func (v ConnectorVisitor) valid() bool                  { return !nilManagedValue(v.Admission) }
 func (ConnectorVisitor) clientAuth() tls.ClientAuthType { return tls.NoClientCert }

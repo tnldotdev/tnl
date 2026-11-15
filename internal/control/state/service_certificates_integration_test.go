@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/netip"
 	"slices"
 	"testing"
 	"time"
@@ -75,7 +76,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 		t.Helper()
 		for _, slot := range active.Connections {
 			lease := leases[slot.RelayServiceID].RelayLeaseIdentity
-			if _, err = d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, active.ServiceID, active.RunID, active.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+			if _, err = d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, active.ServiceID, active.RunID, active.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), lease, now); err != nil {
 				t.Fatal(err)
 			}
 			if _, err = d.ReadyServicePublisherConnection(t.Context(), slot.PublisherConnectionID, active.RunID, active.RunNumber, slot.Revision, lease, now); err != nil {
@@ -292,10 +293,10 @@ func testServiceNamespaceCertificateRetirement(t *testing.T, d *Database, r Appl
 		if !found {
 			break
 		}
-		if work.State != PublicURLDNSRemoving {
+		if work.State != ServiceEndpointDNSRemoving {
 			t.Fatal("retired endpoint did not request DNS removal", work.State)
 		}
-		work.State, work.AvailableAt = PublicURLDNSRemoved, time.Time{}
+		work.State, work.AvailableAt = ServiceEndpointDNSRemoved, time.Time{}
 		if _, err := d.SaveServiceEndpointDNSWork(t.Context(), work, now.Add(2*time.Second)); err != nil {
 			t.Fatal(err)
 		}

@@ -4,19 +4,17 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type previewStoreStub struct {
 	preview controlstate.Preview
-	attach  controlstate.AddPreviewPublicURLRequest
+	attach  controlstate.AddPreviewServiceRequest
 }
 
 func (s *previewStoreStub) ListPreviews(context.Context, string, string, string) (controlstate.PreviewPage, error) {
@@ -24,7 +22,7 @@ func (s *previewStoreStub) ListPreviews(context.Context, string, string, string)
 }
 
 func (s *previewStoreStub) CreatePreview(_ context.Context, teamID, identityID, _ string, _ time.Time) (controlstate.Preview, error) {
-	s.preview = controlstate.Preview{ID: "pv_preview", TeamID: teamID, CreatedByIdentityID: identityID, PublicURLIDs: []string{}, CreatedAt: time.Now()}
+	s.preview = controlstate.Preview{ID: "pv_preview", TeamID: teamID, CreatedByIdentityID: identityID, ServiceIDs: []string{}, CreatedAt: time.Now()}
 	return s.preview, nil
 }
 
@@ -32,9 +30,9 @@ func (s *previewStoreStub) GetPreview(_ context.Context, _ string) (controlstate
 	return s.preview, nil
 }
 
-func (s *previewStoreStub) AddPreviewPublicURL(_ context.Context, request controlstate.AddPreviewPublicURLRequest, _ time.Time) (controlstate.Preview, error) {
+func (s *previewStoreStub) AddPreviewService(_ context.Context, request controlstate.AddPreviewServiceRequest, _ time.Time) (controlstate.Preview, error) {
 	s.attach = request
-	s.preview.PublicURLIDs = []string{request.PublicURLID}
+	s.preview.ServiceIDs = []string{request.ServiceID}
 	return s.preview, nil
 }
 
@@ -72,26 +70,14 @@ func TestPreviewAttachmentAuthorizesTheExistingPublicURL(t *testing.T) {
 	preview := &previewStoreStub{preview: controlstate.Preview{
 		ID: "pv_preview", TeamID: "team_1", CreatedByIdentityID: "identity_1",
 	}}
-	routes := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{
-		ID: "url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
-		CanonicalHostname: "web.example.test", Target: "http://127.0.0.1:3000",
-		PublicURLScope: controlstate.PublicURLScopeMember, MutationRevision: 3,
-		AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")},
-	}}
-	authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{
-		IdentityID: "identity_1", TeamID: "team_1", PolicyRevision: 7,
-		PublicURLMembershipID: "membership_1", DomainID: "domain_1",
-		CanonicalHostname: "web.example.test", PublicURLScope: authorization.PublicURLScopeMember,
-	}}
-	h := &handler{store: routes, previews: preview, authorizer: authorizer}
-	request := httptest.NewRequest(http.MethodPost, "/v1/previews/pv_preview/public-urls", strings.NewReader(`{"public_url_id":"url_1"}`))
+	authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal()}
+	h := &handler{previews: preview, authorizer: authorizer}
+	request := httptest.NewRequest(http.MethodPost, "/v1/previews/pv_preview/services", strings.NewReader(`{"service_id":"svc_`+strings.Repeat("A", 22)+`"}`))
 	request.Header.Set("Authorization", "Bearer access-token")
 	response := httptest.NewRecorder()
-	h.AddPreviewPublicURL(response, request, "pv_preview")
-	if response.Code != http.StatusOK || preview.attach.PreviewID != "pv_preview" || preview.attach.PublicURLID != "url_1" ||
-		preview.attach.IdentityID != "identity_1" || preview.attach.ExpectedMutationRevision != 3 ||
-		len(authorizer.requests) != 1 || authorizer.requests[0].Operation != authorization.OperationPublicURLUpdate ||
-		authorizer.requests[0].PublicURLMembershipID != "membership_1" || authorizer.requests[0].AllowedIPPrefixes[0] != "192.0.2.0/24" {
+	h.AddPreviewService(response, request, "pv_preview")
+	if response.Code != http.StatusOK || preview.attach.PreviewID != "pv_preview" || preview.attach.ServiceID != "svc_"+strings.Repeat("A", 22) ||
+		preview.attach.IdentityID != "identity_1" || preview.attach.TeamID != "team_1" || len(authorizer.requests) != 0 {
 		t.Fatalf("attachment = %+v, authorization = %+v, response = %d %s", preview.attach, authorizer.requests, response.Code, response.Body.String())
 	}
 }

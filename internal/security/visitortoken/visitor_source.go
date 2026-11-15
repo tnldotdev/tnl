@@ -12,15 +12,15 @@ import (
 
 var ErrVisitorSource = errors.New("visitor source proof is unavailable or stale")
 
-// PublicVisitorSourceKey derives a purpose-separated, run-owned key from the
+// ServiceVisitorSourceKey derives a purpose-separated, run-owned key from the
 // stored secret digest. only the exact publisher receives this master key;
 // ingress receives a delegated child key that cannot mint another authority.
-func PublicVisitorSourceKey(secretDigest []byte, run string, number uint64) ([32]byte, error) {
+func ServiceVisitorSourceKey(secretDigest []byte, run string, number uint64) ([32]byte, error) {
 	if len(secretDigest) != sha256.Size || !validText(run, 256) || number == 0 {
 		return [32]byte{}, ErrVisitorSource
 	}
 	mac := hmac.New(sha256.New, secretDigest)
-	mac.Write([]byte("tnl-public-visitor-source-key-v1\x00"))
+	mac.Write([]byte("tnl-service-visitor-source-key-v1\x00"))
 	mac.Write(binary.BigEndian.AppendUint64(nil, number))
 	mac.Write([]byte(run))
 	return [32]byte(mac.Sum(nil)), nil
@@ -35,7 +35,7 @@ func sourceMAC(key [32]byte, domain string, input []byte) []byte {
 }
 
 func visitorSourceChildKey(master [32]byte, authority tunnelv1.VisitorSourceAuthority) [32]byte {
-	return [32]byte(sourceMAC(master, "tnl-public-visitor-source-child-v1", authority.MAC))
+	return [32]byte(sourceMAC(master, "tnl-service-visitor-source-child-v1", authority.MAC))
 }
 
 func IssueVisitorSourceAuthority(master [32]byte, authority tunnelv1.VisitorSourceAuthority, now time.Time) (tunnelv1.VisitorSourceAuthority, [32]byte, error) {
@@ -43,7 +43,7 @@ func IssueVisitorSourceAuthority(master [32]byte, authority tunnelv1.VisitorSour
 	if err != nil || master == ([32]byte{}) || authority.ValidUntil <= now.Unix() || authority.ValidUntil > now.Add(PolicyLifetime).Unix() {
 		return tunnelv1.VisitorSourceAuthority{}, [32]byte{}, ErrVisitorSource
 	}
-	authority.MAC = sourceMAC(master, "tnl-public-visitor-source-authority-v1", input)
+	authority.MAC = sourceMAC(master, "tnl-service-visitor-source-authority-v1", input)
 	return authority, visitorSourceChildKey(master, authority), nil
 }
 
@@ -55,7 +55,7 @@ func SignVisitorSource(key [32]byte, authority tunnelv1.VisitorSourceAuthority, 
 	if err != nil || key == ([32]byte{}) || authority.ValidUntil <= now.Unix() {
 		return tunnelv1.VisitorSourceProof{}, ErrVisitorSource
 	}
-	proof.MAC = sourceMAC(key, "tnl-public-visitor-source-proof-v1", input)
+	proof.MAC = sourceMAC(key, "tnl-service-visitor-source-proof-v1", input)
 	return proof, nil
 }
 
@@ -69,11 +69,11 @@ func VerifyVisitorSource(master [32]byte, proof tunnelv1.VisitorSourceProof, bin
 	input, err := proof.Authority.SigningBytes()
 	if err != nil || master == ([32]byte{}) || policyRevision < 1 || proof.Authority.VisitorPolicyRevision > policyRevision || proof.Authority.ValidUntil <= now.Unix() ||
 		proof.Authority.ValidUntil > now.Add(PolicyLifetime).Unix() ||
-		!hmac.Equal(proof.Authority.MAC, sourceMAC(master, "tnl-public-visitor-source-authority-v1", input)) {
+		!hmac.Equal(proof.Authority.MAC, sourceMAC(master, "tnl-service-visitor-source-authority-v1", input)) {
 		return ErrVisitorSource
 	}
 	input, err = proof.SigningBytes(binding)
-	if err != nil || !hmac.Equal(proof.MAC, sourceMAC(visitorSourceChildKey(master, proof.Authority), "tnl-public-visitor-source-proof-v1", input)) {
+	if err != nil || !hmac.Equal(proof.MAC, sourceMAC(visitorSourceChildKey(master, proof.Authority), "tnl-service-visitor-source-proof-v1", input)) {
 		return ErrVisitorSource
 	}
 	return nil

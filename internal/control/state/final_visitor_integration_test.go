@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
@@ -234,62 +235,47 @@ func TestIntegrationFinalVisitorLiveIPExpiryAndRunBoundary(t *testing.T) {
 	}
 }
 
-func finalBrowserSession(t *testing.T, f *publishRunFixture, auth PublishRunAuthentication, previewID, identityID string) (string, ControlSession) {
+func finalBrowserSession(t *testing.T, f serviceHTTPFixture, previewID, identityID string) (string, ControlSession) {
 	t.Helper()
 	d := f.database
-	tx, err := d.pool.Begin(t.Context())
+	handoff, issued := f.browser(t, previewID, identityID)
+	cookie, err := d.RedeemServiceBrowserHandoff(t.Context(), f.auth(), handoff.Token, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(t.Context())
-	issued, err := d.createControlSession(t.Context(), controlstatedb.New(tx), identityID, time.Hour, 24*time.Hour, f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = tx.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	handoff, err := d.IssueBrowserHandoff(t.Context(), BrowserLoginAttempt{PreviewID: previewID, PublicURLID: auth.PublicURLID, PublishRunID: auth.PublishRunID, ReturnPath: "/settings"}, BrowserAccessSession{IdentityID: identityID, DisplayName: "ignored snapshot", AccessToken: issued.AccessToken.String(), RefreshToken: issued.RefreshToken.String(), AccessExpiresAt: issued.AccessExpiresAt, ExpiresAt: issued.RefreshExpiresAt}, f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cookie, _, _, _, _, err := d.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, _, _, _, err = d.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, f.now); !errors.Is(err, ErrPreviewAccess) {
+	if _, err = d.RedeemServiceBrowserHandoff(t.Context(), f.auth(), handoff.Token, f.now); !errors.Is(err, ErrVisitorSignIn) {
 		t.Fatalf("handoff replay: %v", err)
 	}
-	return cookie, issued
+	return cookie.CookieSecret, issued
 }
 
 func TestIntegrationFinalVisitorBrowserIdentityFeedbackAuthorPolicyAndSessionRevocation(t *testing.T) {
-	f, auth := finalVisitorRun(t, "http")
+	f := newServiceHTTPFixture(t)
+	f.run = f.publish(t, f.service)
+	auth := f.auth()
 	d := f.database
-	owner := f.request.ActingIdentityID
-	preview, err := d.CreatePreview(t.Context(), f.request.TeamID, owner, "final-feedback", f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = d.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{PreviewID: preview.ID, PublicURLID: auth.PublicURLID, TeamID: f.request.TeamID, IdentityID: owner, PolicyRevision: 1, ExpectedMutationRevision: 2}, f.now); err != nil {
-		t.Fatal(err)
-	}
+	owner := f.project.ActorID
+	preview := f.preview(t, "final-feedback", f.service)
 	visitor := finalVisitorIdentity(t, d, f.now, "reviewer@example.test")
-	cookie, issued := finalBrowserSession(t, f, auth, preview.ID, visitor)
-	p, err := d.BrowserAuthorizationForRun(t.Context(), auth, cookie, f.now)
+	cookie, issued := finalBrowserSession(t, f, preview.ID, visitor)
+	p, err := d.ServiceBrowserSession(t.Context(), auth, cookie, false, f.now)
 	if err != nil || p.IdentityID != visitor || p.VisitAllowed {
 		t.Fatalf("identity alone admitted: %+v %v", p, err)
 	}
-	if _, err := d.pool.Exec(t.Context(), `UPDATE control.public_urls SET access_mode='anonymous' WHERE id=$1`, auth.PublicURLID); err != nil {
+	if err := d.CloseServiceRun(t.Context(), auth.Subject.ID, auth.RunID, auth.Token.String(), f.now); err != nil {
 		t.Fatal(err)
 	}
-	ip := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", PublishRunAuthentication: &auth}
+	f.service = f.local(t, "web", &config.HTTPService{Access: &config.Access{Mode: "anonymous"}})
+	f.run = f.publish(t, f.service)
+	auth = f.auth()
+	cookie, issued = finalBrowserSession(t, f, preview.ID, visitor)
+	ip := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", ServiceRun: &auth}
 	report := CreateFeedbackRequest{PreviewID: preview.ID, Service: "web", PagePath: "/", ReportText: "immutable report", AuthorDisplayName: "anonymous name", Anchor: json.RawMessage(`null`), Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`), SourceAtReport: feedbackTestSource(t), IdempotencyKey: "anonymous", Actor: ip}
 	anonymous, err := d.CreateFeedback(t.Context(), auth, report, f.now)
 	if err != nil || anonymous.AuthorVerified {
 		t.Fatal(anonymous, err)
 	}
-	if _, err = d.SetTeamFeedbackPolicy(t.Context(), owner, f.request.TeamID, "signed_in", f.now); err != nil {
+	if _, err = d.SetTeamFeedbackPolicy(t.Context(), owner, f.project.TeamID, "signed_in", f.now); err != nil {
 		t.Fatal(err)
 	}
 	report.IdempotencyKey = "signin-required"
@@ -321,7 +307,7 @@ func TestIntegrationFinalVisitorBrowserIdentityFeedbackAuthorPolicyAndSessionRev
 	if err != nil || original.ReportText != thread.ReportText || original.AuthorIdentityID != thread.AuthorIdentityID {
 		t.Fatal("report changed", err)
 	}
-	if _, err = d.SetTeamFeedbackPolicy(t.Context(), owner, f.request.TeamID, "team_members", f.now); err != nil {
+	if _, err = d.SetTeamFeedbackPolicy(t.Context(), owner, f.project.TeamID, "team_members", f.now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = d.AppendFeedback(t.Context(), AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackReply, Text: "no permission", IdempotencyKey: "team-only", Actor: signed}, f.now); !errors.Is(err, ErrFeedbackAccess) {
@@ -330,7 +316,7 @@ func TestIntegrationFinalVisitorBrowserIdentityFeedbackAuthorPolicyAndSessionRev
 	if err = d.RevokeControlSession(t.Context(), ControlPrincipal{IdentityID: visitor, SessionID: issued.SessionID}, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.BrowserAuthorizationForRun(t.Context(), auth, cookie, f.now); !errors.Is(err, ErrVisitorSignIn) {
+	if _, err = d.ServiceBrowserSession(t.Context(), auth, cookie, false, f.now); !errors.Is(err, ErrVisitorSignIn) {
 		t.Fatalf("revoked current control session admitted: %v", err)
 	}
 	if _, err = d.CreateFeedback(t.Context(), auth, report, f.now); !errors.Is(err, ErrVisitorSignIn) {
@@ -377,74 +363,68 @@ func TestIntegrationFinalVisitorDeviceEnrollmentRevocationAndIdentityBoundary(t 
 }
 
 func TestIntegrationFinalVisitorAdminBrowserHandoffHasIndependentSessionAndFollowsCLIRevocation(t *testing.T) {
-	f, auth := finalVisitorRun(t, "http")
+	f := newServiceHTTPFixture(t)
+	f.run = f.publish(t, f.service)
+	auth := f.auth()
 	d := f.database
 	parent := newOIDCSession(t, d, f.now)
-	handoff, host, err := d.IssueControlBrowserHandoff(t.Context(), parent.AccessToken, parent.RefreshToken, auth.PublicURLID, time.Hour, 24*time.Hour, f.now)
-	if err != nil || host == "" {
+	handoff, err := d.IssueControlBrowserHandoff(t.Context(), parent.AccessToken, parent.RefreshToken, f.service.ID, time.Hour, 24*time.Hour, f.now)
+	if err != nil || handoff.Origin == "" {
 		t.Fatal(err)
 	}
-	cookie, _, _, _, _, err := d.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, f.now)
+	cookie, err := d.RedeemServiceBrowserHandoff(t.Context(), auth, handoff.Token, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := d.BrowserSession(t.Context(), auth.PublicURLID, cookie, f.now)
-	if err != nil || session.AccessToken == parent.AccessToken.String() || session.RefreshToken == parent.RefreshToken.String() {
-		t.Fatal("CLI tokens reused for browser", err)
+	digest, _ := browserDigest(cookie.CookieSecret)
+	var sessionID, keyID string
+	var ciphertext []byte
+	if err := d.pool.QueryRow(t.Context(), `SELECT control_session_id,storage_key_id,refresh_ciphertext FROM control.service_http_browser_sessions WHERE token_digest=$1`, digest).Scan(&sessionID, &keyID, &ciphertext); err != nil {
+		t.Fatal(err)
 	}
-	if permission, err := d.BrowserAuthorizationForRun(t.Context(), auth, cookie, f.now); err != nil || !permission.VisitAllowed {
+	refresh, _, err := d.storageKey.Open(keyID, browserContext(digest), ciphertext)
+	if err != nil || sessionID == parent.SessionID || string(refresh) == parent.RefreshToken.String() {
+		t.Fatal("CLI control session or refresh token reused for browser", err)
+	}
+	if permission, err := d.ServiceBrowserSession(t.Context(), auth, cookie.CookieSecret, false, f.now); err != nil || !permission.VisitAllowed {
 		t.Fatal(permission, err)
 	}
 	if err = d.RevokeControlSession(t.Context(), ControlPrincipal{SessionID: parent.SessionID, IdentityID: parent.Identity.Identity.ID}, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.BrowserAuthorizationForRun(t.Context(), auth, cookie, f.now); !errors.Is(err, ErrVisitorSignIn) {
+	if _, err = d.ServiceBrowserSession(t.Context(), auth, cookie.CookieSecret, false, f.now); !errors.Is(err, ErrVisitorSignIn) {
 		t.Fatal("browser survived parent revocation", err)
 	}
-	if _, _, err = d.IssueControlBrowserHandoff(t.Context(), parent.AccessToken, parent.RefreshToken, auth.PublicURLID, time.Hour, 24*time.Hour, f.now); !errors.Is(err, ErrControlAuthentication) {
+	if _, err = d.IssueControlBrowserHandoff(t.Context(), parent.AccessToken, parent.RefreshToken, f.service.ID, time.Hour, 24*time.Hour, f.now); !errors.Is(err, ErrControlAuthentication) {
 		t.Fatal("revoked CLI created handoff", err)
 	}
 }
 
 func TestIntegrationFinalVisitorHTTPDecisionUsesShareWithoutIPGrant(t *testing.T) {
-	f, auth := finalVisitorRun(t, "http")
+	f := newServiceHTTPFixture(t)
+	f.run = f.publish(t, f.service)
+	auth := f.auth()
 	d := f.database
-	url, err := d.GetPublicURL(t.Context(), f.request.ActingIdentityID, auth.PublicURLID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.ReplaceVisitorAccess(t.Context(), url.ID, f.request.ActingIdentityID, VisitorAccessRestricted, nil, url.MutationRevision, f.now); err != nil {
-		t.Fatal(err)
-	}
 	input := preparedVisitorInput{SourceIP: "192.0.2.9"}
-	if p, err := preparedPublicURLPermission(t.Context(), d, auth, input, f.now); err != nil || p.VisitAllowed || p.IdentityID != "" {
+	if p, err := preparedServiceHTTPPermission(t.Context(), d, auth, input, f.now); err != nil || p.VisitAllowed || p.IdentityID != "" {
 		t.Fatal(p, err)
 	}
-	preview, err := d.CreatePreview(t.Context(), f.request.TeamID, f.request.ActingIdentityID, "visitor-shares", f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = d.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{PreviewID: preview.ID, PublicURLID: auth.PublicURLID, TeamID: f.request.TeamID, IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: 3}, f.now); err != nil {
-		t.Fatal(err)
-	}
+	preview := f.preview(t, "visitor-shares", f.service)
 	secret := bytes.Repeat([]byte{1}, 32)
-	share, err := d.CreateShare(t.Context(), CreateShareRequest{PreviewID: preview.ID, TeamID: f.request.TeamID, ActingIdentityID: f.request.ActingIdentityID, IdempotencyKey: "anonymous", SecretFingerprint: sha256.Sum256(secret), ExpiresAt: f.now.Add(time.Hour), PolicyRevision: 1, PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: auth.PublicURLID, ExpectedMutationRevision: 3}}}, f.now)
+	share := f.share(t, preview.ID, "anonymous", secret, f.service)
+	redemption, err := d.RedeemShare(t.Context(), auth, share.ID, secret, nil, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cookie := bytes.Repeat([]byte{2}, 32)
-	digest := sha256.Sum256(cookie)
-	if _, err = controlstatedb.New(d.pool).InsertShareCookie(t.Context(), controlstatedb.InsertShareCookieParams{TokenDigest: digest[:], PublicURLID: auth.PublicURLID, CreatedAt: timestamptz(f.now), ShareID: share.ID}); err != nil {
-		t.Fatal(err)
-	}
+	cookie, _ := base64.RawURLEncoding.Strict().DecodeString(redemption.CookieSecret)
 	input.ShareID, input.ShareCookieSecret = share.ID, cookie
-	if p, err := preparedPublicURLPermission(t.Context(), d, auth, input, f.now); err != nil || !p.VisitAllowed || p.IdentityID != "" || p.Reason != "anonymous_share" {
+	if p, err := preparedServiceHTTPPermission(t.Context(), d, auth, input, f.now); err != nil || !p.VisitAllowed || p.IdentityID != "" || p.Reason != "anonymous_share" {
 		t.Fatal(p, err)
 	}
-	if _, err = d.RevokeShare(t.Context(), share.ID, f.request.ActingIdentityID, f.now); err != nil {
+	if _, err = d.RevokeShare(t.Context(), share.ID, f.project.ActorID, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if p, err := preparedPublicURLPermission(t.Context(), d, auth, input, f.now); err != nil || p.VisitAllowed {
+	if p, err := preparedServiceHTTPPermission(t.Context(), d, auth, input, f.now); err != nil || p.VisitAllowed {
 		t.Fatal("revoked share admitted", p, err)
 	}
 }
@@ -496,50 +476,54 @@ func TestIntegrationReplaceVisitorAccessChangesLiveRunWithoutIPBypass(t *testing
 }
 
 func TestIntegrationExactURLShareSecretAndCookieAreInterchangeable(t *testing.T) {
-	f, auth := finalVisitorRun(t, "http")
+	f := newServiceHTTPFixture(t)
+	f.run = f.publish(t, f.service)
+	auth := f.auth()
 	d := f.database
 	secret := bytes.Repeat([]byte{7}, 32)
 	digest := sha256.Sum256(secret)
-	var revision int64
-	if err := d.pool.QueryRow(t.Context(), `SELECT mutation_revision FROM control.public_urls WHERE id=$1`, auth.PublicURLID).Scan(&revision); err != nil {
-		t.Fatal(err)
-	}
 	share, err := d.CreateShare(t.Context(), CreateShareRequest{
-		TeamID: f.request.TeamID, ActingIdentityID: f.request.ActingIdentityID,
+		TeamID: f.project.TeamID, ActingIdentityID: f.project.ActorID,
 		IdempotencyKey: "automation", Label: "ci", SecretFingerprint: digest,
-		ExpiresAt: f.now.Add(30 * time.Second), PolicyRevision: f.request.PolicyRevision,
-		PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: auth.PublicURLID, ExpectedMutationRevision: uint64(revision)}},
+		ExpiresAt: f.now.Add(30 * time.Second), ServiceIDs: []string{f.service.ID}, EntryServiceID: f.service.ID,
 	}, f.now)
-	if err != nil || share.Scope != "url" || share.PreviewID != "" || !slices.Equal(share.PublicURLIDs, []string{auth.PublicURLID}) {
+	if err != nil || share.Scope != "service" || share.PreviewID != "" || !slices.Equal(share.ServiceIDs, []string{f.service.ID}) {
 		t.Fatalf("exact URL share: %+v, %v", share, err)
 	}
 	input := preparedVisitorInput{SourceIP: "192.0.2.1", ShareID: share.ID, ShareSecret: secret}
 	check := func(at time.Time, allowed bool) {
 		t.Helper()
-		decision, err := preparedPublicURLPermission(t.Context(), d, auth, input, at)
+		decision, err := preparedServiceHTTPPermission(t.Context(), d, auth, input, at)
 		if err != nil || decision.VisitAllowed != allowed {
 			t.Fatalf("share permission = %+v, want %t: %v", decision, allowed, err)
 		}
 	}
 	check(f.now, true)
-	if permission, err := preparedPublicURLPermission(t.Context(), d, auth, input, f.now); err != nil || permission.ExpiresAt == nil || permission.ExpiresAt.After(share.ExpiresAt) {
+	if permission, err := preparedServiceHTTPPermission(t.Context(), d, auth, input, f.now); err != nil || permission.ExpiresAt == nil || permission.ExpiresAt.After(share.ExpiresAt) {
 		t.Fatalf("HTTP decision outlived its share: %+v %v", permission, err)
 	}
-	cookie := bytes.Repeat([]byte{9}, 32)
-	cookieDigest := sha256.Sum256(cookie)
-	if _, err := controlstatedb.New(d.pool).InsertShareCookie(t.Context(), controlstatedb.InsertShareCookieParams{
-		TokenDigest: cookieDigest[:], PublicURLID: auth.PublicURLID, CreatedAt: timestamptz(f.now), ShareID: share.ID,
-	}); err != nil {
+	redeemed, err := d.RedeemShare(t.Context(), auth, share.ID, secret, nil, f.now)
+	if err != nil {
 		t.Fatal(err)
 	}
+	cookie, _ := base64.RawURLEncoding.Strict().DecodeString(redeemed.CookieSecret)
 	input.ShareSecret, input.ShareCookieSecret = nil, cookie
 	check(f.now, true)
-	if permission, err := preparedPublicURLPermission(t.Context(), d, auth, input, f.now); err != nil || permission.ExpiresAt == nil || permission.ExpiresAt.After(share.ExpiresAt) {
+	if permission, err := preparedServiceHTTPPermission(t.Context(), d, auth, input, f.now); err != nil || permission.ExpiresAt == nil || permission.ExpiresAt.After(share.ExpiresAt) {
 		t.Fatalf("browser cookie decision outlived its share: %+v %v", permission, err)
 	}
-	if _, err := d.ReplaceVisitorAccess(t.Context(), auth.PublicURLID, f.request.ActingIdentityID, VisitorAccessRestricted, []string{"192.0.2.0/24"}, uint64(revision), f.now); err != nil {
+	if err := d.CloseServiceRun(t.Context(), auth.Subject.ID, auth.RunID, auth.Token.String(), f.now); err != nil {
 		t.Fatal(err)
 	}
+	f.service = f.local(t, "web", &config.HTTPService{Access: &config.Access{IP: []string{"192.0.2.0/24"}}})
+	f.run = f.publish(t, f.service)
+	auth = f.auth()
+	check(f.now, false)
+	redeemed, err = d.RedeemShare(t.Context(), auth, share.ID, secret, nil, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.ShareCookieSecret, _ = base64.RawURLEncoding.Strict().DecodeString(redeemed.CookieSecret)
 	input.SourceIP = "198.51.100.9"
 	check(f.now, false)
 	input.SourceIP = "192.0.2.1"
@@ -547,7 +531,7 @@ func TestIntegrationExactURLShareSecretAndCookieAreInterchangeable(t *testing.T)
 	input.ShareID = "shr_other"
 	check(f.now, false)
 	input.ShareID, input.ShareSecret, input.ShareCookieSecret = share.ID, secret, nil
-	if _, err := d.RevokeShare(t.Context(), share.ID, f.request.ActingIdentityID, f.now); err != nil {
+	if _, err := d.RevokeShare(t.Context(), share.ID, f.project.ActorID, f.now); err != nil {
 		t.Fatal(err)
 	}
 	check(f.now, false)

@@ -10,26 +10,26 @@ import (
 	"github.com/tnldotdev/tnl/internal/ingress/clienthello"
 )
 
-func TestPublicURLConnectionClassUsesProcessCapacity(t *testing.T) {
+func TestPublicServiceConnectionClassUsesProcessCapacity(t *testing.T) {
 	for _, limit := range []int{1, 4, 5} {
 		server, _ := startIngress(t, Config{MaxConnections: limit})
 		var releases []func()
 		for range limit {
-			release, rejected := server.admitClass(visitorConnection, "url_one")
+			release, rejected := server.admitClass(visitorConnection)
 			if release == nil {
-				t.Fatalf("first public URL rejected: %s", rejected)
+				t.Fatalf("first service connection rejected: %s", rejected)
 			}
 			releases = append(releases, release)
 		}
-		if release, rejected := server.admitClass(visitorConnection, "url_two"); release != nil || rejected != "public_connections" {
+		if release, rejected := server.admitClass(visitorConnection); release != nil || rejected != "public_connections" {
 			t.Fatalf("exceeded process limit: %s", rejected)
 		}
 		for _, release := range releases {
 			release()
 			release()
 		}
-		if len(server.byPublicURL) != 0 || server.Load() != 0 {
-			t.Fatal("public URL accounting retained closed connections")
+		if server.admitted[visitorConnection] != 0 || server.Load() != 0 {
+			t.Fatal("service accounting retained closed connections")
 		}
 	}
 }

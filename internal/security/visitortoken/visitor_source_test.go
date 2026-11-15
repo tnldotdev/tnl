@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,16 +14,16 @@ import (
 func sourceProofFixture(t *testing.T) ([32]byte, tunnelv1.VisitorSourceProof, tunnelv1.VisitorSourceBinding, time.Time) {
 	t.Helper()
 	now := time.Unix(1_800_000_000, 0)
-	master, err := PublicVisitorSourceKey(bytes.Repeat([]byte{1}, 32), "run", 1)
+	master, err := ServiceVisitorSourceKey(bytes.Repeat([]byte{1}, 32), "srun_"+strings.Repeat("B", 22), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	authority, child, err := IssueVisitorSourceAuthority(master, tunnelv1.VisitorSourceAuthority{PublicURLID: "public-url", PublishRunID: "run", PublishRunNumber: 1,
-		IngressID: "ingress", IngressRunID: "process", IngressLeaseRevision: 2, VisitorPolicyRevision: 3, ValidUntil: now.Add(PolicyLifetime).Unix()}, now)
+	authority, child, err := IssueVisitorSourceAuthority(master, tunnelv1.VisitorSourceAuthority{ServiceID: "svc_" + strings.Repeat("A", 22), ServiceRunID: "srun_" + strings.Repeat("B", 22), RunNumber: 1,
+		IngressID: "ingress", IngressRunID: "ir_" + strings.Repeat("D", 22), IngressLeaseRevision: 2, VisitorPolicyRevision: 3, ValidUntil: now.Add(PolicyLifetime).Unix()}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding := tunnelv1.VisitorSourceBinding{PublicURLID: "public-url", PublishRunID: "run", PublishRunNumber: 1, VisitorID: "visitor",
+	binding := tunnelv1.VisitorSourceBinding{ServiceID: "svc_" + strings.Repeat("A", 22), ServiceRunID: "srun_" + strings.Repeat("B", 22), RunNumber: 1, VisitorConnectionID: "vc_" + strings.Repeat("C", 22),
 		Source: netip.MustParseAddrPort("192.0.2.1:3000"), Destination: netip.MustParseAddrPort("203.0.113.1:443")}
 	proof, err := SignVisitorSource(child, authority, 1, binding, now)
 	if err != nil {
@@ -46,16 +47,22 @@ func TestVisitorSourceProofBindsRunProcessSequenceAndTrustedEndpoints(t *testing
 		func(_ *tunnelv1.VisitorSourceProof, b *tunnelv1.VisitorSourceBinding) {
 			b.Destination = netip.MustParseAddrPort("203.0.113.2:443")
 		},
-		func(_ *tunnelv1.VisitorSourceProof, b *tunnelv1.VisitorSourceBinding) { b.VisitorID = "other-visitor" },
-		func(_ *tunnelv1.VisitorSourceProof, b *tunnelv1.VisitorSourceBinding) { b.PublicURLID = "other-url" },
-		func(_ *tunnelv1.VisitorSourceProof, b *tunnelv1.VisitorSourceBinding) { b.PublishRunID = "other-run" },
-		func(_ *tunnelv1.VisitorSourceProof, b *tunnelv1.VisitorSourceBinding) { b.PublishRunNumber++ },
+		func(_ *tunnelv1.VisitorSourceProof, b *tunnelv1.VisitorSourceBinding) {
+			b.VisitorConnectionID = "vc_" + strings.Repeat("G", 22)
+		},
+		func(_ *tunnelv1.VisitorSourceProof, b *tunnelv1.VisitorSourceBinding) {
+			b.ServiceID = "svc_" + strings.Repeat("E", 22)
+		},
+		func(_ *tunnelv1.VisitorSourceProof, b *tunnelv1.VisitorSourceBinding) {
+			b.ServiceRunID = "srun_" + strings.Repeat("F", 22)
+		},
+		func(_ *tunnelv1.VisitorSourceProof, b *tunnelv1.VisitorSourceBinding) { b.RunNumber++ },
 		func(p *tunnelv1.VisitorSourceProof, _ *tunnelv1.VisitorSourceBinding) { p.Sequence++ },
 		func(p *tunnelv1.VisitorSourceProof, _ *tunnelv1.VisitorSourceBinding) {
 			p.Authority.IngressID = "other-ingress"
 		},
 		func(p *tunnelv1.VisitorSourceProof, _ *tunnelv1.VisitorSourceBinding) {
-			p.Authority.IngressRunID = "restarted"
+			p.Authority.IngressRunID = "ir_" + strings.Repeat("H", 22)
 		},
 		func(p *tunnelv1.VisitorSourceProof, _ *tunnelv1.VisitorSourceBinding) {
 			p.Authority.IngressLeaseRevision++
@@ -90,7 +97,7 @@ func TestVisitorSourceDelegationCannotExtendAuthorityOrBecomeAMaster(t *testing.
 	}
 	child := visitorSourceChildKey(master, proof.Authority)
 	forged := proof.Authority
-	forged.IngressRunID = "restarted"
+	forged.IngressRunID = "ir_" + strings.Repeat("H", 22)
 	authority, wrongChild, err := IssueVisitorSourceAuthority(child, forged, now)
 	if err != nil {
 		t.Fatal(err)
@@ -109,17 +116,17 @@ func TestVisitorSourceDelegationCannotExtendAuthorityOrBecomeAMaster(t *testing.
 
 func TestVisitorSourceKeysArePurposeAndRunBound(t *testing.T) {
 	digest := bytes.Repeat([]byte{1}, 32)
-	first, err := PublicVisitorSourceKey(digest, "run", 1)
+	first, err := ServiceVisitorSourceKey(digest, "srun_"+strings.Repeat("B", 22), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherRun, _ := PublicVisitorSourceKey(digest, "other-run", 1)
-	otherNumber, _ := PublicVisitorSourceKey(digest, "run", 2)
-	otherSecret, _ := PublicVisitorSourceKey(bytes.Repeat([]byte{2}, 32), "run", 1)
+	otherRun, _ := ServiceVisitorSourceKey(digest, "srun_"+strings.Repeat("F", 22), 1)
+	otherNumber, _ := ServiceVisitorSourceKey(digest, "srun_"+strings.Repeat("B", 22), 2)
+	otherSecret, _ := ServiceVisitorSourceKey(bytes.Repeat([]byte{2}, 32), "srun_"+strings.Repeat("B", 22), 1)
 	if first == otherRun || first == otherNumber || first == otherSecret || bytes.Equal(first[:], digest) {
 		t.Fatal("source key derivation lost its purpose or run boundary")
 	}
-	if _, err := PublicVisitorSourceKey(nil, "run", 1); !errors.Is(err, ErrVisitorSource) {
+	if _, err := ServiceVisitorSourceKey(nil, "srun_"+strings.Repeat("B", 22), 1); !errors.Is(err, ErrVisitorSource) {
 		t.Fatal("missing run secret produced a source key", err)
 	}
 }

@@ -465,18 +465,10 @@ func (d *Database) deploymentStatus(ctx context.Context, tx pgx.Tx, row controls
 			continue
 		}
 		service, ok := snapshot.Services[binding.Service]
-		if !ok || !binding.ServiceID.Valid && !binding.PublicURLID.Valid {
+		if !ok || !binding.ServiceID.Valid {
 			return result, ErrProjectConfigurationStale
 		}
 		result.Targets[binding.Service] = deploymentTarget(service)
-		if binding.PublicURLID.Valid {
-			u, err := controlstatedb.New(tx).LockPublicURLForRun(ctx, binding.PublicURLID.String)
-			if err != nil {
-				return result, err
-			}
-			result.Services[binding.Service] = DeploymentService{ID: u.ID, Protocol: "http", TrustRevision: u.MutationRevision, PublicURL: "https://" + u.CanonicalHostname}
-			continue
-		}
 		saved, err := controlstatedb.New(tx).GetService(ctx, binding.ServiceID.String)
 		if err != nil {
 			return result, err

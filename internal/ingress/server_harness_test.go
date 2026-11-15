@@ -8,7 +8,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"errors"
 	"io"
 	"math/big"
 	"net"
@@ -20,7 +19,6 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
-	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 )
 
 const fixtureTimeout = 5 * time.Second
@@ -62,18 +60,9 @@ func startIngress(t *testing.T, config Config, configure ...func(*Server)) (*Ser
 	if config.MaxConnections == 0 {
 		config.MaxConnections = 8
 	}
-	if config.Lookup == nil {
-		config.Lookup = func(string) ([]PublicURL, LookupReason) { return nil, LookupNotFound }
-	}
-	lookup := config.Lookup
-	config.Lookup = func(host string) ([]PublicURL, LookupReason) {
-		candidates, reason := lookup(host)
-		for index := range candidates {
-			if reason == LookupCurrent && candidates[index].AccessMode == "" {
-				candidates[index].AccessMode = "anonymous"
-			}
-		}
-		return candidates, reason
+	if config.Control == nil {
+		fixture, _, _, _ := publicServiceTestConfig(t)
+		config.Control, config.Forwarder, config.CurrentLease = fixture.Control, fixture.Forwarder, fixture.CurrentLease
 	}
 	server, err := New(listener, config)
 	if err != nil {
@@ -135,77 +124,11 @@ func exchangePing(t *testing.T, c *tls.Conn) {
 	_ = c.Close()
 }
 
-func publicURLConfig(backends ...Backend) Config {
-	return Config{Lookup: func(host string) ([]PublicURL, LookupReason) {
-		if host != "route.example" {
-			return nil, LookupNotFound
-		}
-		return []PublicURL{{ID: "public_url_test", PublishRunID: "publish_run_test", PublishRunNumber: 1, RecoveryEpisodeID: 7, Backends: backends, AllowAll: true, AttestSource: testBackendSourceProof}}, LookupCurrent
-	}}
-}
-
-// fake backends parse metadata but do not run publisher authentication. the
-// separated visitor fixtures exercise real source authentication instead.
-func testBackendSourceProof(string, netip.AddrPort, netip.AddrPort) (string, error) {
-	return "fixture-source-proof", nil
-}
-
 type backendResult struct {
 	header                       proxyproto.Header
 	visitorConnectionID, request string
 	err                          error
 }
-type tlsBackend struct {
-	slot       uint8
-	connection net.Conn
-	result     chan backendResult
-	opens      atomic.Int32
-	visitorID  chan string
-}
-
-func newTLSBackend(t *testing.T, protos ...string) *tlsBackend {
-	t.Helper()
-	a, b := net.Pipe()
-	ownIngressConn(t, a)
-	ownIngressConn(t, b)
-	backend := &tlsBackend{connection: a, result: make(chan backendResult, 1), visitorID: make(chan string, 1)}
-	certificate := testCertificate(t, "route.example")
-	ingressWorker(t, func() { _ = a.Close(); _ = b.Close() }, func() error {
-		defer b.Close()
-		header, replay, err := proxyproto.Decode(b)
-		if err != nil {
-			backend.result <- backendResult{err: err}
-			return nil
-		}
-		secured := tls.Server(&testReaderConn{Conn: b, reader: replay}, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12, NextProtos: protos})
-		request := make([]byte, 4)
-		_, err = io.ReadFull(secured, request)
-		if err == nil {
-			_, err = secured.Write([]byte("pong"))
-		}
-		backend.result <- backendResult{header: header, visitorConnectionID: <-backend.visitorID, request: string(request), err: err}
-		return nil
-	})
-	return backend
-}
-func (b *tlsBackend) ConnectionSlot() uint8 { return b.slot }
-
-func (b *tlsBackend) Start(ctx context.Context, id string, pending bool, proxy, initial []byte) (net.Conn, error) {
-	if b.opens.Add(1) != 1 {
-		return nil, errors.New("TLS fixture unexpectedly opened twice")
-	}
-	b.visitorID <- id
-	return startTestBackend(ctx, b.connection, proxy, initial)
-}
-
-func startTestBackend(ctx context.Context, connection net.Conn, proxy, initial []byte) (net.Conn, error) {
-	n, err := writeSetup(ctx, connection, proxy, initial)
-	if err != nil {
-		return nil, &tunnel.OpeningError{Committed: n > 0, VisitorBytes: n, Err: errors.Join(err, connection.Close())}
-	}
-	return connection, nil
-}
-
 type testReaderConn struct {
 	net.Conn
 	reader io.Reader

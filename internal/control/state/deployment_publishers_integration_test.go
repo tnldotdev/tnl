@@ -186,7 +186,7 @@ func TestIntegrationDeploymentHTTPReplicasKeepExactGrantsAfterBootstrapExpiry(t 
 	d, now, _, _ := newPublishRunPrerequisites(t)
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
-	web := ProjectServiceConfiguration{Target: "https://web.internal:8443", TargetTLS: appliedTargetTrust(t, "web.internal"), RequirePostQuantum: new(true),
+	web := ProjectServiceConfiguration{Target: "https://web.internal:8443", Public: new(false), TargetTLS: appliedTargetTrust(t, "web.internal"), RequirePostQuantum: new(true),
 		HTTP:    &config.HTTPService{Access: &config.Access{Mode: "anonymous", IP: []string{"192.0.2.0/24"}}, Limits: &config.WorkLimits{Total: new(7)}},
 		Traffic: &trafficlimits.Selection{Connections: new(4), Rate: new(2), RatePer: new("1m")}}
 	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{
@@ -210,11 +210,16 @@ func TestIntegrationDeploymentHTTPReplicasKeepExactGrantsAfterBootstrapExpiry(t 
 		t.Fatal("replica included app-owned or unapproved listeners")
 	}
 	a, b := first.assignments.Services[0], second.assignments.Services[0]
+	// target TLS is a separate declaration, and duration values are canonical.
+	// public reachability remains control's endpoint fact, not publisher intent.
+	wantTraffic := *web.Traffic
+	wantTraffic.RatePer = new("1m0s")
 	if a.Service != "web" || !opaqueid.Valid(a.ServiceID, opaqueid.ServicePrefix) || a.ServiceID != b.ServiceID || a.TrustRevision < 1 || a.GrantID == b.GrantID ||
-		first.member.PublisherIdentityID == second.member.PublisherIdentityID || a.Configuration.Public != nil || a.Configuration.Target != web.Target ||
+		first.member.PublisherIdentityID == second.member.PublisherIdentityID || a.Configuration.Public != nil || a.Configuration.Target != "web.internal:8443" ||
 		a.Configuration.TargetTLS == nil || a.Configuration.HTTP == nil || a.Configuration.HTTP.Limits == nil || *a.Configuration.HTTP.Limits.Total != 7 ||
-		a.Configuration.RequirePostQuantum == nil || !*a.Configuration.RequirePostQuantum || !reflect.DeepEqual(a.Configuration.Traffic, web.Traffic) {
-		t.Fatal("HTTP assignment lost exact service identity, independent grants, or saved declaration")
+		a.Configuration.RequirePostQuantum == nil || !*a.Configuration.RequirePostQuantum || !reflect.DeepEqual(a.Configuration.Traffic, &wantTraffic) {
+		t.Fatalf("HTTP assignment lost exact service identity, independent grants, or saved declaration: first=%+v second=%+v configuration=%+v traffic=%+v want traffic=%+v",
+			a, b, a.Configuration, a.Configuration.Traffic, web.Traffic)
 	}
 	wire, err := json.Marshal(a)
 	if err != nil || bytes.Contains(wire, []byte(`"service_kind"`)) || !bytes.Contains(wire, []byte(`"trust_revision":"`)) {
@@ -349,7 +354,7 @@ func TestIntegrationDeploymentPublisherApprovalCannotFollowReusedBindings(t *tes
 			r, request := deploymentPublisherRequest(t, d, now)
 			if test.protocol == "http" {
 				service := r.Configuration.Services["db"]
-				service.Protocol = test.protocol
+				service.Protocol, service.Public = test.protocol, new(false)
 				r.Configuration.Services["db"] = service
 				r.ServiceDeclarations["db"] = test.protocol
 				applied, err := d.ApplyProjectConfiguration(t.Context(), r)

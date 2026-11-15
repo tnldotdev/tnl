@@ -356,7 +356,7 @@ func splitTestConfig(role daemonconfig.Role, metricsAddress string) daemonconfig
 		Role: role, MetricsListen: metricsAddress,
 		ManagedURLMode:        naming.ManagedURLModeGenerated,
 		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",
-		PublicURLCertificateWorkers:      4,
+		ServiceCertificateWorkers:        4,
 		ClientHelloConnectionLimit:       1024,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		VisitorConnectionLimit: 100, PublisherConnectionLimit: 10,

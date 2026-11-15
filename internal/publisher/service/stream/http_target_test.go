@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"crypto/tls"
+	"io"
 	"net"
 	"net/http"
 	"sync"
@@ -13,6 +14,52 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 )
+
+func TestHTTPStreamClosesEveryOwnedTargetSocket(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const hostname = "service.example.test"
+		certificate := visitorfixture.Certificate(t, hostname)
+		incoming, visitor := net.Pipe()
+		defer incoming.Close()
+		defer visitor.Close()
+		closed := make(chan struct{}, 2)
+		endpoint := Stream{Protocol: config.ProtocolHTTP, Hostname: hostname, Target: "127.0.0.1:3000",
+			TLS: &tls.Config{Certificates: []tls.Certificate{certificate}},
+			Visitor: HTTPVisitor{Frontend: visitorFrontendFunc(func(_ context.Context, _ *tls.Conn, target HTTPTarget) error {
+				// application work can begin after visitor setup's deadline. that
+				// finished setup must not close a newly selected target socket.
+				time.Sleep(11 * time.Second)
+				for range 2 {
+					raw, backend := net.Pipe()
+					go func() {
+						defer backend.Close()
+						_, _ = io.Copy(io.Discard, backend)
+						closed <- struct{}{}
+					}()
+					socket := target.track(raw)
+					if err := socket.SetWriteDeadline(time.Now().Add(time.Second)); err != nil {
+						return err
+					}
+					if _, err := socket.Write([]byte("application")); err != nil {
+						return err
+					}
+				}
+				return nil
+			})}}
+		done := make(chan error, 1)
+		go func() { done <- endpoint.Forward(t.Context(), incoming) }()
+		client := tls.Client(visitor, &tls.Config{RootCAs: visitorfixture.Roots(t, certificate), ServerName: hostname})
+		if err := client.HandshakeContext(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		for range 2 {
+			<-closed
+		}
+	})
+}
 
 type stoppedConnectorAdmission struct {
 	AdmissionFixture
@@ -33,6 +80,7 @@ func TestConnectorHTTPStreamJoinsTargetDialAfterHandlerReturns(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				entered, finished := make(chan struct{}), make(chan struct{})
+				var dialContext context.Context
 				releaseDial := make(chan struct{})
 				release := sync.OnceFunc(func() { close(releaseDial) })
 				defer release()
@@ -41,6 +89,7 @@ func TestConnectorHTTPStreamJoinsTargetDialAfterHandlerReturns(t *testing.T) {
 					stopped: make(chan struct{}),
 					AdmissionFixture: AdmissionFixture{Check: func(ctx context.Context) (Decision, error) {
 						if ctx.Value(dialContextKey{}) != nil {
+							dialContext = ctx
 							close(entered)
 							defer close(finished)
 							// net/http can return the canceled request while its target
@@ -85,9 +134,9 @@ func TestConnectorHTTPStreamJoinsTargetDialAfterHandlerReturns(t *testing.T) {
 				<-entered
 				cancel()
 				<-replied
-				// Stop runs after shared HTTP serving has joined the handler. the
-				// stream must still retain its owner until the independent dial joins.
-				<-admission.stopped
+				// the request has returned and the dial's owner is canceled, but
+				// cancellation alone cannot release an independently blocked dial.
+				<-dialContext.Done()
 				synctest.Wait()
 				select {
 				case err := <-done:
@@ -97,6 +146,11 @@ func TestConnectorHTTPStreamJoinsTargetDialAfterHandlerReturns(t *testing.T) {
 				release()
 				if err := <-done; err != nil {
 					t.Fatal(err)
+				}
+				select {
+				case <-admission.stopped:
+				default:
+					t.Fatal("connector stream returned before stopping admission")
 				}
 				select {
 				case <-finished:

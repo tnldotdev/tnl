@@ -30,13 +30,13 @@ func TestWorkloadInventoryProjectsExactServiceFactsAndRejectsDuplicates(t *testi
 }
 
 func TestConnectionMetadataProjectsOnlyRequestedValidProtocolsInScopeOrder(t *testing.T) {
-	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: "http", Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test", Port: 443, Public: true}}
+	service := controlv1.ServiceSummary{Id: "svc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: "http", Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test", Port: 443, Public: true}}
 	database := service
 	database.Protocol = "postgres"
 	database.Endpoint = &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 25444}
 	invalid := service
 	invalid.Endpoint = nil
-	inventory := map[string]controlv1.Service{"api": service, "db": database, "wrong-protocol": database, "invalid": invalid, "unrequested": service}
+	inventory := map[string]controlv1.ServiceSummary{"api": service, "db": database, "wrong-protocol": database, "invalid": invalid, "unrequested": service}
 	configuration := config.TNL{Services: config.Services{"api": {}, "db": {Protocol: new("postgres")}, "wrong-protocol": {}, "invalid": {}}}
 	services, metadata, err := projectConnectionMetadata(configuration, []string{"missing", "db", "api", "wrong-protocol", "invalid"}, inventory)
 	if err != nil || len(services) != 2 || len(metadata.Services) != 2 || metadata.Namespace != "db.example.test" {

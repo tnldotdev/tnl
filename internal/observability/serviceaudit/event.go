@@ -97,7 +97,7 @@ func validID(id string) bool {
 }
 
 func ValidService(id, kind string) bool {
-	return kind == "public_url" && opaqueid.Valid(id, opaqueid.PublicURLPrefix) || kind == "service" && opaqueid.Valid(id, opaqueid.ServicePrefix)
+	return kind == "service" && opaqueid.Valid(id, opaqueid.ServicePrefix)
 }
 
 // ValidReference accepts native and authority-issued identifiers. stored scope
@@ -127,21 +127,20 @@ func (o Observation) Validate() error {
 		!opaqueid.Valid(o.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) || !ValidReason(o.Reason) {
 		return ErrInvalid
 	}
-	if o.DeliveryGeneration < 0 || o.DeliveryGeneration > 0 && o.PairID == "" || o.PairID != "" && (o.DeliveryGeneration < 1 || !opaqueid.Valid(o.PairID, "cpp_") || o.ServiceKind != "service" || o.RunID == "") {
+	if o.DeliveryGeneration < 0 || o.DeliveryGeneration > 0 && o.PairID == "" || o.PairID != "" && (o.DeliveryGeneration < 1 || !opaqueid.Valid(o.PairID, "cpp_") || o.RunID == "") {
 		return ErrInvalid
 	}
 	serviceDenial := o.RunID == "" && o.RunNumber == 0 && o.EventType == "connection.open" &&
-		(o.Outcome == "denied" || o.ServiceKind == "public_url" && o.Outcome == "failed")
-	if serviceDenial && o.ServiceKind == "service" && o.Reason != "capacity" && o.Reason != "unavailable" && o.Reason != "invalid_request" {
+		o.Outcome == "denied"
+	if serviceDenial && o.Reason != "capacity" && o.Reason != "unavailable" && o.Reason != "invalid_request" {
 		return ErrInvalid
 	}
-	if !serviceDenial && (o.RunNumber < 1 || o.ServiceKind == "public_url" && !opaqueid.Valid(o.RunID, opaqueid.PublishRunPrefix) ||
-		o.ServiceKind == "service" && !opaqueid.Valid(o.RunID, opaqueid.ServiceRunPrefix)) {
+	if !serviceDenial && (o.RunNumber < 1 || !opaqueid.Valid(o.RunID, opaqueid.ServiceRunPrefix)) {
 		return ErrInvalid
 	}
 	// only the denied open above may omit a selected service run. control
 	// still checks its exact pending admission receipt and mandatory source.
-	if o.ServiceKind == "service" && o.SourceIP == "" {
+	if o.SourceIP == "" {
 		return ErrInvalid
 	}
 	if o.SourceIP != "" {

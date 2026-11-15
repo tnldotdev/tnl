@@ -148,7 +148,7 @@ func ReadConnectorPeerVisitorEntry(r io.Reader) (ConnectorPeerVisitorEntry, erro
 }
 
 func WriteConnectorPeerVisitorOpening(w io.Writer, e ConnectorPeerVisitorEntry, initial []byte) (bool, error) {
-	n, err := writeOpening(w, nil, initial, func(w io.Writer) error { return WriteConnectorPeerVisitorEntry(w, e) })
+	n, err := writeOpening(w, initial, func(w io.Writer) error { return WriteConnectorPeerVisitorEntry(w, e) })
 	return n > 0, err
 }
 

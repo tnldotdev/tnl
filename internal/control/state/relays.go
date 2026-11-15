@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"math"
@@ -10,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/region"
 
 	"github.com/jackc/pgx/v5"
@@ -20,15 +18,11 @@ import (
 )
 
 var (
-	ErrRelayRegistrationConflict         = errors.New("controlstate: relay identity or service configuration conflicts with live state")
-	ErrRelayLeaseStale                   = errors.New("controlstate: relay lease identity or revision is stale")
-	ErrRelayDraining                     = errors.New("controlstate: relay is draining")
-	ErrRelayConnectionCapacity           = errors.New("controlstate: relay connection capacity is exhausted")
-	ErrPublisherConnectionUnavailable    = errors.New("controlstate: publisher connection is unavailable")
-	ErrPublisherConnectionCredential     = errors.New("controlstate: publisher connection credential is invalid")
-	ErrConnectionAssignmentStale         = errors.New("controlstate: connection assignment identity or revision is stale")
-	ErrPublisherConnectionAlreadyClaimed = errors.New("controlstate: publisher connection is already claimed")
-	ErrPublisherConnectionRelayService   = errors.New("controlstate: publisher connection is assigned to another relay service")
+	ErrRelayRegistrationConflict       = errors.New("controlstate: relay identity or service configuration conflicts with live state")
+	ErrRelayLeaseStale                 = errors.New("controlstate: relay lease identity or revision is stale")
+	ErrRelayDraining                   = errors.New("controlstate: relay is draining")
+	ErrRelayConnectionCapacity         = errors.New("controlstate: relay connection capacity is exhausted")
+	ErrPublisherConnectionRelayService = errors.New("controlstate: publisher connection is assigned to another relay service")
 )
 
 // RelayRegistration describes one relay process and its relay service.
@@ -82,39 +76,6 @@ type RelayLease struct {
 	RegisteredAt         time.Time
 	RenewedAt            time.Time
 	LeaseExpiresAt       time.Time
-}
-
-// ConnectionAssignmentIdentity identifies one exact publisher connection assignment.
-type ConnectionAssignmentIdentity struct {
-	PublishRunID                 string
-	PublicURLID                  string
-	PublishRunNumber             uint64
-	ConnectionSlot               int
-	PublisherConnectionID        string
-	ConnectionAssignmentRevision uint64
-	RelayServiceID               string
-}
-
-// PublisherConnectionClaimRequest contains the assignment, relay lease, and
-// credential hash needed to claim one publisher connection in a transaction.
-type PublisherConnectionClaimRequest struct {
-	ConnectionAssignmentIdentity
-	RelayLeaseIdentity
-	ClaimID          string
-	CredentialDigest [32]byte
-}
-
-// ClaimedPublisherConnection is the stored state of one claimed assignment.
-type ClaimedPublisherConnection struct {
-	ConnectionAssignmentIdentity
-	RelayLeaseIdentity
-	ClaimID                                string
-	RelayAddress                           string
-	TLSServerName                          string
-	State                                  PublisherConnectionState
-	PublisherConnectionCredentialExpiresAt time.Time
-	ConnectedAt                            time.Time
-	ReadyAt                                *time.Time
 }
 
 // RegisterRelay creates or renews one relay process lease. A different process
@@ -267,122 +228,6 @@ func (d *Database) BeginRelayDrain(
 	return relayLeaseFromDrain(row)
 }
 
-// ClaimPublisherConnection authenticates and claims one assignment in a
-// transaction. the winning relay can repeat its claim; all other relays are
-// rejected.
-func (d *Database) ClaimPublisherConnection(
-	ctx context.Context,
-	request PublisherConnectionClaimRequest,
-	now time.Time,
-) (result ClaimedPublisherConnection, retErr error) {
-	ctx, finish := d.observeOperation(ctx, observability.OpClaimPublisherConnection)
-	defer func() { finish(retErr) }()
-	if err := validatePublisherConnectionClaim(request); err != nil {
-		return ClaimedPublisherConnection{}, err
-	}
-	if err := d.requireOpen(); err != nil {
-		return ClaimedPublisherConnection{}, err
-	}
-	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
-	if err != nil {
-		return ClaimedPublisherConnection{}, fmt.Errorf("controlstate: claim publisher connection: begin transaction: %w", err)
-	}
-	defer rollback(ctx, tx, "claim publisher connection", &retErr)()
-	queries := controlstatedb.New(tx)
-	if _, _, err := lockPublishRunForPublisherConnection(ctx, queries, request, now); err != nil {
-		return ClaimedPublisherConnection{}, err
-	}
-	connection, err := queries.GetPublisherConnectionForClaim(ctx, request.PublisherConnectionID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ClaimedPublisherConnection{}, ErrPublisherConnectionUnavailable
-	}
-	if err != nil {
-		return ClaimedPublisherConnection{}, fmt.Errorf("controlstate: claim publisher connection: read assignment: %w", err)
-	}
-	if !storedConnectionAssignmentMatches(connection, request.ConnectionAssignmentIdentity) {
-		return ClaimedPublisherConnection{}, ErrConnectionAssignmentStale
-	}
-	if !connection.PublisherConnectionCredentialExpiresAt.Valid ||
-		!connection.PublisherConnectionCredentialExpiresAt.Time.After(now) ||
-		len(connection.PublisherConnectionCredentialDigest) != len(request.CredentialDigest) ||
-		subtle.ConstantTimeCompare(connection.PublisherConnectionCredentialDigest, request.CredentialDigest[:]) != 1 {
-		return ClaimedPublisherConnection{}, ErrPublisherConnectionCredential
-	}
-	lease, err := queries.GetRelayLeaseForClaim(ctx, request.RelayID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ClaimedPublisherConnection{}, ErrRelayLeaseStale
-	}
-	if err != nil {
-		return ClaimedPublisherConnection{}, fmt.Errorf("controlstate: claim publisher connection: read relay lease: %w", err)
-	}
-	if err := validateClaimRelayLease(lease, request.RelayLeaseIdentity, connection.RelayServiceID, now); err != nil {
-		return ClaimedPublisherConnection{}, err
-	}
-	sameClaim := publisherConnectionClaimMatches(connection, request)
-	state := PublisherConnectionState(connection.State)
-	if state != PublisherConnectionAssigned && !sameClaim {
-		if state == PublisherConnectionConnected || state == PublisherConnectionReady || state == PublisherConnectionDraining {
-			return ClaimedPublisherConnection{}, ErrPublisherConnectionAlreadyClaimed
-		}
-		return ClaimedPublisherConnection{}, ErrPublisherConnectionUnavailable
-	}
-	if !sameClaim {
-		revision, _ := positiveInt64(request.RelayLeaseRevision)
-		activeConnections, err := queries.CountRelayActiveConnections(ctx, controlstatedb.CountRelayActiveConnectionsParams{
-			RelayID: text(request.RelayID), RelayRunID: text(request.RelayRunID),
-			RelayLeaseRevision: pgtype.Int8{Int64: revision, Valid: true},
-		})
-		if err != nil {
-			return ClaimedPublisherConnection{}, fmt.Errorf("controlstate: claim publisher connection: check capacity: %w", err)
-		}
-		if activeConnections >= lease.ConnectionCapacity {
-			return ClaimedPublisherConnection{}, ErrRelayConnectionCapacity
-		}
-	}
-	relayRevision, _ := positiveInt64(request.RelayLeaseRevision)
-	assignmentRevision, _ := positiveInt64(request.ConnectionAssignmentRevision)
-	claimed, err := queries.ClaimPublisherConnection(ctx, controlstatedb.ClaimPublisherConnectionParams{
-		RelayID: text(request.RelayID), RelayRunID: text(request.RelayRunID),
-		RelayLeaseRevision: pgtype.Int8{Int64: relayRevision, Valid: true}, ClaimID: text(request.ClaimID),
-		ConnectedAt: timestamptz(now), PublisherConnectionID: request.PublisherConnectionID,
-		PublishRunID: request.PublishRunID, PublicURLID: request.PublicURLID, PublishRunNumber: positive(request.PublishRunNumber),
-		ConnectionSlot: int16(request.ConnectionSlot), ConnectionAssignmentRevision: assignmentRevision,
-		RelayServiceID: request.ConnectionAssignmentIdentity.RelayServiceID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ClaimedPublisherConnection{}, ErrConnectionAssignmentStale
-	}
-	if err != nil {
-		return ClaimedPublisherConnection{}, fmt.Errorf("controlstate: claim publisher connection: update assignment: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return ClaimedPublisherConnection{}, fmt.Errorf("controlstate: claim publisher connection: commit: %w", err)
-	}
-	return claimedPublisherConnection(claimed)
-}
-
-// MarkPublisherConnectionReady records that a claimed publisher connection can
-// carry visitor streams.
-func (d *Database) MarkPublisherConnectionReady(
-	ctx context.Context,
-	request PublisherConnectionClaimRequest,
-	now time.Time,
-) (result ClaimedPublisherConnection, retErr error) {
-	ctx, finish := d.observeOperation(ctx, observability.OpMarkPublisherConnectionReady)
-	defer func() { finish(retErr) }()
-	return d.markPublisherConnectionReady(ctx, request, now)
-}
-
-// DisconnectPublisherConnection closes only the exact claimed connection.
-func (d *Database) DisconnectPublisherConnection(
-	ctx context.Context,
-	request PublisherConnectionClaimRequest,
-	now time.Time,
-	unexpected bool,
-) (ClaimedPublisherConnection, error) {
-	return d.disconnectPublisherConnection(ctx, request, now, unexpected)
-}
-
 func validateRelayRegistration(registration RelayRegistration, leaseDuration time.Duration) error {
 	if registration.PeerSigningPublicKey != nil && len(registration.PeerSigningPublicKey) != 32 {
 		return errors.New("relay peer signing public key must be 32 bytes")
@@ -426,85 +271,6 @@ func validateRelayLeaseIdentity(identity RelayLeaseIdentity) error {
 		return errors.New("controlstate: relay lease revision must be positive")
 	}
 	return nil
-}
-
-func validatePublisherConnectionClaim(request PublisherConnectionClaimRequest) error {
-	if err := validateRelayLeaseIdentity(request.RelayLeaseIdentity); err != nil {
-		return err
-	}
-	for _, value := range []string{
-		request.PublishRunID, request.PublicURLID, request.PublisherConnectionID,
-		request.ConnectionAssignmentIdentity.RelayServiceID, request.ClaimID,
-	} {
-		if !validStateText(value) {
-			return errors.New("controlstate: publisher connection claim is invalid")
-		}
-	}
-	if request.ConnectionAssignmentIdentity.RelayServiceID != request.RelayLeaseIdentity.RelayServiceID {
-		return ErrPublisherConnectionRelayService
-	}
-	if request.ConnectionSlot < 0 || request.ConnectionSlot >= publishRunConnectionCount {
-		return errors.New("controlstate: connection slot is invalid")
-	}
-	if _, ok := positiveInt64(request.PublishRunNumber); !ok {
-		return errors.New("controlstate: publish run number must be positive")
-	}
-	if _, ok := positiveInt64(request.ConnectionAssignmentRevision); !ok {
-		return errors.New("controlstate: connection assignment revision must be positive")
-	}
-	return nil
-}
-
-func claimedPublisherConnection(row controlstatedb.ControlPublishRunConnectionSlot) (ClaimedPublisherConnection, error) {
-	if row.PublishRunNumber <= 0 || row.ConnectionAssignmentRevision <= 0 || row.ConnectionSlot < 0 ||
-		row.ConnectionSlot >= publishRunConnectionCount || !row.ConnectedRelayID.Valid ||
-		!row.ConnectedRelayRunID.Valid || !row.ConnectedRelayLeaseRevision.Valid ||
-		row.ConnectedRelayLeaseRevision.Int64 <= 0 || !row.ClaimID.Valid ||
-		!row.PublisherConnectionCredentialExpiresAt.Valid || !row.ConnectedAt.Valid {
-		return ClaimedPublisherConnection{}, errors.New("controlstate: invalid claimed publisher connection row")
-	}
-	var readyAt *time.Time
-	if row.ReadyAt.Valid {
-		value := row.ReadyAt.Time
-		readyAt = &value
-	}
-	return ClaimedPublisherConnection{
-		ConnectionAssignmentIdentity: ConnectionAssignmentIdentity{
-			PublishRunID: row.PublishRunID, PublicURLID: row.PublicURLID, PublishRunNumber: uint64(row.PublishRunNumber),
-			ConnectionSlot: int(row.ConnectionSlot), PublisherConnectionID: row.PublisherConnectionID,
-			ConnectionAssignmentRevision: uint64(row.ConnectionAssignmentRevision), RelayServiceID: row.RelayServiceID,
-		},
-		RelayLeaseIdentity: RelayLeaseIdentity{
-			RelayServiceID: row.RelayServiceID, RelayID: row.ConnectedRelayID.String,
-			RelayRunID: row.ConnectedRelayRunID.String, RelayLeaseRevision: uint64(row.ConnectedRelayLeaseRevision.Int64),
-		},
-		ClaimID: row.ClaimID.String, RelayAddress: row.RelayAddress, TLSServerName: row.TlsServerName,
-		State: PublisherConnectionState(row.State), PublisherConnectionCredentialExpiresAt: row.PublisherConnectionCredentialExpiresAt.Time,
-		ConnectedAt: row.ConnectedAt.Time, ReadyAt: readyAt,
-	}, nil
-}
-
-func publisherConnectionClaimMatches(
-	connection controlstatedb.ControlPublishRunConnectionSlot,
-	request PublisherConnectionClaimRequest,
-) bool {
-	return connection.ConnectedRelayID.Valid && connection.ConnectedRelayID.String == request.RelayID &&
-		connection.ConnectedRelayRunID.Valid && connection.ConnectedRelayRunID.String == request.RelayRunID &&
-		connection.ConnectedRelayLeaseRevision.Valid &&
-		matchesPositiveInt64(connection.ConnectedRelayLeaseRevision.Int64, request.RelayLeaseRevision) &&
-		connection.ClaimID.Valid && connection.ClaimID.String == request.ClaimID
-}
-
-func storedConnectionAssignmentMatches(
-	connection controlstatedb.ControlPublishRunConnectionSlot,
-	identity ConnectionAssignmentIdentity,
-) bool {
-	return connection.PublishRunID == identity.PublishRunID && connection.PublicURLID == identity.PublicURLID &&
-		matchesPositiveInt64(connection.PublishRunNumber, identity.PublishRunNumber) &&
-		int(connection.ConnectionSlot) == identity.ConnectionSlot &&
-		connection.PublisherConnectionID == identity.PublisherConnectionID &&
-		matchesPositiveInt64(connection.ConnectionAssignmentRevision, identity.ConnectionAssignmentRevision) &&
-		connection.RelayServiceID == identity.RelayServiceID
 }
 
 func validateClaimRelayLease(

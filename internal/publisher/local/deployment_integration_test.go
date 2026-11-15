@@ -1,12 +1,14 @@
 package local
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,14 +20,20 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/config"
 	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -49,13 +57,21 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 		t.Fatal(err)
 	}
 	team, actor := session.Identity.Memberships[0].TeamID, session.Identity.Identity.ID
+	for i := range 2 {
+		name := fmt.Sprintf("invocation-relay-%d", i)
+		if _, err := d.RegisterRelay(ctx, controlstate.RelayRegistration{RelayServiceID: name, RelayID: name + "-1", RelayRunID: name + "-run",
+			ProtocolVersion: 1, RelayAddress: name + ".example.test:443", TLSServerName: name + ".example.test",
+			InternalRelayAddress: name + ".internal:9445", ConnectionCapacity: 10, StreamCapacity: 10}, now, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
 	applied, err := d.ApplyProjectConfiguration(ctx, controlstate.ApplyProjectConfigurationRequest{
 		TeamID: team, ActorID: actor, ProjectKey: "shop", SourceFingerprint: strings.Repeat("a", 64),
 		Deployment: "production", ServiceDeclarations: map[string]string{"web": "http"},
 		Configuration: controlstate.ProjectConfiguration{Settings: &controlstate.DeploymentSettings{}, Services: map[string]controlstate.ProjectServiceConfiguration{
-			"web": {Target: "app", PublicURL: &controlstate.ProjectServicePublicURL{
-				Access: &controlstate.ProjectPublicAccess{Mode: "anonymous"},
-				Limits: &controlstate.ProjectPublicLimits{HTTP: &controlstate.ProjectHTTPApplicationLimits{Total: new(10)}},
+			"web": {Target: "app", Public: new(true), HTTP: &config.HTTPService{
+				Access: &config.Access{Mode: "anonymous"},
+				Limits: &config.WorkLimits{Total: new(10)},
 			}},
 		}}, Now: now,
 	})
@@ -69,6 +85,9 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 	remote := httptest.NewTLSServer(h)
 	t.Cleanup(remote.Close)
 	if _, err = controlauthority.Register(h, controlauthority.Config{ControlURL: remote.URL}, d); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.PrepareVisitorSigningKeys(ctx, remote.URL, now); err != nil {
 		t.Fatal(err)
 	}
 	original := http.DefaultTransport
@@ -107,19 +126,68 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 		t.Fatal(err)
 	}
 	a, _ := testAppRuntimeWorkers(t, true)
-	ready := make(chan publisher.Config, 2)
-	a.workers.RunPublisher = func(ctx context.Context, cfg publisher.Config) error {
-		observe := cfg.Observe
-		cfg.Observe = func(event publisher.Event) error {
-			if err := observe(event); err != nil {
+	type publication struct {
+		config      publisherservice.RunConfig
+		saved       controlv1.Service
+		policy      controlv1.VisitorPolicySnapshot
+		preparation controlv1.ServiceRunPreparation
+	}
+	configured := make(chan publisherservice.RunConfig, 1)
+	ready := make(chan publication, 2)
+	a.AttachPublication = func(_ context.Context, _ publisherapp.Service, cfg *publisherservice.RunConfig) error {
+		configured <- *cfg
+		return nil
+	}
+	// use actual signed service preparation, start, policy and close operations.
+	// only relay sockets/certificate readiness are simulated in this registration
+	// boundary; the fixture-backed routine test exercises the real HTTP publisher.
+	configure := a.workers.Configure
+	a.workers.Configure = func(ctx context.Context, service publisherapp.Service) (publisherapp.Configuration, error) {
+		configuration, err := configure(ctx, service)
+		if err != nil {
+			return configuration, err
+		}
+		cfg := <-configured
+		configuration.Service.Run = func(ctx context.Context, _ *clientstate.Tunnel, observe func(uint64, bool) error, _ inspection.Observer) (result error) {
+			access, err := cfg.Access(ctx)
+			if err != nil {
 				return err
 			}
-			if event.Type == publisher.EventReady {
-				ready <- cfg
+			saved, err := cfg.Control.GetPublisherService(ctx, cfg.ServiceID, access)
+			if err != nil {
+				return err
 			}
+			key, err := opaqueid.New(opaqueid.IdempotencyPrefix)
+			if err != nil {
+				return err
+			}
+			prepared, err := cfg.Control.PrepareServiceRun(ctx, cfg.ServiceID, key, access, publisheridentity.ServiceDeclaration(saved))
+			if err != nil {
+				return err
+			}
+			setup, err := cfg.Control.StartServiceRun(ctx, cfg.ServiceID, prepared.ServiceRunId, access, prepared.RunNumber)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				defer cancel()
+				result = errors.Join(result, cfg.Control.CloseServiceRun(finish, cfg.ServiceID, setup.ServiceRunId, credentials.ServiceRunToken(setup.RunToken)))
+			}()
+			policy, err := d.ReadPublisherVisitorPolicy(ctx, visitorscope.Scope{Kind: visitorscope.Service, ID: saved.Id}, setup.ServiceRunId, setup.RunNumber, setup.RunToken, 0, time.Now())
+			if err != nil {
+				return err
+			}
+			for _, routable := range []bool{false, true} {
+				if err := observe(uint64(prepared.RunNumber), routable); err != nil {
+					return err
+				}
+			}
+			ready <- publication{cfg, saved, policy.Policy, prepared}
+			<-ctx.Done()
 			return nil
 		}
-		return readyInvocation(ctx, cfg)
+		return configuration, nil
 	}
 	listener := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "app still running") }))
 	t.Cleanup(listener.Close)
@@ -141,15 +209,21 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 		if err = publisherprotocol.Call(ctx, endpoint, "POST", "/v1/publications/register", body, &registered); err != nil {
 			t.Fatal(err)
 		}
-		var cfg publisher.Config
+		var published publication
 		select {
-		case cfg = <-ready:
+		case published = <-ready:
 		case <-time.After(5 * time.Second):
 			t.Fatal("worker did not become routable")
 		}
-		if cfg.Ephemeral == named || cfg.Target != listener.URL || cfg.AssignedPublicURL == nil ||
-			named && (cfg.AccessMode != controlv1.Anonymous || cfg.Limits.Requests != 10) || !named && cfg.AccessMode != controlv1.Restricted {
+		cfg, saved := published.config, published.saved
+		if saved.Ephemeral == named || cfg.Target != strings.TrimPrefix(listener.URL, "http://") || cfg.ServiceID != saved.Id ||
+			published.policy.Anonymous != named || named && (saved.HttpLimits == nil || saved.HttpLimits.Total == nil || *saved.HttpLimits.Total != 10) ||
+			cfg.PublisherIdentityID != credential.Approval.ClientId || cfg.PublisherGrantID != credential.Approval.GrantId || cfg.PublisherKeyID != credential.Approval.KeyId ||
+			published.preparation.PublisherIdentityId != credential.Approval.ClientId || published.preparation.PublisherGrantId != credential.Approval.GrantId || published.preparation.PublisherKeyId != credential.Approval.KeyId {
 			t.Fatal("publication changed saved policy or invented a target")
+		}
+		if !named && (saved.ExpiresAt == nil || saved.ExpiresAt.After(credential.Approval.ExpiresAt)) {
+			t.Fatal("temporary service extended its captured credential deadline")
 		}
 		encoded, err := json.Marshal(a.manager.Snapshot())
 		if err != nil || strings.Contains(string(encoded), token) || strings.Contains(string(encoded), credential.PrivateKey) {
@@ -158,10 +232,9 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 		if err = publisherprotocol.Call(ctx, endpoint, "POST", "/v1/unregister", registered, nil); err != nil {
 			t.Fatal(err)
 		}
-		u, err := d.GetPublicURLForAuthorization(ctx, cfg.AssignedPublicURL.Id)
-		if named && (err != nil || u.LifecycleState != controlstate.PublicURLLifecycleEnabled) ||
-			!named && !errors.Is(err, controlstate.ErrPublicURLNotFound) {
-			t.Fatal("cleanup changed wrong URL lifetime", err)
+		surviving, err := d.GetService(ctx, saved.Id, actor)
+		if named && (err != nil || !surviving.Enabled) || !named && !errors.Is(err, controlstate.ErrServiceAccess) {
+			t.Fatal("cleanup changed wrong service lifetime", err)
 		}
 		stillRunning, err := http.Get(listener.URL)
 		if err != nil {
@@ -172,6 +245,89 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 			t.Fatal("app stopped serving")
 		}
 	}
+	t.Run("failed exchange does not allocate during cleanup", func(t *testing.T) {
+		invocation, err := opaqueid.New(opaqueid.InvocationPrefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := map[string]any{"version": 1, "invocation_id": invocation, "owner": "0123456789abcdef0123456789abcdef",
+			"pid": os.Getpid(), "target": listener.URL,
+			"deployment": map[string]string{"project": "acme/shop", "name": "production", "credential": token}}
+		encoded, _ := json.Marshal(body)
+		var request publisherprotocol.Invocation
+		if err := json.Unmarshal(encoded, &request); err != nil {
+			t.Fatal(err)
+		}
+		transport := http.DefaultTransport
+		defer func() { http.DefaultTransport = transport }()
+		exchanges, allocations := 0, 0
+		http.DefaultTransport = invocationTransport(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Host == strings.TrimPrefix(remote.URL, "https://") && r.URL.Path == "/v1/publisher-token" {
+				exchanges++
+				if exchanges == 1 {
+					return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{"Content-Type": {"application/problem+json"}},
+						Body: io.NopCloser(strings.NewReader(`{"code":"unavailable","status":503,"title":"retry"}`)), Request: r}, nil
+				}
+			}
+			if r.Method == http.MethodPost && r.URL.Path == "/v1/projects/shop/deployments/production/services" {
+				allocations++
+			}
+			return transport.RoundTrip(r)
+		})
+		if _, err := a.invocation(t.Context(), request); err == nil || exchanges != 1 || allocations != 0 {
+			t.Fatal("pre-attempt failure caused cleanup to create an allocation", err, exchanges, allocations)
+		}
+	})
+	t.Run("lost allocation reply", func(t *testing.T) {
+		invocation, err := opaqueid.New(opaqueid.InvocationPrefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := map[string]any{"version": 1, "invocation_id": invocation, "owner": "0123456789abcdef0123456789abcdef",
+			"pid": os.Getpid(), "target": listener.URL, "limits": map[string]any{"total": 7},
+			"deployment": map[string]string{"project": "acme/shop", "name": "production", "credential": token}}
+		encoded, _ := json.Marshal(body)
+		var request publisherprotocol.Invocation
+		if err := json.Unmarshal(encoded, &request); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		transport := http.DefaultTransport
+		defer func() { http.DefaultTransport = transport }()
+		var declarations []string
+		var allocated controlv1.Service
+		http.DefaultTransport = invocationTransport(func(r *http.Request) (*http.Response, error) {
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/projects/shop/deployments/production/services" {
+				return transport.RoundTrip(r)
+			}
+			data, err := io.ReadAll(r.Body)
+			if err != nil {
+				return nil, err
+			}
+			declarations = append(declarations, string(data))
+			r.Body = io.NopCloser(bytes.NewReader(data))
+			response, err := transport.RoundTrip(r)
+			if err == nil && len(declarations) == 1 {
+				if err := json.NewDecoder(response.Body).Decode(&allocated); err != nil {
+					return nil, err
+				}
+				_ = response.Body.Close()
+				*request.Limits.Total = 99
+				return nil, io.ErrUnexpectedEOF
+			}
+			return response, err
+		})
+		if _, err := a.invocation(ctx, request); !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatal("registered allocation lost its response error", err)
+		}
+		if allocated.Id == "" || len(declarations) != 2 || declarations[0] != declarations[1] {
+			t.Fatal("registered recovery changed its invocation, declaration, or fixed expiry", declarations)
+		}
+		if _, err := d.GetService(t.Context(), allocated.Id, actor); !errors.Is(err, controlstate.ErrServiceAccess) {
+			t.Fatal("uncertain registered allocation was not deleted with its original approval", err)
+		}
+	})
 	inspect, err := pgx.Connect(ctx, databaseURL)
 	if err != nil {
 		t.Fatal(err)
@@ -216,9 +372,9 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 			if err := publisherprotocol.Call(ctx, endpoint, "POST", "/v1/publications/register", body, &registered); err != nil {
 				t.Fatal(err)
 			}
-			var cfg publisher.Config
+			var published publication
 			select {
-			case cfg = <-ready:
+			case published = <-ready:
 			case <-time.After(5 * time.Second):
 				t.Fatal("temporary publication worker did not become routable")
 			}
@@ -239,7 +395,7 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 			if err := a.manager.RetirementError(); !errors.Is(err, publisherapp.ErrCleanupPermanent) || !errors.Is(err, clientauthority.ErrUnauthenticated) {
 				t.Fatal("owner retirement lost its authorization failure", err)
 			}
-			if _, err := d.GetPublicURLForAuthorization(ctx, cfg.AssignedPublicURL.Id); err != nil {
+			if _, err := d.GetService(ctx, published.saved.Id, actor); err != nil {
 				t.Fatal("local retirement silently bypassed failed remote deletion", err)
 			}
 		})

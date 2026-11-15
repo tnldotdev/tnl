@@ -82,7 +82,7 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
   });
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://localhost");
-    // matches the no-cookie response in ../browser_access.go.
+    // matches the no-cookie response in ../httpaccess/browser.go.
     if (url.pathname === "/__tnl/team/session" && request.method === "GET") {
       response.setHeader("Content-Type", "application/json");
       response.end(JSON.stringify({ signed_in: false }) + "\n");

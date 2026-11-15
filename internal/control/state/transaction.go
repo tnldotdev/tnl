@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
+
+const transactionRollbackTimeout = 5 * time.Second
 
 func rollback(ctx context.Context, tx pgx.Tx, operation string, retErr *error) func() {
 	return func() {

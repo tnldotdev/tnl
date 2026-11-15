@@ -27,14 +27,12 @@ AND r.stopped_at IS NULL AND r.lease_expires_at>sqlc.arg(now)
 AND control.active_publisher(p.id,sqlc.arg(now)) AND k.retired_at IS NULL AND t.deleted_at IS NULL
 AND (EXISTS(SELECT 1 FROM control.deployment_publisher_members m JOIN control.deployments g ON g.id=m.deployment_id WHERE m.publisher_identity_id=p.id AND m.key_id=k.id AND g.team_id=p.team_id AND g.id=r.scope_id AND g.deleted_at IS NULL)
  OR EXISTS(SELECT 1 FROM control.publisher_grants g
- LEFT JOIN control.public_urls u ON u.id=g.public_url_id
- LEFT JOIN control.services s ON s.id=g.service_id
- LEFT JOIN control.domains d ON d.id=COALESCE(g.domain_id,u.domain_id,s.domain_id)
+  LEFT JOIN control.services s ON s.id=g.service_id
+  LEFT JOIN control.domains d ON d.id=COALESCE(g.domain_id,s.domain_id)
  WHERE g.id=r.scope_id AND g.publisher_identity_id=p.id AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>sqlc.arg(now))
   AND ((g.kind='service' AND EXISTS(SELECT 1 FROM control.publisher_service_permission(p.id,g.id,s.id,sqlc.arg(now))))
     OR (g.kind='deployment_credential' AND control.deployment_credential_available(g.id)
         AND EXISTS(SELECT 1 FROM control.services selected WHERE EXISTS(
             SELECT 1 FROM control.publisher_service_permission(p.id,g.id,selected.id,sqlc.arg(now)))))
-   OR (d.state='ready' AND d.released_at IS NULL AND (d.kind='managed' OR d.team_id=p.team_id)
-       AND (g.kind='namespace' OR g.kind='saved_public_url' AND u.team_id=p.team_id AND u.lifecycle_state='enabled' AND NOT u.ephemeral
-            AND u.purpose IN ('app','alias','demo','oauth','webhooks')))))))::boolean;
+    OR (g.kind='namespace' AND d.state='ready' AND d.released_at IS NULL
+        AND (d.kind='managed' OR d.team_id=p.team_id))))))::boolean;

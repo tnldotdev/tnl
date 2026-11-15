@@ -28,7 +28,7 @@ func (e *connectorSocketSourceChange) Unwrap() []error {
 	return []error{errConnectorSocketSourceChanged, e.validation}
 }
 
-// connectorSocketSource binds one physical carrier to its accepted source IP.
+// connectorSocketSource binds a publisher or connector transport to its accepted IP.
 // QUIC may change RemoteAddr without closing; a detected change is irreversible
 // for this carrier, even if the socket later returns to its original address.
 type connectorSocketSource struct {

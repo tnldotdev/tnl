@@ -163,7 +163,7 @@ func (d *Database) CreateTeamInvitation(
 		return InvitationSecret{}, fmt.Errorf("controlstate: create team invitation: read idempotent invitation: %w", err)
 	}
 	if occupied, err := queries.TeamSharedNameInUse(ctx, controlstatedb.TeamSharedNameInUseParams{
-		TeamID: request.TeamID, Label: request.MemberSlug,
+		TeamID: text(request.TeamID), Label: request.MemberSlug,
 	}); err != nil {
 		return InvitationSecret{}, fmt.Errorf("controlstate: check team shared name: %w", err)
 	} else if occupied {

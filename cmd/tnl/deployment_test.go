@@ -68,7 +68,7 @@ func TestDeploymentTargetFlagsUseCanonicalVerifiedTLS(t *testing.T) {
 func TestDeploymentReadRejectsCrossScopeAndRendersDeterministically(t *testing.T) {
 	deployment := controlv1.Deployment{Id: "dpl_aaaaaaaaaaaaaaaaaaaaaa", TeamId: "team-selected", ProjectKey: "shop", Name: "production", Revision: 7,
 		Services: map[string]controlv1.DeploymentService{
-			"web": {Id: "url_bbbbbbbbbbbbbbbbbbbbbb", Protocol: "http", TrustRevision: 1, PublicUrl: new("https://web.example.test")},
+			"web": {Id: "svc_bbbbbbbbbbbbbbbbbbbbbb", Protocol: "http", TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.example.test", Port: 443, Public: true}},
 			"db":  {Id: "svc_cccccccccccccccccccccc", Protocol: "postgres", TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 5432}},
 		}}
 	if err := validateDeploymentResult(deployment, deployment.TeamId, deployment.ProjectKey); err != nil {
@@ -99,13 +99,13 @@ func TestDeploymentReadRejectsCrossScopeAndRendersDeterministically(t *testing.T
 	}
 }
 
-func TestDeploymentReadValidatesPublicURLAndServiceBindingShapes(t *testing.T) {
-	saved := controlv1.DeploymentService{Id: "url_bbbbbbbbbbbbbbbbbbbbbb", Protocol: "http", TrustRevision: 1, PublicUrl: new("https://web.example.test")}
+func TestDeploymentReadValidatesServiceBindingShapes(t *testing.T) {
+	saved := controlv1.DeploymentService{Id: "svc_bbbbbbbbbbbbbbbbbbbbbb", Protocol: "http", TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.example.test", Port: 443, Public: true}}
 	private := controlv1.DeploymentService{Id: "svc_cccccccccccccccccccccc", Protocol: "postgres", TrustRevision: 1}
 	for _, service := range []controlv1.DeploymentService{
 		saved, private,
 		{Id: private.Id, Protocol: "http", TrustRevision: 2},
-		{Id: private.Id, Protocol: "tcp", TrustRevision: 2, Endpoint: &controlv1.ServiceEndpoint{Hostname: "tcp.example.test", Port: 1024}},
+		{Id: private.Id, Protocol: "tcp", TrustRevision: 2, Endpoint: &controlv1.ServiceEndpoint{Hostname: "tcp.example.test", Port: 0}},
 		{Id: private.Id, Protocol: "mysql", TrustRevision: 2, Endpoint: &controlv1.ServiceEndpoint{Hostname: "mysql.example.test", Port: 65535, Public: true}},
 	} {
 		deployment := controlv1.Deployment{Id: "dpl_aaaaaaaaaaaaaaaaaaaaaa", TeamId: "team-selected", ProjectKey: "shop", Name: "production", Revision: 1, Services: map[string]controlv1.DeploymentService{"selected": service}}
@@ -114,17 +114,16 @@ func TestDeploymentReadValidatesPublicURLAndServiceBindingShapes(t *testing.T) {
 		}
 	}
 	for name, mutate := range map[string]func(*controlv1.DeploymentService){
-		"url service ID": func(s *controlv1.DeploymentService) { s.Id = private.Id },
-		"url invalid ID": func(s *controlv1.DeploymentService) { s.Id = "url_invalid" },
-		"url not HTTP":   func(s *controlv1.DeploymentService) { s.Protocol = "postgres" },
-		"url endpoint": func(s *controlv1.DeploymentService) {
-			s.Endpoint = &controlv1.ServiceEndpoint{Hostname: "web.example.test", Port: 443}
+		"invalid service ID": func(s *controlv1.DeploymentService) { s.Id = "url_invalid" },
+		"http port": func(s *controlv1.DeploymentService) {
+			s.Endpoint = &controlv1.ServiceEndpoint{Hostname: "web.example.test", Port: 5432, Public: true}
 		},
-		"url absent":       func(s *controlv1.DeploymentService) { s.PublicUrl = nil },
-		"url revision":     func(s *controlv1.DeploymentService) { s.TrustRevision = 0 },
-		"service URL ID":   func(s *controlv1.DeploymentService) { *s = private; s.Id = saved.Id },
+		"revision":         func(s *controlv1.DeploymentService) { s.TrustRevision = 0 },
 		"service protocol": func(s *controlv1.DeploymentService) { *s = private; s.Protocol = "invalid" },
-		"service URL":      func(s *controlv1.DeploymentService) { *s = private; s.PublicUrl = saved.PublicUrl },
+		"public without port": func(s *controlv1.DeploymentService) {
+			*s = private
+			s.Endpoint = &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 0, Public: true}
+		},
 		"endpoint empty": func(s *controlv1.DeploymentService) {
 			*s = private
 			s.Endpoint = &controlv1.ServiceEndpoint{Port: 5432}
@@ -155,12 +154,14 @@ func TestDeploymentReadValidatesPublicURLAndServiceBindingShapes(t *testing.T) {
 			}
 		})
 	}
-	for _, value := range []string{"", "web.example.test", "http://web.example.test", "https://WEB.example.test", "https://web.example.test.", "https://web.example.test:443", "https://web.example.test/", "https://web.example.test/path", "https://web.example.test?query", "https://web.example.test#fragment", "https://user@web.example.test", "https://127.0.0.1", "https://*.example.test", "https://web.example.test\nsecret"} {
+	for _, value := range []string{"", "http://web.example.test", "WEB.example.test", "web.example.test.", "web.example.test:443", "web.example.test/", "web.example.test/path", "web.example.test?query", "web.example.test#fragment", "user@web.example.test", "127.0.0.1", "*.example.test", "web.example.test\nsecret"} {
 		t.Run(value, func(t *testing.T) {
 			service := saved
-			service.PublicUrl = &value
+			endpoint := *saved.Endpoint
+			endpoint.Hostname = value
+			service.Endpoint = &endpoint
 			if validDeploymentService(service) {
-				t.Fatal("noncanonical public URL was accepted")
+				t.Fatal("noncanonical service hostname was accepted")
 			}
 		})
 	}

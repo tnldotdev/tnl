@@ -26,7 +26,6 @@ type PublisherIdentityStore interface {
 	AuthenticatePublisherAccess(context.Context, string, string, time.Time) (controlstate.PublisherIdentity, error)
 	AllocatePublisherService(context.Context, controlstate.PublisherIdentity, controlstate.AllocateServiceRequest, time.Time) (controlstate.ServiceRecord, error)
 	DeletePublisherService(context.Context, controlstate.PublisherIdentity, string, time.Time) error
-	PublisherMayStartRun(context.Context, controlstate.PublisherIdentity, string) (bool, error)
 }
 
 func publisherProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
@@ -69,10 +68,10 @@ func (h *handler) publisherEditor(w http.ResponseWriter, r *http.Request, team s
 	return nil, controlstate.Membership{}, "", false
 }
 
-func publisherScope(team string, url, domain, private *string) (controlstate.PublisherScope, bool) {
+func publisherScope(team string, domain, service *string) (controlstate.PublisherScope, bool) {
 	s := controlstate.PublisherScope{TeamID: team}
 	selected := 0
-	for _, value := range []*string{url, domain, private} {
+	for _, value := range []*string{domain, service} {
 		if value != nil {
 			selected++
 		}
@@ -80,13 +79,9 @@ func publisherScope(team string, url, domain, private *string) (controlstate.Pub
 	if selected != 1 {
 		return s, false
 	}
-	if private != nil {
-		s.Kind, s.ServiceID = "service", *private
-		return s, opaqueid.Valid(*private, opaqueid.ServicePrefix)
-	}
-	if url != nil {
-		s.Kind, s.PublicURLID = "saved_public_url", *url
-		return s, opaqueid.Valid(*url, opaqueid.PublicURLPrefix)
+	if service != nil {
+		s.Kind, s.ServiceID = "service", *service
+		return s, opaqueid.Valid(*service, opaqueid.ServicePrefix)
 	}
 	s.Kind, s.DomainID = "namespace", *domain
 	return s, opaqueid.Valid(*domain, opaqueid.DomainPrefix)
@@ -98,9 +93,9 @@ func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Reque
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher enrollment")
 		return
 	}
-	s, valid := publisherScope(b.TeamId, b.PublicUrlId, b.DomainId, b.ServiceId)
+	s, valid := publisherScope(b.TeamId, b.DomainId, b.ServiceId)
 	if !valid || s.Kind == "namespace" && !h.config.DNSAutomation {
-		writeProblem(w, 400, controlv1.InvalidRequest, "select a saved URL or an automated HTTP namespace")
+		writeProblem(w, 400, controlv1.InvalidRequest, "select a service or an automated namespace")
 		return
 	}
 	store, m, editor, ok := h.publisherEditor(w, r, b.TeamId)
@@ -117,9 +112,6 @@ func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	result := controlv1.PublisherEnrollment{Id: e.ID, EnrollmentKey: e.Key, ExpiresAt: e.Until, TeamId: s.TeamID, Kind: controlv1.PublisherEnrollmentKind(s.Kind)}
-	if e.Scope.PublicURLID != "" {
-		result.PublicUrlId = &e.Scope.PublicURLID
-	}
 	if e.Scope.ServiceID != "" {
 		result.ServiceId = &e.Scope.ServiceID
 	}
@@ -135,8 +127,11 @@ func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Reque
 
 func publisherGrantResponse(g controlstatedb.ControlPublisherGrant) controlv1.PublisherGrant {
 	r := controlv1.PublisherGrant{Id: g.ID, Kind: controlv1.PublisherGrantKind(g.Kind), CreatedAt: g.CreatedAt.Time}
-	if g.PublicURLID.Valid {
-		r.PublicUrlId = &g.PublicURLID.String
+	if g.TeamID.Valid {
+		r.TeamId = g.TeamID.String
+	}
+	if g.GuestID.Valid {
+		r.GuestId = g.GuestID.String
 	}
 	if g.ServiceID.Valid {
 		r.ServiceId = &g.ServiceID.String
@@ -186,7 +181,14 @@ func (h *handler) ListPublisherIdentities(w http.ResponseWriter, r *http.Request
 			return
 		}
 		i := record.Identity
-		p := controlv1.PublisherIdentity{Id: i.ID, Name: i.Name, Kind: controlv1.PublisherIdentityKind(i.Kind), CreatedAt: i.CreatedAt.Time, Grants: []controlv1.PublisherGrant{}}
+		p := controlv1.PublisherIdentity{Id: i.ID, Name: i.Name,
+			Kind: controlv1.PublisherIdentityKind(i.Kind), CreatedAt: i.CreatedAt.Time, Grants: []controlv1.PublisherGrant{}}
+		if i.TeamID.Valid {
+			p.TeamId = i.TeamID.String
+		}
+		if i.GuestID.Valid {
+			p.GuestId = i.GuestID.String
+		}
 		p.Ownership = controlv1.PublisherIdentityOwnership(i.Ownership)
 		p.Runtime = runtimeResponse(record.Runtime)
 		if i.OwnerMembershipID.Valid {
@@ -212,9 +214,9 @@ func (h *handler) CreatePublisherGrant(w http.ResponseWriter, r *http.Request, i
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher grant")
 		return
 	}
-	s, valid := publisherScope(b.TeamId, b.PublicUrlId, b.DomainId, b.ServiceId)
+	s, valid := publisherScope(b.TeamId, b.DomainId, b.ServiceId)
 	if !valid || s.Kind == "namespace" && !h.config.DNSAutomation {
-		writeProblem(w, 400, controlv1.InvalidRequest, "select a saved URL or an automated HTTP namespace")
+		writeProblem(w, 400, controlv1.InvalidRequest, "select a service or an automated namespace")
 		return
 	}
 	store, m, editor, ok := h.publisherEditor(w, r, b.TeamId)

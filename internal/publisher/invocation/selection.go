@@ -2,7 +2,6 @@ package invocation
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"slices"
 
@@ -13,8 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/naming"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -27,7 +25,7 @@ type publisherServices struct {
 	teamID                string
 	membershipID          string
 	domainID              string
-	publicURLScope        controlv1.PublicURLScope
+	memberNamespace       bool
 	domainKind            authorityv1.DomainKind
 	customDomainAvailable bool
 	policyRevision        uint64
@@ -101,53 +99,33 @@ func preparePublisherServices(
 	if current.team.PolicyRevision < 0 {
 		return publisherServices{}, failure.Wrap("read team policy", failure.ServerResponseInvalid, errors.New("authority returned an invalid team policy revision"))
 	}
-	hostname, domain, publicURLScope, err := resolve.PublishHostname(publicURL, name, selectedDomain, selected)
+	if publicURL != "" {
+		publicURL, err = naming.ParseExactPublicURL(publicURL)
+		if err != nil {
+			return publisherServices{}, failure.Wrap("select service address", failure.InvalidTunnelFlags, err)
+		}
+	}
+	hostname, domain, err := resolve.PublishHostname(publicURL, name, selectedDomain, selected)
 	if err != nil {
 		return publisherServices{}, err
 	}
 	customAvailable := slices.ContainsFunc(current.domains, func(domain authorityv1.Domain) bool {
 		return domain.Kind == authorityv1.Custom && domain.State == authorityv1.DomainStateReady
 	})
+	namespace, direct := selected.Namespace(domain)
+	_, within := naming.ChildDepth(hostname, namespace)
 	return publisherServices{
 		domainKind: domain.Kind, customDomainAvailable: customAvailable,
-		authenticated:  authenticated,
-		state:          publisherState,
-		hostname:       hostname,
-		namespace:      namespaceForMembership(current, domain),
-		teamID:         current.team.Id,
-		membershipID:   current.membership.Id,
-		domainID:       domain.Id,
-		publicURLScope: publicURLScope,
-		policyRevision: uint64(current.team.PolicyRevision),
-		ephemeral:      ephemeral,
-		routes:         authenticated.Control,
+		authenticated:   authenticated,
+		state:           publisherState,
+		hostname:        hostname,
+		namespace:       namespace,
+		teamID:          current.team.Id,
+		membershipID:    current.membership.Id,
+		domainID:        domain.Id,
+		memberNamespace: !direct && within,
+		policyRevision:  uint64(current.team.PolicyRevision),
+		ephemeral:       ephemeral,
+		routes:          authenticated.Control,
 	}, nil
-}
-
-func namespaceForMembership(current TeamSelection, domain authorityv1.Domain) string {
-	namespace, _ := current.Context().Namespace(domain)
-	return namespace
-}
-
-func (p publisherServices) config(target string, allowedIPPrefixes []string, limits applicationlimits.Limits) publisher.Config {
-	relayTransportTLS := &tls.Config{MinVersion: tls.VersionTLS13}
-	return publisher.Config{
-		Control:           p.routes,
-		Management:        p.routes,
-		AccessManagement:  p.routes,
-		TeamID:            p.teamID,
-		MembershipID:      p.membershipID,
-		DomainID:          p.domainID,
-		Hostname:          p.hostname,
-		PublicURLScope:    p.publicURLScope,
-		Purpose:           controlv1.App,
-		ServiceProtocol:   controlv1.Http,
-		PolicyRevision:    p.policyRevision,
-		Target:            target,
-		Limits:            limits,
-		AllowedIPPrefixes: allowedIPPrefixes,
-		Ephemeral:         p.ephemeral,
-		State:             p.state,
-		TransportTLS:      relayTransportTLS,
-	}
 }

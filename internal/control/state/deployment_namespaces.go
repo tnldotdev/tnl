@@ -75,7 +75,10 @@ func (d *Database) ensureDeploymentNamespace(ctx context.Context, tx pgx.Tx, r A
 			return ErrProjectConfigurationInvalid
 		}
 		var conflict bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.public_urls WHERE lifecycle_state<>'deleted' AND (canonical_hostname=$1 OR right(canonical_hostname,length($1)+1)='.'||$1))`, namespace).Scan(&conflict); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.service_endpoints
+			WHERE deployment_id IS DISTINCT FROM $2
+			  AND (hostname=$1 OR right(hostname,length($1)+1)='.'||$1)
+			  AND (retired_at IS NULL OR reusable_after>$3))`, namespace, deploymentID, r.Now).Scan(&conflict); err != nil {
 			return err
 		}
 		if conflict {

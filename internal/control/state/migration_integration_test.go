@@ -90,10 +90,10 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 		t.Fatalf("query mode = %v, want exec", mode)
 	}
 	for _, table := range []string{
-		"schema_identity", "identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions", "guest_retry_keys", "dns_authorities", "dns_challenge_changes",
+		"schema_identity", "identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions", "guest_trials", "dns_authorities", "dns_challenge_changes",
 		"public_urls", "publish_runs", "publisher_service_connection_slots", "relay_services", "relay_leases", "ingress_leases", "ingress_routing_table_clock", "ingress_routing_table_events", "relay_service_reservations",
 		"acme_accounts", "relay_certificate_orders", "acme_orders", "acme_authorizations", "ingress_run_fences",
-		"public_url_recovery_episodes", "public_url_recovery_histogram", "admin_audit_events", "maintenance_controls", "schema_migration_lock",
+		"service_recovery_episodes", "service_recovery_histogram", "admin_audit_events", "maintenance_controls", "schema_migration_lock",
 	} {
 		var exists bool
 		if err := database.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'control' AND table_name = $1)`, table).Scan(&exists); err != nil {
@@ -278,7 +278,7 @@ func TestIntegrationScopedForeignKeys(t *testing.T) {
 			VALUES ('invitation_wrong_team', 'team_owner_a', 'reservation_owner_b_extra', 'member', 'identity_owner_a',
 			'wrong-team', decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'), 'pending', now(), now() + interval '1 hour')`},
 		{name: "publish_run_team", query: `UPDATE control.publish_runs SET team_id = 'team_owner_b' WHERE id = 'session_owner_a'`},
-		{name: "missing_recovery_run", query: `INSERT INTO control.public_url_recovery_episodes (public_url_id, publish_run_number, state, opened_at) VALUES ('public_url_owner_a', 2, 'open', now())`},
+		{name: "missing_recovery_run", query: `INSERT INTO control.service_recovery_episodes (service_id, service_run_id, run_number, state, opened_at) VALUES ('svc_owner_a', 'srun_missing', 2, 'open', now())`},
 		{name: "acme_order_run", query: `INSERT INTO control.acme_orders (id, account_id, publish_run_id, public_url_id, publish_run_number,
 			idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_identifiers,
 			challenge_method, csr_der, csr_digest, state, available_at, created_at, updated_at)

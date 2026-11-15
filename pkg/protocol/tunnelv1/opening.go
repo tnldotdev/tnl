@@ -11,40 +11,14 @@ const MaxInitialBytes = 64 << 10
 
 var ErrOpeningSize = errors.New("initial visitor bytes exceed the opening limit")
 
-// an opening is a bounded header and length-prefixed initial block, followed
-// by raw request bytes. the returned count excludes the trusted PROXY metadata.
-func WriteVisitorOpening(w io.Writer, h VisitorStreamHeader, initial []byte) (int, error) {
-	return writeOpening(w, nil, initial, func(w io.Writer) error { return WriteVisitorStreamHeader(w, h) })
-}
-
-func ReadVisitorOpening(r io.Reader) (VisitorStreamHeader, []byte, error) {
-	h, err := ReadVisitorStreamHeader(r)
-	if err != nil {
-		return h, nil, err
-	}
-	initial, err := ReadInitialBytes(r)
-	return h, initial, err
-}
-
-func WriteForwardingOpening(w io.Writer, h InternalForwardingHeader, proxy, initial []byte) (int, error) {
-	return writeOpening(w, proxy, initial, func(w io.Writer) error { return WriteInternalForwardingHeader(w, h) })
-}
-
-func ReadForwardingOpening(r io.Reader) (InternalForwardingHeader, *ServiceForwardingHeader, []byte, error) {
-	h, service, err := ReadForwardingHeader(r)
-	if err != nil {
-		return h, service, nil, err
-	}
-	initial, err := ReadInitialBytes(r)
-	return h, service, initial, err
-}
-
+// an opening is a bounded service header and length-prefixed initial block,
+// followed by raw visitor bytes. public service openings confirm before bytes.
 func WriteServiceOpening(w io.Writer, h ServiceForwardingHeader) (int, error) {
-	return writeOpening(w, nil, nil, func(w io.Writer) error { return WriteServiceForwardingHeader(w, h) })
+	return writeOpening(w, nil, func(w io.Writer) error { return WriteServiceForwardingHeader(w, h) })
 }
 
-func writeOpening(w io.Writer, proxy, initial []byte, header func(io.Writer) error) (int, error) {
-	if len(proxy) > MaxInitialBytes || len(initial) > MaxInitialBytes-len(proxy) {
+func writeOpening(w io.Writer, initial []byte, header func(io.Writer) error) (int, error) {
+	if len(initial) > MaxInitialBytes {
 		return 0, ErrOpeningSize
 	}
 	var frame bytes.Buffer
@@ -52,9 +26,8 @@ func writeOpening(w io.Writer, proxy, initial []byte, header func(io.Writer) err
 		return 0, err
 	}
 	var length [4]byte
-	binary.BigEndian.PutUint32(length[:], uint32(len(proxy)+len(initial)))
+	binary.BigEndian.PutUint32(length[:], uint32(len(initial)))
 	frame.Write(length[:])
-	frame.Write(proxy)
 	boundary := frame.Len()
 	frame.Write(initial)
 	n, err := w.Write(frame.Bytes())

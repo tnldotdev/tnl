@@ -205,7 +205,7 @@ func TestDeploymentKubeconfigArtifactScope(t *testing.T) {
 	t.Setenv("KUBECONFIG", shared)
 	credential := connectorDeploymentCredential(t, "https://control.example.test")
 	project, state := t.TempDir(), t.TempDir()
-	service := controlv1.Service{
+	service := controlv1.ServiceSummary{
 		Id: "svc_aaaaaaaaaaaaaaaaaaaaaa", Endpoint: &controlv1.ServiceEndpoint{Hostname: "cluster.example.test"},
 		KubernetesAuth: &controlv1.KubernetesAuth{Provider: controlv1.KubernetesEKS, Cluster: "saved-cluster", Region: "us-east-1"},
 	}

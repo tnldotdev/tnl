@@ -2,172 +2,149 @@ package invocation
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"slices"
-	"time"
+	"strings"
 
-	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
-	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-// issuedNativePublisher reuses one locally owned key for the selected namespace.
-// the control session only issues enrollment; run creation uses signed identity.
-func issuedNativePublisher(ctx context.Context, services publisherServices) (*publisheridentity.Native, error) {
-	digest := sha256.Sum256([]byte(services.teamID + "\x00" + services.domainID))
-	scope := "owner-namespace:" + hex.EncodeToString(digest[:])
-	lock, err := services.state.LockPublisherSigningIdentity(ctx, scope)
+// foreground publication changes only selected policy fields. its listener is a
+// runtime target, not a replacement for the saved service's configured target.
+func prepareForegroundService(ctx context.Context, services publisherServices, flags PublicOptions, policy resolvedVisitorAccess, plan targetplan.TargetPlan) (*publisheridentity.Native, controlv1.Service, targetplan.TargetPlan, error) {
+	declaration, err := foregroundServiceDeclaration(flags, policy, plan, nil)
 	if err != nil {
-		return nil, err
+		return nil, controlv1.Service{}, plan, err
 	}
-	defer lock.Close()
-	control, authority := services.authenticated.Control, services.authenticated.Authority
-	saved, found, err := services.state.SelectedPublisherIdentity(ctx, "namespace", scope)
-	if err != nil {
-		return nil, err
-	}
-	if found {
-		var identity authorityv1.PublisherEnrollmentResult
-		if err := json.Unmarshal(saved.PublicDocument, &identity); err != nil || identity.ClientId != saved.ID {
-			return nil, publisheridentity.ErrScope
+	saved, err := reserveConfiguredService(ctx, services, declaration, func(current controlv1.Service, configured *controlv1.ProjectServiceConfiguration) (*controlv1.ProjectServiceConfiguration, error) {
+		if !policy.explicit && flags.Limits == (applicationlimits.Limits{}) && flags.RequirePostQuantum == nil && !foregroundTrustSelected(flags) {
+			return nil, nil
 		}
-		if identity.ClientId != "" {
-			if identity.Kind != authorityv1.Namespace || identity.TeamId != services.teamID || identity.DomainId == nil || *identity.DomainId != services.domainID || identity.Namespace == nil || *identity.Namespace != services.namespace {
-				return nil, publisheridentity.ErrScope
+		captured := plan
+		if !foregroundTrustSelected(flags) {
+			var err error
+			captured.Trust, err = publisheridentity.ServiceTrust(current)
+			if err != nil {
+				return nil, err
 			}
-			native, _, err := publisheridentity.LoadNative(ctx, services.state, publisheridentity.NativeControl{PublicURLControl: control}, authority, identity.ClientId)
-			return native, err
 		}
-	}
-	pending, found, err := services.state.PendingPublisherEnrollmentForSelection(ctx, "namespace", scope)
+		if configured == nil {
+			targetTLS, err := foregroundTargetTLS(captured.Trust)
+			if err != nil {
+				return nil, err
+			}
+			configured = &controlv1.ProjectServiceConfiguration{Target: "app", TargetTls: targetTLS,
+				RequirePostQuantum: new(current.RequirePostQuantum),
+				Http:               &controlv1.ProjectServiceHTTP{Limits: current.HttpLimits}}
+		}
+		desired, err := foregroundServiceDeclaration(flags, policy, captured, configured)
+		return &desired, err
+	})
 	if err != nil {
-		return nil, err
+		return nil, saved, plan, err
 	}
-	if !found {
-		body := controlv1.CreatePublisherEnrollmentRequest{TeamId: services.teamID, DomainId: &services.domainID, Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled, Name: "tnl"}
-		enrollment, err := control.CreatePublisherEnrollment(ctx, body)
+	if !foregroundTrustSelected(flags) {
+		plan.Trust, err = publisheridentity.ServiceTrust(saved)
 		if err != nil {
-			return nil, err
+			return nil, saved, plan, err
 		}
-		if enrollment.Kind != controlv1.PublisherEnrollmentKindNamespace || enrollment.TeamId != services.teamID || enrollment.DomainId == nil || *enrollment.DomainId != services.domainID || enrollment.Namespace == nil || *enrollment.Namespace != services.namespace || enrollment.EnrollmentKey == "" {
-			return nil, failure.Wrap("read publisher enrollment", failure.ServerResponseInvalid, publisheridentity.ErrScope)
-		}
-		public, private, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			return nil, err
-		}
-		pending = clientstate.PendingPublisherEnrollment{EnrollmentID: enrollment.Id, SelectionKind: "namespace", SelectionKey: scope, PublicKey: public, SigningKey: private, EnrollmentSecret: []byte(enrollment.EnrollmentKey), ExpiresAt: time.Now().Add(10 * time.Minute)}
-		if err := services.state.SavePendingPublisherEnrollment(ctx, pending); err != nil {
-			return nil, err
+		if plan.Trust != nil && !strings.Contains(flags.Target, "://") {
+			plan.Target = "https://" + strings.TrimPrefix(strings.TrimPrefix(plan.Target, "http://"), "https://")
 		}
 	}
-	native, identity, err := publisheridentity.EnrollNative(ctx, services.state, publisheridentity.NativeControl{PublicURLControl: control}, authority, string(pending.EnrollmentSecret))
-	if err != nil {
-		return nil, err
+	if err := plan.Normalize(); err != nil {
+		return nil, saved, plan, err
 	}
-	if identity.Kind != authorityv1.Namespace || identity.TeamId != services.teamID || identity.DomainId == nil || *identity.DomainId != services.domainID || identity.Namespace == nil || *identity.Namespace != services.namespace {
-		return nil, failure.Wrap("read publisher enrollment", failure.ServerResponseInvalid, publisheridentity.ErrScope)
+	if err := publisheridentity.MatchServiceDeclaration(saved, "http", plan.Trust); err != nil {
+		return nil, saved, plan, failure.Wrap("match service declaration", failure.ServerConflict, err)
 	}
-	return native, nil
+	native, _, err := publisheridentity.EnsureServiceOwner(ctx, services.state, services.authenticated.Control, services.authenticated.Authority, saved)
+	return native, saved, plan, err
 }
 
-func selectForegroundPublisher(ctx context.Context, database *clientstate.Database, services publisherServices, cfg *publisher.Config, guest *clientstate.GuestSession) (func() error, error) {
-	cleanup := func() error { return nil }
-	if guest != nil {
-		publicURL, err := createGuestDemoURL(ctx, services, *cfg)
-		if err != nil {
-			return nil, err
-		}
-		cleanupGuest := func() error {
-			finish, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			err := services.routes.DeletePublicURL(finish, publicURL.Id)
-			if errors.Is(err, clientcontrol.ErrNotFound) {
-				return nil
-			}
-			return err
-		}
-		native, err := enrollGuestNative(ctx, services, publicURL)
-		if err != nil {
-			return nil, errors.Join(err, cleanupGuest())
-		}
-		cfg.Control = guestPublicationControl{PublicURLControlClient: native, assigned: publicURL, bootstrap: services.routes}
-		cfg.AssignedPublicURL = &publicURL
-		cfg.PublisherIdentityID = native.PublisherIdentityID()
-		configureNativePublication(cfg, native, services.routes)
-		// guest cleanup uses the trial session; its native grant only starts runs.
-		return cleanupGuest, nil
+func foregroundTrustSelected(flags PublicOptions) bool {
+	return flags.Service != "" || flags.TargetCAFile != "" || flags.TargetTLSName != ""
+}
+
+func foregroundTargetTLS(trust *targettrust.Snapshot) (*controlv1.ProjectTargetTLS, error) {
+	if trust == nil {
+		return nil, nil
 	}
-	if cfg.Ephemeral {
-		if cfg.ServiceProtocol != controlv1.Http {
-			return nil, publisherCLIError("temporary publication requires an HTTP service")
-		}
-		native, err := issuedNativePublisher(ctx, services)
-		if err != nil {
-			return nil, err
-		}
-		invocation, err := opaqueid.New(opaqueid.InvocationPrefix)
-		if err != nil {
-			return nil, err
-		}
-		body := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: invocation, Target: cfg.Target, RequirePostQuantum: cfg.RequirePostQuantum}
-		if cfg.AccessMode != "" {
-			mode := cfg.AccessMode
-			body.AccessMode = &mode
-		}
-		if cfg.AllowedIPPrefixes != nil {
-			prefixes := slices.Clone(cfg.AllowedIPPrefixes)
-			body.Ip = &prefixes
-		}
-		publicURL, err := native.Allocate(ctx, body)
-		if err != nil {
-			return nil, err
-		}
-		cfg.Control, cfg.AssignedPublicURL = native, &publicURL
-		cfg.PublisherIdentityID = native.PublisherIdentityID()
-		configureNativePublication(cfg, native, services.routes)
-		cfg.Hostname, cfg.PublicURLScope, cfg.Purpose = publicURL.CanonicalHostname, publicURL.PublicUrlScope, publicURL.Purpose
-		cfg.MembershipID = ""
-		if publicURL.MembershipId != nil {
-			cfg.MembershipID = *publicURL.MembershipId
-		}
-		return func() error {
-			finish, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			err := native.DeletePublicURL(finish, publicURL.Id)
-			if errors.Is(err, clientcontrol.ErrNotFound) {
-				return nil
-			}
-			return err
-		}, nil
-	}
-	reservation := services
-	if reservation.publicURLScope == controlv1.Shared {
-		reservation.membershipID = ""
-	}
-	publicURL, err := reserveConfiguredURL(ctx, reservation, *cfg)
+	captured, err := trust.Declaration()
 	if err != nil {
 		return nil, err
 	}
-	native, _, err := publisheridentity.EnsureOwner(ctx, services.state, services.authenticated.Control, services.authenticated.Authority, publicURL)
-	if err != nil {
-		return nil, err
+	tls := &controlv1.ProjectTargetTLS{Hostname: captured.Hostname, Digest: captured.Digest}
+	if len(captured.CAPEM) != 0 {
+		tls.CaPem = new(string(captured.CAPEM))
 	}
-	if err := native.SelectPublicURL(publicURL); err != nil {
-		return nil, err
+	return tls, nil
+}
+
+func foregroundServiceDeclaration(flags PublicOptions, policy resolvedVisitorAccess, plan targetplan.TargetPlan, current *controlv1.ProjectServiceConfiguration) (controlv1.ProjectServiceConfiguration, error) {
+	declaration := controlv1.ProjectServiceConfiguration{Target: "app", Protocol: new(controlv1.ServiceProtocolHTTP), Public: new(true), Ephemeral: new(false)}
+	if current != nil {
+		encoded, err := json.Marshal(current)
+		if err != nil {
+			return declaration, err
+		}
+		declaration = controlv1.ProjectServiceConfiguration{}
+		if err := json.Unmarshal(encoded, &declaration); err != nil {
+			return declaration, err
+		}
 	}
-	cfg.Control, cfg.PreserveSavedPublicURLTarget = native, true
-	cfg.PublisherIdentityID = native.PublisherIdentityID()
-	configureNativePublication(cfg, native, services.routes)
-	return cleanup, nil
+	if current == nil || foregroundTrustSelected(flags) {
+		var err error
+		declaration.TargetTls, err = foregroundTargetTLS(plan.Trust)
+		if err != nil {
+			return declaration, err
+		}
+	}
+	if flags.RequirePostQuantum != nil {
+		declaration.RequirePostQuantum = new(*flags.RequirePostQuantum)
+	}
+	if err := flags.Limits.Validate(); err != nil {
+		return declaration, err
+	}
+	limits := flags.Limits
+	if policy.explicit || limits.Requests != 0 || limits.Concurrency != 0 || limits.RateRequests != 0 || limits.RateBurst != 0 {
+		if declaration.Http == nil {
+			declaration.Http = &controlv1.ProjectServiceHTTP{}
+		}
+		if policy.explicit {
+			prefixes := slices.Clone(policy.prefixes)
+			if prefixes == nil {
+				prefixes = []string{}
+			}
+			declaration.Http.Access = &controlv1.ProjectHTTPAccess{Mode: new(policy.access), Ip: &prefixes}
+		}
+		if limits.Requests != 0 || limits.Concurrency != 0 || limits.RateRequests != 0 || limits.RateBurst != 0 {
+			if declaration.Http.Limits == nil {
+				declaration.Http.Limits = &controlv1.ProjectHTTPApplicationLimits{}
+			}
+			selected := declaration.Http.Limits
+			if limits.Requests != 0 {
+				selected.Total = new(limits.Requests)
+			}
+			if limits.Concurrency != 0 {
+				selected.Concurrency = new(limits.Concurrency)
+			}
+			if limits.RateRequests != 0 {
+				rate := &controlv1.ProjectApplicationRate{Count: limits.RateRequests, Per: limits.RatePer.String()}
+				if selected.Rate != nil {
+					rate.Burst = selected.Rate.Burst
+				}
+				selected.Rate = rate
+			}
+			if limits.RateBurst != 0 && selected.Rate != nil {
+				selected.Rate.Burst = new(limits.RateBurst)
+			}
+		}
+	}
+	return declaration, nil
 }

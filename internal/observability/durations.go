@@ -20,7 +20,7 @@ func (m *Metrics) ObserveOperationContext(ctx context.Context, operation ServerO
 	}
 	var histogram *histogram
 	switch operation {
-	case OpCreatePublishRun, OpHeartbeatPublishRun, OpClosePublishRun, OpReadIngressRoutingTableSnapshot, OpRefreshPortPoolMetrics,
+	case OpCreateServiceRun, OpHeartbeatServiceRun, OpCloseServiceRun, OpReadIngressRoutingTableSnapshot, OpRefreshPortPoolMetrics,
 		OpAdvanceIngressRoutingRetention, OpPruneIngressRoutingHistory,
 		OpReadIngressRoutingTableEvents, OpRenewIngress,
 		OpClaimPublisherConnection, OpMarkPublisherConnectionReady:

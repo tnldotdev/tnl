@@ -25,11 +25,9 @@ type ProjectPublicationStatus struct {
 	Kind                      string     `json:"service_kind"`
 	WorktreeKey               string     `json:"worktree_key,omitempty"`
 	ServiceID                 string     `json:"service_id,omitempty"`
-	PublicURLID               string     `json:"public_url_id,omitempty"`
 	Hostname                  string     `json:"hostname"`
 	Port                      int        `json:"port,omitempty"`
 	ServiceRunID              string     `json:"service_run_id,omitempty"`
-	PublishRunID              string     `json:"publish_run_id,omitempty"`
 	RunNumber                 int64      `json:"run_number,omitempty,string"`
 	PublicationState          string     `json:"publication_state,omitempty"`
 	PublisherExpiresAt        *time.Time `json:"publisher_expires_at,omitempty"`
@@ -69,18 +67,11 @@ func (d *Database) GetProjectStatus(ctx context.Context, team, project, actor, c
 			result.NextCursor = encodeDiscoveryCursor(discoveryCursor{Kind: kind, Team: team, Actor: actor, After: rows[i-1].CursorKey})
 			break
 		}
-		publication := ProjectPublicationStatus{Service: row.Service, Deployment: row.Deployment, Kind: "local", WorktreeKey: row.WorktreeKey, ServiceID: row.ServiceID.String, PublicURLID: row.PublicURLID.String, Hostname: row.Hostname, Port: int(row.Port), RunNumber: row.RunNumber, PublicationState: row.PublicationState, PublisherExpiresAt: optionalTime(row.PublisherExpiresAt), CertificateExpiresAt: optionalTime(row.CertificateExpiresAt)}
+		publication := ProjectPublicationStatus{Service: row.Service, Deployment: row.Deployment, Kind: "local", WorktreeKey: row.WorktreeKey, ServiceID: row.ServiceID.String, Hostname: row.Hostname, Port: int(row.Port), RunNumber: row.RunNumber, PublicationState: row.PublicationState, PublisherExpiresAt: optionalTime(row.PublisherExpiresAt), CertificateExpiresAt: optionalTime(row.CertificateExpiresAt)}
 		if row.ServiceID.Valid {
 			publication.Kind, publication.ServiceRunID = "service", row.RunID
 			if row.RunID != "" {
 				publication.ReadyPublisherConnections, err = countReadyServiceConnections(ctx, tx, row.RunID, now)
-			}
-		} else if row.PublicURLID.Valid {
-			publication.Kind, publication.PublishRunID = "public_url", row.RunID
-			if row.RunID != "" {
-				connections, e := validReadyPublisherConnections(ctx, q, row.RunID, now)
-				err = e
-				publication.ReadyPublisherConnections = len(connections)
 			}
 		}
 		if err != nil {
@@ -95,7 +86,7 @@ func (d *Database) GetProjectStatus(ctx context.Context, team, project, actor, c
 
 func projectPublicationReason(row controlstatedb.ListProjectPublicationsRow, connections int, now time.Time) string {
 	switch {
-	case !row.ServiceID.Valid && !row.PublicURLID.Valid:
+	case !row.ServiceID.Valid:
 		return "not_realized"
 	case !row.Enabled:
 		return "disabled"
@@ -109,9 +100,9 @@ func projectPublicationReason(row controlstatedb.ListProjectPublicationsRow, con
 		return "certificate_expired"
 	case !row.Healthy:
 		return "publisher_unhealthy"
-	case connections == 0 || !row.ReadyAt.Valid && connections < publishRunConnectionCount:
+	case connections == 0 || !row.ReadyAt.Valid && connections < 2:
 		return "connections_pending"
-	case row.PublicURLID.Valid && row.DnsState != "unmanaged" && row.DnsState != "published":
+	case row.Public && row.DnsState != "unmanaged" && row.DnsState != "published":
 		return "dns_unavailable"
 	case row.PublicationState != "ready":
 		return "starting"

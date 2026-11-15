@@ -13,10 +13,10 @@ import (
 
 type ServiceInventory struct {
 	ServiceMetadata
-	KubernetesAuth                 *controlv1.KubernetesAuth
-	ID, TeamID, Name, ServiceRunID string
-	RunNumber                      int64
-	CreatedAt                      time.Time
+	KubernetesAuth                                          *controlv1.KubernetesAuth
+	ID, TeamID, TeamName, Name, ServiceRunID, VisitorAccess string
+	RunNumber                                               int64
+	CreatedAt                                               time.Time
 }
 
 type ServiceVisitorValidity struct {

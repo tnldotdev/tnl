@@ -104,56 +104,71 @@ type benchmarkAllocationResult struct {
 }
 
 type benchmarkAllocationFixture struct {
-	results     []benchmarkAllocationResult
-	requests    []controlv1.AllocateServiceRequest
-	deleted     []string
-	deleteErr   error
-	checkAccess func(context.Context)
+	result          benchmarkAllocationResult
+	requests        []controlv1.AllocateServiceRequest
+	cleanupRequests []controlv1.AllocateServiceRequest
+	cleanupErr      error
+	afterAllocation func()
+	checkAccess     func(context.Context)
 }
 
 func (f *benchmarkAllocationFixture) AllocateService(ctx context.Context, request controlv1.AllocateServiceRequest) (controlv1.Service, error) {
 	if f.checkAccess != nil {
 		f.checkAccess(ctx)
 	}
-	result := f.results[len(f.requests)]
 	f.requests = append(f.requests, request)
-	return result.service, result.err
+	if f.afterAllocation != nil {
+		f.afterAllocation()
+	}
+	return f.result.service, f.result.err
 }
 
-func (f *benchmarkAllocationFixture) DeleteAllocatedService(ctx context.Context, service string) error {
+func (f *benchmarkAllocationFixture) CleanupServiceAllocation(ctx context.Context, request controlv1.AllocateServiceRequest) error {
 	if f.checkAccess != nil {
 		f.checkAccess(ctx)
 	}
-	f.deleted = append(f.deleted, service)
-	return f.deleteErr
+	f.cleanupRequests = append(f.cleanupRequests, request)
+	return f.cleanupErr
 }
 
-func TestBenchmarkAllocationCleanupRecoversOnlyItsOriginalInvocation(t *testing.T) {
+func TestBenchmarkAllocationCleanupDelegatesItsOriginalInvocation(t *testing.T) {
 	lost, selection, recovery, deletion := errors.New("response lost"), errors.New("selection failed"), errors.New("recovery failed"), errors.New("deletion failed")
 	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL"}
 	for _, test := range []struct {
 		name       string
-		results    []benchmarkAllocationResult
-		deleteErr  error
-		wantError  error
-		wantDelete bool
+		allocation benchmarkAllocationResult
+		cleanupErr error
 	}{
-		{"observed", []benchmarkAllocationResult{{service: service}}, nil, nil, true},
-		{"observed-selection-failure", []benchmarkAllocationResult{{service: service, err: selection}}, deletion, deletion, true},
-		{"lost-response", []benchmarkAllocationResult{{err: lost}, {service: service}}, nil, nil, true},
-		{"lost-response-selection-failure", []benchmarkAllocationResult{{err: lost}, {service: service, err: selection}}, nil, selection, true},
-		{"unrecoverable", []benchmarkAllocationResult{{err: lost}, {err: recovery}}, nil, recovery, false},
-		{"invalid-recovery", []benchmarkAllocationResult{{err: lost}, {}}, nil, nil, false},
+		{"observed", benchmarkAllocationResult{service: service}, nil},
+		{"observed-selection-failure", benchmarkAllocationResult{service: service, err: selection}, deletion},
+		{"lost-response", benchmarkAllocationResult{err: lost}, nil},
+		{"lost-response-selection-failure", benchmarkAllocationResult{err: lost}, errors.Join(selection, deletion)},
+		{"unrecoverable", benchmarkAllocationResult{err: lost}, recovery},
+		{"invalid-recovery", benchmarkAllocationResult{err: lost}, publisheridentity.ErrScope},
+		{"canceled-cleanup-with-independent-failure", benchmarkAllocationResult{err: lost}, errors.Join(context.Canceled, deletion)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			request := controlv1.AllocateServiceRequest{InvocationId: "inv_0123456789ABCDEFGHIJKL",
-				Configuration: controlv1.ProjectServiceConfiguration{Target: "127.0.0.1:8080", Ephemeral: new(true)}}
-			fixture := &benchmarkAllocationFixture{results: test.results, deleteErr: test.deleteErr}
-			_, cleanup, primary := allocateBenchmarkService(ctx, fixture, request)
-			if !errors.Is(primary, test.results[0].err) || cleanup == nil {
-				t.Fatal("allocation lost its primary error or cleanup owner", primary)
+			expires := time.Now().UTC().Add(time.Hour)
+			prefixes := []string{"192.0.2.4/32"}
+			request := controlv1.AllocateServiceRequest{InvocationId: "inv_0123456789ABCDEFGHIJKL", ExpiresAt: &expires,
+				Configuration: controlv1.ProjectServiceConfiguration{Target: "127.0.0.1:8080", Ephemeral: new(true),
+					Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Ip: &prefixes}}}}
+			original := controlv1.AllocateServiceRequest{InvocationId: request.InvocationId, ExpiresAt: new(expires),
+				Configuration: controlv1.ProjectServiceConfiguration{Target: request.Configuration.Target, Ephemeral: new(true),
+					Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Ip: new([]string{"192.0.2.4/32"})}}}}
+			fixture := &benchmarkAllocationFixture{result: test.allocation, cleanupErr: test.cleanupErr}
+			fixture.afterAllocation = func() {
+				request.InvocationId = "changed"
+				request.Configuration.Target = "changed:9000"
+				*request.Configuration.Ephemeral = false
+				prefixes[0] = "203.0.113.4/32"
+				expires = expires.Add(time.Hour)
+			}
+			allocated, cleanup, primary := allocateBenchmarkService(ctx, fixture, request)
+			if primary != test.allocation.err || allocated.Id != test.allocation.service.Id || cleanup == nil {
+				t.Fatal("allocation lost its result, primary error, or cleanup owner", primary)
 			}
 			cancel()
 			fixture.checkAccess = func(ctx context.Context) {
@@ -164,21 +179,16 @@ func TestBenchmarkAllocationCleanupRecoversOnlyItsOriginalInvocation(t *testing.
 			cleanupCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
 			defer stop()
 			err := cleanup(cleanupCtx)
-			if test.wantError != nil && !errors.Is(err, test.wantError) ||
-				test.wantError == nil && test.wantDelete && err != nil ||
-				!test.wantDelete && err == nil {
-				t.Fatal("cleanup lost an independent failure or claimed unconfirmed deletion", err)
+			if err != test.cleanupErr {
+				t.Fatal("cleanup changed or suppressed the native operation's failure", err)
 			}
-			if len(fixture.requests) != len(test.results) || len(fixture.deleted) != map[bool]int{false: 0, true: 1}[test.wantDelete] {
-				t.Fatal("cleanup allocated again or deleted without an observed service")
+			if len(fixture.requests) != 1 || len(fixture.cleanupRequests) != 1 {
+				t.Fatal("benchmark retried allocation instead of delegating exact cleanup")
 			}
-			for _, actual := range fixture.requests {
-				if !reflect.DeepEqual(actual, request) {
-					t.Fatal("cleanup changed the invocation or declaration")
+			for _, actual := range []controlv1.AllocateServiceRequest{fixture.requests[0], fixture.cleanupRequests[0]} {
+				if !reflect.DeepEqual(actual, original) {
+					t.Fatal("allocation or cleanup changed the original invocation, declaration, or deadline")
 				}
-			}
-			if test.wantDelete && fixture.deleted[0] != service.Id {
-				t.Fatal("cleanup deleted another service")
 			}
 		})
 	}

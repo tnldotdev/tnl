@@ -202,7 +202,7 @@ func separatedConfig(t *testing.T, component string) daemonconfig.Config {
 		cfg.TrafficSourceRate, cfg.TrafficSourceBurst = 200, 400
 		cfg.TrafficProcessRate, cfg.TrafficProcessBurst = 500, 1000
 	}
-	cfg.PublicURLCertificateWorkers = *runtimeLoadCertificateWorkers
+	cfg.ServiceCertificateWorkers = *runtimeLoadCertificateWorkers
 	cfg.QUICIdleTimeout = 45 * time.Second
 	cfg.ClusterSecret = testClusterSecret
 	if *runtimeLoadWorkload == "connect" || *runtimeLoadWorkload == "postgres" {

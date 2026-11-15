@@ -5,12 +5,14 @@ info:
   license: { name: BSD-3-Clause, identifier: BSD-3-Clause }
   description: >-
     Same-origin browser feedback endpoints served by the local publisher on a
-    public URL. The publisher supplies the preview, service, public URL, publish
-    run, and current source state. Visitors cannot select that scope or supply
+    service endpoint. The publisher supplies the preview, service, service run,
+    run number, and current source state. Visitors cannot select that scope or supply
     control credentials. Current visitor access, including a sign-in, share,
-    token, or explicitly anonymous URL, grants preview access; an optional IP
+    token, or explicitly anonymous service, grants visitor access; an optional IP
     filter never grants access by itself. The browser tracking cookie only selects a short failed-request
-    trail. Requests and responses use Cache-Control no-store. Errors are plain
+    trail. Control rechecks current feedback access from browser and share proofs
+    and the validated visitor source; a local visit_allowed observation is not authority.
+    Requests and responses use Cache-Control no-store. Errors are plain
     text diagnostics and never include upstream response bodies or credentials.
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers: [{ url: / }]

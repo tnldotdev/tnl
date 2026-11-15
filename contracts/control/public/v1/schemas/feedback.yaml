@@ -4,7 +4,7 @@ schemas:
   ReviewSchemaVersion:
     type: integer
     minimum: 1
-    description: Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+    description: Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
   FeedbackThreadState:
     type: string
     enum: [open, resolved]
@@ -14,20 +14,20 @@ schemas:
   FeedbackScope:
     type: object
     additionalProperties: false
-    required: [preview_id, public_url_id, publish_run_id, publish_run_number, page_path, service]
+    required: [preview_id, service_id, service_run_id, run_number, page_path, service]
     properties:
       preview_id:
         $ref: "../openapi.yaml#/components/schemas/PreviewID"
-      public_url_id:
-        $ref: "../openapi.yaml#/components/schemas/PublicURLID"
-      publish_run_id:
-        $ref: "../openapi.yaml#/components/schemas/PublishRunID"
-      publish_run_number:
+      service_id:
+        $ref: "../openapi.yaml#/components/schemas/ServiceID"
+      service_run_id:
+        $ref: "../openapi.yaml#/components/schemas/ServiceRunID"
+      run_number:
         {
           type: string,
           pattern: "^[0-9]+$",
           x-go-type: int64,
-          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
         }
       page_path:
         type: string
@@ -401,9 +401,40 @@ schemas:
           x-go-type: int64,
           x-oapi-codegen-extra-tags: { json: "event_cursor,string" },
         }
+  FeedbackVisitProof:
+    x-go-type: json.RawMessage
+    description: Publisher-selected visitor proof, never browser input. An explicit invalid proof is denied without falling back to cookie or anonymous access. Browser sign-in remains independent author evidence.
+    oneOf:
+      - { $ref: "../openapi.yaml#/components/schemas/FeedbackBearerVisitProof" }
+      - { $ref: "../openapi.yaml#/components/schemas/FeedbackConnectorVisitProof" }
+  FeedbackBearerVisitProof:
+    type: object
+    additionalProperties: false
+    required: [kind, token]
+    properties:
+      kind: { type: string, enum: [bearer], x-enum-varnames: [FeedbackVisitBearer] }
+      token: { type: string, minLength: 1, maxLength: 2048 }
+    description: The signed bearer token actually selected by HTTP authorization, including accepted renewal. Certificate tokens are not bearer proof.
+  FeedbackConnectorVisitProof:
+    type: object
+    additionalProperties: false
+    required: [kind, pair_id, delivery_generation, permission_token]
+    properties:
+      kind: { type: string, enum: [connector], x-enum-varnames: [FeedbackVisitConnector] }
+      pair_id: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
+      delivery_generation:
+        {
+          type: string,
+          pattern: "^[1-9][0-9]*$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "delivery_generation,string" },
+        }
+      permission_token: { type: string, minLength: 1, maxLength: 2048 }
+    description: A snapshot from the actual connector stream admission after checking use. Control rechecks the pair, delivery binding, source, current service run, and signed permission. A claimed pair ID alone is not authority.
   FeedbackReviewerAccess:
     type: object
     additionalProperties: false
+    description: Browser identity and visitor access are independent. Control rechecks the supplied browser and share proofs, current service policy, and feedback policy; visit_allowed is an observation, not authority.
     required: [visit_allowed]
     properties:
       source_ip:
@@ -422,29 +453,23 @@ schemas:
         type: string
         minLength: 43
         maxLength: 43
+      visit_proof:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackVisitProof"
+        x-go-type-skip-optional-pointer: true
   CreateFeedbackReportRequest:
     type: object
     additionalProperties: false
     required:
-      [
-        preview_id,
-        publish_run_number,
-        service,
-        page_path,
-        report,
-        evidence,
-        source_at_report,
-        access,
-      ]
+      [preview_id, run_number, service, page_path, report, evidence, source_at_report, access]
     properties:
       preview_id:
         $ref: "../openapi.yaml#/components/schemas/PreviewID"
-      publish_run_number:
+      run_number:
         {
           type: string,
           pattern: "^[0-9]+$",
           x-go-type: int64,
-          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
         }
       service:
         type: string
@@ -486,14 +511,14 @@ schemas:
   AppendReviewerFeedbackEventRequest:
     type: object
     additionalProperties: false
-    required: [publish_run_number, type, access]
+    required: [run_number, type, access]
     properties:
-      publish_run_number:
+      run_number:
         {
           type: string,
           pattern: "^[0-9]+$",
           x-go-type: int64,
-          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
         }
       type:
         $ref: "../openapi.yaml#/components/schemas/ReviewerFeedbackEventInputType"
@@ -518,14 +543,14 @@ schemas:
   ReviewerFeedbackReadRequest:
     type: object
     additionalProperties: false
-    required: [publish_run_number, preview_id, access]
+    required: [run_number, preview_id, access]
     properties:
-      publish_run_number:
+      run_number:
         {
           type: string,
           pattern: "^[0-9]+$",
           x-go-type: int64,
-          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
         }
       preview_id:
         $ref: "../openapi.yaml#/components/schemas/PreviewID"

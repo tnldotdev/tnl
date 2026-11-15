@@ -2,12 +2,14 @@ package requestlimit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -17,30 +19,48 @@ import (
 type HTTP struct{ admission *Budget }
 
 func NewHTTP(input *controlv1.ProjectHTTPApplicationLimits) (*HTTP, error) {
-	var limits applicationlimits.Limits
-	if input != nil {
-		if input.Total != nil {
-			limits.Requests = *input.Total
-		}
-		if input.Concurrency != nil {
-			limits.Concurrency = *input.Concurrency
-		}
-		if input.Rate != nil {
-			period, err := time.ParseDuration(input.Rate.Per)
-			if err != nil {
-				return nil, err
-			}
-			limits.RateRequests, limits.RatePer = input.Rate.Count, period
-			if input.Rate.Burst != nil {
-				limits.RateBurst = *input.Rate.Burst
-			}
-		}
+	limits, err := ParseLimits(input)
+	if err != nil {
+		return nil, err
 	}
 	admission, err := New(limits)
 	if err != nil {
 		return nil, err
 	}
 	return &HTTP{admission: admission}, nil
+}
+
+// ParseLimits validates an explicit HTTP budget without applying defaults.
+func ParseLimits(input *controlv1.ProjectHTTPApplicationLimits) (applicationlimits.Limits, error) {
+	var limits applicationlimits.Limits
+	if input != nil {
+		if input.Total != nil {
+			if *input.Total < 1 {
+				return limits, errors.New("request limit must be positive")
+			}
+			limits.Requests = *input.Total
+		}
+		if input.Concurrency != nil {
+			if *input.Concurrency < 1 {
+				return limits, errors.New("concurrency limit must be positive")
+			}
+			limits.Concurrency = *input.Concurrency
+		}
+		if input.Rate != nil {
+			period, err := time.ParseDuration(input.Rate.Per)
+			if err != nil || period <= 0 || input.Rate.Count < 1 {
+				return limits, errors.New("request rate requires a positive count and period")
+			}
+			limits.RateRequests, limits.RatePer = input.Rate.Count, period
+			if input.Rate.Burst != nil {
+				if *input.Rate.Burst < 1 {
+					return limits, errors.New("request rate burst must be positive")
+				}
+				limits.RateBurst = *input.Rate.Burst
+			}
+		}
+	}
+	return limits, limits.Validate()
 }
 
 // admit holds one run-wide request slot until the returned release is called.
@@ -73,7 +93,14 @@ func (l *HTTP) Reserve(w http.ResponseWriter, r *http.Request) (*Reservation, bo
 		}
 		w.Header().Set("Connection", "close")
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second))
-		http.Error(w, "HTTP request limit reached", status)
+		switch {
+		case status == http.StatusTooManyRequests:
+			diagnostic.WriteHTTP(w, r, diagnostic.RequestRateLimited, "")
+		case retry == 0:
+			diagnostic.WriteHTTP(w, r, diagnostic.RequestBudgetExhausted, "")
+		default:
+			diagnostic.WriteHTTP(w, r, diagnostic.RequestLimitReached, "saturated")
+		}
 		return nil, false
 	}
 	return reservation, true

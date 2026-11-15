@@ -4,9 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"io"
 	"net"
+	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,287 +21,282 @@ import (
 )
 
 type admissionTransportFixture struct {
-	forwarder *Forwarder
-	publisher *tunnel.Session
-	wire      muxsession.Session
-	entry     ingressv1.IngressRoutingTableEntry
-	ref       tunnelv1.PublisherConnectionRef
-	material  forwardingTestMaterial
-	lease     atomic.Pointer[relayv1.RelayLease]
+	forwarder       *Forwarder
+	publisher       *tunnel.Session
+	wire            muxsession.Session
+	relay           ingressv1.ServiceRelay
+	header          tunnelv1.ServiceForwardingHeader
+	server          *forwardingTestServer
+	publisherServer *forwardingTestServer
+	lease           atomic.Pointer[relayv1.RelayLease]
+	released        chan struct{}
 }
 
-// both hops use verified TLS/yamux and the real tunnel authentication handshake.
+type admissionRelayControl struct {
+	relay.ControlClient
+	lease relayv1.RelayLease
+	ref   tunnelv1.ServicePublisherConnectionRef
+}
+
+func (c admissionRelayControl) RegisterRelay(context.Context, relayv1.RelayRegistration) (relayv1.RelayLease, error) {
+	return c.lease, nil
+}
+
+func (c admissionRelayControl) ClaimServicePublisherConnection(_ context.Context, id string, request relayv1.ServicePublisherConnectionClaim) (relayv1.ServicePublisherConnection, error) {
+	if id != c.ref.PublisherConnectionID || request.ServiceId != c.ref.ServiceID || request.ServiceRunId != c.ref.ServiceRunID ||
+		request.RunNumber != int64(c.ref.RunNumber) || request.ConnectionAssignmentRevision != int64(c.ref.ConnectionAssignmentRevision) ||
+		request.Credential != "publisher-secret" || request.ObservedSourceIp != "127.0.0.1" ||
+		request.RelayId != c.lease.RelayId || request.RelayRunId != c.lease.RelayRunId || request.RelayLeaseRevision != c.lease.RelayLeaseRevision {
+		return relayv1.ServicePublisherConnection{}, errors.New("publisher claim changed its accepted source or assignment")
+	}
+	return c.connection(), nil
+}
+
+func (c admissionRelayControl) connection() relayv1.ServicePublisherConnection {
+	return relayv1.ServicePublisherConnection{ServiceId: c.ref.ServiceID, ServiceRunId: c.ref.ServiceRunID, RunNumber: int64(c.ref.RunNumber),
+		PublisherConnectionId: c.ref.PublisherConnectionID, ConnectionAssignmentRevision: int64(c.ref.ConnectionAssignmentRevision), RelayServiceId: c.ref.RelayServiceID}
+}
+
+func (c admissionRelayControl) ReadyServicePublisherConnection(context.Context, string, relayv1.ServicePublisherConnectionTransition) (relayv1.ServicePublisherConnection, error) {
+	return c.connection(), nil
+}
+
+func (c admissionRelayControl) DisconnectServicePublisherConnection(context.Context, string, relayv1.ServicePublisherConnectionTransition) error {
+	return nil
+}
+
+// both hops use the real service-only relay acceptors and verified TLS/yamux.
+// control supplies one exact claim; no legacy publisher or forwarding adapter runs.
 func newAdmissionTransportFixture(t *testing.T) *admissionTransportFixture {
 	t.Helper()
 	material := newForwardingTestMaterial(t)
-	f := &admissionTransportFixture{entry: forwardingTestEntry(time.Now(), ""), material: material}
-	f.entry.PublicUrlId = "url_0123456789abcdefghijkl"
-	f.entry.CanonicalHostname = "route.example"
-	f.entry.IpPolicy = ingressv1.AllowAll
-	registry := relay.NewRegistry()
-	t.Cleanup(func() { _ = registry.Close() })
-	ref := tunnelv1.PublisherConnectionRef{PublishRunID: f.entry.PublishRunId, PublicURLID: f.entry.PublicUrlId, PublishRunNumber: uint64(f.entry.PublishRunNumber),
-		PublisherConnectionID: "publisher_connection_1", ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1"}
-	f.ref = ref
-	claimed := relayv1.ClaimedPublisherConnection{PublishRunId: ref.PublishRunID, PublicUrlId: ref.PublicURLID, PublishRunNumber: int64(ref.PublishRunNumber), PublisherConnectionId: ref.PublisherConnectionID,
-		ConnectionAssignmentRevision: 3, RelayServiceId: ref.RelayServiceID, RelayId: "relay_1", RelayRunId: "relay_run_1", RelayLeaseRevision: 4}
-	ready := make(chan struct{}, 1)
-	publisherServer := startForwardingTestServer(t, material, func(ctx context.Context, transport muxsession.Session) error {
-		session, _, err := tunnel.Accept(ctx, transport, func(_ context.Context, m tunnelv1.Message) error {
-			if m.Role != tunnelv1.Publisher || m.Credential != "publisher-secret" || m.PublisherConnection == nil || *m.PublisherConnection != ref {
-				return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		c, err := relay.NewPublisherConnection(ref, claimed, session)
-		if err != nil {
-			return err
-		}
-		if err := registry.Insert(c); err != nil {
-			return err
-		}
-		defer registry.Remove(c)
-		ready <- struct{}{}
-		select {
-		case <-ctx.Done():
-		case <-session.Done():
-		}
-		return nil
+	now := time.Now().UTC()
+	id := func(prefix string) string { return prefix + strings.Repeat("a", 22) }
+	ref := tunnelv1.ServicePublisherConnectionRef{ServiceID: id("svc_"), ServiceRunID: id("srun_"), RunNumber: 2,
+		PublisherConnectionID: id("pc_"), ConnectionAssignmentRevision: 3, RelayServiceID: "relay-service"}
+	lease := relayv1.RelayLease{RelayServiceId: ref.RelayServiceID, RelayId: "relay", RelayRunId: id("rr_"), RelayLeaseRevision: 4,
+		ProtocolVersion: 1, RelayAddress: "relay.test:443", TlsServerName: material.serverName, InternalRelayAddress: "127.0.0.1:9445",
+		InternalNetworks: []string{}, ConnectionCapacity: 4, StreamCapacity: 4,
+		RegisteredAt: now, RenewedAt: now, LeaseExpiresAt: now.Add(time.Minute)}
+	backend := admissionRelayControl{lease: lease, ref: ref}
+	leased := make(chan struct{}, 1)
+	controller, err := relay.NewController(relay.ControllerConfig{Client: backend,
+		Registration: relayv1.RelayRegistration{RelayServiceId: lease.RelayServiceId, RelayId: lease.RelayId, RelayRunId: lease.RelayRunId,
+			ProtocolVersion: 1, RelayAddress: lease.RelayAddress, TlsServerName: lease.TlsServerName, InternalRelayAddress: lease.InternalRelayAddress,
+			InternalNetworks: []string{}, ConnectionCapacity: 4, StreamCapacity: 4},
+		RenewalInterval: time.Hour, RetryInterval: time.Hour, LeaseChanged: func(relayv1.RelayLease, relayv1.RelayLease) { leased <- struct{}{} },
 	})
-	transport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: material.roots}}).Connect(ingressContext(t), muxsession.Endpoint{Address: publisherServer.address(), ServerName: material.serverName})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.publisher, err = tunnel.Dial(ingressContext(t), transport, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Publisher, Credential: "publisher-secret", PublisherConnection: &ref})
+	ctx, cancel := context.WithCancel(t.Context())
+	ingressWorker(t, cancel, func() error { return controller.Run(ctx) })
+	ingressAwait(t, leased)
+	registry := relay.NewServiceRegistry()
+	t.Cleanup(func() { _ = registry.Close() })
+	ready := make(chan struct{}, 1)
+	acceptor, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{
+		Select: func(service string) (relay.ServicePublisherTarget, bool) {
+			return relay.ServicePublisherTarget{Control: controller, Registry: registry}, service == ref.RelayServiceID
+		},
+		ReadyConnectionsDelta: func(delta int) {
+			if delta == 1 {
+				ready <- struct{}{}
+			}
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.wire = transport
-	t.Cleanup(func() { _ = f.publisher.Close() })
+	publisherServer := startForwardingTestServer(t, material, acceptor.Accept)
+	transport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: material.roots}}).Connect(
+		ingressContext(t), muxsession.Endpoint{Address: publisherServer.address(), ServerName: material.serverName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher, err := tunnel.Dial(ingressContext(t), transport, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version,
+		Role: tunnelv1.Publisher, Credential: "publisher-secret", ServiceConnection: &ref})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { publisherServer.cancel(); _ = publisher.Close() })
 	ingressAwait(t, ready)
-	f.lease.Store(&relayv1.RelayLease{RelayServiceId: ref.RelayServiceID, RelayId: claimed.RelayId, RelayRunId: claimed.RelayRunId, RelayLeaseRevision: 4, LeaseExpiresAt: time.Now().Add(time.Minute)})
-	acceptor, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{Registry: registry, CurrentLease: func() relayv1.RelayLease { return *f.lease.Load() }, ClusterSecrets: forwardingTestSecrets(t), StreamCapacity: 32})
+	f := &admissionTransportFixture{publisher: publisher, publisherServer: publisherServer, wire: transport, released: make(chan struct{}, 16)}
+	f.lease.Store(&lease)
+	forwarding, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{ServiceRegistry: registry,
+		CurrentLease: func() relayv1.RelayLease { return *f.lease.Load() }, ClusterSecrets: forwardingTestSecrets(t), StreamCapacity: 1,
+		StreamsDelta: func(delta int) {
+			if delta == -1 {
+				f.released <- struct{}{}
+			}
+		}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	forwardingServer := startForwardingTestServer(t, material, acceptor.Accept)
-	f.entry.PublisherConnections[0].InternalRelayAddress = forwardingServer.address()
+	f.server = startForwardingTestServer(t, material, forwarding.Accept)
+	f.relay = ingressv1.ServiceRelay{PublisherConnectionId: ref.PublisherConnectionID, ConnectionSlot: int(ref.ConnectionSlot),
+		ConnectionAssignmentRevision: int64(ref.ConnectionAssignmentRevision), RelayServiceId: ref.RelayServiceID,
+		RelayId: lease.RelayId, RelayRunId: lease.RelayRunId, RelayLeaseRevision: lease.RelayLeaseRevision,
+		LeaseExpiresAt: lease.LeaseExpiresAt, InternalRelayAddress: f.server.address(), TlsServerName: material.serverName}
+	f.header = tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{
+		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream, ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID,
+		RunNumber: ref.RunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
+		VisitorConnectionID: id("vc_"), SourceIP: "192.0.2.7", ExpiresAt: lease.LeaseExpiresAt,
+		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress", IngressRunID: id("ir_"), IngressLeaseRevision: 1, DestinationPort: 443},
+	}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: lease.RelayServiceId, RelayID: lease.RelayId,
+		RelayRunID: lease.RelayRunId, RelayLeaseRevision: uint64(lease.RelayLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt}
 	f.forwarder = newTestForwarder(t, material)
 	return f
 }
 
-func publisherAdmission(h tunnelv1.VisitorStreamHeader) tunnelv1.AdmissionHeader {
-	return tunnelv1.AdmissionHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.PublisherPromotion, VisitorConnectionID: h.VisitorConnectionID,
-		PublicURLID: h.PublicURLID, PublishRunID: h.PublishRunID, PublishRunNumber: h.PublishRunNumber, PublisherConnectionID: h.PublisherConnectionID,
-		ConnectionAssignmentRevision: h.ConnectionAssignmentRevision, RelayServiceID: "relay_service_1"}
-}
-
-func openPendingTransport(t *testing.T, f *admissionTransportFixture, id string) (net.Conn, *tunnel.IncomingVisitorStream) {
-	t.Helper()
-	incoming := make(chan *tunnel.IncomingVisitorStream, 1)
-	worker := ingressWorker(t, func() { _ = f.publisher.Close() }, func() error {
-		v, err := f.publisher.AcceptVisitorStream(ingressContext(t))
-		if err != nil {
-			return err
-		}
-		incoming <- v
-		return v.Accept()
-	})
-	b := mustOnlyBackend(t, f.forwarder, f.entry).(forwardingBackend)
-	c, err := b.Start(ingressContext(t), id, true, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ingressAwait(t, worker); err != nil {
-		t.Fatal(err)
-	}
-	return c, ingressAwait(t, incoming)
+func (f *admissionTransportFixture) closePublisher() {
+	// stop the publisher owner before closing its carrier, so planned fixture
+	// cleanup cannot be recorded as an unexpected publisher-session failure.
+	f.publisherServer.cancel()
+	_ = f.publisher.Close()
 }
 
 func assertAdmissionCode(t *testing.T, err error, want tunnelv1.ErrorCode) {
 	t.Helper()
-	if want == "" {
-		if err != nil {
-			t.Fatal(err)
-		}
-		return
+	var protocol *tunnel.ProtocolError
+	if !errors.As(err, &protocol) || protocol.Code != want {
+		t.Fatalf("admission=%v want=%s", err, want)
 	}
-	var protocolError *tunnel.ProtocolError
-	if !errors.As(err, &protocolError) || protocolError.Code != want {
-		t.Fatalf("admission = %v; want %s", err, want)
+	var opening *tunnel.OpeningError
+	if !errors.As(err, &opening) || opening.VisitorBytes != 0 {
+		t.Fatal("rejected setup crossed the visitor-byte retry boundary", err)
 	}
 }
 
-func TestAuthenticatedPromotionBindsIdentitySessionAndSingleUse(t *testing.T) {
+func TestServiceForwardingBindsIdentityBeforeVisitorBytes(t *testing.T) {
 	f := newAdmissionTransportFixture(t)
-	var decisions atomic.Int32
-	f.forwarder.SetPromotionHandler(func(_ context.Context, h tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult {
-		decisions.Add(1)
-		if h.RelayRunID != "relay_run_1" || h.RelayLeaseRevision != 4 {
-			t.Error("relay did not bind process identity")
-		}
-		return tunnelv1.AdmissionResult{Type: tunnelv1.StreamAccepted}
-	})
-	for index, change := range []func(*tunnelv1.AdmissionHeader){
-		func(h *tunnelv1.AdmissionHeader) { h.VisitorConnectionID = "another-visitor" },
-		func(h *tunnelv1.AdmissionHeader) { h.PublicURLID = "other" }, func(h *tunnelv1.AdmissionHeader) { h.PublishRunID = "other" },
-		func(h *tunnelv1.AdmissionHeader) { h.PublishRunNumber++ }, func(h *tunnelv1.AdmissionHeader) { h.PublisherConnectionID = "other" },
-		func(h *tunnelv1.AdmissionHeader) { h.ConnectionSlot = 1 }, func(h *tunnelv1.AdmissionHeader) { h.ConnectionAssignmentRevision++ },
-		func(h *tunnelv1.AdmissionHeader) { h.RelayServiceID = "other" },
-	} {
-		stream, wire, header := openRawPendingTransport(t, f, fmt.Sprintf("visitor_bad_%d", index))
-		t.Cleanup(func() { _ = stream.Close(); _ = wire.Close() })
-		bad := publisherAdmission(header)
-		change(&bad)
-		sent := ingressWorker(t, func() { _ = wire.Close() }, func() error {
-			return tunnelv1.WriteReturnFrame(wire, tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnPromoted, Promotion: bad})
+	for _, field := range []string{"ServiceID", "ServiceRunID", "RunNumber", "PublisherConnectionID", "ConnectionSlot", "ConnectionAssignmentRevision", "RelayServiceID", "RelayID", "RelayRunID", "RelayLeaseRevision"} {
+		t.Run(field, func(t *testing.T) {
+			header := f.header
+			value := reflect.ValueOf(&header).Elem().FieldByName(field)
+			if value.Kind() == reflect.String {
+				text := value.String()
+				value.SetString(text[:len(text)-1] + "b")
+			} else {
+				value.SetUint(value.Uint() + 1)
+			}
+			connection, err := f.forwarder.OpenPrivate(ingressContext(t), f.relay, header)
+			if connection != nil || err == nil {
+				t.Fatal("changed forwarding identity was admitted")
+			}
+			switch field {
+			case "ServiceID", "ServiceRunID", "RunNumber":
+				// service identity is checked against the relay's claimed run.
+				assertAdmissionCode(t, err, tunnelv1.StaleConnectionAssignment)
+				ingressAwait(t, f.released)
+			default:
+				// assignment and process identity must match ingress's selection
+				// before it opens a stream or writes any visitor bytes.
+				if !errors.Is(err, ErrServiceAdmission) {
+					t.Fatal("mismatched relay projection reached forwarding", err)
+				}
+			}
 		})
-		_, err := stream.Read(make([]byte, 1))
-		assertAdmissionCode(t, err, tunnelv1.StaleConnectionAssignment)
-		if err := ingressAwait(t, sent); err != nil {
-			t.Fatal(err)
-		}
 	}
-	stream, incoming := openPendingTransport(t, f, "visitor_promotion")
-	t.Cleanup(func() { _ = stream.Close(); _ = incoming.Stream.Close() })
-	done := ingressWorker(t, func() { _ = incoming.Stream.Close() }, func() error {
-		if err := incoming.Promote(ingressContext(t)); err != nil {
-			return err
-		}
-		_, err := incoming.Stream.Write([]byte("encrypted"))
-		return err
-	})
-	bytes := make([]byte, 9)
-	if _, err := io.ReadFull(stream, bytes); err != nil || string(bytes) != "encrypted" {
-		t.Fatalf("%q, %v", bytes, err)
-	}
-	if err := ingressAwait(t, done); err != nil {
-		t.Fatal(err)
-	}
-	if err := incoming.Promote(ingressContext(t)); !errors.Is(err, tunnelv1.ErrReturnFrame) || decisions.Load() != 1 {
-		t.Fatal("promotion reused", err, decisions.Load())
+	if f.server.accepted.Load() != 1 {
+		t.Fatal("semantic setup rejection replaced the shared ingress session")
 	}
 }
 
-func TestAuthenticatedPromotionRejectsRawReplayBeforeVisitorBytes(t *testing.T) {
+func TestServiceForwardingLeaseAndCapacityRejectionBeforeAcknowledgment(t *testing.T) {
+	for _, boundary := range []string{"lease", "capacity", "cancellation"} {
+		t.Run(boundary, func(t *testing.T) {
+			f := newAdmissionTransportFixture(t)
+			ctx, cancel := context.WithCancel(ingressContext(t))
+			defer cancel()
+			type result struct {
+				connection net.Conn
+				err        error
+			}
+			opened := make(chan result, 1)
+			go func() {
+				connection, err := f.forwarder.OpenPrivate(ctx, f.relay, f.header)
+				opened <- result{connection, err}
+			}()
+			incoming, err := f.publisher.AcceptServiceForwardingStream(ingressContext(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer incoming.Stream().Close()
+			if boundary == "capacity" {
+				header := f.header
+				header.VisitorConnectionID = "vc_" + strings.Repeat("b", 22)
+				connection, err := f.forwarder.OpenPrivate(ingressContext(t), f.relay, header)
+				if connection != nil {
+					connection.Close()
+					t.Fatal("capacity was not reserved while publisher acknowledgment was pending")
+				}
+				assertAdmissionCode(t, err, tunnelv1.CapacityExceeded)
+			}
+			if boundary == "lease" {
+				lease := *f.lease.Load()
+				lease.RelayRunId += "-restarted"
+				f.lease.Store(&lease)
+			}
+			if boundary == "cancellation" {
+				cancel()
+			} else if err := incoming.Accept(); err != nil {
+				t.Fatal(err)
+			}
+			got := ingressAwait(t, opened)
+			if boundary == "capacity" {
+				if got.err != nil || got.connection == nil {
+					t.Fatal("healthy pending opening was changed by sibling capacity rejection", got.err)
+				}
+				got.connection.Close()
+			} else {
+				if got.connection != nil || got.err == nil {
+					t.Fatal("canceled or lease-stale setup was accepted")
+				}
+				if boundary == "lease" {
+					assertAdmissionCode(t, got.err, tunnelv1.StaleConnectionAssignment)
+				}
+			}
+		})
+	}
+}
+
+func TestServiceForwardingAcknowledgmentIsIdempotentAndKeepsDataOnce(t *testing.T) {
 	f := newAdmissionTransportFixture(t)
-	var decisions atomic.Int32
-	f.forwarder.SetPromotionHandler(func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult {
-		decisions.Add(1)
-		return tunnelv1.AdmissionResult{Type: tunnelv1.StreamAccepted}
-	})
-	stream, wire, header := openRawPendingTransport(t, f, "visitor_replay")
-	t.Cleanup(func() { _ = stream.Close(); _ = wire.Close() })
-	sent := ingressWorker(t, func() { _ = wire.Close() }, func() error {
-		frame := tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnPromoted, Promotion: publisherAdmission(header)}
-		if err := tunnelv1.WriteReturnFrame(wire, frame); err != nil {
-			return err
-		}
-		return tunnelv1.WriteReturnFrame(wire, frame)
-	})
-	if n, err := stream.Read(make([]byte, 1)); err == nil || n != 0 || decisions.Load() != 1 {
-		t.Fatal("replayed promotion admitted bytes or repeated the decision", n, err, decisions.Load())
-	}
-	if err := ingressAwait(t, sent); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// malformed peer evidence must use the raw transport, not a production capability
-// that permits the caller to substitute another stream's identity.
-func openRawPendingTransport(t *testing.T, f *admissionTransportFixture, id string) (net.Conn, muxsession.Stream, tunnelv1.VisitorStreamHeader) {
-	t.Helper()
-	type decoded struct {
-		stream muxsession.Stream
-		header tunnelv1.VisitorStreamHeader
-	}
-	incoming := make(chan decoded, 1)
-	worker := ingressWorker(t, func() { _ = f.publisher.Close() }, func() error {
-		stream, err := f.wire.AcceptStream(ingressContext(t))
+	worker := ingressWorker(t, f.closePublisher, func() error {
+		incoming, err := f.publisher.AcceptServiceForwardingStream(ingressContext(t))
 		if err != nil {
 			return err
 		}
-		header, _, err := tunnelv1.ReadVisitorOpening(stream)
-		if err != nil {
-			_ = stream.Close()
+		defer incoming.Stream().Close()
+		if !reflect.DeepEqual(incoming.Header, f.header) {
+			return errors.New("canonical forwarding rewrote service, source, or lease facts")
+		}
+		if err := incoming.Accept(); err != nil {
 			return err
 		}
-		incoming <- decoded{stream, header}
-		return tunnelv1.WriteReturnFrame(stream, tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnAccepted})
+		if err := incoming.Accept(); err != nil {
+			return err
+		}
+		_, err = incoming.Stream().Write([]byte("encrypted"))
+		if err != nil {
+			return err
+		}
+		return incoming.CloseWrite(ingressContext(t))
 	})
-	b := mustOnlyBackend(t, f.forwarder, f.entry).(forwardingBackend)
-	stream, err := b.Start(ingressContext(t), id, true, nil, nil)
+	connection, err := f.forwarder.OpenPrivate(ingressContext(t), f.relay, f.header)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer connection.Close()
+	if err := connection.SetDeadline(time.Now().Add(fixtureTimeout)); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := io.ReadAll(connection)
+	if err != nil || string(payload) != "encrypted" {
+		t.Fatal("repeated acknowledgment duplicated a decision or visitor bytes", err)
+	}
 	if err := ingressAwait(t, worker); err != nil {
 		t.Fatal(err)
-	}
-	raw := ingressAwait(t, incoming)
-	return stream, raw.stream, raw.header
-}
-
-func TestAuthenticatedPromotionRejectsStaleRelayLeaseAndPropagatesCapacity(t *testing.T) {
-	for _, test := range []struct {
-		name  string
-		stale bool
-		want  tunnelv1.ErrorCode
-	}{{"capacity", false, tunnelv1.CapacityExceeded}, {"lease", true, tunnelv1.StaleConnectionAssignment}} {
-		t.Run(test.name, func(t *testing.T) {
-			f := newAdmissionTransportFixture(t)
-			f.forwarder.SetPromotionHandler(func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult {
-				return tunnelv1.AdmissionResult{Type: tunnelv1.StreamRejected, Code: tunnelv1.CapacityExceeded}
-			})
-			c, incoming := openPendingTransport(t, f, "visitor_rejected")
-			defer c.Close()
-			defer incoming.Stream.Close()
-			if test.stale {
-				lease := *f.lease.Load()
-				lease.RelayRunId = "restarted"
-				f.lease.Store(&lease)
-			}
-			sent := ingressWorker(t, func() { _ = incoming.Stream.Close() }, func() error { return incoming.Promote(ingressContext(t)) })
-			_, err := c.Read(make([]byte, 1))
-			assertAdmissionCode(t, err, test.want)
-			if err := ingressAwait(t, sent); err != nil {
-				t.Fatal(err)
-			}
-			if err := incoming.Promote(ingressContext(t)); !errors.Is(err, tunnelv1.ErrReturnFrame) {
-				t.Fatal("promotion reused", err)
-			}
-		})
-	}
-}
-
-func TestAuthenticatedPromotionRejectsReplacedIngressSession(t *testing.T) {
-	f := newAdmissionTransportFixture(t)
-	var decisions atomic.Int32
-	f.forwarder.SetPromotionHandler(func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult {
-		decisions.Add(1)
-		return tunnelv1.AdmissionResult{Type: tunnelv1.StreamAccepted}
-	})
-	c, incoming := openPendingTransport(t, f, "visitor_session")
-	defer c.Close()
-	defer incoming.Stream.Close()
-	b := mustOnlyBackend(t, f.forwarder, f.entry).(forwardingBackend)
-	f.forwarder.mu.Lock()
-	old := f.forwarder.sessions[b.target.key()]
-	delete(f.forwarder.sessions, b.target.key())
-	f.forwarder.mu.Unlock()
-	defer old.session.Close()
-	if _, _, err := f.forwarder.session(ingressContext(t), b.target); err != nil {
-		t.Fatal(err)
-	}
-	sent := ingressWorker(t, func() { _ = incoming.Stream.Close() }, func() error { return incoming.Promote(ingressContext(t)) })
-	_, err := c.Read(make([]byte, 1))
-	assertAdmissionCode(t, err, tunnelv1.StaleConnectionAssignment)
-	if err := ingressAwait(t, sent); err != nil {
-		t.Fatal(err)
-	}
-	if decisions.Load() != 0 {
-		t.Fatal("replaced session authorized visitor")
 	}
 }

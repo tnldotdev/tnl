@@ -2,29 +2,6 @@ package observability
 
 import "slices"
 
-type ServiceKind uint8
-
-const (
-	Service ServiceKind = iota + 1
-	PublicURL
-)
-
-func (v ServiceKind) String() string {
-	return enumString([]string{"", "service", "public_url"}, int(v))
-}
-
-// NormalizeServiceKind translates the service wire value at the boundary.
-func NormalizeServiceKind(value string) ServiceKind {
-	switch value {
-	case "service":
-		return Service
-	case "public_url":
-		return PublicURL
-	default:
-		return 0
-	}
-}
-
 // these ordinal types cannot be narrowed from a string by a cast. parsers omit
 // unknown external values; zero is always unspecified, never an invented value.
 type Protocol uint8

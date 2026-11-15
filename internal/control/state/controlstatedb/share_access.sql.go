@@ -113,7 +113,7 @@ func (q *Queries) DeleteFinishedShareHandoffs(ctx context.Context, now pgtype.Ti
 }
 
 const getActiveShareForService = `-- name: GetActiveShareForService :one
-SELECT share.id, share.schema_version, share.preview_id, share.team_id, share.guest_id, share.authority_team_id, share.scope, share.entry_service_id, share.control_session_id, share.label, share.created_by_identity_id, share.authority_creator_identity_id, share.idempotency_key, share.request_digest, share.secret_digest, share.created_at, share.expires_at, share.revoked_at, share.revoked_by_identity_id FROM control.shares share
+SELECT share.id, share.schema_version, share.preview_id, share.team_id, share.guest_id, share.scope, share.entry_service_id, share.control_session_id, share.label, share.created_by_identity_id, share.idempotency_key, share.request_digest, share.secret_digest, share.created_at, share.expires_at, share.revoked_at, share.revoked_by_identity_id, share.revoked_by_guest_id FROM control.shares share
 JOIN control.share_services included ON included.share_id=share.id
 WHERE share.id=$1 AND included.service_id=$2
     AND share.revoked_at IS NULL AND share.expires_at>$3
@@ -135,13 +135,11 @@ func (q *Queries) GetActiveShareForService(ctx context.Context, arg GetActiveSha
 		&i.PreviewID,
 		&i.TeamID,
 		&i.GuestID,
-		&i.AuthorityTeamID,
 		&i.Scope,
 		&i.EntryServiceID,
 		&i.ControlSessionID,
 		&i.Label,
 		&i.CreatedByIdentityID,
-		&i.AuthorityCreatorIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.SecretDigest,
@@ -149,13 +147,14 @@ func (q *Queries) GetActiveShareForService(ctx context.Context, arg GetActiveSha
 		&i.ExpiresAt,
 		&i.RevokedAt,
 		&i.RevokedByIdentityID,
+		&i.RevokedByGuestID,
 	)
 	return i, err
 }
 
 const insertShareCookie = `-- name: InsertShareCookie :one
-INSERT INTO control.share_cookies(token_digest,share_id,service_id,team_id,run_ids,created_at,expires_at)
-SELECT $1,share.id,included.service_id,share.team_id,$2::text[],
+INSERT INTO control.share_cookies(token_digest,share_id,service_id,run_ids,created_at,expires_at)
+SELECT $1,share.id,included.service_id,$2::text[],
     $3,LEAST(share.expires_at,$4::timestamptz)
 FROM control.shares share
 JOIN control.share_services included ON included.share_id=share.id AND included.service_id=$5
@@ -188,8 +187,8 @@ func (q *Queries) InsertShareCookie(ctx context.Context, arg InsertShareCookiePa
 }
 
 const insertShareHandoff = `-- name: InsertShareHandoff :one
-INSERT INTO control.share_handoffs(token_digest,share_id,service_id,team_id,run_ids,redirect_url,bridge,created_at,expires_at)
-SELECT $1,share.id,included.service_id,share.team_id,$2::text[],
+INSERT INTO control.share_handoffs(token_digest,share_id,service_id,run_ids,redirect_url,bridge,created_at,expires_at)
+SELECT $1,share.id,included.service_id,$2::text[],
     $3,$4,$5,$6
 FROM control.shares share
 JOIN control.share_services included ON included.share_id=share.id AND included.service_id=$7
@@ -235,7 +234,11 @@ WHERE included.share_id=$1 AND service.enabled AND service.deleted_at IS NULL
     AND service.protocol='http' AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
     AND run.publisher_expires_at>$2 AND run.certificate_expires_at>$2
     AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,
-        run.publisher_grant_id,service.id,$2))
+        run.publisher_grant_id,service.id,$2) permission
+        JOIN control.publisher_grants grant_record ON grant_record.id=run.publisher_grant_id
+        JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id
+            AND signing.publisher_identity_id=run.publisher_identity_id
+            AND (grant_record.kind='service' OR signing.retired_at IS NULL))
 GROUP BY service.id,service.certificate_hostname ORDER BY service.id
 `
 

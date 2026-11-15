@@ -23,17 +23,17 @@ import (
 
 func TestIdentityScopesDoNotCrossAuthenticationBoundaries(t *testing.T) {
 	ctx := ReplaceIdentity(t.Context(), Identity{TeamID: "team-a", DeploymentID: "deployment-a", PublisherIdentityID: "publisher-a", ReportedDeploymentID: "release-a", ReplicaKey: "replica-a", ServiceID: "service-a"})
-	child := NarrowIdentity(ctx, Identity{PublicURLID: "url-a"})
+	child := NarrowIdentity(ctx, Identity{ServiceID: "service-child"})
 	id := IdentityFromContext(child)
-	if id.ServiceID != "" || id.PublicURLID != "url-a" || id.ServiceKind != PublicURL || id.DeploymentID != "deployment-a" {
+	if id.ServiceID != "service-child" || id.DeploymentID != "deployment-a" {
 		t.Fatal(id)
 	}
 	other := NarrowIdentity(child, Identity{TeamID: "team-b", ServiceID: "service-b"})
 	id = IdentityFromContext(other)
-	if id.DeploymentID != "" || id.ReportedDeploymentID != "" || id.ReplicaKey != "" || id.PublisherIdentityID != "" || id.PublicURLID != "" || id.ServiceKind != Service {
+	if id.DeploymentID != "" || id.ReportedDeploymentID != "" || id.ReplicaKey != "" || id.PublisherIdentityID != "" || id.ServiceID != "service-b" {
 		t.Fatal("cross-team scope inherited", id)
 	}
-	for _, invalid := range []Identity{{ServiceID: "service", PublicURLID: "url"}, {ServiceID: "service", ServiceKind: PublicURL}, {TeamID: strings.Repeat("x", 129)}} {
+	for _, invalid := range []Identity{{ServiceID: "service\nforged"}, {TeamID: strings.Repeat("x", 129)}} {
 		if got := IdentityFromContext(ReplaceIdentity(child, invalid)); got != (Identity{}) {
 			t.Fatal("invalid scope retained previous identity", got)
 		}
@@ -41,7 +41,7 @@ func TestIdentityScopesDoNotCrossAuthenticationBoundaries(t *testing.T) {
 	if got := IdentityFromContext(ReplaceIdentity(child, Identity{})); got != (Identity{}) {
 		t.Fatal("empty replacement did not clear scope")
 	}
-	if got := IdentityFromContext(NarrowIdentity(child, Identity{})); got.ServiceKind != 0 || got.PublicURLID != "" || got.DeploymentID != "deployment-a" {
+	if got := IdentityFromContext(NarrowIdentity(child, Identity{})); got.ServiceID != "" || got.DeploymentID != "deployment-a" {
 		t.Fatal("narrow did not clear service", got)
 	}
 }
@@ -178,7 +178,7 @@ func TestCompletedOperationContextUsesParent(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	m.tracerProvider = sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
 	ctx, parent := m.tracer().Start(t.Context(), "request")
-	m.ObserveOperationContext(ctx, OpCreatePublishRun, context.Canceled, time.Millisecond)
+	m.ObserveOperationContext(ctx, OpCreateServiceRun, context.Canceled, time.Millisecond)
 	parent.End()
 	spans := exporter.GetSpans()
 	if len(spans) != 2 || spans[0].Parent.SpanID() != parent.SpanContext().SpanID() {

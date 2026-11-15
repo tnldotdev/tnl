@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -50,12 +49,9 @@ func TestIntegrationShareTokenPreparesExactPermission(t *testing.T) {
 	if err != nil || len(domains) == 0 {
 		t.Fatal("missing managed domain", err)
 	}
-	publicURL, err := d.CreatePublicURL(ctx, controlstate.CreatePublicURLRequest{
-		TeamID: member.TeamID, DomainID: domains[0].ID, MembershipID: member.ID, ActingIdentityID: person.Identity.Identity.ID,
-		IdempotencyKey: "share-token", RequestDigest: sha256.Sum256([]byte("share-token")),
-		CanonicalHostname: "token." + member.ManagedLabel + ".example.test", Target: "http://127.0.0.1:3000",
-		PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp, DNSState: controlstate.PublicURLDNSUnmanaged,
-	}, now)
+	service, err := d.CreateServiceAt(ctx, member.TeamID, person.Identity.Identity.ID, "token", "share-token", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{},
+		&controlstate.ProjectServiceConfiguration{Target: "127.0.0.1:3000", Protocol: "http", DomainID: domains[0].ID,
+			Hostname: "token." + member.ManagedLabel + ".example.test", Public: new(true)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +66,7 @@ func TestIntegrationShareTokenPreparesExactPermission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := controlv1.VisitorResourceScope{Kind: "public_url", Id: publicURL.ID}
+	scope := controlv1.VisitorResourceScope{Kind: "service", Id: service.ID}
 	type preparation struct {
 		source     controlv1.VisitorTokenShareSource
 		permission controlv1.VisitorTokenResponse
@@ -134,7 +130,7 @@ func TestIntegrationShareTokenPreparesExactPermission(t *testing.T) {
 			mode.Store(item.mode)
 			var output, diagnostics bytes.Buffer
 			before := time.Now()
-			err := run(ctx, []string{"--no-config", "--no-telemetry", "share", "token", "create", publicURL.ID, "--name=automation", "--expires-in=" + item.lifetime,
+			err := run(ctx, []string{"--no-config", "--no-telemetry", "share", "token", "create", service.ID, "--name=automation", "--expires-in=" + item.lifetime,
 				"--server", server.URL, "--access-token", person.AccessToken.String(), "--team", member.TeamID, "--state-dir", state, "--output=" + item.output}, &output, &diagnostics)
 			var result preparation
 			select {
@@ -157,10 +153,10 @@ func TestIntegrationShareTokenPreparesExactPermission(t *testing.T) {
 					SchemaVersion int       `json:"schema_version"`
 					ShareID       string    `json:"share_id"`
 					ShareToken    string    `json:"share_token"`
-					PublicURLID   string    `json:"public_url_id"`
+					ServiceID     string    `json:"service_id"`
 					ExpiresAt     time.Time `json:"expires_at"`
 				}
-				if json.Unmarshal(output.Bytes(), &printed) != nil || printed.SchemaVersion != 1 || printed.ShareID != result.source.ShareId || printed.PublicURLID != publicURL.ID || !printed.ExpiresAt.Equal(result.permission.ExpiresAt) {
+				if json.Unmarshal(output.Bytes(), &printed) != nil || printed.SchemaVersion != 1 || printed.ShareID != result.source.ShareId || printed.ServiceID != service.ID || !printed.ExpiresAt.Equal(result.permission.ExpiresAt) {
 					t.Fatal("JSON lost the exact permission scope or expiry")
 				}
 				token = printed.ShareToken
@@ -174,7 +170,7 @@ func TestIntegrationShareTokenPreparesExactPermission(t *testing.T) {
 				t.Fatal(err)
 			}
 			at := time.Now()
-			view := visitortoken.View{Issuer: server.URL, Scope: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: publicURL.ID}, Hostname: publicURL.CanonicalHostname, Port: 443,
+			view := visitortoken.View{Issuer: server.URL, Scope: visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}, Hostname: service.Endpoint.Hostname, Port: 443,
 				VisitorPolicyRevision: result.permission.VisitorPolicyRevision, ObservedAt: at, ValidUntil: at.Add(visitortoken.PolicyLifetime)}.WithVerificationKeys(map[string]ed25519.PublicKey{keyID: public})
 			verified, err := visitortoken.VerifyBearer(visitortoken.Token(token), view, at)
 			if err != nil || verified.Facts().Subject != (visitortoken.Share{ShareID: result.source.ShareId}) || !verified.Facts().ExpiresAt.Equal(result.permission.ExpiresAt) {

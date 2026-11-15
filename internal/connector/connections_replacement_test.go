@@ -210,7 +210,7 @@ func runConnectionReplacement(t *testing.T, options replacementTestOptions) {
 	b := &connectorConnectionBackend{scope: connectorruntime.Context{Schema: 1, Server: server.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), Workload: "worker", Services: []string{"db", "removed"}}, httpClient: httpClient, connectorConnectionSession: connectorConnectionSession{workload: client, deadline: workload.SessionDeadline(oldSession)}, listeners: map[string]*ownedServiceListener{}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"db": {Protocol: new("postgres")}}}}}}
 	// a replacement session invalidates old snapshots without rebuilding their
 	// listeners. only a later Connect for the requested service may do that work.
-	b.listeners["db"] = &ownedServiceListener{attempt: &servicePreparation{state: &servingService{sessionID: oldID}, service: controlv1.Service{Id: service, Protocol: controlv1.Postgres, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 15443}}}}
+	b.listeners["db"] = &ownedServiceListener{attempt: &servicePreparation{state: &servingService{sessionID: oldID}, service: controlv1.ServiceSummary{Id: service, Protocol: controlv1.Postgres, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 15443}}}}
 	b.listeners["removed"] = &ownedServiceListener{attempt: &servicePreparation{state: &servingService{sessionID: oldID}}}
 	if options.raceExchange {
 		b.lifetime, b.cancel = context.WithCancel(t.Context())

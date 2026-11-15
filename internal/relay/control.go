@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"net/netip"
 	"slices"
@@ -26,9 +25,9 @@ type ControlClient interface {
 	RenewRelay(context.Context, relayv1.RelayID, relayv1.RelayRenewal) (relayv1.RelayLease, error)
 	DrainRelay(context.Context, relayv1.RelayID, relayv1.RelayDrainRequest) (relayv1.RelayLease, error)
 	GetRelayTransportCertificate(context.Context, relayv1.RelayServiceID, relayv1.GetRelayTransportCertificateParams) (relayv1.RelayTransportCertificate, error)
-	ClaimPublisherConnection(context.Context, relayv1.PublisherConnectionID, relayv1.PublisherConnectionClaim) (relayv1.ClaimedPublisherConnection, error)
-	MarkPublisherConnectionReady(context.Context, relayv1.PublisherConnectionID, relayv1.PublisherConnectionTransition) (relayv1.ClaimedPublisherConnection, error)
-	DisconnectPublisherConnection(context.Context, relayv1.PublisherConnectionID, relayv1.PublisherConnectionDisconnect) (relayv1.ClaimedPublisherConnection, error)
+	ClaimServicePublisherConnection(context.Context, string, relayv1.ServicePublisherConnectionClaim) (relayv1.ServicePublisherConnection, error)
+	ReadyServicePublisherConnection(context.Context, string, relayv1.ServicePublisherConnectionTransition) (relayv1.ServicePublisherConnection, error)
+	DisconnectServicePublisherConnection(context.Context, string, relayv1.ServicePublisherConnectionTransition) error
 }
 
 type LoadFunc func() (reportedConnections, reportedStreams int64)
@@ -254,162 +253,11 @@ func (c *Controller) Drain(ctx context.Context, deadline time.Time) (retErr erro
 	return c.setLease(updated)
 }
 
-func (c *Controller) ClaimPublisherConnection(
-	ctx context.Context,
-	ref tunnelv1.PublisherConnectionRef,
-	claimID, credential string,
-) (relayv1.ClaimedPublisherConnection, error) {
-	lease, err := c.activeLease()
-	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, err
-	}
-	if credential == "" {
-		return relayv1.ClaimedPublisherConnection{}, errors.New("relay: publisher connection credential is required")
-	}
-	transition, err := c.connectionTransition(ref, claimID, lease)
-	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, err
-	}
-	request := relayv1.PublisherConnectionClaim{
-		PublishRunId: transition.PublishRunId, PublicUrlId: transition.PublicUrlId,
-		PublishRunNumber: transition.PublishRunNumber, PublisherConnectionId: transition.PublisherConnectionId,
-		ConnectionSlot:               transition.ConnectionSlot,
-		ConnectionAssignmentRevision: transition.ConnectionAssignmentRevision,
-		RelayServiceId:               transition.RelayServiceId, RelayId: transition.RelayId,
-		RelayRunId: transition.RelayRunId, RelayLeaseRevision: transition.RelayLeaseRevision,
-		ClaimId: transition.ClaimId, PublisherConnectionCredential: credential,
-	}
-	claimed, err := c.client.ClaimPublisherConnection(ctx, ref.PublisherConnectionID, request)
-	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, c.responseError("claim publisher connection", err)
-	}
-	if err := validateClaimedConnection(transition, claimed, false); err != nil {
-		return relayv1.ClaimedPublisherConnection{}, err
-	}
-	if claimed.State != relayv1.Connected && claimed.State != relayv1.Ready {
-		return relayv1.ClaimedPublisherConnection{}, errors.New("relay: control did not claim the publisher connection")
-	}
-	return claimed, nil
-}
-
-func (c *Controller) MarkPublisherConnectionReady(
-	ctx context.Context,
-	claimed relayv1.ClaimedPublisherConnection,
-) (relayv1.ClaimedPublisherConnection, error) {
-	request, err := c.transitionForClaimedConnection(claimed, false)
-	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, err
-	}
-	updated, err := c.client.MarkPublisherConnectionReady(ctx, claimed.PublisherConnectionId, request)
-	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, c.responseError("mark publisher connection ready", err)
-	}
-	if err := validateClaimedConnection(request, updated, true); err != nil {
-		return relayv1.ClaimedPublisherConnection{}, err
-	}
-	return updated, nil
-}
-
-func (c *Controller) DisconnectPublisherConnection(
-	ctx context.Context,
-	claimed relayv1.ClaimedPublisherConnection,
-	unexpected bool,
-) (relayv1.ClaimedPublisherConnection, error) {
-	transition, err := c.transitionForClaimedConnection(claimed, true)
-	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, err
-	}
-	request := relayv1.PublisherConnectionDisconnect{
-		PublishRunId: transition.PublishRunId, PublicUrlId: transition.PublicUrlId,
-		PublishRunNumber: transition.PublishRunNumber, PublisherConnectionId: transition.PublisherConnectionId,
-		ConnectionSlot:               transition.ConnectionSlot,
-		ConnectionAssignmentRevision: transition.ConnectionAssignmentRevision,
-		RelayServiceId:               transition.RelayServiceId, RelayId: transition.RelayId,
-		RelayRunId: transition.RelayRunId, RelayLeaseRevision: transition.RelayLeaseRevision,
-		ClaimId: transition.ClaimId, Unexpected: unexpected,
-	}
-	updated, err := c.client.DisconnectPublisherConnection(ctx, claimed.PublisherConnectionId, request)
-	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, c.responseError("disconnect publisher connection", err)
-	}
-	if err := validateClaimedConnection(transition, updated, false); err != nil {
-		return relayv1.ClaimedPublisherConnection{}, err
-	}
-	if updated.State != relayv1.Closed {
-		return relayv1.ClaimedPublisherConnection{}, errors.New("relay: control did not close the publisher connection")
-	}
-	return updated, nil
-}
-
 func (c *Controller) activeLease() (relayv1.RelayLease, error) {
 	if !c.Ready(c.now()) {
 		return relayv1.RelayLease{}, errors.New("relay: control lease is unavailable")
 	}
 	return c.Lease(), nil
-}
-
-func (c *Controller) connectionTransition(
-	ref tunnelv1.PublisherConnectionRef,
-	claimID string,
-	lease relayv1.RelayLease,
-) (relayv1.PublisherConnectionTransition, error) {
-	if err := ref.Validate(); err != nil || claimID == "" || len(claimID) > 256 || strings.TrimSpace(claimID) != claimID ||
-		ref.PublishRunNumber > math.MaxInt64 || ref.ConnectionAssignmentRevision > math.MaxInt64 {
-		return relayv1.PublisherConnectionTransition{}, errors.New("relay: publisher connection assignment is invalid")
-	}
-	if ref.RelayServiceID != c.registration.RelayServiceId {
-		return relayv1.PublisherConnectionTransition{}, errors.New("relay: publisher connection is assigned to another relay service")
-	}
-	return relayv1.PublisherConnectionTransition{
-		PublishRunId: ref.PublishRunID, PublicUrlId: ref.PublicURLID, PublishRunNumber: int64(ref.PublishRunNumber),
-		PublisherConnectionId: ref.PublisherConnectionID, ConnectionSlot: int(ref.ConnectionSlot),
-		ConnectionAssignmentRevision: int64(ref.ConnectionAssignmentRevision),
-		RelayServiceId:               c.registration.RelayServiceId, RelayId: c.registration.RelayId,
-		RelayRunId: c.registration.RelayRunId, RelayLeaseRevision: lease.RelayLeaseRevision,
-		ClaimId: claimID,
-	}, nil
-}
-
-func (c *Controller) transitionForClaimedConnection(
-	claimed relayv1.ClaimedPublisherConnection,
-	allowDraining bool,
-) (relayv1.PublisherConnectionTransition, error) {
-	lease := c.Lease()
-	if lease.RelayLeaseRevision <= 0 || !lease.LeaseExpiresAt.After(c.now()) || !allowDraining && lease.Draining ||
-		claimed.RelayServiceId != c.registration.RelayServiceId || claimed.RelayId != c.registration.RelayId ||
-		claimed.RelayRunId != c.registration.RelayRunId || claimed.RelayLeaseRevision != lease.RelayLeaseRevision {
-		return relayv1.PublisherConnectionTransition{}, errors.New("relay: claimed publisher connection is not held by the active relay lease")
-	}
-	request := relayv1.PublisherConnectionTransition{
-		PublishRunId: claimed.PublishRunId, PublicUrlId: claimed.PublicUrlId, PublishRunNumber: claimed.PublishRunNumber,
-		PublisherConnectionId: claimed.PublisherConnectionId, ConnectionSlot: claimed.ConnectionSlot,
-		ConnectionAssignmentRevision: claimed.ConnectionAssignmentRevision,
-		RelayServiceId:               claimed.RelayServiceId, RelayId: claimed.RelayId,
-		RelayRunId: claimed.RelayRunId, RelayLeaseRevision: claimed.RelayLeaseRevision,
-		ClaimId: claimed.ClaimId,
-	}
-	if err := validateClaimedConnection(request, claimed, false); err != nil {
-		return relayv1.PublisherConnectionTransition{}, err
-	}
-	return request, nil
-}
-
-func validateClaimedConnection(
-	request relayv1.PublisherConnectionTransition,
-	claimed relayv1.ClaimedPublisherConnection,
-	requireReady bool,
-) error {
-	if publicClaimRef(claimed) != publicTransitionRef(request) || claimed.ConnectionSlot != request.ConnectionSlot || claimed.RelayId != request.RelayId ||
-		claimed.RelayRunId != request.RelayRunId || claimed.RelayLeaseRevision != request.RelayLeaseRevision ||
-		claimed.ClaimId != request.ClaimId || claimed.ConnectionSlot < 0 || claimed.ConnectionSlot > 1 ||
-		claimed.RelayAddress == "" || claimed.TlsServerName == "" || !claimed.State.Valid() ||
-		claimed.PublisherConnectionCredentialExpiresAt.IsZero() || claimed.ConnectedAt.IsZero() {
-		return errors.New("relay: control returned an invalid claimed publisher connection")
-	}
-	if requireReady && (claimed.State != relayv1.Ready || claimed.ReadyAt == nil) {
-		return errors.New("relay: control did not mark the publisher connection ready")
-	}
-	return nil
 }
 
 func (c *Controller) setLease(lease relayv1.RelayLease) error {

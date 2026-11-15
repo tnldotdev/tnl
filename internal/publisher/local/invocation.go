@@ -5,9 +5,9 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -19,17 +19,32 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	publisheradhoc "github.com/tnldotdev/tnl/internal/publisher/adhoc"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.Invocation) (_ publisherprotocol.Registration, result error) {
+	// keep the original private request independent of caller-owned pointers.
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		return publisherprotocol.Registration{}, err
+	}
+	var original publisherprotocol.Invocation
+	if err := json.Unmarshal(encoded, &original); err != nil {
+		return publisherprotocol.Registration{}, err
+	}
+	request = original
 	release, err := a.beginPreparation(ctx, request.InvocationId)
 	if err != nil {
 		return publisherprotocol.Registration{}, err
@@ -42,7 +57,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		request.AccessMode != nil && !request.AccessMode.Valid() || request.Ip != nil && len(*request.Ip) > 32 {
 		return publisherprotocol.Registration{}, errors.New("invalid invocation target or policy")
 	}
-	limits, err := invocationLimits(request.Limits)
+	limits, err := requestlimit.ParseLimits(request.Limits)
 	if err != nil {
 		return publisherprotocol.Registration{}, err
 	}
@@ -72,18 +87,75 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	}
 	var native *publisheridentity.Native
 	var profile *clientstate.Store
-	var publicURL controlv1.PublicURL
+	var saved controlv1.Service
+	var cfg publisherservice.RunConfig
 	var credentialExpiry time.Time
+	// cleanup is installed before allocation: an uncertain response still owns
+	// recovery of the exact invocation, even if cancellation wins registration.
+	var cleanup func() error
+	transferred, id := false, ""
+	defer func() {
+		if !transferred {
+			if id != "" {
+				err := a.manager.Unregister(id, request.Owner)
+				result = errors.Join(result, err)
+				if err == nil {
+					a.mu.Lock()
+					delete(a.prepared, id)
+					a.mu.Unlock()
+				}
+			}
+			if cleanup != nil {
+				result = errors.Join(result, cleanup())
+			}
+		}
+	}()
 	server := ""
 	if request.Deployment != nil {
 		var selection deploymentInvocation
 		selection, err = a.prepareDeploymentInvocation(ctx, request)
+		cleanup = selection.cleanup
 		if err != nil {
 			return publisherprotocol.Registration{}, err
 		}
-		native, profile, publicURL, limits = selection.native, selection.profile, selection.publicURL, selection.limits
+		native, profile, saved = selection.native, selection.profile, selection.service
 		credentialExpiry = selection.expiresAt
 		server = native.ControlURL()
+		if saved.Endpoint == nil || !saved.Endpoint.Public || saved.Endpoint.Port != 443 {
+			return publisherprotocol.Registration{}, publisheridentity.ErrScope
+		}
+		target, err := targetsyntax.ParseCanonicalTarget(request.Target)
+		if err != nil {
+			return publisherprotocol.Registration{}, err
+		}
+		trust, err := publisheridentity.ServiceTrust(saved)
+		if err != nil {
+			return publisherprotocol.Registration{}, err
+		}
+		if (target.Scheme == "https") != (trust != nil) {
+			return publisherprotocol.Registration{}, publisheridentity.ErrScope
+		}
+		if request.Deployment.Service == "" {
+			if request.RequirePostQuantum != nil && saved.RequirePostQuantum != *request.RequirePostQuantum {
+				return publisherprotocol.Registration{}, publisheridentity.ErrScope
+			}
+			if trust != nil {
+				declaration, err := targettrust.NewDeclaration(target.Hostname(), nil)
+				if err != nil {
+					return publisherprotocol.Registration{}, err
+				}
+				expected, err := declaration.Snapshot()
+				if err != nil {
+					return publisherprotocol.Registration{}, err
+				}
+				if err := publisheridentity.MatchServiceDeclaration(saved, "http", expected); err != nil {
+					return publisherprotocol.Registration{}, err
+				}
+			}
+		}
+		cfg = publisherservice.RunConfig{Control: native, Access: native.Access, State: profile,
+			PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
+			ServiceID: saved.Id, Target: target.Host, Metadata: publisheridentity.ServiceMetadata(saved)}
 	} else {
 		server = valueOrEmpty(a.project.Config.Server)
 		if request.ServerUrl != nil {
@@ -112,44 +184,38 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		if err != nil {
 			return publisherprotocol.Registration{}, err
 		}
-		native, err = publisheridentity.ResolveAdHoc(ctx, profile, publisheridentity.NativeControl{PublicURLControl: control}, authority, server, "", "", "", file, "", request.PublisherIdentityId, nil)
+		native, err = publisheridentity.ResolveAdHoc(ctx, profile, publisheridentity.NativeControl{Services: control, Allocations: control}, authority, server, "", "", "", file, "", request.PublisherIdentityId, nil)
 		if err != nil {
 			if file != "" && errors.Is(err, publisheridentity.ErrScope) {
 				return publisherprotocol.Registration{}, credentialfile.ErrInvalid
 			}
 			return publisherprotocol.Registration{}, err
 		}
-		allocation := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: request.InvocationId, Target: request.Target, Ip: request.Ip, Limits: request.Limits}
-		allocation.RequirePostQuantum = request.RequirePostQuantum
-		if request.AccessMode != nil {
-			mode := controlv1.VisitorAccessMode(*request.AccessMode)
-			allocation.AccessMode = &mode
+		options := publisheradhoc.Options{ControlURL: server, State: profile, Publisher: native,
+			InvocationID: request.InvocationId, Target: request.Target, Limits: limits}
+		if request.RequirePostQuantum != nil {
+			options.RequirePostQuantum = *request.RequirePostQuantum
 		}
-		publicURL, err = native.Allocate(ctx, allocation)
+		if request.AccessMode != nil {
+			options.AccessMode = controlv1.VisitorAccessMode(*request.AccessMode)
+		}
+		if request.Ip != nil {
+			options.IP = *request.Ip
+		}
+		prepared, err := publisheradhoc.Prepare(ctx, options)
+		if prepared != nil {
+			cleanup = invocationCleanup(prepared.Cleanup, time.Time{})
+		}
 		if err != nil {
 			return publisherprotocol.Registration{}, err
 		}
+		saved, cfg = prepared.Service, prepared.Config
 	}
-	cleanup := invocationCleanup(native, publicURL, credentialExpiry)
-	transferred, id := false, ""
-	defer func() {
-		if !transferred {
-			if id != "" {
-				err := a.manager.Unregister(id, request.Owner)
-				result = errors.Join(result, err)
-				if err == nil {
-					a.mu.Lock()
-					delete(a.prepared, id)
-					a.mu.Unlock()
-				}
-			}
-			result = errors.Join(result, cleanup())
-		}
-	}()
 	if err := a.manager.AddService(publisherapp.Service{Name: request.InvocationId, Directory: ".", ServiceProtocol: "http", Readiness: publisherapp.Readiness{Path: "/"}}); err != nil {
 		return publisherprotocol.Registration{}, err
 	}
-	id, err = a.manager.Reserve(request.InvocationId, request.Owner, request.Pid, "https://"+publicURL.CanonicalHostname)
+	address := "https://" + saved.Endpoint.Hostname
+	id, err = a.manager.Reserve(request.InvocationId, request.Owner, request.Pid, address)
 	if err != nil {
 		return publisherprotocol.Registration{}, err
 	}
@@ -160,26 +226,25 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	if err != nil {
 		return publisherprotocol.Registration{}, err
 	}
-	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
-	cfg := publisher.Config{Control: native, Identity: native, Audit: native, VisitorControl: native, BrowserControl: native, Shares: native, ControlURL: server, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, ProjectRoot: a.project.Root, Target: request.Target, ServiceProtocol: "http", Limits: limits, Ephemeral: publicURL.Ephemeral, AssignedPublicURL: &publicURL, TransportTLS: tlsConfig}
-	cfg.PublisherIdentityID = native.PublisherIdentityID()
-	cfg.RequirePostQuantum = request.RequirePostQuantum
-	if request.Deployment != nil {
-		cfg.RequirePostQuantum = new(publicURL.RequirePostQuantum)
+	service := publisherapp.Service{Name: request.InvocationId, RegistrationID: id, Target: request.Target}
+	cfg.TransportTLS = &tls.Config{MinVersion: tls.VersionTLS13}
+	cfg.InspectionMode = policy.Mode
+	if !request.TelemetryDisabled {
+		cfg.Telemetry = a.Telemetry
 	}
-	if publicURL.MembershipId != nil {
-		cfg.MembershipID = *publicURL.MembershipId
-	}
-	if publicURL.AllowedIpPrefixes != nil {
-		cfg.AllowedIPPrefixes = slices.Clone(*publicURL.AllowedIpPrefixes)
-	}
-	cfg.AccessMode = publicURL.AccessMode
-	configuration := publisherapp.Configuration{Publisher: cfg, Inspection: policy, Cleanup: cleanup}
 	if a.AttachPublication != nil {
-		if err := a.AttachPublication(ctx, publisherapp.Service{Name: request.InvocationId, RegistrationID: id, Target: request.Target}, &configuration.Publisher); err != nil {
+		if err := a.AttachPublication(ctx, service, &cfg); err != nil {
 			return publisherprotocol.Registration{}, err
 		}
 	}
+	expires := credentialExpiry
+	if saved.ExpiresAt != nil && (expires.IsZero() || saved.ExpiresAt.Before(expires)) {
+		expires = *saved.ExpiresAt
+	}
+	publication := a.invocationPublication(service, cfg, address, expires)
+	publication.Options = clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: server, Project: a.project.Root,
+		Target: request.Target, ServiceID: saved.Id, ServiceProtocol: saved.Protocol}
+	configuration := publisherapp.Configuration{Service: publication, Inspection: policy, Cleanup: cleanup}
 	a.mu.Lock()
 	a.prepared[id] = appPreparation{configuration: configuration, invocation: &request, telemetryDisabled: request.TelemetryDisabled}
 	a.mu.Unlock()
@@ -196,16 +261,165 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	return publisherprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: request.Target}, nil
 }
 
+// invocationAllocation is used only by deployment's credential-scoped allocator.
+func invocationAllocation(request publisherprotocol.Invocation) (controlv1.AllocateServiceRequest, error) {
+	target, err := targetsyntax.ParseCanonicalTarget(request.Target)
+	if err != nil {
+		return controlv1.AllocateServiceRequest{}, err
+	}
+	declaration := controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocolHTTP), Target: target.Host,
+		Public: new(true), Ephemeral: new(true), RequirePostQuantum: request.RequirePostQuantum,
+		Http: &controlv1.ProjectServiceHTTP{Limits: request.Limits, Access: &controlv1.ProjectHTTPAccess{Ip: request.Ip}}}
+	if request.AccessMode != nil {
+		declaration.Http.Access.Mode = new(controlv1.VisitorAccessMode(*request.AccessMode))
+	}
+	if target.Scheme == "https" {
+		trust, err := targettrust.NewDeclaration(target.Hostname(), nil)
+		if err != nil {
+			return controlv1.AllocateServiceRequest{}, err
+		}
+		declaration.TargetTls = &controlv1.ProjectTargetTLS{Hostname: trust.Hostname, Digest: trust.Digest}
+	}
+	return controlv1.AllocateServiceRequest{InvocationId: request.InvocationId, Configuration: declaration}, nil
+}
+
+// the app worker owns journaling and joined cleanup. these callbacks bind its
+// observations and public readiness proof to the actual prepared service run.
+func (a *appRuntime) invocationPublication(service publisherapp.Service, base publisherservice.RunConfig, address string, expires time.Time) *publisherapp.ServicePublication {
+	var mu sync.Mutex
+	var current httpaccess.ReadinessRun
+	var proof *httpaccess.ReadinessProof
+	publication := &publisherapp.ServicePublication{URL: address}
+	publication.Check = func(ctx context.Context, service publisherapp.Service) publisherapp.Observation {
+		mu.Lock()
+		run, captured := current, proof
+		mu.Unlock()
+		failed := publisherapp.Observation{Target: service.Target, RegistrationID: service.RegistrationID, RunNumber: service.RunNumber,
+			Readiness: service.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"}
+		if run.Number != service.RunNumber || captured == nil {
+			return failed
+		}
+		secret, err := captured.Renew()
+		if err != nil {
+			return failed
+		}
+		service.PublicURL = address
+		observation := publisherapp.ProbeWithProof(ctx, service, nil, secret)
+		mu.Lock()
+		unchanged := current == run && proof == captured
+		mu.Unlock()
+		if !unchanged || captured.HeaderValue() != "" {
+			return failed
+		}
+		return observation
+	}
+	publication.Run = func(ctx context.Context, _ *clientstate.Tunnel, observe func(uint64, bool) error, summary inspection.Observer) error {
+		if !expires.IsZero() {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithDeadline(ctx, expires)
+			defer cancel()
+		}
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		cfg := base
+		cfg.ObserveSummary = func(value inspection.Summary) {
+			if summary != nil {
+				summary(value)
+			}
+			if base.ObserveSummary != nil {
+				base.ObserveSummary(value)
+			}
+		}
+		prepared, ready, admit, status := cfg.Prepared, cfg.Ready, cfg.AdmitRequest, cfg.ObserveReadiness
+		var notified bool
+		var observationErr error
+		cfg.Prepared = func(preparation controlv1.ServiceRunPreparation) error {
+			mu.Lock()
+			current = httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: preparation.ServiceId},
+				ID: preparation.ServiceRunId, Number: uint64(preparation.RunNumber), Hostname: preparation.Hostname}
+			proof = nil
+			mu.Unlock()
+			notified = false
+			if err := observe(uint64(preparation.RunNumber), false); err != nil {
+				return err
+			}
+			if prepared != nil {
+				return prepared(preparation)
+			}
+			return nil
+		}
+		cfg.ReadinessProof = func(run httpaccess.ReadinessRun) *httpaccess.ReadinessProof {
+			mu.Lock()
+			defer mu.Unlock()
+			if run != current {
+				return nil
+			}
+			if base.ReadinessProof != nil {
+				proof = base.ReadinessProof(run)
+			} else {
+				proof, _ = httpaccess.NewReadinessProof(run, "/")
+			}
+			return proof
+		}
+		cfg.AdmitRequest = func(r *http.Request) error {
+			mu.Lock()
+			run := current
+			mu.Unlock()
+			if ctx.Err() != nil || !a.manager.CurrentRun(service.Name, service.RegistrationID, service.Target, run.Number) {
+				return publisherapp.ErrRegistrationStale
+			}
+			if admit != nil {
+				return admit(r)
+			}
+			return nil
+		}
+		cfg.Ready = func() error {
+			mu.Lock()
+			run := current
+			mu.Unlock()
+			if err := observe(run.Number, true); err != nil {
+				return err
+			}
+			notified = true
+			if ready != nil {
+				return ready()
+			}
+			return nil
+		}
+		cfg.ObserveReadiness = func(state publisherservice.RunStatus) {
+			if status != nil {
+				status(state)
+			}
+			if !notified || ctx.Err() != nil || observationErr != nil {
+				return
+			}
+			mu.Lock()
+			run := current
+			mu.Unlock()
+			active, ok := a.manager.ServiceForRun(service.Name, service.RegistrationID, service.Target, run.Number)
+			if ok && active.Routable == state.Ready {
+				return
+			}
+			if err := observe(run.Number, state.Ready); err != nil {
+				observationErr = err
+				cancel()
+			}
+		}
+		return errors.Join(publisherservice.Publish(ctx, cfg), observationErr)
+	}
+	return publication
+}
+
 // retain one exact allocation for transient retries. permanent authority loss or
 // the captured grant deadline retires only local ownership, never remote state.
-func invocationCleanup(native *publisheridentity.Native, publicURL controlv1.PublicURL, expiresAt time.Time) func() error {
+func invocationCleanup(remove func(context.Context) error, expiresAt time.Time) func() error {
 	var mu sync.Mutex
 	cleaned := false
 	var permanent error
 	return func() error {
 		mu.Lock()
 		defer mu.Unlock()
-		if cleaned || !publicURL.Ephemeral {
+		if cleaned || remove == nil {
 			return nil
 		}
 		if permanent != nil {
@@ -217,8 +431,8 @@ func invocationCleanup(native *publisheridentity.Native, publicURL controlv1.Pub
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		err := native.DeletePublicURL(ctx, publicURL.Id)
-		if err == nil || errors.Is(err, clientcontrol.ErrNotFound) {
+		err := remove(ctx)
+		if err == nil || failure.Only(err, clientcontrol.ErrNotFound) {
 			cleaned = true
 			return nil
 		}
@@ -230,30 +444,4 @@ func invocationCleanup(native *publisheridentity.Native, publicURL controlv1.Pub
 		}
 		return err
 	}
-}
-
-func invocationLimits(input *controlv1.PublisherApplicationLimits) (applicationlimits.Limits, error) {
-	var limits applicationlimits.Limits
-	if input != nil {
-		if input.Requests != nil {
-			if *input.Requests < 1 {
-				return limits, errors.New("request limit must be positive")
-			}
-			limits.Requests = *input.Requests
-		}
-		if input.Concurrency != nil {
-			if *input.Concurrency < 1 {
-				return limits, errors.New("concurrency limit must be positive")
-			}
-			limits.Concurrency = *input.Concurrency
-		}
-		if input.Rate != nil {
-			period, err := time.ParseDuration(input.Rate.Per)
-			if err != nil || period <= 0 || input.Rate.Requests < 1 {
-				return limits, errors.New("request rate requires a positive count and period")
-			}
-			limits.RateRequests, limits.RatePer = input.Rate.Requests, period
-		}
-	}
-	return limits, limits.Validate()
 }

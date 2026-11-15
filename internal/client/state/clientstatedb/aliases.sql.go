@@ -86,6 +86,8 @@ SELECT count(*) FROM alias_declarations declaration
 JOIN project_aliases alias ON alias.id = declaration.alias_id
 JOIN local_tunnels t ON t.id = declaration.tunnel_id
 WHERE alias.id = ?1 AND t.project_root = alias.selected_project_root
+    AND t.server_origin = alias.server_origin AND t.primary_project_root = alias.primary_project_root
+    AND t.integration_namespace = declaration.integration_namespace
     AND declaration.fingerprint = alias.fingerprint AND t.service = alias.service
     AND t.stopped_at IS NULL AND t.lease_expires_at > ?2
 `
@@ -221,8 +223,10 @@ SELECT t.id, t.command, t.process_id, t.server_origin, t.project_root, t.service
 JOIN project_aliases alias ON alias.id = declaration.alias_id
 JOIN local_tunnels t ON t.id = declaration.tunnel_id
 WHERE alias.id = ?1 AND t.project_root = ?2
+    AND t.server_origin = alias.server_origin AND t.primary_project_root = alias.primary_project_root
+    AND t.integration_namespace = declaration.integration_namespace
     AND declaration.fingerprint = alias.fingerprint AND t.service = alias.service
-    AND t.state = 'ready' AND t.public_url_id <> '' AND t.publish_run_number > 0
+    AND t.state = 'ready' AND t.service_id IS NOT NULL AND t.publish_run_number > 0
     AND t.stopped_at IS NULL AND t.lease_expires_at > ?3
 ORDER BY t.started_at DESC, t.id DESC LIMIT 1
 `
@@ -264,13 +268,14 @@ func (q *Queries) ReadyAliasReceiver(ctx context.Context, arg ReadyAliasReceiver
 }
 
 const registerAliasDeclaration = `-- name: RegisterAliasDeclaration :execrows
-INSERT INTO alias_declarations (alias_id, tunnel_id, fingerprint)
-SELECT ?1, t.id, ?2 FROM local_tunnels t
+INSERT INTO alias_declarations (alias_id, tunnel_id, fingerprint, integration_namespace)
+SELECT ?1, t.id, ?2, t.integration_namespace FROM local_tunnels t
 WHERE t.id = ?3 AND t.server_origin = ?4
     AND t.service = ?5 AND t.primary_project_root = ?6
     AND t.integration_namespace = ?7
     AND t.stopped_at IS NULL AND t.lease_expires_at > ?8
-ON CONFLICT(alias_id, tunnel_id) DO UPDATE SET fingerprint = excluded.fingerprint
+ON CONFLICT(alias_id, tunnel_id) DO UPDATE SET fingerprint = excluded.fingerprint,
+    integration_namespace = excluded.integration_namespace
 `
 
 type RegisterAliasDeclarationParams struct {

@@ -39,7 +39,7 @@ WITH candidate AS (
 UPDATE control.service_endpoints endpoint
 SET dns_work_owner=$1,dns_work_epoch=endpoint.dns_work_epoch+1,
     dns_work_expires_at=$2,dns_attempts=endpoint.dns_attempts+1
-FROM candidate WHERE endpoint.hostname=candidate.hostname RETURNING endpoint.hostname, endpoint.service_id, endpoint.deployment_id, endpoint.local_source_key, endpoint.domain_id, endpoint.namespace, endpoint.ingress_pool_id, endpoint.public, endpoint.dns_authority_reference, endpoint.dns_state, endpoint.dns_revision, endpoint.dns_attempts, endpoint.dns_available_at, endpoint.dns_last_error, endpoint.dns_work_owner, endpoint.dns_work_epoch, endpoint.dns_work_expires_at, endpoint.created_at, endpoint.retired_at, endpoint.reusable_after
+FROM candidate WHERE endpoint.hostname=candidate.hostname RETURNING endpoint.hostname, endpoint.service_id, endpoint.deployment_id, endpoint.local_source_key, endpoint.domain_id, endpoint.namespace, endpoint.ingress_pool_id, endpoint.public, endpoint.dns_automation, endpoint.dns_authority_reference, endpoint.dns_state, endpoint.dns_revision, endpoint.dns_attempts, endpoint.dns_available_at, endpoint.dns_last_error, endpoint.dns_work_owner, endpoint.dns_work_epoch, endpoint.dns_work_expires_at, endpoint.created_at, endpoint.retired_at, endpoint.reusable_after
 `
 
 type ClaimServiceEndpointDNSWorkParams struct {
@@ -60,6 +60,7 @@ func (q *Queries) ClaimServiceEndpointDNSWork(ctx context.Context, arg ClaimServ
 		&i.Namespace,
 		&i.IngressPoolID,
 		&i.Public,
+		&i.DnsAutomation,
 		&i.DnsAuthorityReference,
 		&i.DnsState,
 		&i.DnsRevision,
@@ -82,7 +83,7 @@ SET dns_state=$1,dns_revision=dns_revision+1,dns_available_at=$2,
     dns_last_error=$3,dns_work_owner=NULL,dns_work_expires_at=NULL
 WHERE hostname=$4 AND service_id=$5 AND dns_revision=$6
     AND dns_work_owner=$7 AND dns_work_epoch=$8 AND dns_work_expires_at>$9
-RETURNING hostname, service_id, deployment_id, local_source_key, domain_id, namespace, ingress_pool_id, public, dns_authority_reference, dns_state, dns_revision, dns_attempts, dns_available_at, dns_last_error, dns_work_owner, dns_work_epoch, dns_work_expires_at, created_at, retired_at, reusable_after
+RETURNING hostname, service_id, deployment_id, local_source_key, domain_id, namespace, ingress_pool_id, public, dns_automation, dns_authority_reference, dns_state, dns_revision, dns_attempts, dns_available_at, dns_last_error, dns_work_owner, dns_work_epoch, dns_work_expires_at, created_at, retired_at, reusable_after
 `
 
 type SaveServiceEndpointDNSWorkParams struct {
@@ -119,6 +120,7 @@ func (q *Queries) SaveServiceEndpointDNSWork(ctx context.Context, arg SaveServic
 		&i.Namespace,
 		&i.IngressPoolID,
 		&i.Public,
+		&i.DnsAutomation,
 		&i.DnsAuthorityReference,
 		&i.DnsState,
 		&i.DnsRevision,

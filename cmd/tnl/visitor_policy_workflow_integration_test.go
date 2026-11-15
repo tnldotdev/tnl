@@ -53,7 +53,7 @@ func TestIntegrationCLIWorkflowForwardsAuthenticatedVisitorSource(t *testing.T) 
 	if err != nil {
 		t.Fatal("workflow team domain selection failed")
 	}
-	hostname, _, _, err := resolve.PublishHostname("", "prepared", "", current)
+	hostname, _, err := resolve.PublishHostname("", "prepared", "", current)
 	if err != nil {
 		t.Fatal("workflow public hostname selection failed")
 	}

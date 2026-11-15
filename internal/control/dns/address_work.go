@@ -5,8 +5,7 @@ import (
 	"time"
 )
 
-// provider changes and authoritative verification share one implementation for
-// public URLs and services. their ownership markers remain distinct.
+// reconcile the service address record and verify its authoritative DNS answers.
 func (w *Worker) reconcileAddress(ctx context.Context, record AddressRecord, nameservers []string, removing bool, kind string) (bool, error) {
 	var zone Zone
 	var err error
@@ -25,12 +24,8 @@ func (w *Worker) reconcileAddress(ctx context.Context, record AddressRecord, nam
 	if len(zone.Nameservers) != 0 {
 		nameservers = zone.Nameservers
 	}
-	hostname := record.CanonicalHostname
-	if record.WildcardHostname != "" {
-		hostname = record.WildcardHostname
-	}
 	started = time.Now()
-	verified, err := w.verifier.VerifyPublicURL(ctx, hostname, ipv4, ipv6, nameservers)
+	verified, err := w.verifier.VerifyAddress(ctx, record.CanonicalHostname, ipv4, ipv6, nameservers)
 	observeDNS(ctx, w.config.Observer, kind, "verify", started, verified, err)
 	return verified, err
 }

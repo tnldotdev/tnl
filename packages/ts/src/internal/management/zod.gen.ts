@@ -185,7 +185,6 @@ export const deploymentServiceSchema = z.strictObject({
   protocol: serviceProtocolSchema,
   trust_revision: z.int().gte(1),
   endpoint: serviceEndpointSchema.optional(),
-  public_url: z.url().optional(),
 });
 
 export const deploymentSchema = z.strictObject({
@@ -221,7 +220,6 @@ export const problemCodeSchema = z.enum([
   "unavailable",
   "internal",
   "name_unavailable",
-  "publish_run_open",
   "policy_revision_stale",
   "dns_setup_pending",
   "placement_unavailable",

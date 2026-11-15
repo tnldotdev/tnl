@@ -198,7 +198,7 @@ components:
     RedeemPublisherEnrollmentRequest:
       $ref: "./schemas/publisherauth.yaml#/schemas/RedeemPublisherEnrollmentRequest"
     PublisherEnrollmentResult:
-      $ref: "./schemas/publisherauth.yaml#/schemas/PublisherEnrollmentResult"
+      $ref: "../../../shared/publisher-enrollment.yaml#/schemas/PublisherEnrollmentResult"
     PublisherTokenRequest:
       $ref: "./schemas/publisherauth.yaml#/schemas/PublisherTokenRequest"
     PublisherTokenResponse:
@@ -227,8 +227,6 @@ components:
       $ref: "./schemas/invites.yaml#/schemas/InvitationID"
     DomainID:
       $ref: "./schemas/domains.yaml#/schemas/DomainID"
-    PublicURLID:
-      $ref: "./schemas/common.yaml#/schemas/PublicURLID"
     CanonicalHostname:
       $ref: "./schemas/domains.yaml#/schemas/CanonicalHostname"
     CanonicalLabel:
@@ -289,8 +287,6 @@ components:
       $ref: "./schemas/domains.yaml#/schemas/DomainPage"
     ClaimDomainRequest:
       $ref: "./schemas/domains.yaml#/schemas/ClaimDomainRequest"
-    PublicURLScope:
-      $ref: "./schemas/common.yaml#/schemas/PublicURLScope"
     CertificateChallengeMethod:
       $ref: "./schemas/common.yaml#/schemas/CertificateChallengeMethod"
     CertificatePlan:

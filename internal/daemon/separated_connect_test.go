@@ -126,7 +126,7 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 		if err != nil {
 			t.Fatal(err)
 		}
-		native, identity, err := publisheridentity.EnrollNative(ctx, profile, publisheridentity.NativeControl{PublicURLControl: authenticated.Control, Services: authenticated.Control}, authenticated.Authority, enrollment.EnrollmentKey)
+		native, identity, err := publisheridentity.EnrollNative(ctx, profile, publisheridentity.NativeControl{Services: authenticated.Control}, authenticated.Authority, enrollment.EnrollmentKey)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -96,7 +96,7 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var service controlv1.Service
+			var service controlv1.ServiceSummary
 			workflowWait(t, 30*time.Second, func() bool {
 				service, err = connector.Select(t.Context(), session.Authenticated().Control, project.Project, name, session.Identity().PersonalTeamId)
 				if err != nil {

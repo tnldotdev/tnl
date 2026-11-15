@@ -3,7 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
@@ -95,15 +99,14 @@ func TestConfigRejectsRemovedPublicFields(t *testing.T) {
 }
 
 type visitorListStub struct {
-	pages   map[string]controlv1.AvailablePublicURLPage
-	teams   []string
-	cursors []string
+	items []controlv1.ServiceSummary
 }
 
-func (s *visitorListStub) ListAvailablePublicURLs(_ context.Context, team, cursor string) (controlv1.AvailablePublicURLPage, error) {
-	s.teams = append(s.teams, team)
-	s.cursors = append(s.cursors, cursor)
-	return s.pages[cursor], nil
+func (s *visitorListStub) ListAvailableServices(_ context.Context, path controlv1.ServiceAccessPath) ([]controlv1.ServiceSummary, error) {
+	if path != controlv1.ServiceAccessPathPublicEndpoint {
+		return nil, errors.New("URL inventory requested connector authority")
+	}
+	return append([]controlv1.ServiceSummary{}, s.items...), nil
 }
 
 func TestVisitorURLListFiltersWithoutTeamMembership(t *testing.T) {
@@ -111,41 +114,48 @@ func TestVisitorURLListFiltersWithoutTeamMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	next := "second"
-	first := controlv1.AvailablePublicURL{Id: "first", TeamId: teamID, TeamName: "studio"}
-	second := controlv1.AvailablePublicURL{Id: "second", TeamId: "other", TeamName: "another"}
+	first := controlv1.ServiceSummary{Id: "svc_first", TeamId: teamID, TeamName: "studio", VisitorAccess: "identity_grant", Endpoint: &controlv1.ServiceEndpoint{Public: true}}
+	second := controlv1.ServiceSummary{Id: "svc_second", TeamId: "other", TeamName: "another", VisitorAccess: "team_grant", Endpoint: &controlv1.ServiceEndpoint{Public: true}}
+	private := controlv1.ServiceSummary{Id: "svc_private", TeamId: teamID}
 	for _, team := range []string{"", "studio", teamID} {
-		stub := &visitorListStub{pages: map[string]controlv1.AvailablePublicURLPage{
-			"":   {PublicUrls: []controlv1.AvailablePublicURL{first}, NextCursor: &next},
-			next: {PublicUrls: []controlv1.AvailablePublicURL{second}},
-		}}
+		stub := &visitorListStub{items: []controlv1.ServiceSummary{first, second, private}}
 		items, err := visitorURLList(t.Context(), stub, team)
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := []controlv1.AvailablePublicURL{first}
+		want := []controlv1.ServiceSummary{first}
 		if team == "" {
 			want = append(want, second)
 		}
-		if !reflect.DeepEqual(items, want) || !reflect.DeepEqual(stub.cursors, []string{"", next}) {
-			t.Fatalf("team %q: items=%+v, cursors=%v", team, items, stub.cursors)
-		}
-		serverFilter := ""
-		if team == teamID {
-			serverFilter = teamID
-		}
-		if !reflect.DeepEqual(stub.teams, []string{serverFilter, serverFilter}) {
-			t.Fatalf("team %q leaked a name into the team-ID filter: %v", team, stub.teams)
+		if !reflect.DeepEqual(items, want) {
+			t.Fatalf("team %q: items=%+v", team, items)
 		}
 	}
 }
 
 func TestVisitorURLListRejectsCursorCycles(t *testing.T) {
 	first, second := "first", "second"
-	stub := &visitorListStub{pages: map[string]controlv1.AvailablePublicURLPage{
-		"": {NextCursor: &first}, first: {NextCursor: &second}, second: {NextCursor: &first},
-	}}
-	if _, err := visitorURLList(t.Context(), stub, ""); err == nil {
+	pages := map[string]controlv1.ServicePage{
+		"":     {Services: []controlv1.ServiceSummary{{Id: "svc_one"}}, NextCursor: &first},
+		first:  {Services: []controlv1.ServiceSummary{{Id: "svc_two"}}, NextCursor: &second},
+		second: {Services: []controlv1.ServiceSummary{{Id: "svc_three"}}, NextCursor: &first},
+	}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/visitor/services" {
+			t.Errorf("visitor inventory used management authority: %s", r.URL)
+		}
+		if r.URL.Query().Get("access_path") != "public_endpoint" {
+			t.Error("URL inventory used connector discovery")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(pages[r.URL.Query().Get("cursor")])
+	}))
+	defer server.Close()
+	client, err := clientcontrol.New(server.URL, server.Client(), "visitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := visitorURLList(t.Context(), client, ""); err == nil {
 		t.Fatal("visitor inventory cursor cycle was accepted")
 	}
 }

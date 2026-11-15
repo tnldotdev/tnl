@@ -19,7 +19,7 @@ func (q *Queries) DeleteGuestSession(ctx context.Context, serverOrigin string) e
 }
 
 const getGuestSession = `-- name: GetGuestSession :one
-SELECT server_origin, guest_id, access_token_ciphertext, team_id, membership_id, domain_id, namespace, expires_at, created_at FROM guest_demo_sessions WHERE server_origin = ?1
+SELECT server_origin, guest_id, access_token_ciphertext, expires_at, created_at FROM guest_demo_sessions WHERE server_origin = ?1
 `
 
 func (q *Queries) GetGuestSession(ctx context.Context, serverOrigin string) (GuestDemoSession, error) {
@@ -29,10 +29,6 @@ func (q *Queries) GetGuestSession(ctx context.Context, serverOrigin string) (Gue
 		&i.ServerOrigin,
 		&i.GuestID,
 		&i.AccessTokenCiphertext,
-		&i.TeamID,
-		&i.MembershipID,
-		&i.DomainID,
-		&i.Namespace,
 		&i.ExpiresAt,
 		&i.CreatedAt,
 	)
@@ -41,11 +37,9 @@ func (q *Queries) GetGuestSession(ctx context.Context, serverOrigin string) (Gue
 
 const saveGuestSession = `-- name: SaveGuestSession :exec
 INSERT INTO guest_demo_sessions (
-    server_origin, guest_id, access_token_ciphertext, team_id,
-    membership_id, domain_id, namespace, expires_at, created_at
+    server_origin, guest_id, access_token_ciphertext, expires_at, created_at
 ) VALUES (
-    ?1, ?2, ?3, ?4,
-    ?5, ?6, ?7, ?8, ?9
+    ?1, ?2, ?3, ?4, ?5
 )
 ON CONFLICT (server_origin) DO NOTHING
 `
@@ -54,10 +48,6 @@ type SaveGuestSessionParams struct {
 	ServerOrigin          string
 	GuestID               string
 	AccessTokenCiphertext []byte
-	TeamID                string
-	MembershipID          string
-	DomainID              string
-	Namespace             string
 	ExpiresAt             int64
 	CreatedAt             int64
 }
@@ -67,10 +57,6 @@ func (q *Queries) SaveGuestSession(ctx context.Context, arg SaveGuestSessionPara
 		arg.ServerOrigin,
 		arg.GuestID,
 		arg.AccessTokenCiphertext,
-		arg.TeamID,
-		arg.MembershipID,
-		arg.DomainID,
-		arg.Namespace,
 		arg.ExpiresAt,
 		arg.CreatedAt,
 	)

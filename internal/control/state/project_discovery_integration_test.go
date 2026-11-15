@@ -8,6 +8,9 @@ import (
 func TestIntegrationProjectDiscoveryPaging(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "project_discovery")
 	r := appliedProjectRequest(t, d, now)
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.teams SET kind='organization' WHERE id=$1`, r.TeamID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
@@ -45,8 +48,8 @@ func TestIntegrationProjectDiscoveryPaging(t *testing.T) {
 	if _, err := d.ListProjects(t.Context(), r.TeamID, "another-identity", ""); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("project discovery did not check current authorization", err)
 	}
-	insertAuthorityIdentity(t, d, "other-creator", "", false, now)
-	if _, err := d.CreatePreview(t.Context(), r.TeamID, "other-creator", "other-preview", now); err != nil {
+	other := addAuthorityMember(t, d, now, r.ActorID, r.TeamID, "other-creator", TeamRoleMember)
+	if _, err := d.CreatePreview(t.Context(), r.TeamID, other.IdentityID, "other-preview", now); err != nil {
 		t.Fatal(err)
 	}
 	preview, err := d.CreatePreview(t.Context(), r.TeamID, r.ActorID, "own-preview", now)

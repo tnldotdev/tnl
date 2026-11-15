@@ -91,60 +91,6 @@ func (c *HTTPControlClient) GetRelayTransportCertificate(
 	return *response.JSON200, nil
 }
 
-func (c *HTTPControlClient) ClaimPublisherConnection(
-	ctx context.Context,
-	publisherConnectionID relayv1.PublisherConnectionID,
-	body relayv1.PublisherConnectionClaim,
-) (relayv1.ClaimedPublisherConnection, error) {
-	response, err := c.client.ClaimPublisherConnectionWithResponse(ctx, publisherConnectionID, body)
-	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, err
-	}
-	if response == nil {
-		return relayv1.ClaimedPublisherConnection{}, relayHTTPProblem(0, nil)
-	}
-	if response.JSON200 == nil {
-		return relayv1.ClaimedPublisherConnection{}, relayHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
-	}
-	return *response.JSON200, nil
-}
-
-func (c *HTTPControlClient) MarkPublisherConnectionReady(
-	ctx context.Context,
-	publisherConnectionID relayv1.PublisherConnectionID,
-	body relayv1.PublisherConnectionTransition,
-) (relayv1.ClaimedPublisherConnection, error) {
-	response, err := c.client.MarkPublisherConnectionReadyWithResponse(ctx, publisherConnectionID, body)
-	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, err
-	}
-	if response == nil {
-		return relayv1.ClaimedPublisherConnection{}, relayHTTPProblem(0, nil)
-	}
-	if response.JSON200 == nil {
-		return relayv1.ClaimedPublisherConnection{}, relayHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
-	}
-	return *response.JSON200, nil
-}
-
-func (c *HTTPControlClient) DisconnectPublisherConnection(
-	ctx context.Context,
-	publisherConnectionID relayv1.PublisherConnectionID,
-	body relayv1.PublisherConnectionDisconnect,
-) (relayv1.ClaimedPublisherConnection, error) {
-	response, err := c.client.DisconnectPublisherConnectionWithResponse(ctx, publisherConnectionID, body)
-	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, err
-	}
-	if response == nil {
-		return relayv1.ClaimedPublisherConnection{}, relayHTTPProblem(0, nil)
-	}
-	if response.JSON200 == nil {
-		return relayv1.ClaimedPublisherConnection{}, relayHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
-	}
-	return *response.JSON200, nil
-}
-
 func relayHTTPProblem(status int, problem *relayv1.Problem) error {
 	result := &serverhttp.ProblemError{Status: status}
 	if problem != nil {

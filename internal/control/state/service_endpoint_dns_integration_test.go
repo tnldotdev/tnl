@@ -17,7 +17,7 @@ func TestIntegrationServiceEndpointDNSRevisions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claim := func(public bool, state PublicURLDNSState) ServiceEndpointDNSWork {
+	claim := func(public bool, state ServiceEndpointDNSState) ServiceEndpointDNSWork {
 		t.Helper()
 		work, found, err := d.ClaimServiceEndpointDNSWork(ctx, "endpoint-worker", r.Now, time.Minute)
 		if err != nil || !found || work.Hostname != applied.Services[0].Hostname || work.ServiceID != applied.Services[0].ServiceID || work.Public != public || work.State != state {
@@ -28,7 +28,7 @@ func TestIntegrationServiceEndpointDNSRevisions(t *testing.T) {
 		}
 		return work
 	}
-	private := claim(false, PublicURLDNSPending)
+	private := claim(false, ServiceEndpointDNSPending)
 	r.ExpectedRevision = applied.Revision
 	r.Now = now.Add(time.Second)
 	binding := r.Configuration.Services["api"]
@@ -38,11 +38,11 @@ func TestIntegrationServiceEndpointDNSRevisions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = d.ValidateServiceEndpointDNSWork(ctx, private, r.Now); !errors.Is(err, ErrDNSPublicURLWorkStale) {
+	if err = d.ValidateServiceEndpointDNSWork(ctx, private, r.Now); !errors.Is(err, ErrServiceEndpointDNSWorkStale) {
 		t.Fatal("stale worker retained provider authority", err)
 	}
-	private.State, private.AvailableAt = PublicURLDNSPublished, time.Time{}
-	if _, err = d.SaveServiceEndpointDNSWork(ctx, private, r.Now); !errors.Is(err, ErrDNSPublicURLWorkStale) {
+	private.State, private.AvailableAt = ServiceEndpointDNSPublished, time.Time{}
+	if _, err = d.SaveServiceEndpointDNSWork(ctx, private, r.Now); !errors.Is(err, ErrServiceEndpointDNSWorkStale) {
 		t.Fatal("old loopback publication completed a public revision", err)
 	}
 	if _, found, err := d.ClaimServiceEndpointDNSWork(ctx, "duplicate", r.Now, time.Minute); err != nil || found {
@@ -57,8 +57,8 @@ func TestIntegrationServiceEndpointDNSRevisions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loopback := claim(false, PublicURLDNSPending)
-	loopback.State, loopback.AvailableAt = PublicURLDNSPublished, time.Time{}
+	loopback := claim(false, ServiceEndpointDNSPending)
+	loopback.State, loopback.AvailableAt = ServiceEndpointDNSPublished, time.Time{}
 	if _, err := d.SaveServiceEndpointDNSWork(ctx, loopback, r.Now); err != nil {
 		t.Fatal(err)
 	}
@@ -71,8 +71,8 @@ func TestIntegrationServiceEndpointDNSRevisions(t *testing.T) {
 	if _, err = d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)
 	}
-	removed := claim(false, PublicURLDNSRemoving)
-	removed.State, removed.AvailableAt = PublicURLDNSRemoved, time.Time{}
+	removed := claim(false, ServiceEndpointDNSRemoving)
+	removed.State, removed.AvailableAt = ServiceEndpointDNSRemoved, time.Time{}
 	if _, err = d.SaveServiceEndpointDNSWork(ctx, removed, r.Now); err != nil {
 		t.Fatal(err)
 	}

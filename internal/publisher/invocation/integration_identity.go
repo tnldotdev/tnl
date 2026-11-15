@@ -2,69 +2,28 @@ package invocation
 
 import (
 	"context"
-	"errors"
 	"slices"
 
-	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func nativeIntegrationConfig(ctx context.Context, database *clientstate.Database, services publisherServices, hostname string, purpose controlv1.PublicURLPurpose, allowed ...[]string) (publisher.Config, error) {
-	cfg := integrationURLConfig(services, hostname, purpose)
-	if len(allowed) != 0 {
-		cfg.AllowedIPPrefixes = append([]string{}, allowed[0]...)
+func nativeIntegrationConfig(ctx context.Context, services publisherServices, hostname string, allowed []string) (publisherservice.RunConfig, controlv1.Service, error) {
+	services.hostname = hostname
+	prefixes := slices.Clone(allowed)
+	if prefixes == nil {
+		prefixes = []string{}
 	}
-	lock, err := clientstate.LockHostnameContext(ctx, services.state, hostname)
+	declaration := controlv1.ProjectServiceConfiguration{Target: "app",
+		Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: new(controlv1.Anonymous), Ip: &prefixes},
+			Limits: &controlv1.ProjectHTTPApplicationLimits{Concurrency: new(32)}}}
+	native, saved, err := selectNativeProjectPublisher(ctx, services, declaration)
 	if err != nil {
-		return cfg, err
+		return publisherservice.RunConfig{}, controlv1.Service{}, err
 	}
-	defer lock.Close()
-	publicURL, err := services.routes.GetPublicURLByHostname(ctx, services.teamID, hostname)
-	if errors.Is(err, clientcontrol.ErrNotFound) {
-		key, keyErr := opaqueid.New(opaqueid.IdempotencyPrefix)
-		if keyErr != nil {
-			return cfg, keyErr
-		}
-		protocol := controlv1.Http
-		body := controlv1.CreatePublicURLRequest{TeamId: services.teamID, DomainId: services.domainID, CanonicalHostname: hostname, PublicUrlScope: services.publicURLScope, Purpose: purpose, ServiceProtocol: &protocol, Target: "", AllowedIpPrefixes: &cfg.AllowedIPPrefixes}
-		if services.publicURLScope == controlv1.Member {
-			body.MembershipId = &services.membershipID
-		}
-		publicURL, err = services.routes.CreatePublicURL(ctx, body, key)
-	}
-	if err != nil {
-		return cfg, err
-	}
-	if publicURL.TeamId != services.teamID || publicURL.DomainId != services.domainID || publicURL.CanonicalHostname != hostname || publicURL.Purpose != purpose || publicURL.ServiceProtocol != controlv1.Http || publicURL.Target != "" || publicURL.Ephemeral || publicURL.LifecycleState != controlv1.Enabled || publicURL.PublicUrlScope != services.publicURLScope {
-		return cfg, failure.Wrap("read integration URL", failure.ServerResponseInvalid, errors.New("integration URL differs from the selected project"))
-	}
-	if publicURL.PublicUrlScope == controlv1.Member && (publicURL.MembershipId == nil || *publicURL.MembershipId != services.membershipID) || publicURL.PublicUrlScope == controlv1.Shared && publicURL.MembershipId != nil {
-		return cfg, failure.Wrap("read integration URL", failure.ServerResponseInvalid, errors.New("integration URL belongs to a different membership"))
-	}
-	currentPolicy := []string{}
-	if publicURL.AllowedIpPrefixes != nil {
-		currentPolicy = *publicURL.AllowedIpPrefixes
-	}
-	if !slices.Equal(currentPolicy, cfg.AllowedIPPrefixes) {
-		publicURL, err = services.routes.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{AllowedIpPrefixes: new(append([]string{}, cfg.AllowedIPPrefixes...)), ExpectedMutationRevision: publicURL.MutationRevision})
-		if err != nil {
-			return cfg, err
-		}
-	}
-	native, _, err := publisheridentity.EnsureOwner(ctx, services.state, services.authenticated.Control, services.authenticated.Authority, publicURL)
-	if err != nil {
-		return cfg, err
-	}
-	if err := native.SelectPublicURL(publicURL); err != nil {
-		return cfg, err
-	}
-	cfg.Control, cfg.PreserveSavedPublicURLTarget = native, true
-	cfg.PublisherIdentityID = native.PublisherIdentityID()
-	configureNativePublication(&cfg, native, services.routes)
-	return cfg, nil
+	return publisherservice.RunConfig{Control: native, State: services.state, Access: native.Access,
+		PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
+		ServiceID: saved.Id, Metadata: publisheridentity.ServiceMetadata(saved), InspectionMode: inspection.None}, saved, nil
 }

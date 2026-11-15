@@ -95,7 +95,7 @@ func TestAppWorkflowLocalRealizationSurvivesGitChanges(t *testing.T) {
 			t.Error(err)
 		}
 		identities = append(identities, r.URL.Path+":"+body.SourceFingerprint+":"+body.WorktreeKey)
-		_ = json.NewEncoder(w).Encode(controlv1.LocalProjectService{Service: "web", ServiceId: "svc_test", ServiceKind: "service", WorktreeKey: body.WorktreeKey})
+		_ = json.NewEncoder(w).Encode(controlv1.LocalProjectService{Service: "web", ServiceId: "svc_0123456789abcdefghijkl", WorktreeKey: body.WorktreeKey})
 	}))
 	defer server.Close()
 	control, err := clientcontrol.New(server.URL, server.Client(), credentials.AccessToken("session"))

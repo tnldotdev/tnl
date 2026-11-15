@@ -1,12 +1,18 @@
 package failure
 
-import "errors"
+import (
+	"errors"
+	"reflect"
+)
 
-// Only reports whether every leaf cause matches target. unlike errors.Is, a
+// Only reports whether each cause chain reaches target. unlike errors.Is, a
 // matching cancellation cannot hide an independent failure in a joined error.
 func Only(err, target error) bool {
 	if err == nil {
 		return target == nil
+	}
+	if target != nil && reflect.TypeOf(target).Comparable() && err == target {
+		return true
 	}
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {
 		children := joined.Unwrap()

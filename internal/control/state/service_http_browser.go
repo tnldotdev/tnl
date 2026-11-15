@@ -2,7 +2,10 @@ package state
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -19,8 +22,62 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-// ServiceHTTPRun carries an exact service/run credential. public URL run tokens
-// and browser/share scopes cannot be interpreted as service permission.
+const browserSessionLifetime = 24 * time.Hour
+
+type BrowserLoginAttempt struct {
+	Subject       visitorscope.Scope
+	ServiceRunIDs []string
+	PreviewID     string
+	CompanyIntent *CompanyIntentBinding
+	ReturnPath    string
+	Nonce         string
+	Verifier      string
+}
+
+type BrowserAccessSession struct {
+	ParentControlSessionID string
+	IdentityID             string
+	DisplayName            string
+	AccessToken            string
+	RefreshToken           string
+	AccessExpiresAt        time.Time
+	ExpiresAt              time.Time
+}
+
+type BrowserTokenRotation struct {
+	IdentityID      string
+	AccessToken     string
+	RefreshToken    string
+	AccessExpiresAt time.Time
+}
+
+type BrowserHandoff struct {
+	Origin     string
+	Token      string
+	ReturnPath string
+}
+
+func randomBrowserSecret() (string, []byte, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", nil, err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), raw, nil
+}
+
+func browserDigest(token string) ([]byte, error) {
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(token)
+	if err != nil || len(raw) != 32 || base64.RawURLEncoding.EncodeToString(raw) != token {
+		return nil, ErrPreviewAccess
+	}
+	digest := sha256.Sum256(raw)
+	return digest[:], nil
+}
+
+func browserContext(digest []byte) string { return "browser-access:" + hex.EncodeToString(digest) }
+
+// ServiceHTTPRun carries an exact service/run credential. browser/share scopes
+// cannot be interpreted as publisher permission.
 type ServiceHTTPRun struct {
 	Subject visitorscope.Scope
 	RunID   string
@@ -41,7 +98,7 @@ func (d *Database) lockServiceHTTPRun(ctx context.Context, tx pgx.Tx, auth Servi
 		return err
 	}
 	q := controlstatedb.New(tx)
-	run, err := serviceRunAuthorization(ctx, tx, q, auth.Subject.ID, auth.RunID, auth.Token.String(), now)
+	run, err := d.serviceRunAuthorization(ctx, tx, q, auth.Subject.ID, auth.RunID, auth.Token.String(), now)
 	if err != nil {
 		return err
 	}
@@ -55,7 +112,7 @@ func (d *Database) lockServiceHTTPRun(ctx context.Context, tx pgx.Tx, auth Servi
 	if !slices.Contains(endpoint.RunIds, auth.RunID) {
 		return ErrServiceAccess
 	}
-	observability.AuthenticatedServerScope(ctx, observability.Identity{TeamID: run.TeamID, PublisherIdentityID: run.PublisherIdentityID, ServiceID: run.ServiceID}, observability.Fields{Component: "control", ServiceProtocol: observability.ProtocolHTTP})
+	observability.AuthenticatedServerScope(ctx, observability.Identity{TeamID: run.TeamID.String, PublisherIdentityID: run.PublisherIdentityID, ServiceID: run.ServiceID}, observability.Fields{Component: "control", ServiceProtocol: observability.ProtocolHTTP})
 	return nil
 }
 
@@ -77,10 +134,10 @@ func (d *Database) ServiceHTTPBrowserTeam(ctx context.Context, subject visitorsc
 	if len(endpoint.RunIds) == 0 {
 		return "", ErrServiceAccess
 	}
-	return endpoint.TeamID, nil
+	return endpoint.TeamID.String, nil
 }
 
-func (d *Database) BeginServiceBrowserLogin(ctx context.Context, subject visitorscope.Scope, path, nonce, verifier string, binding []byte, intent *CompanyLoginIntent, now time.Time) (string, error) {
+func (d *Database) BeginServiceBrowserLogin(ctx context.Context, subject visitorscope.Scope, preview, path, nonce, verifier string, binding []byte, intent *CompanyLoginIntent, now time.Time) (string, error) {
 	if subject.Kind != visitorscope.Service || !subject.Valid() || !validFeedbackPath(path) || len(path) > 2048 || len(nonce) < 16 || len(nonce) > 256 || len(verifier) < 43 || len(verifier) > 128 || len(binding) != 32 || d.storageKey == nil {
 		return "", ErrPreviewAccess
 	}
@@ -97,7 +154,13 @@ func (d *Database) BeginServiceBrowserLogin(ctx context.Context, subject visitor
 		return "", err
 	}
 	digest, _ := browserDigest(state)
-	private := BrowserLoginAttempt{Verifier: verifier, Subject: subject}
+	if preview != "" {
+		included, err := q.ListPreviewServices(ctx, preview)
+		if err != nil || !slices.Contains(included, subject.ID) {
+			return "", ErrPreviewAccess
+		}
+	}
+	private := BrowserLoginAttempt{Verifier: verifier, Subject: subject, PreviewID: preview}
 	if intent != nil {
 		private.CompanyIntent = &CompanyIntentBinding{ID: intent.ID, BindingToken: intent.BindingToken, RedirectURI: intent.RedirectURI}
 	}
@@ -114,8 +177,13 @@ func (d *Database) BeginServiceBrowserLogin(ctx context.Context, subject visitor
 	return state, err
 }
 
-func (d *Database) consumeServiceBrowserLogin(ctx context.Context, digest, binding []byte, now time.Time) (BrowserLoginAttempt, error) {
-	row, err := controlstatedb.New(d.pool).ConsumeServiceHTTPBrowserLogin(ctx, controlstatedb.ConsumeServiceHTTPBrowserLoginParams{StateDigest: digest, BindingDigest: binding, Now: timestamptz(now)})
+func (d *Database) ConsumeBrowserLogin(ctx context.Context, state string, binding []byte, now time.Time) (BrowserLoginAttempt, error) {
+	digest, err := browserDigest(state)
+	if err != nil || len(binding) != 32 || d.storageKey == nil {
+		return BrowserLoginAttempt{}, ErrPreviewAccess
+	}
+	bindingDigest := sha256.Sum256(binding)
+	row, err := controlstatedb.New(d.pool).ConsumeServiceHTTPBrowserLogin(ctx, controlstatedb.ConsumeServiceHTTPBrowserLoginParams{StateDigest: digest, BindingDigest: bindingDigest[:], Now: timestamptz(now)})
 	if err != nil {
 		return BrowserLoginAttempt{}, publisherLookupError(err, ErrPreviewAccess)
 	}
@@ -134,8 +202,8 @@ func (d *Database) consumeServiceBrowserLogin(ctx context.Context, digest, bindi
 	return result, nil
 }
 
-func (d *Database) issueServiceBrowserHandoff(ctx context.Context, attempt BrowserLoginAttempt, session BrowserAccessSession, now time.Time) (result BrowserHandoff, retErr error) {
-	if !attempt.Subject.Valid() || len(attempt.ServiceRunIDs) == 0 || !session.ExpiresAt.After(now) || session.RefreshToken == "" || d.storageKey == nil {
+func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLoginAttempt, session BrowserAccessSession, now time.Time) (result BrowserHandoff, retErr error) {
+	if attempt.Subject.Kind != visitorscope.Service || !attempt.Subject.Valid() || len(attempt.ServiceRunIDs) == 0 || !session.ExpiresAt.After(now) || session.RefreshToken == "" || d.storageKey == nil {
 		return result, ErrPreviewAccess
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -147,7 +215,7 @@ func (d *Database) issueServiceBrowserHandoff(ctx context.Context, attempt Brows
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	if _, err = currentVisitorSession(ctx, q, session.AccessToken, session.IdentityID, "", now); err != nil {
+	if _, err = currentVisitorSession(ctx, q, session.AccessToken, session.IdentityID, session.ParentControlSessionID, now); err != nil {
 		return result, err
 	}
 	sessionID, _, err := credentials.ParseAccessToken(credentials.AccessToken(session.AccessToken))
@@ -159,7 +227,7 @@ func (d *Database) issueServiceBrowserHandoff(ctx context.Context, attempt Brows
 		return result, err
 	}
 	ctx = WithControlPrincipal(ctx, ControlPrincipal{SessionID: controlSession.ID, IdentityID: session.IdentityID})
-	if _, _, err = privateVisitorAccess(ctx, tx, attempt.Subject.ID, session.IdentityID, now); err != nil {
+	if _, err = d.serviceHTTPIdentityPermission(ctx, tx, attempt.Subject.ID, session.IdentityID, now); err != nil {
 		return result, err
 	}
 	endpoint, err := q.ServiceHTTPBrowserEndpoint(ctx, controlstatedb.ServiceHTTPBrowserEndpointParams{ServiceID: attempt.Subject.ID, Now: timestamptz(now)})
@@ -174,16 +242,54 @@ func (d *Database) issueServiceBrowserHandoff(ctx context.Context, attempt Brows
 	if err != nil {
 		return result, err
 	}
-	result.Token, _, err = randomBrowserSecret()
+	cookie, _, err := randomBrowserSecret()
 	if err != nil {
 		return result, err
 	}
-	digest, _ := browserDigest(result.Token)
+	digest, _ := browserDigest(cookie)
 	refresh, err := d.storageKey.Seal(browserContext(digest), []byte(session.RefreshToken))
 	if err != nil {
 		return result, err
 	}
-	err = q.InsertServiceHTTPBrowserSession(ctx, controlstatedb.InsertServiceHTTPBrowserSessionParams{HandoffDigest: digest, ServiceID: attempt.Subject.ID, RunIds: runs, ControlSessionID: controlSession.ID, ReturnPath: attempt.ReturnPath, HandoffExpiresAt: timestamptz(now.Add(time.Minute)), ExpiresAt: timestamptz(minTime(session.ExpiresAt, now.Add(browserSessionLifetime))), RefreshCiphertext: refresh, StorageKeyID: d.storageKey.CurrentID()})
+	until := minTime(session.ExpiresAt, controlSession.RefreshExpiresAt.Time)
+	until = minTime(until, now.Add(browserSessionLifetime))
+	err = q.InsertServiceHTTPBrowserSession(ctx, controlstatedb.InsertServiceHTTPBrowserSessionParams{TokenDigest: digest, ControlSessionID: controlSession.ID, ParentControlSessionID: nullableText(session.ParentControlSessionID), ExpiresAt: timestamptz(until), RefreshCiphertext: refresh, StorageKeyID: d.storageKey.CurrentID()})
+	if err != nil {
+		return result, err
+	}
+	hosts, err := q.ReadyServiceBrowserHosts(ctx, controlstatedb.ReadyServiceBrowserHostsParams{ServiceID: attempt.Subject.ID, PreviewID: attempt.PreviewID, Now: timestamptz(now)})
+	if err != nil {
+		return result, err
+	}
+	next := result.Origin + attempt.ReturnPath
+	issue := func(service string, captured []string, redirect string, bridge bool) (string, error) {
+		ticket, _, err := randomBrowserSecret()
+		if err != nil {
+			return "", err
+		}
+		ticketDigest, _ := browserDigest(ticket)
+		sealed, err := d.storageKey.Seal(browserContext(ticketDigest), []byte(cookie))
+		if err != nil {
+			return "", err
+		}
+		err = q.InsertServiceHTTPBrowserHandoff(ctx, controlstatedb.InsertServiceHTTPBrowserHandoffParams{
+			TokenDigest: ticketDigest, SessionDigest: digest, ServiceID: service, RunIds: captured,
+			CookieCiphertext: sealed, StorageKeyID: d.storageKey.CurrentID(), ReturnPath: attempt.ReturnPath,
+			RedirectUrl: redirect, Bridge: bridge, ExpiresAt: timestamptz(minTime(until, now.Add(time.Minute))),
+		})
+		return ticket, err
+	}
+	for index, host := range hosts {
+		if host.ServiceID == attempt.Subject.ID {
+			continue
+		}
+		ticket, err := issue(host.ServiceID, host.RunIds, next, index%8 == 7)
+		if err != nil {
+			return result, err
+		}
+		next = "https://" + host.CertificateHostname + "/__tnl/team/handoff/" + ticket
+	}
+	result.Token, err = issue(attempt.Subject.ID, runs, next, false)
 	if err != nil {
 		return result, err
 	}
@@ -191,27 +297,80 @@ func (d *Database) issueServiceBrowserHandoff(ctx context.Context, attempt Brows
 	return result, tx.Commit(ctx)
 }
 
-func serviceBrowserPermission(ctx context.Context, tx pgx.Tx, service, run string, digest []byte, now time.Time) (VisitorPermission, error) {
+func (d *Database) serviceBrowserPermission(ctx context.Context, tx pgx.Tx, service, run string, digest []byte, now time.Time) (VisitorPermission, error) {
 	row, err := controlstatedb.New(tx).ServiceHTTPBrowserPermission(ctx, controlstatedb.ServiceHTTPBrowserPermissionParams{ServiceID: service, ServiceRunID: run, CookieDigest: digest, Now: timestamptz(now)})
 	if err != nil {
 		return VisitorPermission{}, publisherLookupError(err, ErrVisitorSignIn)
 	}
 	ctx = WithControlPrincipal(ctx, ControlPrincipal{SessionID: row.ControlSessionID, IdentityID: row.IdentityID})
-	until, _, err := privateVisitorAccess(ctx, tx, service, row.IdentityID, now)
+	result, err := d.serviceHTTPIdentityPermission(ctx, tx, service, row.IdentityID, now)
 	if err != nil {
 		return VisitorPermission{}, err
 	}
-	until = minTime(until, row.ExpiresAt.Time)
+	result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, row.ExpiresAt.Time)
+	return result, nil
+}
+
+// authentication survives a denied visitor decision. preview team access is
+// evaluated only here, never by connector, device, or workload authorization.
+func (d *Database) serviceHTTPIdentityPermission(ctx context.Context, tx pgx.Tx, service, identity string, now time.Time) (VisitorPermission, error) {
 	q := controlstatedb.New(tx)
+	result := VisitorPermission{}
+	person, err := q.LockVisitorIdentity(ctx, identity)
+	if err != nil {
+		return result, publisherLookupError(err, ErrVisitorSignIn)
+	}
 	s, err := q.GetService(ctx, service)
 	if err != nil {
-		return VisitorPermission{}, err
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	_, err = q.VisitorCurrentMembership(ctx, controlstatedb.VisitorCurrentMembershipParams{TeamID: s.TeamID, IdentityID: row.IdentityID})
+	if s.Protocol != "http" || !s.Enabled || s.DeletedAt.Valid {
+		return result, ErrServiceAccess
+	}
+	session := companySessionID(ctx, identity)
+	allowed, err := q.CompanySubjectSessionAuthorized(ctx, controlstatedb.CompanySubjectSessionAuthorizedParams{TeamID: s.TeamID.String, IdentityID: identity, SessionID: session, Now: timestamptz(now)})
+	if err != nil {
+		return result, err
+	}
+	if !allowed {
+		return result, ErrVisitorSignIn
+	}
+	result.Authenticated, result.IdentityID, result.DisplayName = true, identity, person.DisplayName
+	_, err = q.VisitorCurrentMembership(ctx, controlstatedb.VisitorCurrentMembershipParams{TeamID: s.TeamID.String, IdentityID: identity})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return VisitorPermission{}, err
+		return result, err
 	}
-	return VisitorPermission{Authenticated: true, TeamMember: err == nil, IdentityID: row.IdentityID, DisplayName: row.DisplayName, VisitAllowed: true, Reason: "service_browser", ExpiresAt: &until}, nil
+	result.TeamMember = err == nil
+	permission, err := q.VisitorPermission(ctx, controlstatedb.VisitorPermissionParams{ResourceKind: "service", ResourceID: service, IdentityID: identity, ControlSessionID: session, Now: timestamptz(now)})
+	if err == nil {
+		result.VisitAllowed, result.Reason = true, permission.Reason
+		if permission.ExpiresAt.InfinityModifier == 0 {
+			result.ExpiresAt = optionalTime(permission.ExpiresAt)
+		}
+		return result, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return result, err
+	}
+	deadline, err := q.ServiceHTTPPreviewTeamPermission(ctx, controlstatedb.ServiceHTTPPreviewTeamPermissionParams{ServiceID: service, IdentityID: identity, ControlSessionID: session, Now: timestamptz(now)})
+	if err == nil {
+		result.VisitAllowed, result.Reason = true, "preview_team"
+		if deadline.InfinityModifier == 0 {
+			result.ExpiresAt = optionalTime(deadline)
+		}
+		return result, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return result, err
+	}
+	settings, err := d.serviceHTTPSettings(ctx, q, service)
+	if err != nil {
+		return result, err
+	}
+	if settings != nil && settings.Access != nil && settings.Access.VisitorMode() == "anonymous" {
+		result.VisitAllowed, result.Reason = true, "anonymous"
+	}
+	return result, nil
 }
 
 func (d *Database) RedeemServiceBrowserHandoff(ctx context.Context, auth ServiceHTTPRun, ticket string, now time.Time) (result controlv1.BrowserHandoffResponse, retErr error) {
@@ -227,19 +386,18 @@ func (d *Database) RedeemServiceBrowserHandoff(ctx context.Context, auth Service
 	if err = d.lockServiceHTTPRun(ctx, tx, auth, now); err != nil {
 		return result, err
 	}
-	cookie, _, err := randomBrowserSecret()
-	if err != nil {
-		return result, err
-	}
-	cookieDigest, _ := browserDigest(cookie)
-	row, err := controlstatedb.New(tx).RedeemServiceHTTPBrowserSession(ctx, controlstatedb.RedeemServiceHTTPBrowserSessionParams{HandoffDigest: digest, CookieDigest: cookieDigest, ServiceID: auth.Subject.ID, ServiceRunID: auth.RunID, Now: timestamptz(now)})
+	row, err := controlstatedb.New(tx).RedeemServiceHTTPBrowserHandoff(ctx, controlstatedb.RedeemServiceHTTPBrowserHandoffParams{TokenDigest: digest, ServiceID: auth.Subject.ID, ServiceRunID: auth.RunID, Now: timestamptz(now)})
 	if err != nil {
 		return result, publisherLookupError(err, ErrVisitorSignIn)
 	}
-	if _, err = serviceBrowserPermission(ctx, tx, auth.Subject.ID, auth.RunID, cookieDigest, now); err != nil {
+	cookie, _, err := d.storageKey.Open(row.StorageKeyID, browserContext(digest), row.CookieCiphertext)
+	if err != nil {
 		return result, err
 	}
-	result = controlv1.BrowserHandoffResponse{CookieSecret: cookie, ReturnPath: row.ReturnPath, ExpiresAt: row.ExpiresAt.Time}
+	if _, err = d.serviceBrowserPermission(ctx, tx, auth.Subject.ID, auth.RunID, row.SessionDigest, now); err != nil {
+		return result, err
+	}
+	result = controlv1.BrowserHandoffResponse{CookieSecret: string(cookie), ReturnPath: row.ReturnPath, NextUrl: &row.RedirectUrl, Bridge: &row.Bridge, ExpiresAt: row.ExpiresAt.Time}
 	return result, tx.Commit(ctx)
 }
 
@@ -259,7 +417,7 @@ func (d *Database) ServiceBrowserSession(ctx context.Context, auth ServiceHTTPRu
 	if revoke {
 		err = controlstatedb.New(tx).RevokeServiceHTTPBrowserSession(ctx, controlstatedb.RevokeServiceHTTPBrowserSessionParams{ServiceID: auth.Subject.ID, ServiceRunID: auth.RunID, CookieDigest: digest, Now: timestamptz(now)})
 	} else {
-		result, err = serviceBrowserPermission(ctx, tx, auth.Subject.ID, auth.RunID, digest, now)
+		result, err = d.serviceBrowserPermission(ctx, tx, auth.Subject.ID, auth.RunID, digest, now)
 	}
 	if errors.Is(err, ErrServiceAccess) {
 		err = ErrVisitorSignIn
@@ -272,10 +430,12 @@ func (d *Database) ServiceBrowserSession(ctx context.Context, auth ServiceHTTPRu
 
 // the browser row serializes refresh without locking the parent session that
 // the authority must rotate. contenders release their connection before retrying
-// so they cannot exhaust the authority's pool. service and expiry remain fixed.
+// so they cannot exhaust the authority's pool. the row can stay locked during
+// an authority network request, so busy-row retries have a longer, capped budget
+// than local visitor preparation. service and expiry remain fixed.
 func (d *Database) RefreshServiceBrowserSession(ctx context.Context, service, secret string, now time.Time,
 	refresh func(context.Context, string) (BrowserTokenRotation, error)) (BrowserAccessSession, error) {
-	result, err := retryVisitorPreparation(ctx, now, func(at time.Time) (BrowserAccessSession, error) {
+	result, err := retryVisitorPreparationWithLockAttempts(ctx, now, 64, func(at time.Time) (BrowserAccessSession, error) {
 		return d.refreshServiceBrowserSession(ctx, service, secret, at, refresh)
 	})
 	var pgErr *pgconn.PgError
@@ -304,10 +464,10 @@ func (d *Database) refreshServiceBrowserSession(ctx context.Context, service, se
 	if row.ParentRevokedAt.Valid || !row.RefreshExpiresAt.Time.After(now) {
 		return result, ErrPreviewAccess
 	}
-	result = BrowserAccessSession{IdentityID: row.IdentityID, AccessExpiresAt: row.AccessExpiresAt.Time,
+	result = BrowserAccessSession{IdentityID: row.IdentityID, DisplayName: row.DisplayName, AccessExpiresAt: row.AccessExpiresAt.Time,
 		ExpiresAt: minTime(row.ExpiresAt.Time, row.RefreshExpiresAt.Time)}
 	if !result.AccessExpiresAt.After(now.Add(30 * time.Second)) {
-		secret, _, err := d.storageKey.Open(row.StorageKeyID, browserContext(row.HandoffDigest), row.RefreshCiphertext)
+		secret, _, err := d.storageKey.Open(row.StorageKeyID, browserContext(row.TokenDigest), row.RefreshCiphertext)
 		if err != nil {
 			return result, err
 		}
@@ -319,11 +479,11 @@ func (d *Database) refreshServiceBrowserSession(ctx context.Context, service, se
 		if err != nil || principal.SessionID != row.ControlSessionID || principal.IdentityID != row.IdentityID || rotated.IdentityID != row.IdentityID || rotated.RefreshToken == "" || !rotated.AccessExpiresAt.After(now) {
 			return result, ErrPreviewAccess
 		}
-		sealed, err := d.storageKey.Seal(browserContext(row.HandoffDigest), []byte(rotated.RefreshToken))
+		sealed, err := d.storageKey.Seal(browserContext(row.TokenDigest), []byte(rotated.RefreshToken))
 		if err != nil {
 			return result, err
 		}
-		if err := q.RotateServiceHTTPBrowserSession(ctx, controlstatedb.RotateServiceHTTPBrowserSessionParams{HandoffDigest: row.HandoffDigest, RefreshCiphertext: sealed, StorageKeyID: d.storageKey.CurrentID()}); err != nil {
+		if err := q.RotateServiceHTTPBrowserSession(ctx, controlstatedb.RotateServiceHTTPBrowserSessionParams{TokenDigest: row.TokenDigest, RefreshCiphertext: sealed, StorageKeyID: d.storageKey.CurrentID()}); err != nil {
 			return result, err
 		}
 		result.AccessExpiresAt = rotated.AccessExpiresAt

@@ -94,7 +94,7 @@ func TestIntegrationServicePermissionReportsCurrentTrustRevisionWithoutSelecting
 		}
 	}
 	read(service.TrustRevision)
-	updated, err := d.ConfigureService(ctx, service.ID, principal.IdentityID, ServiceMetadata{Protocol: "tcp", TrustRevision: service.TrustRevision}, now)
+	updated, err := d.ConfigureService(ctx, service.ID, principal.IdentityID, ServiceMetadata{Protocol: "tcp", TrustRevision: service.TrustRevision}, nil, ServiceUpdateConditions{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,33 +169,29 @@ func TestIntegrationConcurrentVisitorGrantAndCertificatePreparation(t *testing.T
 }
 
 func TestIntegrationVisitorTokenShareUsesCapturedScopeExpiryAndCurrentIssuer(t *testing.T) {
-	d, now := newControlStateIntegrationDatabase(t, "visitor_token_share")
-	request := oidcRouteRequest(t, d, now)
-	u := createTestPublicURL(t, d, request, now)
-	otherRequest := request
-	otherRequest.IdempotencyKey, otherRequest.CanonicalHostname = "other", "other."+request.CanonicalHostname
-	otherRequest.RequestDigest = sha256.Sum256([]byte("other"))
-	other := createTestPublicURL(t, d, otherRequest, now)
+	f := newServiceHTTPFixture(t)
+	d, now, service := f.database, f.now, f.service
+	other := f.local(t, "api", nil)
 	secret := bytes.Repeat([]byte{7}, 32)
 	fingerprint := sha256.Sum256(secret)
 	deadline := now.Add(3 * time.Second)
-	share, err := d.CreateShare(t.Context(), CreateShareRequest{TeamID: u.TeamID, ActingIdentityID: request.ActingIdentityID, IdempotencyKey: "token-share", SecretFingerprint: fingerprint, ExpiresAt: deadline, PolicyRevision: 1, PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: u.ID, ExpectedMutationRevision: u.MutationRevision}}}, now)
+	share, err := d.CreateShare(t.Context(), CreateShareRequest{TeamID: service.TeamID, ActingIdentityID: f.project.ActorID, IdempotencyKey: "token-share", SecretFingerprint: fingerprint, ExpiresAt: deadline, ServiceIDs: []string{service.ID}, EntryServiceID: service.ID}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := ShareTokenSource{ShareID: share.ID, Secret: base64.RawURLEncoding.EncodeToString(secret)}
-	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: u.ID}
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}
 	issued, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, scope, source, now)
 	if err != nil || issued.Permission.Subject != (visitortoken.Share{ShareID: share.ID}) || !issued.Permission.ExpiresAt.Equal(deadline.Truncate(time.Second)) {
 		t.Fatal("share permission scope or expiry changed", err)
 	}
-	if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: other.ID}, source, now); !errors.Is(err, ErrVisitorPermission) {
+	if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, visitorscope.Scope{Kind: visitorscope.Service, ID: other.ID}, source, now); !errors.Is(err, ErrVisitorPermission) {
 		t.Fatal("share expanded to a later public URL", err)
 	}
 	if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, scope, source, deadline); err == nil {
 		t.Fatal("expired share issued permission")
 	}
-	if _, err := d.pool.Exec(t.Context(), `UPDATE control.identities SET disabled_at=$2 WHERE id=$1`, request.ActingIdentityID, now); err != nil {
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.identities SET disabled_at=$2 WHERE id=$1`, f.project.ActorID, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, scope, source, now); !errors.Is(err, ErrVisitorPermission) {

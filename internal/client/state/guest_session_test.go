@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -27,8 +28,6 @@ func TestGuestSessionIsSavedForTheServerAndProtected(t *testing.T) {
 	}
 	guest := GuestSession{
 		GuestID: "gst_0123456789abcdefghijkl", AccessToken: token.String(),
-		TeamID: "tm_0123456789abcdefghijkl", MembershipID: "mem_0123456789abcdefghijkl",
-		DomainID: "dom_0123456789abcdefghijkl", Namespace: "guest-01234567.example",
 		ExpiresAt: time.Now().UTC().Add(72 * time.Hour),
 	}
 	if err := store.SaveGuestSession(t.Context(), guest); err != nil {
@@ -50,12 +49,15 @@ func TestGuestSessionIsSavedForTheServerAndProtected(t *testing.T) {
 	if err != nil || len(stored.AccessTokenCiphertext) == 0 {
 		t.Fatalf("guest credential missing from client state: %v", err)
 	}
-	var sourceColumns int
-	if err := database.db.QueryRowContext(t.Context(), `SELECT count(*) FROM pragma_table_info('guest_demo_sessions') WHERE name = 'source_ip'`).Scan(&sourceColumns); err != nil || sourceColumns != 0 {
-		t.Fatalf("guest client state retained a source IP column: %d, %v", sourceColumns, err)
+	var unnecessaryColumns int
+	if err := database.db.QueryRowContext(t.Context(), `SELECT count(*) FROM pragma_table_info('guest_demo_sessions') WHERE name IN ('source_ip','team_id','membership_id','domain_id','namespace')`).Scan(&unnecessaryColumns); err != nil || unnecessaryColumns != 0 {
+		t.Fatalf("guest client state retained ownership or DNS copies: %d, %v", unnecessaryColumns, err)
 	}
 	if bytes.Contains(stored.AccessTokenCiphertext, []byte(token)) || !bytes.HasPrefix(stored.AccessTokenCiphertext, sealedValuePrefix) {
 		t.Fatal("guest credential stored in plaintext")
+	}
+	if formatted := fmt.Sprintf("%v %+v %#v", guest, &guest, guest); bytes.Contains([]byte(formatted), []byte(token)) {
+		t.Fatal("guest session formatting exposed its credential")
 	}
 	read, found, err := store.GuestSession(t.Context())
 	if err != nil || !found || read != guest {

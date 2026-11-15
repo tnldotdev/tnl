@@ -1,4 +1,4 @@
-// package ingress routes HTTPS by exact SNI and public services by destination.
+// package ingress selects HTTP services by exact SNI and other public services by destination.
 // public visitor TLS terminates at the publisher.
 package ingress
 
@@ -15,46 +15,18 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/ingress/clienthello"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
-	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
-	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 const defaultOpenTimeout = 10 * time.Second
 
 // keep a failed preferred relay from consuming the visitor concurrency budget
-// while another connected relay can still serve the public URL.
+// while another connected relay can still serve the service.
 const alternateAttemptTimeout = 250 * time.Millisecond
-
-const visitorConnectionIDPrefix = opaqueid.VisitorConnectionPrefix
-
-type PublicURL struct {
-	BindConnection    func(func()) (func(), error)
-	AttestSource      func(string, netip.AddrPort, netip.AddrPort) (string, error)
-	ID                string
-	PublishRunNumber  uint64
-	RecoveryEpisodeID uint64
-	HashedIPPolicy    *ippolicy.Policy
-	AllowAll          bool
-	Backends          []Backend
-	PublishRunID      string
-	ServiceProtocol   string
-	AccessMode        string
-	Traffic           *TrafficLimits
-	// current assignments include full relays: existing streams still need to
-	// authorize after consuming the last available new-stream slot.
-	assignments []tunnelv1.AdmissionHeader
-}
-
-// LookupFunc returns the current candidate runs for a public URL, including a
-// one-element slice for a single run. failure reasons are fixed labels, never
-// hostnames, identifiers, or error text.
-type LookupFunc func(string) ([]PublicURL, LookupReason)
 
 type Metrics interface {
 	ObserveTrafficAdmission(string, string)
@@ -70,7 +42,6 @@ type Metrics interface {
 
 type Config struct {
 	AuditSink                 serviceaudit.Sink
-	Lookup                    LookupFunc
 	ServerHostname            string
 	HandleControl             func(net.Conn) bool
 	RelayHostname             string
@@ -93,9 +64,8 @@ type Config struct {
 	OpenTimeout               time.Duration
 	Metrics                   Metrics
 	Observer                  OperationObserver
-	ObserveRecovery           func(string, uint64, uint64, time.Time)
+	ObserveRecovery           func(ingressv1.ServiceRunReference, string, uint64, time.Time)
 	OnError                   func(error)
-	OnForwardingFailure       func(string, uint64, string, ForwardingFailureReason, int)
 	Traffic                   TrafficConfig
 	Pending                   PendingConfig
 }
@@ -110,27 +80,23 @@ type Server struct {
 	closeOnce      sync.Once
 	closeErr       error
 
-	mu              sync.Mutex
-	connections     map[net.Conn]bool // true for public visitors, false during inspection.
-	backends        map[net.Conn]struct{}
-	byPublicURL     map[string]int
-	byDenied        map[string]int
-	poolRuns        map[string]int
-	pending         int
-	admitted        [connectionKinds]int
-	serving         bool
-	closing         bool
-	done            chan struct{}
-	active          sync.WaitGroup
-	nextPoolRun     atomic.Uint64
-	nextBackend     atomic.Uint64
-	traffic         *trafficAdmission
-	servicePorts    tcpport.Inventory
-	pendingVisitors map[string]*visitorAdmission
+	mu           sync.Mutex
+	connections  map[net.Conn]bool // true for public visitors, false during inspection.
+	backends     map[net.Conn]struct{}
+	pending      int
+	admitted     [connectionKinds]int
+	serving      bool
+	closing      bool
+	done         chan struct{}
+	active       sync.WaitGroup
+	nextPoolRun  atomic.Uint64
+	nextBackend  atomic.Uint64
+	traffic      *trafficAdmission
+	servicePorts tcpport.Inventory
 }
 
 func New(listener net.Listener, config Config) (*Server, error) {
-	if listener == nil || config.Lookup == nil && config.Control == nil {
+	if listener == nil || config.Control == nil {
 		return nil, errors.New("ingress: listener and service forwarding are required")
 	}
 	if config.MaxConnections <= 0 {
@@ -182,20 +148,17 @@ func New(listener net.Listener, config Config) (*Server, error) {
 	}
 	traffic := newTrafficAdmission(config.Traffic, config.Pending)
 	server := &Server{
-		listener:        listener,
-		config:          config,
-		openContext:     openContext,
-		cancelOpens:     cancelOpens,
-		admissions:      admissions,
-		stopAdmissions:  stopAdmissions,
-		connections:     make(map[net.Conn]bool),
-		backends:        make(map[net.Conn]struct{}),
-		byPublicURL:     make(map[string]int),
-		byDenied:        make(map[string]int),
-		done:            make(chan struct{}),
-		traffic:         traffic,
-		servicePorts:    servicePorts,
-		pendingVisitors: make(map[string]*visitorAdmission),
+		listener:       listener,
+		config:         config,
+		openContext:    openContext,
+		cancelOpens:    cancelOpens,
+		admissions:     admissions,
+		stopAdmissions: stopAdmissions,
+		connections:    make(map[net.Conn]bool),
+		backends:       make(map[net.Conn]struct{}),
+		done:           make(chan struct{}),
+		traffic:        traffic,
+		servicePorts:   servicePorts,
 	}
 	return server, nil
 }
@@ -267,7 +230,9 @@ func (s *Server) StopAccepting() {
 // Close cancels and joins every owned accepted connection and backend.
 func (s *Server) Close() error {
 	s.closeOnce.Do(func() {
-		s.StopAccepting()
+		s.mu.Lock()
+		s.closing = true
+		s.mu.Unlock()
 		_ = s.listener.Close()
 		s.closeErr = s.closeConnections()
 		s.active.Wait()
@@ -325,7 +290,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	// native database negotiation is not a TLS ClientHello. select a managed
 	// service by its trusted destination before attempting HTTPS inspection.
 	if s.servicePorts.Contains(int(destination.Port())) || s.config.RequireProxyHeader && destination.Port() != 443 {
-		if s.config.Control == nil || !s.servicePorts.Contains(int(destination.Port())) {
+		if !s.servicePorts.Contains(int(destination.Port())) {
 			return nil
 		}
 		finishInspection()
@@ -378,7 +343,7 @@ func (s *Server) forwardService(ctx context.Context, public net.Conn, source, de
 	if s.config.Control == nil {
 		return ErrServiceAdmission
 	}
-	release, rejected := s.admitClass(serviceConnection, "")
+	release, rejected := s.admitClass(serviceConnection)
 	if release == nil {
 		s.rejectCapacity(rejected)
 		return nil
@@ -394,7 +359,7 @@ func (s *Server) handoff(
 	kind connectionKind,
 	handler func(net.Conn) bool,
 ) bool {
-	release, rejected := s.admitClass(kind, "")
+	release, rejected := s.admitClass(kind)
 	if release == nil {
 		s.rejectCapacity(rejected)
 		return false
@@ -489,7 +454,6 @@ func (s *Server) transfer(connection net.Conn) {
 }
 
 func (s *Server) closeConnections() error {
-	s.cancelOpens()
 	s.mu.Lock()
 	connections := make([]net.Conn, 0, len(s.connections)+len(s.backends))
 	for connection := range s.connections {
@@ -499,6 +463,10 @@ func (s *Server) closeConnections() error {
 		connections = append(connections, connection)
 	}
 	s.mu.Unlock()
+	// capture owned closes before cancellation can let pending handlers retire
+	// their sockets. every captured closer returns its retained physical error.
+	s.stopAdmissions()
+	s.cancelOpens()
 	var err error
 	for _, connection := range connections {
 		err = errors.Join(err, connection.Close())
@@ -545,13 +513,6 @@ func addressPort(address net.Addr) (netip.AddrPort, error) {
 		return netip.AddrPort{}, fmt.Errorf("ingress: parse connection address: %w", err)
 	}
 	return endpoint, nil
-}
-
-func (route PublicURL) allowsIP(source netip.Addr) bool {
-	if route.HashedIPPolicy != nil {
-		return route.HashedIPPolicy.Allows(source)
-	}
-	return route.AllowAll
 }
 
 func tcpAddress(endpoint netip.AddrPort) net.Addr {

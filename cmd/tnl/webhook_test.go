@@ -38,15 +38,12 @@ func TestExclusiveWebhookCommandClaimsOnlyCurrentReadyWorktree(t *testing.T) {
 	}
 	tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandPublish, Server: server, Project: projectRoot, Service: "api",
-		Target: "3000", IntegrationScope: group,
+		Target: "3000", ServiceID: "svc_0123456789abcdefghijkl", IntegrationScope: group,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = tunnel.Finish(t.Context(), nil) })
-	if err := tunnel.SetPublicURL(t.Context(), "url_0123456789abcdefghijkl", "api.project.example.test"); err != nil {
-		t.Fatal(err)
-	}
 	if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +60,7 @@ func TestExclusiveWebhookCommandClaimsOnlyCurrentReadyWorktree(t *testing.T) {
 	}
 	project := projectConfiguration{Project: clientproject.Project{
 		Root: projectRoot, Selection: clientproject.Selection{Path: filepath.Join(projectRoot, "tnl.json")},
-		Config: config.TNL{Services: config.Services{"api": {Tunnel: &config.Tunnel{}}}, Webhooks: map[string]config.Webhook{"stripe": definition}},
+		Config: config.TNL{Services: config.Services{"api": {Public: new(true)}}, Webhooks: map[string]config.Webhook{"stripe": definition}},
 	}}
 	command := webhookChoiceCommand{remoteFlags: remoteFlags{ServerURL: server, StateDir: stateRoot}, Endpoint: "stripe"}
 	var output bytes.Buffer
@@ -74,15 +71,12 @@ func TestExclusiveWebhookCommandClaimsOnlyCurrentReadyWorktree(t *testing.T) {
 	otherRoot := t.TempDir()
 	other, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandPublish, Server: server, Project: otherRoot, Service: "api",
-		Target: "4000", IntegrationScope: group,
+		Target: "4000", ServiceID: "svc_abcdefghijklmnopqrstuv", IntegrationScope: group,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = other.Finish(t.Context(), nil) })
-	if err := other.SetPublicURL(t.Context(), "url_abcdefghijklmnopqrstuv", "api-feature.project.example.test"); err != nil {
-		t.Fatal(err)
-	}
 	if err := other.SetProvisioning(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}

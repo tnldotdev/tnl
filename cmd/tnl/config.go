@@ -157,9 +157,6 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	if err := applyProtocolLimits(&flags.tunnelFlags, string(protocol)); err != nil {
 		return failure.Wrap("resolve application limits", failure.InvalidTunnelFlags, err)
 	}
-	if err := selectPublishInspection(flags, protocol); err != nil {
-		return err
-	}
 	return nil
 }
 

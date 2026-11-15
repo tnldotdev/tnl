@@ -5,6 +5,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +13,98 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+func TestParseLimitsPreservesOmissionAndValidatesExplicitFields(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		input *controlv1.ProjectHTTPApplicationLimits
+		want  applicationlimits.Limits
+	}{
+		{name: "omitted"},
+		{name: "empty", input: &controlv1.ProjectHTTPApplicationLimits{}},
+		{name: "selected", input: &controlv1.ProjectHTTPApplicationLimits{Total: new(7), Concurrency: new(2),
+			Rate: &controlv1.ProjectApplicationRate{Count: 3, Per: "4s", Burst: new(5)}},
+			want: applicationlimits.Limits{Requests: 7, Concurrency: 2, RateRequests: 3, RatePer: 4 * time.Second, RateBurst: 5}},
+		{name: "omitted burst", input: &controlv1.ProjectHTTPApplicationLimits{Rate: &controlv1.ProjectApplicationRate{Count: 3, Per: "4s"}},
+			want: applicationlimits.Limits{RateRequests: 3, RatePer: 4 * time.Second}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			limits, err := ParseLimits(test.input)
+			if err != nil || limits != test.want {
+				t.Fatal("wire parsing changed an explicit selection or applied defaults", limits, err)
+			}
+			budget, err := NewHTTP(test.input)
+			if err != nil || budget.admission.Limits() != test.want.Defaults(false) {
+				t.Fatal("HTTP admission did not use the shared parsed value", err)
+			}
+		})
+	}
+	for _, input := range []*controlv1.ProjectHTTPApplicationLimits{
+		{Total: new(0)}, {Total: new(-1)}, {Concurrency: new(0)}, {Concurrency: new(-1)},
+		{Rate: &controlv1.ProjectApplicationRate{Count: 1, Per: "bad"}},
+		{Rate: &controlv1.ProjectApplicationRate{Count: 1, Per: "0s"}},
+		{Rate: &controlv1.ProjectApplicationRate{Count: 0, Per: "1s"}},
+		{Rate: &controlv1.ProjectApplicationRate{Count: 1}},
+		{Rate: &controlv1.ProjectApplicationRate{Count: 1, Per: "1s", Burst: new(0)}},
+		{Rate: &controlv1.ProjectApplicationRate{Count: 1, Per: "1s", Burst: new(-1)}},
+	} {
+		if _, err := ParseLimits(input); err == nil {
+			t.Fatal("explicit nonpositive or invalid limit accepted", input)
+		}
+		if _, err := NewHTTP(input); err == nil {
+			t.Fatal("HTTP admission bypassed wire validation", input)
+		}
+	}
+}
+
+func TestHTTPRejectionsKeepDiagnosticAndRetryContracts(t *testing.T) {
+	for _, test := range []struct {
+		name, code, retry string
+		limits            controlv1.ProjectHTTPApplicationLimits
+		finish            bool
+		status            int
+	}{
+		{name: "concurrency", code: "TNL_REQUEST_LIMIT_REACHED", retry: "1",
+			limits: controlv1.ProjectHTTPApplicationLimits{Concurrency: new(1)}, status: http.StatusServiceUnavailable},
+		{name: "total", code: "TNL_REQUEST_BUDGET_EXHAUSTED",
+			limits: controlv1.ProjectHTTPApplicationLimits{Total: new(1)}, finish: true, status: http.StatusServiceUnavailable},
+		{name: "rate", code: "TNL_REQUEST_RATE_LIMITED", retry: "3600",
+			limits: controlv1.ProjectHTTPApplicationLimits{Rate: &controlv1.ProjectApplicationRate{Count: 1, Per: "1h", Burst: new(1)}},
+			finish: true, status: http.StatusTooManyRequests},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			limits, err := NewHTTP(&test.limits)
+			if err != nil {
+				t.Fatal(err)
+			}
+			first, ok := limits.Reserve(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+			if !ok {
+				t.Fatal("first request rejected")
+			}
+			defer first.Finish()
+			if test.finish {
+				first.Finish()
+			}
+			for _, method := range []string{http.MethodGet, http.MethodHead} {
+				request := httptest.NewRequest(method, "/", nil)
+				request.Header.Set("Accept", "text/html")
+				response := httptest.NewRecorder()
+				if _, ok := limits.Reserve(response, request); ok {
+					t.Fatal("exhausted budget admitted another request")
+				}
+				if response.Code != test.status || response.Header().Get("Tnl-Error-Code") != test.code ||
+					response.Header().Get("Retry-After") != test.retry || response.Header().Get("Connection") != "close" ||
+					response.Header().Get("Cache-Control") != "no-store" {
+					t.Fatal("request rejection changed its HTTP contract", response.Code, response.Header())
+				}
+				if method == http.MethodHead && response.Body.Len() != 0 ||
+					method == http.MethodGet && !strings.Contains(response.Body.String(), "<!doctype html>") {
+					t.Fatal("request rejection lost HTML or HEAD negotiation", response.Body.String())
+				}
+			}
+		})
+	}
+}
 
 func TestAdmissionBurstCancellationAndRefund(t *testing.T) {
 	a, err := New(applicationlimits.Limits{Requests: 3, Concurrency: 1, RateRequests: 1, RatePer: time.Minute, RateBurst: 2})

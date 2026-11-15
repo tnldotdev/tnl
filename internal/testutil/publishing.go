@@ -180,17 +180,24 @@ func (f *PublishingFixture) Service(id string) (controlv1.Service, controlv1.Pro
 	return publishingClone(value), publishingClone(f.configurations[id]), found
 }
 
-// setserviceexpiration records the fixed deadline authorized by the allocation
-// fixture. later service reads and run preparation use the same captured value.
-func (f *PublishingFixture) SetServiceExpiration(id string, deadline *time.Time) {
+// setserviceexpiration captures the allocation deadline in the saved service.
+// allocation replies, scoped reads and renewals use this same fixed value.
+func (f *PublishingFixture) SetServiceExpiration(id string, deadline *time.Time) (controlv1.Service, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	service := f.services[id]
+	service, found := f.services[id]
+	if !found {
+		return controlv1.Service{}, errors.New("service expiration requires a saved service")
+	}
+	if service.ExpiresAt != nil && (deadline == nil || !service.ExpiresAt.Equal(*deadline)) {
+		return controlv1.Service{}, errors.New("service expiration is already fixed")
+	}
 	if deadline != nil {
 		value := *deadline
 		service.ExpiresAt = &value
 	}
 	f.services[id] = service
+	return publishingClone(service), nil
 }
 
 func (f *PublishingFixture) Run(id string) (PublishingRun, bool) {
@@ -355,7 +362,8 @@ func (f *PublishingFixture) prepare(w http.ResponseWriter, r *http.Request, serv
 	defer f.mu.Unlock()
 	saved, found := f.services[service]
 	identity, bound := f.publishers[r.Header.Get("Idempotency-Key")]
-	if !found || !saved.Enabled || !bound || identity.TeamId != saved.TeamId || declaration.Protocol != saved.Protocol ||
+	if !found || !saved.Enabled || saved.ExpiresAt != nil && !saved.ExpiresAt.After(time.Now()) ||
+		!bound || identity.TeamId != saved.TeamId || declaration.Protocol != saved.Protocol ||
 		declaration.TrustRevision != saved.TrustRevision || !reflect.DeepEqual(declaration.TargetTls, saved.TargetTls) {
 		w.WriteHeader(403)
 		return
@@ -558,6 +566,9 @@ func (f *PublishingFixture) runOperation(w http.ResponseWriter, r *http.Request,
 			state = controlv1.ServiceRunStateStateReady
 		}
 		deadline := time.Now().Add(time.Minute)
+		if snapshot.Preparation.ExpiresAt.Before(deadline) {
+			deadline = snapshot.Preparation.ExpiresAt
+		}
 		if current.ExpiresAt != nil && current.ExpiresAt.Before(deadline) {
 			deadline = *current.ExpiresAt
 		}
@@ -565,6 +576,13 @@ func (f *PublishingFixture) runOperation(w http.ResponseWriter, r *http.Request,
 			State: state, Healthy: &body.Healthy, PublisherExpiresAt: deadline, PublisherConnections: snapshot.Setup.PublisherConnections})
 	case operation == "connector-peer-pairs" && r.Method == http.MethodGet:
 		publishingWrite(w, 200, controlv1.ConnectorPeerPairCandidates{Items: []controlv1.ConnectorPeerPairCandidate{}})
+	case operation == "service-observations" && r.Method == http.MethodPost:
+		var body controlv1.ServiceRunObservations
+		if !publishingDecode(r, &body) || body.RunNumber != snapshot.Setup.RunNumber {
+			w.WriteHeader(400)
+			return
+		}
+		publishingWrite(w, 200, controlv1.ServiceObservationResult{Accepted: len(body.Events)})
 	case operation == "authorize-http-visitor":
 		var body controlv1.AuthorizeServiceHTTPVisitorRequest
 		if !publishingDecode(r, &body) || body.RunNumber != snapshot.Setup.RunNumber || body.DestinationPort != 443 || !opaqueid.Valid(body.VisitorConnectionId, opaqueid.VisitorConnectionPrefix) {

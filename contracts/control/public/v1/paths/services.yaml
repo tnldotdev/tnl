@@ -66,7 +66,7 @@ paths:
       operationId: createService
       tags: [services]
       summary: Create one saved service with approved protocol and placement
-      description: Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
+      description: Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" }]
       requestBody:
@@ -89,12 +89,32 @@ paths:
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/enabled:
+    put:
+      operationId: setServiceEnabled
+      tags: [services]
+      summary: Suspend or enable a saved service
+      description: "Change operational availability using current stored management authority. Suspension closes current runs while retaining the service ID, declaration, publisher and visitor grants, endpoint reservations, and project or deployment ownership. Enabling allows new authorized runs; it never reopens closed runs or restores revoked permission. Works for project-managed services without editing their declarations. Guest trial credentials and publisher grants do not grant this management operation."
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/SetServiceEnabledRequest" }
+      responses:
+        "200":
+          description: Saved service with its current availability
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Service" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services/{service_id}:
     put:
       operationId: configureService
       tags: [services]
-      summary: Replace a service's approved protocol and target TLS trust
-      description: "Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs."
+      summary: Replace a service's approved settings and standalone declaration
+      description: "Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Optional configuration atomically replaces a standalone service declaration, including its target, endpoint selectors, HTTP visitor policy, and request limits, without replacing the service ID. Protocol and target TLS must agree with the declaration. For read/modify/write, also send the unquoted getServiceConfiguration ETag token as expected_configuration_digest; a mismatch conflicts before any service write, independently of expected_trust_revision. Full desired-intent replacements may omit the digest. Omitting configuration retains it. Allocated invocation intent and project-managed definitions remain protected. Endpoint changes preserve authorized connector runs; protocol or target-trust changes fence old runs. Publishers must declare matching trust when preparing later runs."
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       requestBody:
@@ -131,11 +151,42 @@ paths:
       operationId: deleteService
       tags: [services]
       summary: Delete a saved service and revoke its active publication
-      description: Revoke access and close any run before tombstoning its ID-keyed ingress projection.
-      security: [{ bearerAuth: [] }]
+      description: Revoke access and close any run before tombstoning its ID-keyed ingress projection. A current trial credential may delete only its exact owned demo service after control verifies the server-observed source; READY exhaustion does not prevent cleanup within the fixed trial lifetime. A publisher grant, run token, or share is not management permission. Guest cleanup uses this same closure, settlement, and endpoint retirement; outstanding offline serving authority remains fenced.
+      security: [{ bearerAuth: [] }, { guestAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       responses:
         "204": { description: Service deleted }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/configuration:
+    get:
+      operationId: getServiceConfiguration
+      tags: [services]
+      summary: Read one service's protected saved declaration
+      description: "Requires current exact-service management permission, including current membership and company sign-in where required. Returns the canonical normalized ProjectServiceConfiguration directly, or 204 when the service legitimately has no declaration. Both successful responses include a strong ETag containing a sha256 digest token; absence has its own deterministic digest. Use the unquoted token as expected_configuration_digest when replacing a read declaration. The digest is independent of trust, endpoint, and visitor-policy revisions. This read does not create state or grant mutation permission for allocated or project-managed declarations. Publisher credentials, visitor grants, shares, and guest credentials do not authorize it. Targets and private configuration never appear in inventory or publisher metadata."
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
+      responses:
+        "200":
+          description: Canonical saved declaration for the current service manager
+          headers:
+            ETag:
+              description: Required strong ETag; remove its surrounding quotes when sending expected_configuration_digest.
+              schema:
+                { type: string, minLength: 73, maxLength: 73, pattern: '^"sha256:[0-9a-f]{64}"$' }
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceConfiguration" }
+        "204":
+          description: Authorized service with no saved declaration
+          headers:
+            ETag:
+              description: Required strong ETag for the absence of a declaration.
+              schema:
+                { type: string, minLength: 73, maxLength: 73, pattern: '^"sha256:[0-9a-f]{64}"$' }
+            Cache-Control:
+              schema: { type: string, const: no-store }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services/{service_id}/endpoint/release:
     post:

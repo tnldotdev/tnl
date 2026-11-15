@@ -38,7 +38,7 @@ func TestPublisherConnBytesKeepScopeDirectionAndAllowlist(t *testing.T) {
 	owner := New("publisher")
 	defer owner.Shutdown(context.Background())
 	ctx := publisherByteContext(WithMetrics(t.Context(), owner))
-	other := ReplaceIdentity(ctx, Identity{TeamID: "other-team", PublicURLID: "url"})
+	other := ReplaceIdentity(ctx, Identity{TeamID: "other-team", ServiceID: "other-service"})
 	other = WithFields(other, Fields{
 		Component: "publisher", ServiceProtocol: ProtocolHTTP, AccessPath: "public_endpoint", Exposure: "public",
 		Transport: TransportQUIC, TLSLeg: "target", Direction: "visitor_to_relay", ResponseOrigin: "local_service",
@@ -46,11 +46,11 @@ func TestPublisherConnBytesKeepScopeDirectionAndAllowlist(t *testing.T) {
 	want := map[string]map[string]string{
 		"service": {
 			"tnl_team_id": "team", "tnl_deployment_id": "deployment", "tnl_publisher_identity_id": "publisher",
-			"tnl_reported_deployment_id": "deployment", "tnl_replica_key": "replica", "tnl_service_id": "service", "tnl_service_kind": "service",
+			"tnl_reported_deployment_id": "deployment", "tnl_replica_key": "replica", "tnl_service_id": "service",
 			"tnl_component": "publisher", "tnl_service_protocol": "postgres", "tnl_access_path": "connector", "tnl_exposure": "private",
 		},
-		"url": {
-			"tnl_team_id": "other-team", "tnl_public_url_id": "url", "tnl_service_kind": "public_url",
+		"other-service": {
+			"tnl_team_id": "other-team", "tnl_service_id": "other-service",
 			"tnl_component": "publisher", "tnl_service_protocol": "http", "tnl_access_path": "public_endpoint", "tnl_exposure": "public",
 		},
 	}
@@ -69,11 +69,7 @@ func TestPublisherConnBytesKeepScopeDirectionAndAllowlist(t *testing.T) {
 		for _, label := range point.Label {
 			labels[label.GetName()] = label.GetValue()
 		}
-		scope := labels["tnl_service_id"]
-		if scope == "" {
-			scope = labels["tnl_public_url_id"]
-		}
-		expected := maps.Clone(want[scope])
+		expected := maps.Clone(want[labels["tnl_service_id"]])
 		if expected == nil {
 			t.Fatalf("unexpected scope: %v", labels)
 		}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"reflect"
 	"testing"
 	"time"
@@ -57,7 +58,7 @@ func TestIntegrationDeploymentHTTPAssignmentIgnoresRunLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := readyAppliedServiceRun(t, d, access, replica.private, saved, leases, now)
+	run := readyAppliedServiceRun(t, d, access, replica.private, saved, netip.MustParseAddr("127.0.0.1"), leases, now)
 	for poll := range 3 {
 		if _, err := d.HeartbeatServiceRun(ctx, run.ServiceID, run.RunID, run.Token, now.Add(time.Duration(poll)*time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
 			t.Fatal(err)
@@ -294,7 +295,7 @@ func TestIntegrationDeploymentHTTPWorkerSurvivesAssignmentPolls(t *testing.T) {
 		installPrivateTestCertificate(t, d, prepared, setup, time.Now())
 		for _, slot := range setup.Connections {
 			lease := leases[slot.RelayServiceID].RelayLeaseIdentity
-			if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, setup.ServiceID, setup.RunID, setup.RunNumber, slot.Revision, slot.Credential, lease, time.Now()); err != nil {
+			if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, setup.ServiceID, setup.RunID, setup.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("8.8.8.8"), lease, time.Now()); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := d.ReadyServicePublisherConnection(ctx, slot.PublisherConnectionID, setup.RunID, setup.RunNumber, slot.Revision, lease, time.Now()); err != nil {

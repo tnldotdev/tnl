@@ -10,7 +10,7 @@ import (
 
 func TestAppWorkflowRejectsStaleOwnerAfterOneAppRestart(t *testing.T) {
 	a, endpoint := testAppRuntime(t)
-	a.project.Config.Services = config.Services{"web": {Tunnel: &config.Tunnel{}}, "api": {Tunnel: &config.Tunnel{Access: &config.Access{Mode: "anonymous"}}}}
+	a.project.Config.Services = config.Services{"web": {Public: new(true)}, "api": {Public: new(true), HTTP: &config.HTTPService{Access: &config.Access{Mode: "anonymous"}}}}
 	for _, name := range []string{"web", "api"} {
 		id, err := a.manager.Reserve(name, name, os.Getpid(), "")
 		if err != nil {
@@ -36,7 +36,7 @@ func TestAppWorkflowRejectsStaleOwnerAfterOneAppRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed := a.project
-	changed.Config.Services = config.Services{"web": {Tunnel: &config.Tunnel{}}, "api": {Tunnel: &config.Tunnel{Access: &config.Access{Mode: "restricted"}}}}
+	changed.Config.Services = config.Services{"web": {Public: new(true)}, "api": {Public: new(true), HTTP: &config.HTTPService{Access: &config.Access{Mode: "restricted"}}}}
 	if _, err := EnsureOwner(t.Context(), changed, a.state.Root()); err == nil {
 		t.Fatal("restarted app silently reused the old owner's policy")
 	}

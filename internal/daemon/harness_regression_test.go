@@ -22,7 +22,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/tnldotdev/tnl/internal/benchworkload"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 )
 
 func TestRuntimeTopologyRetainsRelayUDPThroughPublisherDrain(t *testing.T) {
@@ -231,7 +231,7 @@ func TestPublisherObserverNeverWaitsForReaders(t *testing.T) {
 		for range producers {
 			group.Go(func() {
 				for range perProducer {
-					_ = handle.observe(publisher.Event{Type: publisher.EventReady})
+					_ = handle.observe(publisherservice.RunStatus{Ready: true})
 				}
 			})
 		}
@@ -253,7 +253,7 @@ func TestPublisherObserverNeverWaitsForReaders(t *testing.T) {
 	if _, err := handle.events.next(ctx, &cursor); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if err := handle.observe(publisher.Event{Type: publisher.EventDraining}); err != nil {
+	if err := handle.observe(publisherservice.RunStatus{Draining: true}); err != nil {
 		t.Fatalf("abandoned observer affected publisher: %v", err)
 	}
 	if got := len(handle.observedEvents()); got != producers*perProducer+1 {

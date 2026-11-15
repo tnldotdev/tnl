@@ -352,7 +352,7 @@ func TestIntegrationDeploymentManagementRevocationDuringLockWait(t *testing.T) {
 				done <- err
 			})
 			waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), done)
-			if _, err = controlstatedb.New(gate).RevokePublisherIdentity(ctx, controlstatedb.RevokePublisherIdentityParams{ID: credential.ClientID, TeamID: r.TeamID, Now: timestamptz(now)}); err != nil {
+			if _, err = controlstatedb.New(gate).RevokePublisherIdentity(ctx, controlstatedb.RevokePublisherIdentityParams{ID: credential.ClientID, TeamID: text(r.TeamID), Now: timestamptz(now)}); err != nil {
 				t.Fatal(err)
 			}
 			if err = gate.Commit(ctx); err != nil {

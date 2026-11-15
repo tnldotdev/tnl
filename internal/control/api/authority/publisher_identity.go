@@ -45,10 +45,8 @@ func publisherPublicKey(value string) (ed25519.PublicKey, error) {
 }
 
 func PublisherEnrollmentResponse(p controlstate.PublisherIdentity) authorityv1.PublisherEnrollmentResult {
-	r := authorityv1.PublisherEnrollmentResult{ClientId: p.ID, KeyId: p.KeyID, GrantId: p.GrantID, TeamId: p.Scope.TeamID, Kind: authorityv1.PublisherEnrollmentResultKind(p.Scope.Kind)}
-	if p.Scope.PublicURLID != "" {
-		r.PublicUrlId = &p.Scope.PublicURLID
-	}
+	r := authorityv1.PublisherEnrollmentResult{ClientId: p.ID, KeyId: p.KeyID, GrantId: p.GrantID,
+		TeamId: p.Scope.TeamID, GuestId: p.Scope.GuestID, ExpiresAt: p.ExpiresAt, Kind: authorityv1.PublisherEnrollmentResultKind(p.Scope.Kind)}
 	if p.Scope.ServiceID != "" {
 		r.ServiceId = &p.Scope.ServiceID
 	}

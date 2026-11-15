@@ -21,10 +21,8 @@ func FuzzReadFrames(f *testing.F) {
 			t.Fatal("unbounded opening")
 		}
 		opening := &limitedReader{Reader: bytes.NewReader(input), Size: int(readSize%32) + 1}
-		if kind%2 == 0 {
-			_, _, _ = ReadVisitorOpening(opening)
-		} else {
-			_, _, _, _ = ReadForwardingOpening(opening)
+		if _, err := ReadServiceForwardingHeader(opening); err == nil {
+			_, _ = ReadInitialBytes(opening)
 		}
 	})
 }

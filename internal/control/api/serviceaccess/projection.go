@@ -9,7 +9,7 @@ import (
 )
 
 func Service(record controlstate.ServiceRecord) controlv1.Service {
-	result := controlv1.Service{Id: record.ID, TeamId: record.TeamID, Name: record.Name,
+	result := controlv1.Service{Id: record.ID, TeamId: record.TeamID, GuestId: record.GuestID, Name: record.Name,
 		Enabled: record.Enabled, CreatedAt: record.CreatedAt, Protocol: controlv1.ServiceProtocol(record.Protocol),
 		PublisherPool: record.PublisherPool, TrustRevision: record.TrustRevision, EndpointRevision: record.EndpointRevision,
 		Ephemeral: record.Ephemeral, ExpiresAt: record.ExpiresAt, RequirePostQuantum: record.RequirePostQuantum}
@@ -56,7 +56,7 @@ func Service(record controlstate.ServiceRecord) controlv1.Service {
 // target trust or HTTP limits. callers needing approved trust fetch one service.
 func Summary(record controlstate.ServiceRecord) controlv1.ServiceSummary {
 	s := Service(record)
-	return controlv1.ServiceSummary{Id: s.Id, TeamId: s.TeamId, DomainId: s.DomainId, Name: s.Name,
+	return controlv1.ServiceSummary{Id: s.Id, TeamId: s.TeamId, GuestId: s.GuestId, DomainId: s.DomainId, Name: s.Name,
 		Placement: s.Placement, Source: s.Source, Enabled: s.Enabled, Endpoint: s.Endpoint,
 		Protocol: s.Protocol, KubernetesAuth: s.KubernetesAuth, PublisherPool: s.PublisherPool,
 		TrustRevision: s.TrustRevision, CreatedAt: s.CreatedAt, ServiceRunId: s.ServiceRunId, RunNumber: s.RunNumber}

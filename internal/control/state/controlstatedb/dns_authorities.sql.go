@@ -71,53 +71,6 @@ func (q *Queries) ClaimDNSAuthorityWork(ctx context.Context, arg ClaimDNSAuthori
 const dNSAuthorityReleaseReady = `-- name: DNSAuthorityReleaseReady :one
 SELECT
     NOT EXISTS (
-        SELECT 1
-        FROM control.public_urls AS routes
-        WHERE routes.domain_id = $1
-          AND routes.lifecycle_state <> 'deleted'
-    )
-    AND NOT EXISTS (
-        SELECT 1
-        FROM control.publish_runs AS sessions
-        JOIN control.public_urls AS routes ON routes.id = sessions.public_url_id
-        WHERE routes.domain_id = $1
-          AND sessions.closed_at IS NULL
-    )
-    AND NOT EXISTS (
-        SELECT 1
-        FROM control.acme_orders AS orders
-        JOIN control.public_urls AS routes ON routes.id = orders.public_url_id
-        WHERE routes.domain_id = $1
-          AND (
-              orders.state NOT IN ('waiting_for_install', 'installed', 'failed', 'canceled')
-              OR orders.finalization_possible AND orders.not_after IS NULL
-              OR orders.not_after > $2
-              OR EXISTS (
-                  SELECT 1
-                  FROM control.acme_authorizations AS authorizations
-                  WHERE authorizations.order_id = orders.id
-                    AND authorizations.challenge_type = 'dns-01'
-                    AND (
-                        authorizations.state IN ('presenting', 'presented', 'validating', 'valid', 'cleaning')
-                        OR authorizations.presented_at IS NOT NULL AND authorizations.cleanup_completed_at IS NULL
-                    )
-              )
-          )
-    )
-    AND NOT EXISTS (
-        SELECT 1
-        FROM control.publish_runs AS sessions
-        JOIN control.public_urls AS routes ON routes.id = sessions.public_url_id
-        WHERE routes.domain_id = $1
-          AND sessions.certificate_not_after > $2
-    )
-    AND NOT EXISTS (
-        SELECT 1
-        FROM control.public_urls AS routes
-        WHERE routes.domain_id = $1
-          AND routes.dns_state NOT IN ('unmanaged', 'removed')
-    )
-    AND NOT EXISTS (
         SELECT 1 FROM control.deployments deployment
         WHERE deployment.domain_id=$1 AND deployment.deleted_at IS NULL
     )
@@ -139,7 +92,7 @@ SELECT
 `
 
 type DNSAuthorityReleaseReadyParams struct {
-	AuthorityDomainID string
+	AuthorityDomainID pgtype.Text
 	ObservedAt        pgtype.Timestamptz
 }
 

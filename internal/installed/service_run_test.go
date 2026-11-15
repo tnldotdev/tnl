@@ -11,11 +11,10 @@ import (
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
-func TestPrivatePublisherCannotUseAPublicURLGrant(t *testing.T) {
+func TestServicePublisherRejectsDifferentGrantScope(t *testing.T) {
 	r := testRegistry(t)
 	job, identity, key := fixture(t, "private")
-	legacyID := opaqueid.PublicURLPrefix + "0000000000000000000001"
-	identity.Kind, identity.ServiceId, identity.PublicUrlId = authorityv1.SavedPublicUrl, nil, &legacyID
+	identity.Kind, identity.ServiceId = authorityv1.Namespace, nil
 	service, err := opaqueid.New(opaqueid.ServicePrefix)
 	if err != nil {
 		t.Fatal(err)
@@ -24,9 +23,9 @@ func TestPrivatePublisherCannotUseAPublicURLGrant(t *testing.T) {
 	job.TrustRevision = 1
 	job.Protocol, job.Target = "tcp", "127.0.0.1:22"
 	if err := r.Install(t.Context(), job, identity, key); !errors.Is(err, ErrScope) {
-		t.Fatalf("public grant installed for service: %v", err)
+		t.Fatalf("namespace grant installed for service: %v", err)
 	}
-	identity.Kind, identity.ServiceId, identity.PublicUrlId = authorityv1.Service, &service, nil
+	identity.Kind, identity.ServiceId = authorityv1.Service, &service
 	if err := r.Install(t.Context(), job, identity, key); err != nil {
 		t.Fatal(err)
 	}

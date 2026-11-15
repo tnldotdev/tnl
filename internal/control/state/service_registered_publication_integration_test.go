@@ -50,7 +50,7 @@ func TestIntegrationRegisteredServicePendingAdmissionRechecksPermission(t *testi
 				if err := d.pool.QueryRow(ctx, `SELECT relay_id,relay_run_id,relay_lease_revision FROM control.relay_leases WHERE relay_service_id=$1`, slot.RelayServiceID).Scan(&lease.RelayID, &lease.RelayRunID, &lease.RelayLeaseRevision); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+				if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), lease, now); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := d.ReadyServicePublisherConnection(ctx, slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {

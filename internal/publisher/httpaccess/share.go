@@ -9,10 +9,13 @@ import (
 	"io"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -25,17 +28,12 @@ const ShareCookieName = "__Host-tnl-share"
 const FeedbackBrowserCookieName = "__Host-tnl-feedback-browser"
 
 type ShareClient interface {
-	EnableShareAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error
-	RedeemPublishRunShare(context.Context, string, controlv1.RedeemShareRequest, credentials.PublishRunToken) (controlv1.ShareRedemption, error)
+	RedeemServiceShare(context.Context, string, string, controlv1.RedeemServiceShareRequest, credentials.ServiceRunToken) (controlv1.ShareRedemption, error)
 }
 
-// Shares binds public URL share redemption to one publish run and its shared
-// browser preparation. service grant redemption is composed by the service run.
+// Shares binds share redemption and browser permission to one service run.
 type Shares struct {
 	Client  ShareClient
-	RunID   string
-	Number  uint64
-	Token   credentials.PublishRunToken
 	Browser *Browser
 	Logf    func(string, ...any)
 }
@@ -44,48 +42,60 @@ type Shares struct {
 func (Shares) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
 
 func (a *Shares) Redeem(ctx context.Context, path string) (controlv1.ShareRedemption, error) {
+	if a == nil || a.Client == nil || a.Browser == nil || a.Browser.Tokens == nil || a.Browser.Policy == nil {
+		return controlv1.ShareRedemption{}, visitortoken.ErrBinding
+	}
+	browser := a.Browser
+	view, enabled, _ := browser.Policy.Lease().Current()
+	if !enabled {
+		return controlv1.ShareRedemption{}, visitortoken.ErrPolicy
+	}
+	if browser.Subject.Kind != visitorscope.Service || !browser.Subject.Valid() || browser.Subject != view.Scope ||
+		!opaqueid.Valid(browser.RunID, opaqueid.ServiceRunPrefix) || browser.Number < 1 || browser.Token == "" {
+		return controlv1.ShareRedemption{}, visitortoken.ErrBinding
+	}
 	const linkPrefix = "/__tnl/share/"
 	const handoffPrefix = "/__tnl/share/handoff/"
-	request := controlv1.RedeemShareRequest{PublishRunNumber: int64(a.Number)}
+	request := controlv1.RedeemServiceShareRequest{RunNumber: browser.Number}
 	if token, found := strings.CutPrefix(path, handoffPrefix); found {
-		if decoded, err := base64.RawURLEncoding.DecodeString(token); err != nil || len(decoded) != 32 {
-			return controlv1.ShareRedemption{}, errors.New("invalid share handoff")
+		if decoded, err := base64.RawURLEncoding.Strict().DecodeString(token); err != nil || len(decoded) != 32 {
+			return controlv1.ShareRedemption{}, visitortoken.ErrToken
 		}
 		request.HandoffToken = &token
 	} else if link, found := strings.CutPrefix(path, linkPrefix); found {
 		id, secret, found := strings.Cut(link, ".")
 		if !found || !opaqueid.Valid(id, opaqueid.SharePrefix) {
-			return controlv1.ShareRedemption{}, errors.New("invalid share link")
+			return controlv1.ShareRedemption{}, visitortoken.ErrToken
 		}
-		if decoded, err := base64.RawURLEncoding.DecodeString(secret); err != nil || len(decoded) != 32 {
-			return controlv1.ShareRedemption{}, errors.New("invalid share link")
+		if decoded, err := base64.RawURLEncoding.Strict().DecodeString(secret); err != nil || len(decoded) != 32 {
+			return controlv1.ShareRedemption{}, visitortoken.ErrToken
 		}
 		request.ShareId, request.Secret = &id, &secret
 	} else {
-		return controlv1.ShareRedemption{}, errors.New("invalid share path")
+		return controlv1.ShareRedemption{}, visitortoken.ErrToken
 	}
-	result, err := a.Client.RedeemPublishRunShare(ctx, a.RunID, request, a.Token)
+	result, err := a.Client.RedeemServiceShare(ctx, browser.Subject.ID, browser.RunID, request, browser.Token)
 	if err != nil {
 		return controlv1.ShareRedemption{}, err
 	}
-	if !opaqueid.Valid(result.ShareId, opaqueid.SharePrefix) || !result.ExpiresAt.After(time.Now()) ||
-		!strings.HasPrefix(result.NextUrl, "https://") || strings.Contains(result.CookieSecret, ".") {
-		return controlv1.ShareRedemption{}, errors.New("publisher: server returned invalid share redemption")
+	next, parseErr := url.Parse(result.NextUrl)
+	if !opaqueid.Valid(result.ShareId, opaqueid.SharePrefix) || request.ShareId != nil && result.ShareId != *request.ShareId ||
+		!result.ExpiresAt.After(time.Now()) || parseErr != nil || next.Scheme != "https" ||
+		next.Host == "" || next.User != nil || next.Fragment != "" || len(result.NextUrl) > 4096 {
+		return controlv1.ShareRedemption{}, failure.Wrap("redeem share", failure.ServerResponseInvalid, errors.New("server returned invalid share redemption"))
 	}
-	if cookie, err := base64.RawURLEncoding.DecodeString(result.CookieSecret); err != nil || len(cookie) != 32 {
-		return controlv1.ShareRedemption{}, errors.New("publisher: server returned invalid share cookie")
+	if cookie, err := base64.RawURLEncoding.Strict().DecodeString(result.CookieSecret); err != nil || len(cookie) != 32 {
+		return controlv1.ShareRedemption{}, failure.Wrap("redeem share", failure.ServerResponseInvalid, errors.New("server returned invalid share cookie"))
 	}
-	if a.Browser != nil && a.Browser.Tokens != nil {
-		source, err := json.Marshal(controlv1.VisitorTokenShareSessionSource{Kind: controlv1.VisitorTokenShareSession, ShareId: result.ShareId, Secret: result.CookieSecret})
-		if err == nil {
-			result.Permission, err = a.Browser.PrepareToken(ctx, source, result.Permission, result.ExpiresAt)
+	source, err := json.Marshal(controlv1.VisitorTokenShareSessionSource{Kind: controlv1.VisitorTokenShareSession, ShareId: result.ShareId, Secret: result.CookieSecret})
+	if err == nil {
+		result.Permission, err = a.Browser.PrepareToken(ctx, source, result.Permission, result.ExpiresAt)
+	}
+	if err != nil {
+		if a.Logf != nil {
+			a.Logf("publisher: share permission preparation failed: %s", sharePreparationFailure(err))
 		}
-		if err != nil {
-			if a.Logf != nil {
-				a.Logf("publisher: share permission preparation failed: %s", sharePreparationFailure(err))
-			}
-			return controlv1.ShareRedemption{}, err
-		}
+		return controlv1.ShareRedemption{}, err
 	}
 	return result, nil
 }

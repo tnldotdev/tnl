@@ -239,6 +239,20 @@ func (transport failingSourceTransport) RoundTrip(*http.Request) (*http.Response
 	return nil, transport.err
 }
 
+func TestCachePreservesCustomDefaultTransport(t *testing.T) {
+	original := http.DefaultTransport
+	cause := errors.New("custom default transport")
+	http.DefaultTransport = failingSourceTransport{cause}
+	t.Cleanup(func() { http.DefaultTransport = original })
+	for _, client := range []*http.Client{nil, {}} {
+		cache := NewCache(client)
+		_, err := cache.Capture(t.Context(), t.TempDir(), "127.0.0.1:5432", config.TrustSource{CA: "https://ca.example.test/root.pem"})
+		if !errors.Is(err, cause) {
+			t.Fatal("cache lost the configured default transport", err)
+		}
+	}
+}
+
 func TestCASourceErrorsKeepTypedCausesAndHideSourceCredentials(t *testing.T) {
 	const secret = "private-source-token"
 	location := "https://example.com/%invalid?token=" + secret

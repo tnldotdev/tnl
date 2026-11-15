@@ -41,10 +41,10 @@ paths:
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed:
+  /internal/v1/ingresses/{ingress_id}/service-recovery/{recovery_episode_id}/observed:
     post:
-      operationId: observePublicURLRecovery
-      summary: Record the first publisher byte after public URL recovery
+      operationId: observeServiceRecovery
+      summary: Record the first publisher byte written to a visitor after service recovery
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/IngressID"
         - name: recovery_episode_id
@@ -59,13 +59,13 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "../openapi.yaml#/components/schemas/PublicURLRecoveryObservationRequest"
+              $ref: "../openapi.yaml#/components/schemas/ServiceRecoveryObservationRequest"
       responses:
         "200":
           description: Recovery observation committed or replayed
           content:
             application/json:
               schema:
-                $ref: "../openapi.yaml#/components/schemas/PublicURLRecoveryObservation"
+                $ref: "../openapi.yaml#/components/schemas/ServiceRecoveryObservation"
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"

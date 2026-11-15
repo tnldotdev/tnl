@@ -110,7 +110,7 @@ func TestIntegrationPublisherAllocationRejectsUnrelatedExactServiceGrant(t *test
 	// independently of the creation guard. this is not an allocation code path.
 	staleID := mustOpaqueID(t, opaqueid.PublisherGrantPrefix)
 	if _, err := controlstatedb.New(d.pool).InsertPublisherGrant(t.Context(), controlstatedb.InsertPublisherGrantParams{
-		ID: staleID, PublisherIdentityID: root.ID, CreatedByIdentityID: r.ActingIdentityID,
+		ID: staleID, PublisherIdentityID: root.ID, CreatedByIdentityID: text(r.ActingIdentityID),
 		Kind: "service", ServiceID: text(service.ID), CreatedAt: timestamptz(now),
 	}); err != nil {
 		t.Fatal(err)

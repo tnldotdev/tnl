@@ -79,8 +79,16 @@ func TestIntegrationServiceEndpointReleaseHTTPContract(t *testing.T) {
 	if _, err := owner.ApplyProjectConfiguration(ctx, resolved.ProjectKey, body); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := owner.ReleaseServiceEndpoint(ctx, id, request); !errors.Is(err, clientcontrol.ErrStatusConflict) {
+		t.Fatal("disablement did not invalidate an earlier endpoint revision", err)
+	}
+	disabled, err := owner.GetService(ctx, id)
+	if err != nil || disabled.EndpointRevision != saved.EndpointRevision+1 || disabled.Endpoint.Public || disabled.Endpoint.Port != saved.Endpoint.Port {
+		t.Fatal("disablement lost its reservation or endpoint revision", disabled, err)
+	}
+	request.ExpectedEndpointRevision = disabled.EndpointRevision
 	released, err := owner.ReleaseServiceEndpoint(ctx, id, request)
-	if err != nil || released.Id != id || released.Endpoint.Port != 0 || released.Endpoint.Hostname != saved.Endpoint.Hostname || released.TrustRevision != saved.TrustRevision || released.EndpointRevision != saved.EndpointRevision+1 {
+	if err != nil || released.Id != id || released.Endpoint.Port != 0 || released.Endpoint.Hostname != saved.Endpoint.Hostname || released.TrustRevision != saved.TrustRevision || released.EndpointRevision != disabled.EndpointRevision+1 {
 		t.Fatal("native release roundtrip changed surviving identity", released, err)
 	}
 	if _, err := owner.ReleaseServiceEndpoint(ctx, id, request); !errors.Is(err, clientcontrol.ErrStatusConflict) {

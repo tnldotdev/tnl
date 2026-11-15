@@ -18,7 +18,6 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/http/httptrace"
-	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
@@ -37,7 +36,6 @@ import (
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -124,11 +122,11 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	serviceID := *applied.Services[0].ServiceId
 	// a group assignment is the only publisher grant for this service.
 	publisherMetrics := startServiceHTTPDeploymentPublisher(t, f, applied, "http-auth", group, target.Listener.Addr().String())
-	services, err := f.identity.routes.ListAvailableServices(t.Context())
+	services, err := f.identity.routes.ListAvailableServices(t.Context(), controlv1.ServiceAccessPathPublicEndpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var service controlv1.Service
+	var service controlv1.ServiceSummary
 	for _, s := range services {
 		if s.Id == serviceID {
 			service = s
@@ -221,19 +219,31 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	}
 	awaitServiceHTTPStatus(t, client, base, "Tnl-Visitor-Token", token.Permission.VisitorToken, 403)
 	closeResponse(request(client, "/", "Tnl-Visitor-Token", token.Permission.VisitorToken, 403))
-	share, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateVisitorCredentialRequest{Kind: "share", ExpiresAt: time.Now().Add(time.Hour)})
-	if err != nil || share.ShareUrl == nil || !strings.HasPrefix(*share.ShareUrl, base+"/") {
+	share, err := f.identity.routes.CreateServiceShare(t.Context(), "http-auth-share", controlv1.CreateShareRequest{
+		ServiceIds: []string{service.Id}, EntryServiceId: service.Id, ExpiresAt: time.Now().Add(time.Hour),
+	})
+	if err != nil || !strings.HasPrefix(share.Link, base+"/__tnl/share/") {
 		t.Fatal("share lost the canonical HTTPS origin", err)
 	}
-	awaitServiceHTTPStatus(t, client, base, "Tnl-Visitor-Token", share.Permission.VisitorToken, 200)
-	closeResponse(request(client, "/", "Tnl-Visitor-Token", share.Permission.VisitorToken, 200))
-	closeResponse(request(client, "/", "Tnl-Visitor-Token", share.RefreshCredential, 403))
+	shareSource, err := json.Marshal(share.TokenSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharePermission, err := f.identity.routes.IssueVisitorToken(t.Context(), controlv1.VisitorTokenRequest{
+		Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.Id}, Source: shareSource,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitServiceHTTPStatus(t, client, base, "Tnl-Visitor-Token", sharePermission.VisitorToken, 200)
+	closeResponse(request(client, "/", "Tnl-Visitor-Token", sharePermission.VisitorToken, 200))
+	closeResponse(request(client, "/", "Tnl-Visitor-Token", share.TokenSource.Secret, 403))
 	jar, _ := cookiejar.New(nil)
 	shareClient := *client
 	shareClient.Jar = jar
-	closeResponse(request(&shareClient, "/__tnl/share/"+share.RefreshCredential, "", "", 303))
+	closeResponse(request(&shareClient, strings.TrimPrefix(share.Link, base), "", "", 303))
 	closeResponse(request(&shareClient, "/", "", "", 200))
-	if err = f.identity.routes.RevokeServiceHTTPGrant(t.Context(), service.Id, share.GrantId); err != nil {
+	if _, err = f.identity.routes.RevokeShare(t.Context(), share.Share.Id); err != nil {
 		t.Fatal(err)
 	}
 	awaitServiceHTTPStatus(t, &shareClient, base, "", "", 403)
@@ -415,7 +425,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	}
 	closeResponse(request(mtls, "/", "", "", 200))
 	closeResponse(request(mtls, "/", "Tnl-Access-Token", "invalid", 403))
-	serviceHTTPCurl(t, f, listener.Addr().String(), service, material)
+	serviceHTTPCurl(t, f, publicDial, service, material)
 	certificateDigest := sha256.Sum256(material.Certificate[0])
 	if _, err = f.inspect.ExecContext(t.Context(), `UPDATE control.service_client_certificates SET revoked_at=now() WHERE certificate_digest=$1`, certificateDigest[:]); err != nil {
 		t.Fatal(err)
@@ -557,9 +567,10 @@ func TestServiceHTTPIdleWaitObservesPublisherRequestRelease(t *testing.T) {
 	}
 }
 
-func serviceHTTPCurl(t *testing.T, f *privateSeparatedFixture, direct string, service controlv1.Service, certificate tls.Certificate) {
+func serviceHTTPCurl(t *testing.T, f *privateSeparatedFixture, dial func(context.Context, string, string) (net.Conn, error), service controlv1.ServiceSummary, certificate tls.Certificate) {
 	t.Helper()
-	// curl connects to a fixture edge which supplies trusted outer PROXY v2.
+	// curl uses the same ingress admission and trusted source/destination facts
+	// as the native HTTP client, while verifying visitor TLS independently.
 	edge, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -573,13 +584,11 @@ func serviceHTTPCurl(t *testing.T, f *privateSeparatedFixture, direct string, se
 			return
 		}
 		defer c.Close()
-		up, err := net.Dial("tcp", direct)
+		up, err := dial(t.Context(), "tcp", net.JoinHostPort(service.Endpoint.Hostname, strconv.Itoa(service.Endpoint.Port)))
 		if err != nil {
 			return
 		}
 		defer up.Close()
-		metadata, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.44:4242"), Destination: netip.AddrPortFrom(netip.MustParseAddr("203.0.113.10"), uint16(service.Endpoint.Port))})
-		_, _ = up.Write(metadata)
 		copied := make(chan struct{})
 		go func() { defer close(copied); _, _ = io.Copy(up, c); _ = up.Close() }()
 		_, _ = io.Copy(c, up)
@@ -634,7 +643,7 @@ func startServiceHTTPDeploymentPublisher(t *testing.T, f *privateSeparatedFixtur
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner, err := publisheridentity.NewDeployment(publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.routes, f.identity.authority, f.identity.routes.ControlURL(), member, key)
+	owner, err := publisheridentity.NewDeployment(publisheridentity.NativeControl{Services: f.identity.routes, Runtime: f.identity.routes}, f.identity.routes, f.identity.authority, f.identity.routes.ControlURL(), member, key)
 	if err != nil {
 		t.Fatal(err)
 	}

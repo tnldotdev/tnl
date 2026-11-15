@@ -22,7 +22,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/httpjson"
-	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -38,10 +37,10 @@ const (
 var (
 	ErrUnauthenticated      = failure.Wrap("authenticate control request", failure.Authentication, errors.New("controlclient: unauthenticated"))
 	ErrNotFound             = failure.Wrap("read control resource", failure.ServerResourceNotFound, errors.New("controlclient: not found"))
-	ErrNameUnavailable      = failure.Wrap("select public URL hostname", failure.ServerConflict, errors.New("controlclient: public URL hostname unavailable"))
+	ErrNameUnavailable      = failure.Wrap("select service hostname", failure.ServerConflict, errors.New("controlclient: service hostname unavailable"))
 	ErrStatusConflict       = failure.Wrap("update control state", failure.ServerConflict, errors.New("controlclient: status conflict"))
 	ErrProjectManaged       = failure.Wrap("change project-managed resource", failure.ServerConflict, fmt.Errorf("resource is managed by project configuration: %w", ErrStatusConflict))
-	ErrCertificateStatus    = failure.Wrap("issue public URL certificate", failure.CertificateUnavailable, errors.New("controlclient: certificate status conflict"))
+	ErrCertificateStatus    = failure.Wrap("issue service certificate", failure.CertificateUnavailable, errors.New("controlclient: certificate status conflict"))
 	ErrDNSProofPending      = failure.Wrap("configure domain DNS", failure.DNSPending, errors.New("controlclient: DNS setup pending"))
 	ErrRateLimited          = failure.Wrap("request control API", failure.ServerRateLimited, errors.New("controlclient: rate limited"))
 	ErrUnavailable          = failure.Wrap("request control API", failure.ServerUnavailable, errors.New("controlclient: temporarily unavailable"))
@@ -50,7 +49,7 @@ var (
 	ErrGuestDemoOnly        = failure.Wrap("publish guest demo", failure.GuestDemoOnly, errors.New("controlclient: guest demo only"))
 	ErrGuestIPChanged       = failure.Wrap("publish guest demo", failure.GuestIPChanged, errors.New("controlclient: guest demo source IP changed"))
 	ErrGuestIssuanceLimited = failure.Wrap("create guest demo", failure.GuestIssuanceLimited, errors.New("controlclient: guest demo issuance limited"))
-	ErrMemberHostnameDepth  = failure.Wrap("select public URL hostname", failure.MemberHostnameDepthExceeded, errors.New("managed-domain member hostname depth exceeded"))
+	ErrMemberHostnameDepth  = failure.Wrap("select service hostname", failure.MemberHostnameDepthExceeded, errors.New("managed-domain member hostname depth exceeded"))
 )
 
 type Client struct {
@@ -100,10 +99,6 @@ func (c *Client) ClientIP(ctx context.Context) (controlv1.ClientIPResponse, erro
 
 func (c *Client) CreateGuestDemo(ctx context.Context) (controlv1.GuestDemoSession, error) {
 	return request[controlv1.GuestDemoSession](ctx, c, "", c.api.CreateGuestDemo)
-}
-
-func (c *Client) AllocateGuestDemoNumber(ctx context.Context) (controlv1.GuestDemoNumber, error) {
-	return requestWithAccess[controlv1.GuestDemoNumber](ctx, c, c.api.AllocateGuestDemoNumber)
 }
 
 func (c *Client) CreatePreview(ctx context.Context, teamID, key string) (controlv1.Preview, error) {
@@ -193,167 +188,10 @@ func (c *Client) RevokeShare(ctx context.Context, id string) (controlv1.Share, e
 	})
 }
 
-func (c *Client) RedeemBrowserHandoff(ctx context.Context, runID string, version uint64, ticket, shareID, shareSecret string, token credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
-	input := controlv1.BrowserHandoffRequest{PublishRunNumber: int64(version), Token: ticket}
-	if shareID != "" && shareSecret != "" {
-		input.ShareId, input.ShareSecret = &shareID, &shareSecret
-	}
-	return request[controlv1.BrowserHandoffResponse](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RedeemPreviewBrowserHandoff(ctx, runID, input, editors...)
-	})
-}
-
-func (c *Client) CheckBrowserAccess(ctx context.Context, runID string, version uint64, secret string, token credentials.PublishRunToken) (controlv1.BrowserAccessResponse, error) {
-	return request[controlv1.BrowserAccessResponse](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CheckPreviewBrowserAccess(ctx, runID, controlv1.BrowserAccessRequest{PublishRunNumber: int64(version), CookieSecret: secret}, editors...)
-	})
-}
-
-func (c *Client) RevokeBrowserAccess(ctx context.Context, runID string, version uint64, secret string, token credentials.PublishRunToken) error {
-	_, err := request[struct{}](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RevokePreviewBrowserAccess(ctx, runID, controlv1.BrowserAccessRequest{PublishRunNumber: int64(version), CookieSecret: secret}, editors...)
-	})
-	return err
-}
-
 func (c *Client) RedeemServiceShare(ctx context.Context, serviceID, runID string, body controlv1.RedeemServiceShareRequest, token credentials.ServiceRunToken) (controlv1.ShareRedemption, error) {
 	return request[controlv1.ShareRedemption](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.RedeemServiceShare(ctx, serviceID, runID, body, editors...)
 	})
-}
-
-func (c *Client) CreatePublicURL(ctx context.Context, body controlv1.CreatePublicURLRequest, idempotencyKey string) (controlv1.PublicURL, error) {
-	params := &controlv1.CreatePublicURLParams{IdempotencyKey: idempotencyKey}
-	return requestWithAccess[controlv1.PublicURL](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreatePublicURL(ctx, params, body, editors...)
-	})
-}
-
-func (c *Client) ListPublicURLs(ctx context.Context, teamID string) ([]controlv1.PublicURL, error) {
-	var routes []controlv1.PublicURL
-	cursor := ""
-	for {
-		params := &controlv1.ListPublicURLsParams{TeamId: teamID}
-		if cursor != "" {
-			params.Cursor = &cursor
-		}
-		page, err := requestWithAccess[controlv1.PublicURLPage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-			return c.api.ListPublicURLs(ctx, params, editors...)
-		})
-		if err != nil {
-			return nil, err
-		}
-		routes = append(routes, page.PublicUrls...)
-		if page.NextCursor == nil {
-			return routes, nil
-		}
-		if len(page.PublicUrls) == 0 || *page.NextCursor == cursor {
-			return nil, failure.Wrap("list public URLs", failure.ServerResponseInvalid, errors.New("controlclient: invalid public URL cursor"))
-		}
-		cursor = *page.NextCursor
-	}
-}
-
-// GetPublicURLByHostname uses one filtered request instead of paging through a
-// team's public URLs. reject unfiltered responses from servers ignoring the filter.
-func (c *Client) GetPublicURLByHostname(ctx context.Context, teamID, hostname string) (controlv1.PublicURL, error) {
-	canonical, err := naming.CanonicalizeHostname(hostname)
-	if teamID == "" || err != nil || canonical != hostname {
-		return controlv1.PublicURL{}, failure.Wrap("find public URL", failure.ServerRequestInvalid, errors.New("controlclient: team and canonical hostname are required"))
-	}
-	params := &controlv1.ListPublicURLsParams{TeamId: teamID, CanonicalHostname: &hostname}
-	page, err := requestWithAccess[controlv1.PublicURLPage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ListPublicURLs(ctx, params, editors...)
-	})
-	if err != nil {
-		return controlv1.PublicURL{}, err
-	}
-	if page.NextCursor != nil || len(page.PublicUrls) > 1 {
-		return controlv1.PublicURL{}, failure.Wrap("find public URL", failure.ServerResponseInvalid, errors.New("controlclient: server returned an unfiltered hostname lookup"))
-	}
-	if len(page.PublicUrls) == 0 {
-		return controlv1.PublicURL{}, ErrNotFound
-	}
-	publicURL := page.PublicUrls[0]
-	if publicURL.Id == "" || publicURL.TeamId != teamID || publicURL.CanonicalHostname != hostname ||
-		(publicURL.LifecycleState != controlv1.Enabled && publicURL.LifecycleState != controlv1.Suspended) {
-		return controlv1.PublicURL{}, failure.Wrap("find public URL", failure.ServerResponseInvalid, errors.New("controlclient: server returned an invalid hostname lookup"))
-	}
-	return publicURL, nil
-}
-
-func (c *Client) GetPublicURL(ctx context.Context, publicURLID string) (controlv1.PublicURL, error) {
-	return requestWithAccess[controlv1.PublicURL](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.GetPublicURL(ctx, publicURLID, editors...)
-	})
-}
-
-func (c *Client) UpdatePublicURL(ctx context.Context, publicURLID string, body controlv1.UpdatePublicURLRequest) (controlv1.PublicURL, error) {
-	return requestWithAccess[controlv1.PublicURL](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.UpdatePublicURL(ctx, publicURLID, body, editors...)
-	})
-}
-
-func (c *Client) DeletePublicURL(ctx context.Context, publicURLID string) error {
-	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.DeletePublicURL(ctx, publicURLID, editors...)
-	})
-	return err
-}
-
-func (c *Client) CreatePublishRun(ctx context.Context, publicURLID, idempotencyKey string, preferred ...string) (controlv1.PublishRunSetup, error) {
-	body, err := publishRunRequest(nil, preferred)
-	if err != nil {
-		return controlv1.PublishRunSetup{}, err
-	}
-	params := &controlv1.CreatePublishRunParams{IdempotencyKey: idempotencyKey}
-	return requestWithAccess[controlv1.PublishRunSetup](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreatePublishRun(ctx, publicURLID, params, body, editors...)
-	})
-}
-
-func (c *Client) MarkPublishRunReady(ctx context.Context, publishRunID string, publishRunNumber uint64, token credentials.PublishRunToken) error {
-	body := controlv1.PublishRunVersionRequest{PublishRunNumber: int64(publishRunNumber)}
-	_, err := request[controlv1.PublishRun](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.MarkPublishRunReady(ctx, publishRunID, body, editors...)
-	})
-	return err
-}
-
-func (c *Client) HeartbeatPublishRun(ctx context.Context, publishRunID string, publishRunNumber uint64, token credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
-	body := controlv1.PublishRunVersionRequest{PublishRunNumber: int64(publishRunNumber)}
-	return request[controlv1.PublishRunHeartbeat](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RenewPublishRun(ctx, publishRunID, body, editors...)
-	})
-}
-
-func (c *Client) ClosePublishRun(ctx context.Context, publishRunID string, token credentials.PublishRunToken) error {
-	_, err := request[struct{}](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ClosePublishRun(ctx, publishRunID, editors...)
-	})
-	return err
-}
-
-func (c *Client) CreateCertificateIssuance(ctx context.Context, publishRunID string, publishRunNumber uint64, token credentials.PublishRunToken, csrDER []byte, idempotencyKey string) (controlv1.CertificateIssuance, error) {
-	params := &controlv1.CreateCertificateIssuanceParams{IdempotencyKey: idempotencyKey}
-	body := controlv1.CreateCertificateIssuanceRequest{PublishRunNumber: int64(publishRunNumber), Csr: csrDER}
-	return requestWithTimeout[controlv1.CertificateIssuance](ctx, c, certificateCallTimeout, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreateCertificateIssuance(ctx, publishRunID, params, body, editors...)
-	})
-}
-
-func (c *Client) GetCertificateIssuance(ctx context.Context, issuanceID string, token credentials.PublishRunToken) (controlv1.CertificateIssuance, error) {
-	return request[controlv1.CertificateIssuance](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.GetCertificateIssuance(ctx, issuanceID, editors...)
-	})
-}
-
-func (c *Client) MarkPublishRunCertificateInstalled(ctx context.Context, publishRunID string, publishRunNumber uint64, issuanceID string, notAfter time.Time, token credentials.PublishRunToken) error {
-	body := controlv1.CertificateInstalledRequest{PublishRunNumber: int64(publishRunNumber), IssuanceId: issuanceID, NotAfter: notAfter}
-	_, err := request[controlv1.PublishRun](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.MarkPublishRunCertificateInstalled(ctx, publishRunID, body, editors...)
-	})
-	return err
 }
 
 type controlRequest func(context.Context, ...controlv1.RequestEditorFn) (*http.Response, error)
@@ -443,7 +281,10 @@ func requestWithTimeoutAndLimit[T any](ctx context.Context, client *Client, time
 
 func unavailableError(ctx context.Context, err error) error {
 	if cause := context.Cause(ctx); cause != nil {
-		return cause
+		if failure.Only(err, cause) {
+			return cause
+		}
+		return errors.Join(cause, err)
 	}
 	return fmt.Errorf("%w: %w", ErrUnavailable, err)
 }
@@ -480,7 +321,7 @@ func responseError(status int, header http.Header, payload []byte) (result error
 		return ErrNotFound
 	case controlv1.NameUnavailable:
 		return ErrNameUnavailable
-	case controlv1.Conflict, controlv1.PublishRunOpen, controlv1.PolicyRevisionStale:
+	case controlv1.Conflict, controlv1.PolicyRevisionStale:
 		return ErrStatusConflict
 	case controlv1.DnsSetupPending:
 		return ErrDNSProofPending

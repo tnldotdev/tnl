@@ -605,6 +605,64 @@ func TestPublishOutputWarnsWhenRunningLocalServiceFails(t *testing.T) {
 	}
 }
 
+func TestPublicationPresentationSemanticDiagnosticsKeepExistingOutput(t *testing.T) {
+	for _, mode := range []publishOutputMode{publishOutputHuman, publishOutputNDJSON} {
+		t.Run(string(mode), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			output, err := newPublishOutput(mode, "tnl publish", &stdout, &stderr, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			presentation := publicationPresentation(t.Context(), publishCommand{}, output)
+			for _, emit := range []func() error{
+				func() error { return presentation.Starting("tun_fixture", "http://127.0.0.1:3000") },
+				func() error { return presentation.Provisioning("app.example", 7) },
+				func() error { return presentation.ProvisioningStalled(7) },
+				func() error { return presentation.TransportFallback(7, "tls-tcp") },
+				presentation.TargetUnavailable,
+				func() error { return presentation.Ready("https://app.example", 7) },
+				presentation.Stopped,
+			} {
+				if err := emit(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == publishOutputHuman {
+				if stdout.Len() != 0 {
+					t.Fatal("human lifecycle output reached stdout", stdout.String())
+				}
+				for _, code := range []string{string(diagnostic.ProvisioningStalled), string(failure.TransportFallback), string(diagnostic.TargetUnavailable)} {
+					if strings.Count(stderr.String(), code) != 1 {
+						t.Fatal("semantic callback changed a human diagnostic", code, stderr.String())
+					}
+				}
+				return
+			}
+			if stderr.Len() != 0 {
+				t.Fatal("semantic diagnostics added human output to NDJSON", stderr.String())
+			}
+			decoder := json.NewDecoder(&stdout)
+			for index, code := range []string{"", string(diagnostic.ProvisioningStalled), string(failure.TransportFallback), string(diagnostic.TargetUnavailable), "", ""} {
+				var event publishEvent
+				if err := decoder.Decode(&event); err != nil {
+					t.Fatal(err)
+				}
+				if event.Code != code || event.SchemaVersion != 1 || event.Cursor != uint64(index+1) || event.TunnelID != "tun_fixture" ||
+					index > 0 && index < 4 && event.Type != publishEventWarning {
+					t.Fatal("semantic callbacks changed diagnostic codes or NDJSON lifecycle shape", event)
+				}
+				if index == 1 && (event.PublishRunNumber != 7 || event.Retryable == nil || !*event.Retryable) ||
+					index == 2 && (event.PublishRunNumber != 7 || event.Transport != "tls-tcp" || event.Retryable == nil || *event.Retryable) {
+					t.Fatal("semantic warning lost its actual run/transport or retry meaning", event)
+				}
+			}
+			if err := decoder.Decode(new(publishEvent)); !errors.Is(err, io.EOF) {
+				t.Fatal("semantic callbacks added an unexpected output event", err)
+			}
+		})
+	}
+}
+
 func TestPublishNDJSONWireKeysAndOmissions(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	output, err := newPublishOutput("ndjson", "tnl publish", &stdout, &stderr, nil)

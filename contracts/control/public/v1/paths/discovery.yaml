@@ -109,46 +109,33 @@ paths:
       security: []
       responses:
         "201":
-          description: Guest credential and managed namespace
+          description: Source-bound trial management credential and fixed expiry
           content:
             application/json:
               schema:
                 $ref: "../openapi.yaml#/components/schemas/GuestDemoSession"
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
-  /v1/guest-demo/number:
+  /v1/guest-demo/services:
     post:
-      operationId: allocateGuestDemoNumber
+      operationId: allocateGuestDemoService
       tags: [guest-demos]
-      description: Allocate the next demo hostname number using the guest credential returned by createGuestDemo. Control checks the trial deadline, source address, remaining allowance, and absence of an open demo publish run.
-      summary: Allocate a new hostname number for this guest trial
+      description: Allocate one ordinary service using the current trial credential and server-observed source. Control captures the fixed approved demo declaration and absolute trial expiry. The same key and normalized request recover only the original live allocation, including cleanup after a lost response; retries never advance the demo number or extend expiry. READY exhaustion blocks new allocation, not recovery for cleanup. A deleted or expired allocation cannot be recreated. Another demo or outstanding offline serving authority blocks new allocation. This operation grants no publisher or connector permission.
+      summary: Allocate or recover this trial's exact demo service
       security:
         - guestAuth: []
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/AllocateGuestDemoServiceRequest" }
       responses:
-        "200":
-          description: Next demo number
+        "201":
+          description: Original ordinary service and its assigned endpoint
           content:
             application/json:
               schema:
-                $ref: "../openapi.yaml#/components/schemas/GuestDemoNumber"
-        default:
-          $ref: "../openapi.yaml#/components/responses/Problem"
-  /v1/certificate-issuances/{issuance_id}:
-    get:
-      operationId: getCertificateIssuance
-      tags: [certificates]
-      description: Poll one public URL certificate issuance using its publish run token. The token must belong to the issuance's current run; a control session alone cannot retrieve the certificate.
-      summary: Read one publish-run certificate issuance
-      security:
-        - publishRunAuth: []
-      parameters:
-        - $ref: "../openapi.yaml#/components/parameters/IssuanceID"
-      responses:
-        "200":
-          description: Certificate issuance
-          content:
-            application/json:
-              schema:
-                $ref: "../openapi.yaml#/components/schemas/CertificateIssuance"
+                $ref: "../openapi.yaml#/components/schemas/Service"
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"

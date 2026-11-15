@@ -423,7 +423,7 @@ func TestIntegrationServiceAuditCrossTeamClockOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if err = controlstatedb.New(gate).LockServiceAuditClock(ctx, teams[0]); err != nil {
+	if err = controlstatedb.New(gate).LockServiceAuditClock(ctx, controlstatedb.LockServiceAuditClockParams{TeamID: text(teams[0])}); err != nil {
 		t.Fatal(err)
 	}
 	workers := newIntegrationWorkers(t, cancel)

@@ -12,15 +12,18 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
@@ -34,6 +37,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher/setup"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -84,7 +88,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hostname, _, _, err := resolve.PublishHostname("", "opencode", "", selectedTeam)
+	hostname, _, err := resolve.PublishHostname("", "opencode", "", selectedTeam)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,6 +129,15 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 					return
 				}
 				defer ingress.Close()
+				source := visitor.RemoteAddr().(*net.TCPAddr).AddrPort()
+				header, err := proxyproto.Encode(proxyproto.Header{Source: source,
+					Destination: netip.MustParseAddrPort("127.0.0.1:443")})
+				if err != nil {
+					return
+				}
+				if _, err := ingress.Write(header); err != nil {
+					return
+				}
 				done := make(chan struct{})
 				go func() { _, _ = io.Copy(ingress, visitor); close(done) }()
 				_, _ = io.Copy(visitor, ingress)
@@ -167,7 +180,12 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	args := []string{"--no-config", "--no-telemetry", "publish", target.URL, "--name", "opencode", "--team", "studio", "--install", "--system", "--server", f.url, "--state-dir", person}
+	// keep one project source through initial install, retries and target edits.
+	// a later configuration cannot adopt an unrelated ad-hoc hostname.
+	configuration := installFixtureProject(t, filepath.Join(binDir, "project"), f.url, config.DeploymentBinding{
+		Public: new(true), Hostname: &hostname, ServiceTarget: config.ServiceTarget{Address: new(config.Target(target.URL))},
+	})
+	args := []string{"--config", configuration, "--no-telemetry", "publish", "opencode", "--service-name", "opencode", "--install", "--system", "--state-dir", person}
 	output := installFixtureCommand(t, binary, args...)
 	if !strings.Contains(output, "https://opencode.") || !strings.Contains(output, "ready") || probes.Load() == 0 {
 		t.Fatal("setup returned before verified public readiness", output)
@@ -182,10 +200,10 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.Status.PublicURL != "https://"+hostname {
+	if job.Status.Address != "https://"+hostname {
 		t.Fatal("installation printed a different public URL")
 	}
-	firstRun, publisherIdentityID, urlID := job.Status.RunNumber, job.PublisherIdentityID, job.PublicURLID
+	firstRun, publisherIdentityID, serviceID := job.Status.RunNumber, job.PublisherIdentityID, job.ServiceID
 	checkSeparation := func() {
 		t.Helper()
 		profile, err := registry.Profile(t.Context(), f.url)
@@ -227,7 +245,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	installFixtureCommand(t, "runuser", append([]string{"-u", "installer", "--", binary}, args...)...)
 	installFixtureCommand(t, "chown", "-R", "0:0", filepath.Dir(person))
 	job, err = registry.ResolveJob(t.Context(), "opencode")
-	if err != nil || job.PublisherIdentityID != publisherIdentityID || job.PublicURLID != urlID || job.Status.RunNumber <= firstRun {
+	if err != nil || job.PublisherIdentityID != publisherIdentityID || job.ServiceID != serviceID || job.Status.RunNumber <= firstRun {
 		t.Fatal("setup retry replaced the identity or URL", err)
 	}
 	// enter through the real parser as the unprivileged operator. the configured
@@ -244,7 +262,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		job, err = registry.ResolveJob(t.Context(), "opencode")
 		return err == nil && job.Status.State == "ready" && job.Status.RunNumber > firstRun
 	})
-	if job.PublicURLID != urlID || job.PublisherIdentityID != publisherIdentityID {
+	if job.ServiceID != serviceID || job.PublisherIdentityID != publisherIdentityID {
 		t.Fatal("logout/restart changed publication ownership")
 	}
 	checkSeparation()
@@ -280,11 +298,11 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	}
 	// control's current run number is observed across a complete container boot,
 	// not inferred from local desired state or an old readiness observation.
-	beforeBoot, err := session.Authenticated().Control.GetPublicURL(t.Context(), urlID)
+	_, err = session.Authenticated().Control.GetService(t.Context(), serviceID)
 	if err == nil {
 		t.Fatal("logged-out human session still has control access")
 	}
-	// the publisher can still read its exact URL without that human session.
+	// the publisher can still read its exact service without that human session.
 	control, authority, err := installedjobs.Clients(job)
 	if err != nil {
 		t.Fatal(err)
@@ -297,10 +315,11 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	beforeBoot, err = scoped.SavedPublicURL(t.Context())
+	beforeBoot, err := scoped.SavedService(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
+	beforeBootRun := installedServiceRunNumber(t, f.databaseURL, serviceID)
 	installFixtureCommand(t, "docker", "restart", "--timeout", "60", machine)
 	waitInstallFixtureBoot(t, machine)
 	// Docker rewrites the shared /etc/hosts file on container boot. restore this
@@ -316,8 +335,8 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		if err != nil || !strings.Contains(string(output), "ready") {
 			return false
 		}
-		afterBoot, err := scoped.SavedPublicURL(t.Context())
-		return err == nil && afterBoot.Id == urlID && afterBoot.NextPublishRunNumber > beforeBoot.NextPublishRunNumber
+		afterBoot, err := scoped.SavedService(t.Context())
+		return err == nil && afterBoot.Id == beforeBoot.Id && installedServiceRunNumber(t, f.databaseURL, serviceID) > beforeBootRun
 	})
 	status := installFixtureCommand(t, "docker", "exec", machine, binary, "auth", "status", "--server", f.url, "--state-dir", root, "--output=json")
 	var auth struct {
@@ -348,8 +367,12 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		t.Fatal("stale runtime lost its owned fence diagnostic", err)
 	}
 	scoped.WithRuntime(staleOwner)
-	if _, err := scoped.CreatePublishRun(t.Context(), urlID, "stale-epoch-proof"); err == nil {
-		t.Fatal("stale publisher epoch created another public URL run")
+	access, err := scoped.Access(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scoped.PrepareServiceRun(t.Context(), serviceID, "stale-epoch-proof", access, publisheridentity.ServiceDeclaration(beforeBoot)); err == nil {
+		t.Fatal("stale publisher epoch created another service run")
 	} else if classified, ok := failure.Of(err); !ok || classified.Reason() != failure.ServerConflict {
 		t.Fatal("stale run creation lost its fence diagnostic", err)
 	}
@@ -362,15 +385,19 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer current.Close()
-	publicURL, err := current.Authenticated().Control.GetPublicURL(t.Context(), urlID)
-	if err != nil || publicURL.AccessMode != controlv1.Restricted || publicURL.Target != "" {
-		t.Fatal("setup relaxed access or stored the private target", err)
+	saved, err := current.Authenticated().Control.GetService(t.Context(), serviceID)
+	if err != nil || saved.Endpoint == nil || saved.Endpoint.Hostname != hostname || !saved.Endpoint.Public {
+		t.Fatal("setup changed the saved service endpoint", err)
+	}
+	policy, _, err := current.Authenticated().Control.GetServiceConfiguration(t.Context(), serviceID)
+	if err != nil || policy != nil && policy.Http != nil && policy.Http.Access != nil && policy.Http.Access.Mode != nil && *policy.Http.Access.Mode != controlv1.Restricted {
+		t.Fatal("setup relaxed service access", err)
 	}
 	// fresh Compose identity is issued by the operator. it receives exactly one
 	// saved URL grant, and never receives the operator's session.
 	enrollment := func() string {
 		t.Helper()
-		e, err := current.Authenticated().Control.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: team.Id, PublicUrlId: &urlID, Name: "opencode", Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled})
+		e, err := current.Authenticated().Control.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: team.Id, ServiceId: &serviceID, Name: "opencode", Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -393,7 +420,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	}
 	compose := func(allowFailure bool, extra ...string) string {
 		t.Helper()
-		data := "TNL_IMAGE=" + image + "\nTNL_SERVER=" + f.url + "\nTNL_TARGET=" + target.URL + "\nTNL_ENROLL_KEY=" + secret + "\n"
+		data := "TNL_IMAGE=" + image + "\nTNL_SERVER=" + f.url + "\nTNL_TARGET=" + job.Target + "\nTNL_ENROLL_KEY=" + secret + "\n"
 		if err := os.WriteFile(environmentFile, []byte(data), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -433,17 +460,14 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		workflowWait(t, 30*time.Second, func() bool { return strings.Contains(compose(false, "logs", "--no-color", "publisher"), "ready") })
 	}
 	ready()
-	before, err := current.Authenticated().Control.GetPublicURL(t.Context(), urlID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	compose(false, "exec", "-T", "publisher", "/fixture/inspect.test", "-test.run=^TestIntegrationPublisherInstallIdentity$", "-test.v", "-tnl-test-tier=integration", "-tnl-publisher-install-inspect", "-tnl-publisher-install-server="+f.url, "-tnl-publisher-install-target="+target.URL, "-tnl-publisher-install-url="+urlID, "-tnl-publisher-install-team="+team.Id)
+	before := installedServiceRunNumber(t, f.databaseURL, serviceID)
+	compose(false, "exec", "-T", "publisher", "/fixture/inspect.test", "-test.run=^TestIntegrationPublisherInstallIdentity$", "-test.v", "-tnl-test-tier=integration", "-tnl-publisher-install-inspect", "-tnl-publisher-install-server="+f.url, "-tnl-publisher-install-target="+job.Target, "-tnl-publisher-install-url="+serviceID, "-tnl-publisher-install-team="+team.Id)
 	secret = ""
 	compose(false, "up", "--detach", "--force-recreate")
 	ready()
-	after, err := current.Authenticated().Control.GetPublicURL(t.Context(), urlID)
-	if err != nil || after.NextPublishRunNumber <= before.NextPublishRunNumber {
-		t.Fatal("retained Compose identity did not start a new run", err)
+	after := installedServiceRunNumber(t, f.databaseURL, serviceID)
+	if after <= before {
+		t.Fatal("retained Compose identity did not start a new run")
 	}
 	// an anonymous application GET remains denied while proof-bound readiness
 	// succeeds, and the state volume contains no control session.
@@ -486,9 +510,13 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	secret = enrollment()
 	compose(false, "up", "--detach")
 	ready()
-	recovered, err := current.Authenticated().Control.GetPublicURL(t.Context(), urlID)
-	if err != nil || recovered.Id != publicURL.Id || recovered.CanonicalHostname != publicURL.CanonicalHostname || recovered.AccessMode != controlv1.Restricted || recovered.NextPublishRunNumber <= after.NextPublishRunNumber {
+	recovered, err := current.Authenticated().Control.GetService(t.Context(), serviceID)
+	if err != nil || recovered.Id != saved.Id || recovered.Endpoint == nil || *recovered.Endpoint != *saved.Endpoint || installedServiceRunNumber(t, f.databaseURL, serviceID) <= after {
 		t.Fatal("fresh enrollment failed to recover the saved publication", err)
+	}
+	recoveredPolicy, _, err := current.Authenticated().Control.GetServiceConfiguration(t.Context(), serviceID)
+	if err != nil || !reflect.DeepEqual(recoveredPolicy, policy) {
+		t.Fatal("fresh enrollment changed the restricted service declaration", err)
 	}
 	t.Log("real Ubuntu sudo setup/interrupted retry, operator logout, complete init reboot, retained Compose restart, missing-state/consumed-key failures, and fresh scoped enrollment preserved the restricted URL without human management access")
 }
@@ -510,52 +538,43 @@ func installConfiguredHealthTarget(t *testing.T, registry *installedjobs.Registr
 	t.Helper()
 	var probes atomic.Int64
 	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/health" {
+		if r.URL.Path != "/health" && r.URL.Path != "/" {
 			http.NotFound(w, r)
 			return
 		}
 		if r.Header.Get("Tnl-Readiness-Probe") != "" || r.Header.Get("Cookie") != "" {
 			t.Error("readiness credential reached target")
 		}
-		probes.Add(1)
+		if r.URL.Path == "/health" {
+			probes.Add(1)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(target.Close)
 	projectRoot := filepath.Join(binDir, "project")
-	if err := os.Mkdir(projectRoot, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	caFile := filepath.Join(projectRoot, "target-ca.pem")
 	ca := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: target.Certificate().Raw})
 	if err := os.WriteFile(caFile, ca, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	address := config.Target(target.URL)
-	document := config.Document{Version: new(1), TNL: &config.Project{Server: &old.Server, Team: new("studio"), Services: map[string]config.ServiceDeclaration{"opencode": {}}, Deployments: map[string]config.Deployment{"local": {Targets: map[string]config.DeploymentBinding{
-		"opencode": {Tunnel: &config.Tunnel{PublicURL: &old.Status.PublicURL}, ServiceTarget: config.ServiceTarget{Address: &address, TLS: &config.TargetTLS{CA: new(string(ca)), Hostname: new("example.com")}}, HTTP: &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}}},
-	}}}}}
-	data, err := json.Marshal(document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	configuration := filepath.Join(projectRoot, "tnl.json")
-	if err := os.WriteFile(configuration, data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	args := []string{"-u", "installer", "--", binary, "--no-telemetry", "--config", configuration, "publish", "opencode", "--install", "--system", "--state-dir", person}
+	configuration := installFixtureProject(t, projectRoot, old.Server, config.DeploymentBinding{
+		Public: new(true), Hostname: &old.Endpoint.Hostname, ServiceTarget: config.ServiceTarget{Address: &address, TLS: &config.TargetTLS{CA: new(string(ca)), Hostname: new("example.com")}}, HTTP: &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}},
+	})
+	args := []string{"-u", "installer", "--", binary, "--no-telemetry", "--config", configuration, "publish", "opencode", "--service-name", old.Name, "--install", "--system", "--state-dir", person}
 	output := installFixtureCommand(t, "runuser", args...)
 	if !strings.Contains(output, "ready") || strings.Contains(output, "sign in") {
 		t.Fatal("configured CLI installation failed or exposed credentials", output)
 	}
 	job, err := registry.ResolveJob(t.Context(), old.ID)
-	if err != nil || job.ReadinessPath != "/health" || job.Revision <= old.Revision || job.GrantID != old.GrantID || job.PublisherIdentityID != old.PublisherIdentityID || job.Target != target.URL || job.TargetTLSName != "example.com" || !bytes.Equal(job.TargetCAPEM, ca) {
+	if err != nil || job.ReadinessPath != "/health" || job.Revision <= old.Revision || job.GrantID != old.GrantID || job.PublisherIdentityID != old.PublisherIdentityID || job.Target != target.URL || job.Trust == nil || job.Trust.Hostname != "example.com" || !bytes.Equal(job.Trust.PEM, ca) {
 		t.Fatal("configured CLI installation lost target settings or exact grant", err)
 	}
 	// retry the real setup command after its first committed reply. it must reuse
 	// the identity and exact URL while retaining the evaluated target snapshot.
 	installFixtureCommand(t, "runuser", args...)
 	retried, err := registry.ResolveJob(t.Context(), old.ID)
-	if err != nil || retried.PublisherIdentityID != job.PublisherIdentityID || retried.GrantID != job.GrantID || retried.PublicURLID != job.PublicURLID || retried.Status.RunNumber <= job.Status.RunNumber {
+	if err != nil || retried.PublisherIdentityID != job.PublisherIdentityID || retried.GrantID != job.GrantID || retried.ServiceID != job.ServiceID || retried.Status.RunNumber <= job.Status.RunNumber {
 		t.Fatal("configured CLI retry changed identity or failed to restart", err)
 	}
 	// supervisor restarts and the reboot machine have no project or CA file.
@@ -570,7 +589,7 @@ func installConfiguredHealthTarget(t *testing.T, registry *installedjobs.Registr
 	if strings.Contains(logs, "PRIVATE KEY") {
 		t.Fatal("supervisor logged private credentials")
 	}
-	response, err := http.Get(job.Status.PublicURL + "/health")
+	response, err := http.Get(job.Status.Address + "/health")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -579,6 +598,26 @@ func installConfiguredHealthTarget(t *testing.T, registry *installedjobs.Registr
 		t.Fatal("readiness allowed an anonymous visitor")
 	}
 	return job
+}
+
+func installFixtureProject(t *testing.T, root, server string, binding config.DeploymentBinding) string {
+	t.Helper()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	document := config.Document{Version: new(1), TNL: &config.Project{Server: &server, Team: new("studio"),
+		Services:    map[string]config.ServiceDeclaration{"opencode": {}},
+		Deployments: map[string]config.Deployment{"local": {Targets: map[string]config.DeploymentBinding{"opencode": binding}}},
+	}}
+	data, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "tnl.json")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestIntegrationPublisherInstallIdentity(t *testing.T) {
@@ -610,8 +649,8 @@ func TestIntegrationPublisherInstallIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, identity, err := publisheridentity.LoadNative(t.Context(), profile, publisheridentity.NativeControl{PublicURLControl: control}, authority, selected.ID)
-	if err != nil || identity.Kind != authorityv1.SavedPublicUrl || identity.PublicUrlId == nil || *identity.PublicUrlId != *publisherInstallURL || identity.TeamId != *publisherInstallTeam {
+	native, identity, err := publisheridentity.LoadNative(t.Context(), profile, publisheridentity.NativeControl{Services: control, Runtime: control}, authority, selected.ID)
+	if err != nil || identity.Kind != authorityv1.Service || identity.ServiceId == nil || *identity.ServiceId != *publisherInstallURL || identity.TeamId != *publisherInstallTeam {
 		t.Fatal("Compose identity is not scoped to the exact URL", err)
 	}
 	access, err := native.Access(t.Context())
@@ -622,9 +661,23 @@ func TestIntegrationPublisherInstallIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := management.ListPublicURLs(t.Context(), *publisherInstallTeam); err == nil {
+	if _, err := management.ListServices(t.Context(), *publisherInstallTeam); err == nil {
 		t.Fatal("publisher identity acquired human management access")
 	}
+}
+
+func installedServiceRunNumber(t *testing.T, databaseURL, serviceID string) int64 {
+	t.Helper()
+	connection, err := pgx.Connect(t.Context(), databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close(t.Context())
+	var number int64
+	if err := connection.QueryRow(t.Context(), `SELECT COALESCE(max(run_number),0) FROM control.service_runs WHERE service_id=$1`, serviceID).Scan(&number); err != nil {
+		t.Fatal(err)
+	}
+	return number
 }
 
 func installFixtureCommand(t *testing.T, program string, args ...string) string {

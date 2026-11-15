@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
@@ -57,10 +58,17 @@ type RunConfig struct {
 	ServiceID                                             string
 	Target                                                string
 	Handler                                               http.Handler
-	InspectionMode                                        inspection.Mode
-	ObserveSummary                                        inspection.Observer
-	AdmitRequest                                          func(*http.Request) error
-	ReadinessProof                                        func(httpaccess.ReadinessRun) *httpaccess.ReadinessProof
+	Mounts                                                []proxy.Mount
+	// ResolveHTTPTarget captures one HTTP request's target and replacement identity.
+	// target trust remains run-approved; discovery with its own TLS uses TargetResolver.
+	ResolveHTTPTarget                      func(*http.Request) (address, identity string, err error)
+	InspectionMode                         inspection.Mode
+	ObserveSummary                         inspection.Observer
+	AdmitRequest                           func(*http.Request) error
+	ReadinessProof                         func(httpaccess.ReadinessRun) *httpaccess.ReadinessProof
+	Feedback                               bool
+	PreviewID, ProjectService, ProjectRoot string
+	Demo                                   bool
 	// http response hooks are built once from validated run facts, not per visitor.
 	// inline applications do not use upstream response hooks.
 	HTTPResponseHooks func(HTTPRun) httpstream.ResponseHooks
@@ -91,6 +99,10 @@ type RunStatus struct {
 	Ready, TargetHealthy, ConfigurationCurrent bool
 	LastCheck, LastSuccess, LeaseExpiresAt     time.Time
 	Connected                                  [2]bool
+	// transports belong to the connected sessions in this observation, not
+	// attempted dials or a remembered transport preference.
+	Transports [2]tunnel.Transport
+	Draining   bool
 }
 
 func (RunConfig) String() string   { return "service publisher configuration" }
@@ -111,6 +123,9 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		!opaqueid.Valid(config.PublisherGrantID, opaqueid.PublisherGrantPrefix) ||
 		!opaqueid.Valid(config.PublisherKeyID, opaqueid.PublisherIdentityKeyPrefix) ||
 		config.ReadinessProof != nil && config.Metadata.Protocol != controlv1.ServiceProtocolHTTP ||
+		config.Feedback && config.Metadata.Protocol != controlv1.ServiceProtocolHTTP ||
+		(len(config.Mounts) != 0 || config.ResolveHTTPTarget != nil) &&
+			(config.Metadata.Protocol != controlv1.ServiceProtocolHTTP || config.Handler != nil || config.TargetResolver != nil) ||
 		config.HTTPResponseHooks != nil && (config.Metadata.Protocol != controlv1.ServiceProtocolHTTP || config.Handler != nil) {
 		return ErrPrivateStream
 	}
@@ -144,7 +159,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		config.resolvedTargetTLS = discoveredTLS
 	}
 	if config.Handler != nil {
-		if config.Metadata.Protocol != controlv1.ServiceProtocolHTTP || config.Target != "" || config.TargetResolver != nil || config.Metadata.TargetTls != nil {
+		if config.Metadata.Protocol != controlv1.ServiceProtocolHTTP || config.Target != "" || config.TargetResolver != nil || config.Metadata.TargetTls != nil || len(config.Mounts) != 0 || config.ResolveHTTPTarget != nil {
 			return ErrPrivateStream
 		}
 	} else {
@@ -423,6 +438,9 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), until)
 			defer cancel()
 			bound.startHTTPDrain(until)
+			status.Ready, status.Draining = false, true
+			status.LastCheck = time.Now()
+			report()
 			drained := make(chan error, 1)
 			go func() {
 				// relay acknowledgment must not close transports before the HTTP
@@ -470,10 +488,17 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		status.LastCheck = time.Now()
 		status.LeaseExpiresAt = state.PublisherExpiresAt
 		status.Connected = [2]bool{connected[0] != nil, connected[1] != nil}
+		status.Transports = [2]tunnel.Transport{}
+		for slot, session := range connected {
+			if session != nil {
+				status.Transports[slot] = session.Transport()
+			}
+		}
 		// initial readiness needs both slots; an established run can serve on one
 		// while replacing the other, without repeating its one-time notification.
 		connectionsReady := status.Connected[0] && status.Connected[1] || ready && (status.Connected[0] || status.Connected[1])
-		status.Ready = heartbeatOK && status.ConfigurationCurrent && status.TargetHealthy && state.PublisherExpiresAt.After(status.LastCheck) && state.State == controlv1.ServiceRunStateState("ready") && (state.Healthy == nil || *state.Healthy) && connectionsReady
+		_, certificateErr := prepared.currentCertificate()
+		status.Ready = certificateErr == nil && heartbeatOK && status.ConfigurationCurrent && status.TargetHealthy && state.PublisherExpiresAt.After(status.LastCheck) && state.State == controlv1.ServiceRunStateState("ready") && (state.Healthy == nil || *state.Healthy) && connectionsReady
 		if status.Ready {
 			status.LastSuccess = status.LastCheck
 		}

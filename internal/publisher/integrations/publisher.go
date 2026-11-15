@@ -1,4 +1,4 @@
-// package integrationurls maintains project integration URLs on the publisher's machine.
+// package integrations maintains project integration services on this machine.
 package integrations
 
 import (
@@ -9,18 +9,23 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-// Snapshot is immutable for one integration URL publish run. a changed revision
-// drains that run before starting another against the same saved hostname.
+// Snapshot captures one saved service and its local serving operation. a changed
+// revision drains that operation before preparing another at the same hostname.
 type Snapshot struct {
-	Config   publisher.Config
+	Config   publisherservice.RunConfig
+	Service  controlv1.Service
 	Revision string
+	// readiness owns any additional local readiness record, such as an alias's
+	// selected service run. false uses a bounded cleanup context during shutdown.
+	Readiness func(context.Context, bool) error
 }
 
-// Publisher maintains a locally elected publish run for an integration URL
-// while app tunnels run, independently of their own publish runs.
+// Publisher maintains a locally elected integration service run while app
+// tunnels run, independently of their own service runs.
 type Publisher struct {
 	State    *clientstate.Database
 	Store    *clientstate.Store
@@ -29,11 +34,13 @@ type Publisher struct {
 	Prepare  func(context.Context) (Snapshot, error)
 	Eligible func(context.Context) (bool, error)
 	Revision func(context.Context) (string, error)
-	Report   func(publisher.Event, error)
+	Report   func(ready bool, err error)
 	// run and interval are substituted only by lifecycle tests.
-	run      func(context.Context, publisher.Config) error
+	run      func(context.Context, publisherservice.RunConfig) error
 	interval time.Duration
 }
+
+var errIntegrationRunStale = errors.New("integration service run was replaced or stopped")
 
 func (p Publisher) Maintain(ctx context.Context) {
 	interval := p.interval
@@ -57,7 +64,7 @@ func (p Publisher) Maintain(ctx context.Context) {
 			}
 		}
 		if err != nil && !errors.Is(err, clientstate.ErrLocked) && ctx.Err() == nil && p.Report != nil {
-			p.Report(publisher.Event{}, err)
+			p.Report(false, err)
 		}
 		select {
 		case <-ctx.Done():
@@ -72,8 +79,9 @@ func (p Publisher) serve(parent context.Context, interval time.Duration) error {
 	if err != nil {
 		return err
 	}
-	if snapshot.Config.Hostname != p.Hostname {
-		return errors.New("prepared integration URL publisher has a different hostname")
+	if snapshot.Service.Id != snapshot.Config.ServiceID || snapshot.Service.Endpoint == nil ||
+		snapshot.Service.Endpoint.Hostname != p.Hostname {
+		return errors.New("prepared integration service has a different service ID or hostname")
 	}
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
@@ -83,41 +91,105 @@ func (p Publisher) serve(parent context.Context, interval time.Duration) error {
 	}
 	var mu sync.Mutex
 	ready := false
+	config := snapshot.Config
+	var readinessErr error
+	var binding controlv1.ServiceRunPreparation
+	stopped := false
+	notified := false
+	change := func(ctx context.Context, available bool) error {
+		var err error
+		if available {
+			if stopped || binding.ServiceId == "" || binding.RunNumber < 1 || ctx.Err() != nil {
+				return errIntegrationRunStale
+			}
+			err = p.State.MarkIntegrationURLReady(ctx, p.Server, p.Hostname, publisherInstanceID, binding.ServiceId, uint64(binding.RunNumber))
+		} else {
+			err = p.State.ClearIntegrationURLReady(ctx, p.Server, p.Hostname, publisherInstanceID)
+		}
+		if snapshot.Readiness != nil && (!available || err == nil) {
+			err = errors.Join(err, snapshot.Readiness(ctx, available))
+		}
+		ready = available && err == nil
+		return err
+	}
 	clear := func() error {
 		cleanup, stop := context.WithTimeout(context.Background(), 2*time.Second)
 		defer stop()
-		return p.State.ClearIntegrationURLReady(cleanup, p.Server, p.Hostname, publisherInstanceID)
+		return change(cleanup, false)
 	}
-	config := snapshot.Config
-	observe := config.Observe
-	config.Observe = func(event publisher.Event) error {
+	prepared, onReady, status := config.Prepared, config.Ready, config.ObserveReadiness
+	config.Prepared = func(preparation controlv1.ServiceRunPreparation) error {
 		mu.Lock()
 		defer mu.Unlock()
-		var observeErr error
-		switch event.Type {
-		case publisher.EventReady:
-			observeErr = p.State.MarkIntegrationURLReady(ctx, p.Server, p.Hostname, publisherInstanceID)
-			ready = observeErr == nil
-		case publisher.EventProvisioning, publisher.EventDraining:
-			ready = false
-			observeErr = clear()
-		default:
-			if observe != nil {
-				return observe(event)
+		if stopped || ctx.Err() != nil || preparation.ServiceId != config.ServiceID || preparation.Hostname != p.Hostname ||
+			!opaqueid.Valid(preparation.ServiceRunId, opaqueid.ServiceRunPrefix) || preparation.RunNumber < 1 {
+			return errIntegrationRunStale
+		}
+		// Publish owns one prepared run. replacement belongs to a fresh snapshot,
+		// so argument-free Ready/status callbacks cannot follow a newer binding.
+		if binding.ServiceId != "" {
+			if binding.ServiceId == preparation.ServiceId && binding.ServiceRunId == preparation.ServiceRunId && binding.RunNumber == preparation.RunNumber {
+				return nil
 			}
-			return nil
+			return errIntegrationRunStale
 		}
-		if observeErr == nil && observe != nil {
-			observeErr = observe(event)
+		notified = false
+		if err := clear(); err != nil {
+			return err
 		}
-		if p.Report != nil && parent.Err() == nil && observeErr == nil {
-			p.Report(event, nil)
+		if prepared != nil {
+			if err := prepared(preparation); err != nil {
+				return err
+			}
 		}
-		return observeErr
+		binding = preparation
+		return nil
+	}
+	config.Ready = func() error {
+		mu.Lock()
+		defer mu.Unlock()
+		if stopped || binding.ServiceId == "" || ctx.Err() != nil {
+			return errIntegrationRunStale
+		}
+		err := change(ctx, true)
+		if err == nil && onReady != nil {
+			err = onReady()
+		}
+		if err != nil {
+			return errors.Join(err, clear())
+		}
+		notified = true
+		if p.Report != nil && parent.Err() == nil {
+			p.Report(true, nil)
+		}
+		return nil
+	}
+	config.ObserveReadiness = func(state publisherservice.RunStatus) {
+		mu.Lock()
+		defer mu.Unlock()
+		if stopped || binding.ServiceId == "" || state.Ready && ctx.Err() != nil {
+			return
+		}
+		if status != nil {
+			status(state)
+		}
+		if !notified || readinessErr != nil || ready == state.Ready {
+			return
+		}
+		if state.Ready {
+			readinessErr = change(ctx, true)
+		} else {
+			readinessErr = clear()
+		}
+		if readinessErr != nil {
+			cancel()
+		} else if p.Report != nil && parent.Err() == nil {
+			p.Report(state.Ready, nil)
+		}
 	}
 	run := p.run
 	if run == nil {
-		run = publisher.Run
+		run = publisherservice.Publish
 	}
 	done := make(chan error, 1)
 	go func() { done <- run(ctx, config) }()
@@ -126,12 +198,17 @@ func (p Publisher) serve(parent context.Context, interval time.Duration) error {
 	finish := func(result error) error {
 		mu.Lock()
 		defer mu.Unlock()
-		ready = false
-		return errors.Join(result, clear())
+		stopped = true
+		cancel()
+		return errors.Join(result, readinessErr, clear())
 	}
 	stop := func(cause error) error {
+		mu.Lock()
+		stopped = true
 		cancel()
-		return finish(errors.Join(cause, <-done))
+		clearErr := clear()
+		mu.Unlock()
+		return finish(errors.Join(cause, clearErr, <-done))
 	}
 	for {
 		select {
@@ -143,7 +220,7 @@ func (p Publisher) serve(parent context.Context, interval time.Duration) error {
 			mu.Lock()
 			var renewErr error
 			if ready {
-				renewErr = p.State.MarkIntegrationURLReady(ctx, p.Server, p.Hostname, publisherInstanceID)
+				renewErr = p.State.MarkIntegrationURLReady(ctx, p.Server, p.Hostname, publisherInstanceID, binding.ServiceId, uint64(binding.RunNumber))
 			}
 			mu.Unlock()
 			if renewErr != nil {

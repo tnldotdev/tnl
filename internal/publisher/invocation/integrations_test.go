@@ -15,12 +15,28 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func TestIntegrationURLUsesTheSelectedPublicURLScope(t *testing.T) {
-	for _, scope := range []controlv1.PublicURLScope{controlv1.Shared, controlv1.Member} {
-		config := integrationURLConfig(publisherServices{publicURLScope: scope}, "hooks.example.test", controlv1.Webhooks)
-		if config.PublicURLScope != scope || config.Purpose != controlv1.Webhooks || config.Hostname != "hooks.example.test" || config.Ephemeral || config.Target != "" {
-			t.Fatalf("integration URL scope %q produced %#v", scope, config)
-		}
+func TestIntegrationServiceUsesSelectedTeamDomainAndHostname(t *testing.T) {
+	for _, hostname := range []string{"hooks.example.test", "hooks.member.example.test"} {
+		t.Run(hostname, func(t *testing.T) {
+			f := newServiceSetupFixture(t, hostname)
+			for range 2 {
+				cfg, saved, err := nativeIntegrationConfig(t.Context(), f.services, hostname, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if cfg.ServiceID != saved.Id || saved.TeamId != f.services.teamID ||
+					saved.DomainId == nil || *saved.DomainId != f.services.domainID ||
+					saved.Endpoint == nil || saved.Endpoint.Hostname != hostname || saved.Endpoint.Port != 443 || !saved.Endpoint.Public ||
+					saved.Source != nil || saved.Ephemeral || cfg.Target != "" ||
+					f.declaration.Target != "app" || f.declaration.Hostname == nil || *f.declaration.Hostname != hostname ||
+					f.declaration.DomainId == nil || *f.declaration.DomainId != f.services.domainID {
+					t.Fatal("integration changed the selected ordinary service placement or saved a private target", cfg, saved, f.declaration)
+				}
+			}
+			if f.creates != 1 || f.enrollments != 1 {
+				t.Fatal("unchanged integration setup replaced its saved service or publisher grant", f.creates, f.enrollments)
+			}
+		})
 	}
 }
 
@@ -67,8 +83,12 @@ func TestWebhookReadyTelemetryRequiresPublishedURLAndSelectedReceiver(t *testing
 	if _, err := state.Server(t.Context(), server); err != nil {
 		t.Fatal(err)
 	}
+	id, err := opaqueid.New(opaqueid.ServicePrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
 	tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
-		Command: clientstate.TunnelCommandPublish, Server: server, Target: "3000", Project: t.TempDir(), Service: "api", IntegrationScope: group,
+		Command: clientstate.TunnelCommandPublish, Server: server, ServiceID: id, Target: "3000", Project: t.TempDir(), Service: "api", IntegrationScope: group,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -94,20 +114,30 @@ func TestWebhookReadyTelemetryRequiresPublishedURLAndSelectedReceiver(t *testing
 	if mode := readyWebhookDelivery(t.Context(), state, server, group, hostname, definitions); mode != "" {
 		t.Fatalf("unpublished URL reported ready: %q", mode)
 	}
-	id, err := opaqueid.New(opaqueid.PublicURLPrefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := tunnel.SetPublicURL(t.Context(), id, "api.member.example.test"); err != nil {
-		t.Fatal(err)
-	}
 	if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
 	if err := tunnel.SetReady(t.Context(), "https://api.member.example.test", 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.MarkIntegrationURLReady(t.Context(), server, hostname, "owner"); err != nil {
+	integrationID, err := opaqueid.New(opaqueid.ServicePrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	integration, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish,
+		Server: server, ServiceID: integrationID, Target: "3000", Project: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer integration.Finish(context.Background(), nil)
+	prepared := controlv1.ServiceRunPreparation{ServiceId: integrationID, Hostname: hostname, RunNumber: 1}
+	if err := integration.SetProvisioning(t.Context(), uint64(prepared.RunNumber)); err != nil {
+		t.Fatal(err)
+	}
+	if err := integration.SetReady(t.Context(), "https://"+prepared.Hostname, uint64(prepared.RunNumber)); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.MarkIntegrationURLReady(t.Context(), server, prepared.Hostname, "owner", prepared.ServiceId, uint64(prepared.RunNumber)); err != nil {
 		t.Fatal(err)
 	}
 	if mode := readyWebhookDelivery(t.Context(), state, server, group, hostname, map[string]config.Webhook{"fanout": fanout}); mode != "fanout" {

@@ -2,16 +2,29 @@ package state
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
+func hostnameWithin(hostname, domain string) bool {
+	return hostname == domain || strings.HasSuffix(hostname, "."+domain)
+}
+
+type serviceHostnameFacts struct {
+	ActorMembershipID, ActorManagedLabel, ActorMemberSlug, IngressPoolID string
+	ActorRole, TeamKind, TeamDisplayName, TeamManagedLabel               string
+	DomainKind, CanonicalDomain, DomainState                             string
+	DomainTeamID                                                         pgtype.Text
+}
+
 // callers hold the team mutation guard. use snapshots rather than acquiring a
 // domain row lock after the service lock; domain changes use the opposite order.
-func serviceHostnameAuthority(ctx context.Context, tx pgx.Tx, team, actor, domain string, now time.Time) (facts controlstatedb.GetPublicURLCreationContextRow, err error) {
+func serviceHostnameAuthority(ctx context.Context, tx pgx.Tx, team, actor, domain string, now time.Time) (facts serviceHostnameFacts, err error) {
 	err = tx.QueryRow(ctx, `SELECT member.id,member.managed_label,reservation.member_slug,team.ingress_pool_id,
 	    member.role,team.kind,team.display_name,team.managed_label,
 	    domain.kind,domain.team_id,domain.canonical_domain,domain.state
@@ -31,7 +44,7 @@ func serviceHostnameAuthority(ctx context.Context, tx pgx.Tx, team, actor, domai
 
 // service hostname authority is independent of protocol and public reachability.
 // member names cannot claim their namespace apex or another member's descendants.
-func authorizeServiceHostname(facts controlstatedb.GetPublicURLCreationContextRow, labels []controlstatedb.ListTeamNamespaceLabelsRow, team, membership, hostname, scope string, mode naming.ManagedURLMode) error {
+func authorizeServiceHostname(facts serviceHostnameFacts, labels []controlstatedb.ListTeamNamespaceLabelsRow, team, membership, hostname, scope string, mode naming.ManagedURLMode) error {
 	if facts.DomainState != "ready" || facts.DomainKind == "custom" && facts.DomainTeamID.String != team ||
 		facts.DomainKind == "managed" && facts.DomainTeamID.Valid || !hostnameWithin(hostname, facts.CanonicalDomain) {
 		return ErrServiceAccess

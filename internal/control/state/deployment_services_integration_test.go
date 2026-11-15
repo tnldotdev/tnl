@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"errors"
+	"net/netip"
 	"reflect"
 	"strings"
 	"testing"
@@ -172,7 +173,7 @@ func TestIntegrationDeploymentServicesBelongToTeamAcrossPublisherReplacement(t *
 		if err != nil {
 			t.Fatal(err)
 		}
-		if row.TeamID != r.TeamID || row.NameScope != deployment.ID || !row.PublisherPool || row.Ephemeral || row.CertificateScope != namespace {
+		if row.TeamID != text(r.TeamID) || row.GuestID.Valid || row.NameScope != deployment.ID || !row.PublisherPool || row.Ephemeral || row.CertificateScope != namespace {
 			t.Fatal("saved service is not deployment/team owned")
 		}
 		configuration, err := d.serviceConfiguration(ctx, q, id)
@@ -219,7 +220,7 @@ func TestIntegrationDeploymentServicesBelongToTeamAcrossPublisherReplacement(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldRun := readyAppliedServiceRun(t, d, access, first.private, service, leases, now, 10*24*time.Hour)
+	oldRun := readyAppliedServiceRun(t, d, access, first.private, service, netip.MustParseAddr("127.0.0.1"), leases, now, 10*24*time.Hour)
 	storedRun, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: oldRun.RunID, ServiceID: apiID})
 	if err != nil || !storedRun.CertificateExpiresAt.Valid || !storedRun.CertificateExpiresAt.Time.After(now.Add(8*24*time.Hour)) {
 		t.Fatal("namespace retirement fixture certificate does not cover the observation time", err)

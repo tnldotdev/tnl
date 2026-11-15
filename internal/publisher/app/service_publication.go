@@ -9,12 +9,11 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 )
 
 func (w *Workers) runService(ctx context.Context, service Service, publication *ServicePublication, journal *publicationJournal, observe func(PublicationUpdate) error) error {
-	var entry *proofEntry
+	var entry *readinessEntry
 	var observations sync.Mutex
 	var stopReadiness func()
 	defer func() {
@@ -23,12 +22,12 @@ func (w *Workers) runService(ctx context.Context, service Service, publication *
 		}
 		w.mu.Lock()
 		defer w.mu.Unlock()
-		if w.proofs[service.RegistrationID] == entry {
-			delete(w.proofs, service.RegistrationID)
+		if w.checks[service.RegistrationID] == entry {
+			delete(w.checks, service.RegistrationID)
 		}
 	}()
 	record := SummaryObservation(journal.recorder)
-	return publication.Run(ctx, func(run uint64, routable bool) error {
+	return publication.Run(ctx, journal.tunnel, func(run uint64, routable bool) error {
 		// serialize the owning operation's callbacks so a late older run cannot
 		// change the local journal before the manager rejects its observation.
 		observations.Lock()
@@ -36,10 +35,10 @@ func (w *Workers) runService(ctx context.Context, service Service, publication *
 		if run == 0 || ctx.Err() != nil || !w.Manager.CurrentRegistration(service.Name, service.RegistrationID, service.Target) {
 			return ErrRegistrationStale
 		}
-		if entry != nil && run < entry.run.Number {
+		if entry != nil && run < entry.run {
 			return ErrRegistrationStale
 		}
-		newRun := entry == nil || run != entry.run.Number
+		newRun := entry == nil || run != entry.run
 		if stopReadiness != nil && (!routable || newRun) {
 			stopReadiness()
 		}
@@ -54,12 +53,12 @@ func (w *Workers) runService(ctx context.Context, service Service, publication *
 			return err
 		}
 		if newRun {
-			entry = &proofEntry{service: service, run: publisher.PublishRunIdentity{Number: run}, serviceCheck: publication.Check}
+			entry = &readinessEntry{target: service.Target, run: run, check: publication.Check}
 			w.mu.Lock()
-			if w.proofs == nil {
-				w.proofs = map[string]*proofEntry{}
+			if w.checks == nil {
+				w.checks = map[string]*readinessEntry{}
 			}
-			w.proofs[service.RegistrationID] = entry
+			w.checks[service.RegistrationID] = entry
 			w.mu.Unlock()
 			stopReadiness = nil
 		}

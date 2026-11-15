@@ -8,12 +8,10 @@ import (
 )
 
 // Identity contains authenticated stable scope, not request-supplied identifiers.
-// the public URL and service slots are mutually exclusive. a conflicting
-// or invalid identity is cleared rather than attributed to the previous tenant.
+// an invalid identity is cleared rather than attributed to the previous tenant.
 type Identity struct {
 	TeamID, DeploymentID, PublisherIdentityID, ReportedDeploymentID, ReplicaKey string
-	ServiceID, PublicURLID                                                      string
-	ServiceKind                                                                 ServiceKind
+	ServiceID                                                                   string
 }
 type identityKey struct{}
 
@@ -27,12 +25,6 @@ func IdentityFromContext(ctx context.Context) Identity {
 func ReplaceIdentity(ctx context.Context, id Identity) context.Context {
 	if !validIdentity(id) {
 		id = Identity{}
-	}
-	if id.ServiceID != "" {
-		id.ServiceKind = Service
-	}
-	if id.PublicURLID != "" {
-		id.ServiceKind = PublicURL
 	}
 	return context.WithValue(ctx, identityKey{}, id)
 }
@@ -64,16 +56,7 @@ func NarrowIdentity(ctx context.Context, id Identity) context.Context {
 }
 
 func validIdentity(id Identity) bool {
-	if id.ServiceID != "" && id.PublicURLID != "" {
-		return false
-	}
-	if id.ServiceKind != 0 && id.ServiceKind != Service && id.ServiceKind != PublicURL {
-		return false
-	}
-	if id.ServiceID != "" && id.ServiceKind == PublicURL || id.PublicURLID != "" && id.ServiceKind == Service {
-		return false
-	}
-	for _, v := range []string{id.TeamID, id.DeploymentID, id.PublisherIdentityID, id.ReportedDeploymentID, id.ReplicaKey, id.ServiceID, id.PublicURLID} {
+	for _, v := range []string{id.TeamID, id.DeploymentID, id.PublisherIdentityID, id.ReportedDeploymentID, id.ReplicaKey, id.ServiceID} {
 		if len(v) > 128 || strings.ContainsAny(v, "\r\n\x00") {
 			return false
 		}
@@ -87,13 +70,10 @@ func identityAttributes(ctx context.Context) []attribute.KeyValue {
 	for _, item := range []struct {
 		k metricStringKey
 		v string
-	}{{TeamID, id.TeamID}, {DeploymentID, id.DeploymentID}, {PublisherIdentityID, id.PublisherIdentityID}, {ReportedDeploymentID, id.ReportedDeploymentID}, {ReplicaKey, id.ReplicaKey}, {ServiceID, id.ServiceID}, {PublicURLID, id.PublicURLID}} {
+	}{{TeamID, id.TeamID}, {DeploymentID, id.DeploymentID}, {PublisherIdentityID, id.PublisherIdentityID}, {ReportedDeploymentID, id.ReportedDeploymentID}, {ReplicaKey, id.ReplicaKey}, {ServiceID, id.ServiceID}} {
 		if item.v != "" {
 			out = append(out, item.k.String(item.v))
 		}
-	}
-	if id.ServiceKind != 0 {
-		out = append(out, ServiceKindKey.Value(id.ServiceKind))
 	}
 	return out
 }

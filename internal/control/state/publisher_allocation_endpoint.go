@@ -19,13 +19,6 @@ func allocateServiceEndpoint(ctx context.Context, tx pgx.Tx, service, deployment
 		JOIN control.teams team ON team.id=service.team_id WHERE service.id=$1`, service).Scan(&pool); err != nil {
 		return err
 	}
-	var occupied bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.public_urls WHERE canonical_hostname=$1 AND lifecycle_state<>'deleted')`, hostname).Scan(&occupied); err != nil {
-		return err
-	}
-	if occupied {
-		return ErrServiceConflict
-	}
 	if _, err = tx.Exec(ctx, `UPDATE control.services SET domain_id=$2,certificate_hostname=$3,certificate_scope=$3,
 		service_port=443,ingress_pool_id=$4,public=true WHERE id=$1`, service, domain, hostname, pool); err != nil {
 		return err

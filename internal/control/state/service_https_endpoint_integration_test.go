@@ -96,7 +96,7 @@ func TestIntegrationServiceHTTPSRequiresIngressCapabilityForDNSAndVisitors(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := readyAppliedServiceRun(t, d, access, replica.private, service, relays, now)
+	run := readyAppliedServiceRun(t, d, access, replica.private, service, netip.MustParseAddr("127.0.0.1"), relays, now)
 	registration := IngressRegistration{
 		IngressID: "https-capability", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix),
 		ProtocolVersion: 1, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
@@ -166,7 +166,7 @@ func TestIntegrationServiceHTTPSRequiresIngressCapabilityForDNSAndVisitors(t *te
 	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.ValidateServiceEndpointDNSWork(ctx, work, now); !errors.Is(err, ErrDNSPublicURLWorkStale) {
+	if err := d.ValidateServiceEndpointDNSWork(ctx, work, now); !errors.Is(err, ErrServiceEndpointDNSWorkStale) {
 		t.Fatal("revoked exposure left a public DNS worker authorized", err)
 	}
 	if err := admit(withHTTPS); !errors.Is(err, ErrServiceAccess) {

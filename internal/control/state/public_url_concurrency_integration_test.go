@@ -24,7 +24,7 @@ func TestIntegrationRouteCreationDoesNotDeadlockSessionCreation(t *testing.T) {
 	request := CreatePublicURLRequest{
 		TeamID: "team_concurrent_creator", DomainID: "domain_concurrent_creator", ActingIdentityID: identity,
 		IdempotencyKey: "first", RequestDigest: sha256.Sum256([]byte("first")), CanonicalHostname: "first.concurrent-creator.example.test",
-		Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeShared, Purpose: PublicURLPurposeApp, DNSState: PublicURLDNSUnmanaged,
+		Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeShared, Purpose: PublicURLPurposeApp, DNSState: ServiceEndpointDNSUnmanaged,
 		PolicyRevision: 1,
 	}
 	first, err := database.CreatePublicURL(ctx, request, now)
@@ -36,7 +36,7 @@ func TestIntegrationRouteCreationDoesNotDeadlockSessionCreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if _, err := gate.Exec(ctx, `SELECT operation FROM control.maintenance_controls WHERE operation = 'publish_run_creation' FOR UPDATE`); err != nil {
+	if _, err := gate.Exec(ctx, `SELECT operation FROM control.maintenance_controls WHERE operation = 'service_run_creation' FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}
 	workers := newIntegrationWorkers(t, cancel)

@@ -45,14 +45,18 @@ type statusLocal struct {
 	Tunnels   clientstate.TunnelSnapshot `json:"tunnels"`
 }
 
-type statusServerURL struct {
-	PublicURLID string    `json:"public_url_id"`
-	Hostname    string    `json:"hostname"`
-	Lifecycle   string    `json:"lifecycle_state"`
-	OpenRunID   string    `json:"open_publish_run_id,omitempty"`
-	NextRun     int64     `json:"next_publish_run_number"`
-	RunState    string    `json:"publish_run_state"`
-	UpdatedAt   time.Time `json:"updated_at"`
+type statusServerService struct {
+	ServiceID            string                     `json:"service_id"`
+	Name                 string                     `json:"name"`
+	Enabled              bool                       `json:"enabled"`
+	Endpoint             *controlv1.ServiceEndpoint `json:"endpoint,omitempty"`
+	Protocol             controlv1.ServiceProtocol  `json:"protocol"`
+	CreatedAt            time.Time                  `json:"created_at"`
+	PublisherObservation string                     `json:"publisher_observation"`
+	// these optional inventory hints neither select a visitor run nor establish
+	// its current readiness or durable lifecycle state.
+	ServiceRunID *controlv1.ServiceRunID `json:"service_run_id,omitempty"`
+	RunNumber    *int64                  `json:"run_number,omitempty,string"`
 }
 
 type statusServer struct {
@@ -62,7 +66,7 @@ type statusServer struct {
 	CheckedAt     time.Time                              `json:"checked_at"`
 	ControlURL    string                                 `json:"control_url,omitempty"`
 	Reason        string                                 `json:"reason,omitempty"`
-	URLs          []statusServerURL                      `json:"public_urls"`
+	Services      []statusServerService                  `json:"services"`
 }
 
 type projectStatus struct {
@@ -213,11 +217,11 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 					}
 				}
 				if mixed {
-					projects[index].Server = &statusServer{CheckedAt: time.Now().UTC(), Reason: "multiple local servers; select one with --server", URLs: []statusServerURL{}}
+					projects[index].Server = &statusServer{CheckedAt: time.Now().UTC(), Reason: "multiple local servers; select one with --server", Services: []statusServerService{}}
 					continue
 				}
 			}
-			projects[index].Server = readStatusServer(ctx, state, selected, flags.AccessToken, projects[index].Project, localTunnels)
+			projects[index].Server = readStatusServer(ctx, state, selected, flags.AccessToken, projects[index].Project)
 			configuration := flags.Configuration
 			if flags.All {
 				configuration, _, _ = runtimeProject(ctx, runtimeOptions{Directory: projects[index].Project, StateDir: root})
@@ -266,9 +270,7 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 			}
 		}
 		if project.Server != nil && project.Server.Available {
-			for _, item := range project.Server.URLs {
-				blocks = append(blocks, clioutput.Section("server "+item.Lifecycle, clioutput.Fields(clioutput.Field{Label: "hostname", Value: item.Hostname}, clioutput.Field{Label: "public URL ID", Value: item.PublicURLID}, clioutput.Field{Label: "open publish run", Value: item.OpenRunID}, clioutput.Field{Label: "next publish run", Value: strconv.FormatInt(item.NextRun, 10)}, clioutput.Field{Label: "publish run state", Value: item.RunState}, clioutput.Field{Label: "server updated at", Value: item.UpdatedAt.Format(time.RFC3339Nano)})))
-			}
+			blocks = append(blocks, statusServiceBlocks(project.Server.Services)...)
 		}
 		if project.Server != nil && project.Server.Applied != nil {
 			blocks = append(blocks, appliedProjectBlocks(*project.Server.Applied)...)
@@ -326,29 +328,42 @@ func readAppliedStatus(ctx context.Context, state *clientstate.Database, server,
 	result.Available, result.Reason = true, ""
 }
 
-func readStatusServer(ctx context.Context, state *clientstate.Database, server, token, project string, tunnels clientstate.TunnelSnapshot) *statusServer {
-	result := &statusServer{CheckedAt: time.Now().UTC(), ControlURL: server, URLs: []statusServerURL{}}
-	ids := map[string]bool{}
-	known, err := state.KnownProjectPublicURLs(ctx, project, server)
+func readStatusServer(ctx context.Context, state *clientstate.Database, server, token, project string) *statusServer {
+	result := &statusServer{CheckedAt: time.Now().UTC(), ControlURL: server, Services: []statusServerService{}}
+	server, err := clientstate.CanonicalServer(server)
 	if err != nil {
-		result.Reason = "local public URL inventory unavailable"
+		result.Reason = "control URL unavailable"
+		return result
+	}
+	result.ControlURL = server
+	ids := map[string]bool{}
+	known, err := state.KnownProjectServices(ctx, project, server)
+	if err != nil {
+		result.Reason = "local service inventory unavailable"
+		return result
+	}
+	// aliases have no owning-project field. SnapshotProject applies the saved
+	// declaration/primary/selected-worktree scope; SelectedProject alone cannot.
+	tunnels, err := state.SnapshotProject(ctx, project)
+	if err != nil {
+		result.Reason = "local service journal unavailable"
 		return result
 	}
 	for _, id := range known {
 		ids[id] = true
 	}
 	for _, tunnel := range tunnels.Tunnels {
-		if tunnel.Server == server && tunnel.PublicURLID != "" {
-			ids[tunnel.PublicURLID] = true
+		if tunnel.Project == project && tunnel.Server == server && tunnel.ServiceID != "" {
+			ids[tunnel.ServiceID] = true
 		}
 	}
 	for _, alias := range tunnels.Aliases {
-		if alias.Server == server && alias.PublicURLID != "" {
-			ids[alias.PublicURLID] = true
+		if alias.Server == server && alias.ServiceID != "" {
+			ids[alias.ServiceID] = true
 		}
 	}
 	if len(ids) == 0 {
-		result.Reason = "no local public URL IDs for this project; use tnl url inventory to inspect saved server URLs"
+		result.Reason = "no local service IDs for this project"
 		return result
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -363,37 +378,84 @@ func readStatusServer(ctx context.Context, state *clientstate.Database, server, 
 		result.Reason = "identity inventory unavailable"
 		return result
 	}
+	teams := map[string]bool{}
 	for _, membership := range identity.Memberships {
 		if len(ids) == 0 {
 			break
 		}
-		urls, err := auth.Control.ListPublicURLs(ctx, membership.TeamId)
+		if teams[membership.TeamId] {
+			continue
+		}
+		teams[membership.TeamId] = true
+		services, err := auth.Control.ListServices(ctx, membership.TeamId)
 		if err != nil {
-			result.Reason = "public URL inventory unavailable"
-			result.URLs = []statusServerURL{}
+			result.Reason = "service inventory unavailable"
+			result.Services = []statusServerService{}
 			return result
 		}
-		result.URLs = append(result.URLs, statusURLsForProject(urls, ids)...)
+		result.Services = append(result.Services, statusServicesForProject(services, ids)...)
 	}
 	result.Available = true
 	return result
 }
 
-func statusURLsForProject(urls []controlv1.PublicURL, ids map[string]bool) []statusServerURL {
-	result := []statusServerURL{}
-	for _, url := range urls {
-		if !ids[url.Id] {
+func statusServicesForProject(services []controlv1.ServiceSummary, ids map[string]bool) []statusServerService {
+	result := []statusServerService{}
+	for _, service := range services {
+		if !ids[service.Id] {
 			continue
 		}
-		delete(ids, url.Id)
-		item := statusServerURL{PublicURLID: url.Id, Hostname: url.CanonicalHostname, Lifecycle: string(url.LifecycleState), NextRun: url.NextPublishRunNumber, UpdatedAt: url.UpdatedAt, RunState: "no open publish run"}
-		if url.OpenPublishRunId != nil {
-			item.OpenRunID = *url.OpenPublishRunId
-			item.RunState = "unavailable (control has no publish run status read)"
+		delete(ids, service.Id)
+		item := statusServerService{
+			ServiceID: service.Id, Name: service.Name, Enabled: service.Enabled,
+			Endpoint: service.Endpoint, Protocol: service.Protocol, CreatedAt: service.CreatedAt,
+			ServiceRunID: service.ServiceRunId, RunNumber: service.RunNumber,
+			PublisherObservation: "no_ready_publisher_observed",
+		}
+		if service.ServiceRunId != nil || service.RunNumber != nil {
+			item.PublisherObservation = "ready_publisher_hint"
 		}
 		result = append(result, item)
 	}
 	return result
+}
+
+func statusServiceBlocks(services []statusServerService) []clioutput.Block {
+	blocks := make([]clioutput.Block, 0, len(services))
+	for _, service := range services {
+		state := "disabled"
+		if service.Enabled {
+			state = "enabled"
+		}
+		fields := []clioutput.Field{
+			{Label: "service", Value: service.Name},
+			{Label: "service ID", Value: service.ServiceID},
+			{Label: "protocol", Value: string(service.Protocol)},
+			{Label: "created at", Value: service.CreatedAt.Format(time.RFC3339Nano)},
+		}
+		if service.Endpoint != nil {
+			fields = append(fields,
+				clioutput.Field{Label: "hostname", Value: service.Endpoint.Hostname},
+				clioutput.Field{Label: "public", Value: strconv.FormatBool(service.Endpoint.Public)},
+				clioutput.Field{Label: "endpoint port", Value: strconv.Itoa(service.Endpoint.Port)},
+			)
+		} else {
+			fields = append(fields, clioutput.Field{Label: "endpoint", Value: "not reported"})
+		}
+		observation := "no ready publisher observed"
+		if service.PublisherObservation == "ready_publisher_hint" {
+			observation = "ready publisher hint; not a selected visitor run"
+		}
+		fields = append(fields, clioutput.Field{Label: "publisher", Value: observation})
+		if service.ServiceRunID != nil {
+			fields = append(fields, clioutput.Field{Label: "service run ID hint", Value: *service.ServiceRunID})
+		}
+		if service.RunNumber != nil {
+			fields = append(fields, clioutput.Field{Label: "run number hint", Value: strconv.FormatInt(*service.RunNumber, 10)})
+		}
+		blocks = append(blocks, clioutput.Section("server "+state, clioutput.Fields(fields...)))
+	}
+	return blocks
 }
 
 func currentProjectRoot(ctx context.Context) (string, error) {

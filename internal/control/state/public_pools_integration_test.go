@@ -65,17 +65,8 @@ func TestIntegrationPublicURLPublisherPoolsIndependentDNSCertificates(t *testing
 	if err != nil || len(snapshot.Entries) != 2 {
 		t.Fatalf("two ready certificate holders: %+v %v", snapshot, err)
 	}
-	controlSession := browserTestControlSession(t, d, base.ActingIdentityID, now)
-	handoff, err := d.IssueBrowserHandoff(t.Context(), BrowserLoginAttempt{PublicURLID: base.PublicURLID, PublishRunID: runs[0].setup.PublishRunID, ReturnPath: "/"}, BrowserAccessSession{
-		IdentityID: base.ActingIdentityID, DisplayName: "pool visitor", AccessToken: controlSession.AccessToken.String(), RefreshToken: controlSession.RefreshToken.String(),
-		AccessExpiresAt: controlSession.AccessExpiresAt, ExpiresAt: controlSession.RefreshExpiresAt}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cookie, _, _, _, _, err := d.RedeemBrowserHandoff(t.Context(), runs[1].authentication(), handoff.Token, now)
-	if err != nil {
-		t.Fatalf("pool sibling could not redeem host-bound browser handoff: %v", err)
-	}
+	// browser replica assertions live in the service-backed test below. this
+	// retained suite still proves the legacy pool's DNS/certificate boundaries.
 	var issuances []string
 	for _, run := range runs {
 		var issuance string
@@ -89,9 +80,6 @@ func TestIntegrationPublicURLPublisherPoolsIndependentDNSCertificates(t *testing
 	}
 	if err = d.ClosePublishRun(t.Context(), runs[0].setup.PublishRunID, runs[0].setup.PublishRunToken, now); err != nil {
 		t.Fatal(err)
-	}
-	if permission, err := preparedPublicURLPermission(t.Context(), d, runs[1].authentication(), preparedVisitorInput{SourceIP: "192.0.2.9", BrowserCookieSecret: cookie}, now); err != nil || !permission.VisitAllowed {
-		t.Fatalf("closed pool sibling invalidated browser access: %+v %v", permission, err)
 	}
 	snapshot, err = d.ReadIngressRoutingTableSnapshot(t.Context(), ingress.IngressLeaseIdentity, now)
 	if err != nil || len(snapshot.Entries) != 1 {
@@ -112,5 +100,36 @@ func TestIntegrationPublicURLPublisherPoolsIndependentDNSCertificates(t *testing
 	row, err := controlstatedb.New(d.pool).GetPublishRun(t.Context(), runs[1].setup.PublishRunID)
 	if err != nil || !row.ClosedAt.Valid {
 		t.Fatalf("revoked publisher runtime is open: %+v %v", row, err)
+	}
+}
+
+func TestIntegrationServicePoolBrowserHandoffSurvivesSiblingClosure(t *testing.T) {
+	f := newServiceHTTPFixture(t)
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.services SET publisher_pool=true WHERE id=$1`, f.service.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.service.PublisherPool = true
+	f.run = f.publish(t, f.service)
+	sibling := f
+	sibling.run = f.publish(t, f.service)
+	handoff, _ := f.browser(t, "", f.project.ActorID)
+	cookie, err := f.database.RedeemServiceBrowserHandoff(t.Context(), sibling.auth(), handoff.Token, f.now)
+	if err != nil {
+		t.Fatalf("pool sibling could not redeem host-bound browser handoff: %v", err)
+	}
+	var first, second string
+	if err := f.database.pool.QueryRow(t.Context(), `SELECT a.certificate_issuance_id,b.certificate_issuance_id
+		FROM control.service_runs a CROSS JOIN control.service_runs b WHERE a.id=$1 AND b.id=$2`,
+		f.run.RunID, sibling.run.RunID).Scan(&first, &second); err != nil || first == second {
+		t.Fatal("service pool publishers shared a certificate issuance", err)
+	}
+	if err := f.database.CloseServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now); err != nil {
+		t.Fatal(err)
+	}
+	if permission, err := f.database.ServiceBrowserSession(t.Context(), sibling.auth(), cookie.CookieSecret, false, f.now); err != nil || !permission.VisitAllowed {
+		t.Fatalf("closed pool sibling invalidated browser access: %+v %v", permission, err)
+	}
+	if _, err := f.database.IssueVisitorToken(t.Context(), testVisitorIssuer, sibling.auth().Subject, BrowserSessionTokenSource{Secret: cookie.CookieSecret}, f.now); err != nil {
+		t.Fatal("closed pool sibling invalidated captured browser permission", err)
 	}
 }

@@ -4,8 +4,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"net/http"
-	"net/netip"
 	"slices"
 	"strings"
 	"time"
@@ -25,7 +25,7 @@ func (h *handler) CreateServiceShare(response http.ResponseWriter, request *http
 func (h *handler) createShare(response http.ResponseWriter, request *http.Request, previewID string) {
 	response.Header().Set("Cache-Control", "no-store")
 	var body controlv1.CreateShareRequest
-	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil || body.ExpiresAt.IsZero() ||
+	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil || body.ExpiresAt.IsZero() || body.EntryServiceId == "" ||
 		len(body.ServiceIds) == 0 || len(body.ServiceIds) > 32 || previewID == "" && len(body.ServiceIds) != 1 ||
 		!slices.Contains(body.ServiceIds, body.EntryServiceId) || body.Label != nil && len(*body.Label) > 128 {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid share request")
@@ -40,9 +40,21 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "shares are unavailable")
 		return
 	}
-	principal, ok := h.authorizeReads(response, request)
-	if !ok {
+	credential, guest, proceed := h.guestServiceCredential(response, request)
+	if !proceed {
 		return
+	}
+	if guest && previewID != "" {
+		writeProblem(response, http.StatusForbidden, controlv1.GuestDemoOnly, "guest access can only share its exact demo service")
+		return
+	}
+	var principal publicURLReadPrincipal
+	var ok bool
+	if !guest {
+		principal, ok = h.authorizeReads(response, request)
+		if !ok {
+			return
+		}
 	}
 	var secret [32]byte
 	if _, err := rand.Read(secret[:]); err != nil {
@@ -55,12 +67,8 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 	if body.Label != nil {
 		label = *body.Label
 	}
-	if previewID == "" && principal.guest != nil {
-		if h.guests == nil {
-			writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "guest demos are unavailable")
-			return
-		}
-		h.createGuestShare(response, request, *principal.guest, body.ServiceIds[0], key, label, secretFingerprint, encodedSecret, body.ExpiresAt)
+	if guest {
+		h.createGuestShare(response, request, credential, body.ServiceIds[0], key, label, secretFingerprint, encodedSecret, body.ExpiresAt)
 		return
 	}
 	var preview controlstate.Preview
@@ -85,30 +93,20 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 		ServiceIDs: ids, EntryServiceID: body.EntryServiceId,
 	}, time.Now())
 	if err != nil {
+		if errors.Is(err, controlstate.ErrServiceAccess) {
+			writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "share permission denied")
+			return
+		}
 		writeControlStateProblem(request.Context(), response, "create share", err)
 		return
 	}
 	writeJSON(response, http.StatusCreated, shareCreationResponse(share, share.EntryHostname, encodedSecret))
 }
 
-func (h *handler) createGuestShare(response http.ResponseWriter, request *http.Request, guest controlstate.GuestTrial, serviceID, key, label string, fingerprint [32]byte, secret string, expiresAt time.Time) {
-	address, err := guestRequestAddress(request)
+func (h *handler) createGuestShare(response http.ResponseWriter, request *http.Request, credential controlstate.GuestCredential, serviceID, key, label string, fingerprint [32]byte, secret string, expiresAt time.Time) {
+	share, err := h.shares.CreateGuestShare(request.Context(), credential, serviceID, key, label, fingerprint, expiresAt, time.Now())
 	if err != nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid client address")
-		return
-	}
-	matched, err := h.guests.GuestSourceMatches(guest, netip.PrefixFrom(address, address.BitLen()).String())
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "check guest IP", err)
-		return
-	}
-	if !matched {
-		writeProblem(response, http.StatusForbidden, controlv1.GuestIpChanged, "guest trial IP changed")
-		return
-	}
-	share, err := h.shares.CreateGuestShare(request.Context(), guest.ID, serviceID, key, label, fingerprint, expiresAt, time.Now())
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "create guest share", err)
+		guestProblem(request.Context(), response, "create guest share", err)
 		return
 	}
 	response.Header().Set("Cache-Control", "no-store")
@@ -227,7 +225,7 @@ func (h *handler) readShare(response http.ResponseWriter, request *http.Request,
 func shareResponse(share controlstate.Share) controlv1.Share {
 	result := controlv1.Share{
 		SchemaVersion: controlv1.ReviewSchemaVersion(share.SchemaVersion),
-		Id:            share.ID, TeamId: share.TeamID, Scope: controlv1.ShareScope(share.Scope), Label: share.Label,
+		Id:            share.ID, TeamId: share.TeamID, GuestId: share.GuestID, Scope: controlv1.ShareScope(share.Scope), Label: share.Label,
 		ServiceIds: share.ServiceIDs, EntryServiceId: share.EntryServiceID, CreatedByIdentityId: share.CreatedByIdentityID,
 		CreatedAt: share.CreatedAt, ExpiresAt: share.ExpiresAt, RevokedAt: share.RevokedAt,
 	}

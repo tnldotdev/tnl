@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -69,9 +68,6 @@ var _ interface {
 	HeartbeatServiceRun(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error)
 } = (*runtimeNativeControl)(nil)
 
-func (*runtimeNativeControl) HeartbeatPublishRun(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
-	return controlv1.PublishRunHeartbeat{}, nil
-}
 func (*runtimeNativeControl) HeartbeatServiceRun(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
 	return controlv1.ServiceRunState{}, nil
 }
@@ -297,17 +293,15 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 		t.Fatal("deployment publisher stop", s)
 	}
 
-	// a public URL's installed identity uses the same signed lifecycle. the
+	// an HTTP service's installed identity uses the same signed lifecycle. the
 	// existing native heartbeat performs renewal, not token exchange/preflight.
-	domains, err := d.ListTeamDomains(ctx, session.Identity.Identity.ID, m.TeamID)
+	httpService, err := owner.CreateService(ctx, m.TeamID, "installed-http", "runtime-http",
+		controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP},
+		&controlv1.ProjectServiceConfiguration{Target: "app"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	u, err := d.CreatePublicURL(ctx, controlstate.CreatePublicURLRequest{TeamID: m.TeamID, DomainID: domains[0].ID, MembershipID: m.ID, ActingIdentityID: session.Identity.Identity.ID, IdempotencyKey: "runtime-url", RequestDigest: sha256.Sum256([]byte("runtime-url")), CanonicalHostname: "egress." + m.ManagedLabel + ".example.test", Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp, DNSState: controlstate.PublicURLDNSUnmanaged}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pe, err := owner.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: m.TeamID, Name: "installed", Kind: "installed", PublicUrlId: &u.ID})
+	pe, err := owner.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: m.TeamID, Name: "installed", Kind: "installed", ServiceId: &httpService.Id})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +314,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtimeControl := &runtimeNativeControl{client}
-	native, err := publisheridentity.NewNative(publisheridentity.NativeControl{PublicURLControl: runtimeControl, Runtime: runtimeControl}, authority, identity, priv)
+	native, err := publisheridentity.NewNative(publisheridentity.NativeControl{Services: runtimeControl, Runtime: runtimeControl}, authority, identity, priv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +333,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	}
 	native.WithRuntime(installed)
 	transport.set(proxy, "10.0.0.2:1234", "::ffff:8.8.4.4")
-	if _, err = native.HeartbeatPublishRun(ctx, "run", 1, credentials.PublishRunToken("test")); err != nil {
+	if _, err = native.HeartbeatServiceRun(ctx, httpService.Id, "run", credentials.ServiceRunToken("test"), controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 64}); err != nil {
 		t.Fatal(err)
 	}
 	if s := read(identity.ClientId); s.Address == nil || *s.Address != "8.8.4.4" || s.AddressFamily != "ipv4" {
@@ -360,7 +354,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if _, err = replacement.Renew(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = native.HeartbeatPublishRun(ctx, "old-run", 1, credentials.PublishRunToken("test")); !errors.Is(err, clientcontrol.ErrStatusConflict) {
+	if _, err = native.HeartbeatServiceRun(ctx, httpService.Id, "old-run", credentials.ServiceRunToken("test"), controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 64}); !errors.Is(err, clientcontrol.ErrStatusConflict) {
 		t.Fatal("old installed heartbeat escaped fence", err)
 	}
 	if err = installed.Stop(ctx); !errors.Is(err, clientcontrol.ErrStatusConflict) {
@@ -389,7 +383,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtimeControl = &runtimeNativeControl{client}
-	native, err = publisheridentity.NewNative(publisheridentity.NativeControl{PublicURLControl: runtimeControl, Services: runtimeControl, Runtime: runtimeControl}, authority, identity, priv)
+	native, err = publisheridentity.NewNative(publisheridentity.NativeControl{Services: runtimeControl, Runtime: runtimeControl}, authority, identity, priv)
 	if err != nil {
 		t.Fatal(err)
 	}

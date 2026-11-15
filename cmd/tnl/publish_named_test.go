@@ -89,7 +89,7 @@ func TestNamedServerOverrideRequiresAnExplicitReplacementTeam(t *testing.T) {
 func TestNamedPublishRejectsUnsupportedPolicyBeforeOwnerState(t *testing.T) {
 	root := t.TempDir()
 	project := projectConfiguration{Project: clientproject.Project{Root: root, Config: config.TNL{Services: config.Services{
-		"web": {Tunnel: &config.Tunnel{}},
+		"web": {Public: new(true)},
 	}}}}
 	flags := publishCommand{Target: "web", Output: publishOutputHuman, tunnelFlags: tunnelFlags{Anonymous: true}, remoteFlags: remoteFlags{StateDir: filepath.Join(root, "state")}}
 	if err := project.applyPublish(&flags); err != nil {

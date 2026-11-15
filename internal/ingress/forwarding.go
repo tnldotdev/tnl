@@ -6,45 +6,34 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/netip"
 	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
-	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 const relaySessionSetupTimeout = 10 * time.Second
 
-type VisitorSourceSigner func(ingressv1.IngressRoutingTableEntry, string, netip.AddrPort, netip.AddrPort) (string, error)
-
 type ForwarderConfig struct {
-	BindPublicConnection func(ingressv1.IngressRoutingTableEntry, func()) (func(), error)
-	SignVisitorSource    VisitorSourceSigner
-	Context              context.Context
-	TLSConfig            *tls.Config
-	ClusterSecret        string
-	TransportConfig      muxsession.TLSYamuxConfig
-	Observer             OperationObserver
-	OnSessionClosed      func(relayServiceID, relayID, origin string, cause error)
-	PromoteVisitor       func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult
+	Context         context.Context
+	TLSConfig       *tls.Config
+	ClusterSecret   string
+	TransportConfig muxsession.TLSYamuxConfig
+	Observer        OperationObserver
+	OnSessionClosed func(relayServiceID, relayID, origin string, cause error)
 }
 
 // Forwarder pools authenticated sessions to exact relay processes and waits for
 // each internal-forwarding stream's acceptance before sending visitor bytes.
 type Forwarder struct {
-	bindPublicConnection func(ingressv1.IngressRoutingTableEntry, func()) (func(), error)
-	signVisitorSource    VisitorSourceSigner
-	connector            relayConnector
-	observer             OperationObserver
-	context              context.Context
-	cancel               context.CancelFunc
-	onSessionClosed      func(relayServiceID, relayID, origin string, cause error)
+	connector       relayConnector
+	observer        OperationObserver
+	context         context.Context
+	cancel          context.CancelFunc
+	onSessionClosed func(relayServiceID, relayID, origin string, cause error)
 
 	mu        sync.Mutex
 	sessions  map[relaySessionKey]*relaySession
@@ -52,23 +41,16 @@ type Forwarder struct {
 	closeDone chan struct{}
 	closeErr  error
 	workers   sync.WaitGroup
-	promote   func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult
 }
 
 func NewForwarder(config ForwarderConfig) (*Forwarder, error) {
-	if config.SignVisitorSource == nil {
-		return nil, visitortoken.ErrVisitorSource
-	}
 	connector, err := newTLSRelayConnector(config.TLSConfig, config.ClusterSecret, config.TransportConfig)
 	if err != nil {
 		return nil, err
 	}
 	f := newForwarderContext(config.Context, connector)
-	f.signVisitorSource = config.SignVisitorSource
-	f.bindPublicConnection = config.BindPublicConnection
 	f.observer = config.Observer
 	f.onSessionClosed = config.OnSessionClosed
-	f.promote = config.PromoteVisitor
 	return f, nil
 }
 
@@ -82,130 +64,6 @@ func newForwarderContext(owner context.Context, connector relayConnector) *Forwa
 	}
 	ctx, cancel := context.WithCancel(owner)
 	return &Forwarder{connector: connector, context: ctx, cancel: cancel, sessions: make(map[relaySessionKey]*relaySession)}
-}
-
-// Backends preserves control's publisher-connection order. every returned
-// backend is bound to the publish run number, assignment, and concrete relay lease
-// represented by entry.
-func (f *Forwarder) Backends(entry ingressv1.IngressRoutingTableEntry) ([]Backend, error) {
-	if f == nil || f.connector == nil {
-		return nil, errors.New("ingress: forwarding connector is required")
-	}
-	if entry.PublishRunNumber <= 0 {
-		return nil, errors.New("ingress: forwarding publish run number is invalid")
-	}
-	backends := make([]Backend, 0, len(entry.PublisherConnections))
-	for _, connection := range entry.PublisherConnections {
-		if connection.ConnectionSlot < 0 || connection.ConnectionSlot > 1 ||
-			connection.ConnectionAssignmentRevision <= 0 || connection.RelayLeaseRevision <= 0 ||
-			connection.InternalRelayAddress == "" || connection.TlsServerName == "" {
-			return nil, errors.New("ingress: forwarding publisher connection is invalid")
-		}
-		target := relayTarget{
-			address: connection.InternalRelayAddress, serverName: connection.TlsServerName,
-			relayServiceID: connection.RelayServiceId, relayID: connection.RelayId,
-			relayRunID: connection.RelayRunId, relayLeaseRevision: uint64(connection.RelayLeaseRevision),
-		}
-		header := tunnelv1.InternalForwardingHeader{
-			ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.InternalForwardingStream,
-			VisitorConnectionID: "visitor", PublicURLID: entry.PublicUrlId, PublishRunID: entry.PublishRunId,
-			PublishRunNumber: uint64(entry.PublishRunNumber), PublisherConnectionID: connection.PublisherConnectionId,
-			ConnectionSlot:               uint8(connection.ConnectionSlot),
-			ConnectionAssignmentRevision: uint64(connection.ConnectionAssignmentRevision),
-			RelayServiceID:               connection.RelayServiceId, RelayID: connection.RelayId,
-			RelayRunID: connection.RelayRunId, RelayLeaseRevision: uint64(connection.RelayLeaseRevision),
-			PublicUrlExpiresAt: entry.PublicUrlExpiresAt, LeaseExpiresAt: connection.LeaseExpiresAt,
-		}
-		if err := header.Validate(); err != nil {
-			return nil, fmt.Errorf("ingress: forwarding publisher connection is invalid: %w", err)
-		}
-		header.VisitorConnectionID = ""
-		backends = append(backends, forwardingBackend{forwarder: f, target: target, header: header})
-	}
-	return backends, nil
-}
-
-// PublicURL converts one validated routing-table projection into an immutable
-// public URL view used by Server for a visitor connection.
-func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicURL, error) {
-	all, err := f.Backends(entry)
-	if err != nil {
-		return PublicURL{}, err
-	}
-	backends := make([]Backend, 0, len(all))
-	assignments := make([]tunnelv1.AdmissionHeader, 0, len(all))
-	for index, backend := range all {
-		assignments = append(assignments, backend.(forwardingBackend).header.Admission())
-		connection := entry.PublisherConnections[index]
-		if connection.AvailableStreams == nil || *connection.AvailableStreams > 0 {
-			backends = append(backends, backend)
-		}
-	}
-	var hashed *ippolicy.Policy
-	if entry.IpPolicy == ingressv1.HashedAllowlist {
-		if entry.IpPolicyKey == nil || len(*entry.IpPolicyKey) != 32 || len(entry.AllowedIpHashes) == 0 {
-			return PublicURL{}, errors.New("ingress: routing-table hashed IP policy is incomplete")
-		}
-		var key [32]byte
-		copy(key[:], *entry.IpPolicyKey)
-		entries := make([]ippolicy.Entry, 0, len(entry.AllowedIpHashes))
-		for _, item := range entry.AllowedIpHashes {
-			entries = append(entries, ippolicy.Entry{
-				Family: string(item.Family), Bits: item.PrefixLength, Digest: item.Digest,
-			})
-		}
-		policy, err := ippolicy.New(key, entries)
-		if err != nil {
-			return PublicURL{}, fmt.Errorf("ingress: routing-table hashed IP policy: %w", err)
-		}
-		hashed = &policy
-	} else if entry.IpPolicy != ingressv1.AllowAll || len(entry.AllowedIpHashes) != 0 || entry.IpPolicyKey != nil {
-		return PublicURL{}, errors.New("ingress: routing-table IP policy is inconsistent")
-	}
-	route := PublicURL{
-		AttestSource: func(visitorID string, source, destination netip.AddrPort) (string, error) {
-			if f.signVisitorSource == nil {
-				return "", visitortoken.ErrVisitorSource
-			}
-			return f.signVisitorSource(entry, visitorID, source, destination)
-		},
-		ID: entry.PublicUrlId, PublishRunNumber: uint64(entry.PublishRunNumber),
-		PublishRunID:   entry.PublishRunId,
-		HashedIPPolicy: hashed, AllowAll: entry.IpPolicy == ingressv1.AllowAll, Backends: backends,
-		assignments: assignments,
-	}
-	if f.bindPublicConnection != nil {
-		route.BindConnection = func(stop func()) (func(), error) { return f.bindPublicConnection(entry, stop) }
-	}
-	if entry.ServiceProtocol != nil {
-		route.ServiceProtocol = string(*entry.ServiceProtocol)
-	} else {
-		route.ServiceProtocol = "http"
-	}
-	route.AccessMode = string(entry.AccessMode)
-	if entry.Traffic != nil {
-		limits, err := routingTraffic(*entry.Traffic)
-		if err != nil {
-			return PublicURL{}, err
-		}
-		route.Traffic = &limits
-	}
-	if entry.RecoveryEpisodeId != nil && *entry.RecoveryEpisodeId > 0 {
-		route.RecoveryEpisodeID = uint64(*entry.RecoveryEpisodeId)
-	}
-	return route, nil
-}
-
-func (f *Forwarder) PublicURLs(entries []ingressv1.IngressRoutingTableEntry) ([]PublicURL, error) {
-	result := make([]PublicURL, 0, len(entries))
-	for _, entry := range entries {
-		route, err := f.PublicURL(entry)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, route)
-	}
-	return result, nil
 }
 
 // Close stops new forwarding work and closes every pooled relay session.
@@ -238,92 +96,6 @@ func (f *Forwarder) Close() error {
 	close(done)
 	f.mu.Unlock()
 	return result
-}
-
-type forwardingBackend struct {
-	forwarder *Forwarder
-	target    relayTarget
-	header    tunnelv1.InternalForwardingHeader
-}
-
-func (b forwardingBackend) Start(ctx context.Context, visitorConnectionID string, denied bool, proxy, initial []byte) (result net.Conn, retErr error) {
-	ctx, finish := observability.Start(ctx, "ingress.relay_attempt")
-	defer func() { finish(retErr) }()
-	header := b.header
-	header.VisitorConnectionID = visitorConnectionID
-	header.AccessPending = denied
-	if err := header.Validate(); err != nil {
-		return nil, fmt.Errorf("ingress: internal forwarding header: %w", err)
-	}
-	var overflow []byte
-	if len(proxy) <= tunnelv1.MaxInitialBytes && len(initial) > tunnelv1.MaxInitialBytes-len(proxy) {
-		boundary := tunnelv1.MaxInitialBytes - len(proxy)
-		initial, overflow = initial[:boundary], initial[boundary:]
-	}
-	for attempt := 0; ; attempt++ {
-		session, reused, err := b.forwarder.session(ctx, b.target)
-		if err != nil {
-			return nil, err
-		}
-		started := time.Now()
-		var events tunnel.ReturnEvents
-		if denied {
-			events.Promoted = func(h tunnelv1.AdmissionHeader) error {
-				if h != header.Admission() || !b.forwarder.currentSession(b.target.key(), session) {
-					return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
-				}
-				b.forwarder.mu.Lock()
-				handle := b.forwarder.promote
-				b.forwarder.mu.Unlock()
-				if handle == nil || b.forwarder.context.Err() != nil {
-					return &tunnel.ProtocolError{Code: tunnelv1.Unavailable}
-				}
-				result := handle(b.forwarder.context, h)
-				if result.Type != tunnelv1.StreamAccepted {
-					return &tunnel.ProtocolError{Code: result.Code}
-				}
-				return nil
-			}
-		}
-		// a previously accepted assignment does not prove this path still carries
-		// bytes. confirm each opening before crossing the visitor retry boundary.
-		header.ConfirmBeforeBytes = true
-		stream, err := session.OpenInternalForwardingStream(ctx, header, proxy, initial, events)
-		if err == nil {
-			if len(overflow) != 0 {
-				n, writeErr := writeSetup(ctx, stream, nil, overflow)
-				if writeErr != nil {
-					written := int64(len(initial)) + n
-					err = &tunnel.OpeningError{Committed: written > 0, VisitorBytes: written, Err: errors.Join(writeErr, stream.Close())}
-				}
-			}
-		}
-		b.forwarder.observe(ctx, observability.OpIngressForwardingAck, err, started)
-		if err == nil {
-			return stream, nil
-		}
-		var protocolError *tunnel.ProtocolError
-		var opening *tunnel.OpeningError
-		if errors.As(err, &protocolError) || errors.As(err, &opening) && opening.Committed || ctx.Err() != nil && session.Err() == nil {
-			return nil, err
-		}
-		// a failed stream does not invalidate a still-usable pooled session.
-		// closing it would also drop unrelated visitor streams; ingress can try
-		// another connected relay for this visitor before sending visitor bytes.
-		if session.Err() == nil && b.forwarder.currentSession(b.target.key(), session) {
-			return nil, fmt.Errorf("ingress: open internal forwarding stream: %w", err)
-		}
-		err = errors.Join(err, b.forwarder.invalidate(ctx, b.target.key(), session))
-		// another visitor may populate the pool before our retry. at most one
-		// retry is allowed, even if it reuses a session.
-		if !reused || attempt == 1 || ctx.Err() != nil {
-			return nil, fmt.Errorf("ingress: open internal forwarding stream: %w", err)
-		}
-	}
-}
-
-func (b forwardingBackend) ConnectionSlot() uint8 {
-	return b.header.ConnectionSlot
 }
 
 type relayTarget struct {
@@ -452,7 +224,7 @@ func (f *Forwarder) removeSupersededLocked(current relaySessionKey) ([]*relaySes
 	var keys []relaySessionKey
 	for key := range f.sessions {
 		if key != current && key.relayServiceID == current.relayServiceID && key.relayID == current.relayID {
-			// public URLs receive relay replacements independently. an older
+			// service runs receive relay replacements independently. an older
 			// projection must not evict a newer session or its live visitors,
 			// including while that replacement is still connecting.
 			if key.relayLeaseRevision >= current.relayLeaseRevision {

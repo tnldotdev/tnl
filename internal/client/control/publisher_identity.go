@@ -2,8 +2,6 @@ package control
 
 import (
 	"context"
-	"crypto/ed25519"
-	"encoding/base64"
 	"net/http"
 	"strings"
 
@@ -43,9 +41,6 @@ func (c *Client) RevokePublisherGrant(ctx context.Context, team, id, grant strin
 	})
 	return err
 }
-func (c *Client) PublisherPublicURL(ctx context.Context, token string) (controlv1.PublicURL, error) {
-	return request[controlv1.PublicURL](ctx, c, token, c.api.GetPublisherPublicURL)
-}
 func (c *Client) AllocatePublisherService(ctx context.Context, token string, b controlv1.AllocateServiceRequest) (controlv1.Service, error) {
 	return request[controlv1.Service](ctx, c, token, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.AllocatePublisherService(ctx, b, e...)
@@ -56,9 +51,4 @@ func (c *Client) DeletePublisherService(ctx context.Context, token, id string) e
 		return c.api.DeletePublisherService(ctx, id, e...)
 	})
 	return err
-}
-func (c *Client) EnrollGuestPublisher(ctx context.Context, id string, public ed25519.PublicKey) (controlv1.GuestPublisherIdentity, error) {
-	return requestWithAccess[controlv1.GuestPublisherIdentity](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.EnrollGuestPublisher(ctx, controlv1.EnrollGuestPublisherRequest{PublicUrlId: id, PublicKey: base64.RawURLEncoding.EncodeToString(public)}, e...)
-	})
 }

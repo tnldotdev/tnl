@@ -43,36 +43,31 @@ func waitForIngressRoutingCurrent(t *testing.T, database *sql.DB, expected int) 
 
 func waitForIngressRoutingCurrentWithin(t *testing.T, database *sql.DB, expected int, timeout time.Duration) {
 	t.Helper()
-	// wait for the state that preceded this barrier. ongoing publisher heartbeats
-	// must not move its goal past an ingress's otherwise sufficient acknowledgment.
-	var revision int64
-	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT current_revision FROM control.ingress_routing_table_clock`).Scan(&revision); err != nil {
-		t.Fatal(err)
-	}
+	// public admission checks the current lease and connected relays at control.
+	// there is no asynchronous routing projection to acknowledge.
 	waitForIntegrationCondition(t, timeout, func(ctx context.Context) (bool, error) {
-		var current, applied int
+		var current int
 		err := database.QueryRowContext(ctx, `
-			SELECT count(*), count(*) FILTER (WHERE leases.routing_table_revision >= $1)
-			FROM control.ingress_leases AS leases
-			WHERE NOT leases.draining AND leases.lease_expires_at > now()
-		`, revision).Scan(&current, &applied)
-		return err == nil && current == expected && applied == expected, err
+			SELECT count(*) FROM control.ingress_leases
+			WHERE NOT draining AND lease_expires_at > now()
+		`).Scan(&current)
+		return err == nil && current == expected, err
 	})
 }
 
-func waitForReadyPublisherConnections(t *testing.T, database *sql.DB, publicURLID string, publishRunNumber uint64, expected int) {
+func waitForReadyPublisherConnections(t *testing.T, database *sql.DB, serviceID string, runNumber int64, expected int) {
 	t.Helper()
 	waitForIntegrationCondition(t, 25*time.Second, func(ctx context.Context) (bool, error) {
 		var ready int
 		err := database.QueryRowContext(ctx, `
-			SELECT count(*) FROM control.publish_run_connection_slots AS connections
+			SELECT count(*) FROM control.publisher_service_connection_slots AS connections
 			JOIN control.relay_leases AS leases
 			  ON leases.relay_id = connections.connected_relay_id
 			 AND leases.relay_run_id = connections.connected_relay_run_id
 			 AND leases.relay_lease_revision = connections.connected_relay_lease_revision
-			WHERE connections.public_url_id = $1 AND connections.publish_run_number = $2
+			WHERE connections.service_id = $1 AND connections.run_number = $2
 			  AND connections.state = 'ready' AND NOT leases.draining AND leases.lease_expires_at > now()
-		`, publicURLID, publishRunNumber).Scan(&ready)
+		`, serviceID, runNumber).Scan(&ready)
 		return err == nil && ready == expected, err
 	})
 }
@@ -112,14 +107,14 @@ type splitConnectionState struct {
 	connectedRelayRunID   string
 }
 
-func readSplitConnectionState(t *testing.T, database *sql.DB, publicURLID string, publishRunNumber uint64, relayServiceID string) splitConnectionState {
+func readSplitConnectionState(t *testing.T, database *sql.DB, serviceID string, runNumber int64, relayServiceID string) splitConnectionState {
 	t.Helper()
 	var state splitConnectionState
 	if err := database.QueryRowContext(integrationOperationContext(t), `
 		SELECT publisher_connection_id, connection_assignment_revision, connected_relay_run_id
-		FROM control.publish_run_connection_slots
-		WHERE public_url_id = $1 AND publish_run_number = $2 AND relay_service_id = $3 AND state = 'ready'
-	`, publicURLID, publishRunNumber, relayServiceID).Scan(&state.publisherConnectionID, &state.assignmentRevision, &state.connectedRelayRunID); err != nil {
+		FROM control.publisher_service_connection_slots
+		WHERE service_id = $1 AND run_number = $2 AND relay_service_id = $3 AND state = 'ready'
+	`, serviceID, runNumber, relayServiceID).Scan(&state.publisherConnectionID, &state.assignmentRevision, &state.connectedRelayRunID); err != nil {
 		t.Fatal(err)
 	}
 	return state
@@ -168,13 +163,13 @@ func readSplitIngressLeaseResult(ctx context.Context, database *sql.DB, ingressI
 	return lease
 }
 
-func assertSplitRoutePlacement(t *testing.T, database *sql.DB, publicURLID string, publishRunNumber uint64) {
+func assertSplitRoutePlacement(t *testing.T, database *sql.DB, serviceID string, runNumber int64) {
 	t.Helper()
 	var connections, services, relays int
 	if err := database.QueryRowContext(integrationOperationContext(t), `
 		SELECT count(*), count(DISTINCT relay_service_id), count(DISTINCT connected_relay_id)
-		FROM control.publish_run_connection_slots WHERE public_url_id = $1 AND publish_run_number = $2 AND state = 'ready'
-	`, publicURLID, publishRunNumber).Scan(&connections, &services, &relays); err != nil {
+		FROM control.publisher_service_connection_slots WHERE service_id = $1 AND run_number = $2 AND state = 'ready'
+	`, serviceID, runNumber).Scan(&connections, &services, &relays); err != nil {
 		t.Fatal(err)
 	}
 	if connections != 2 || services != 2 || relays != 2 {
@@ -182,22 +177,22 @@ func assertSplitRoutePlacement(t *testing.T, database *sql.DB, publicURLID strin
 	}
 }
 
-func assertPublishRunNumber(t *testing.T, database *sql.DB, publicURLID string, publishRunNumber uint64) {
+func assertServiceRunNumber(t *testing.T, database *sql.DB, serviceID string, runNumber int64) {
 	t.Helper()
 	var current int64
-	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT publish_run_number
-		FROM control.publish_runs WHERE public_url_id = $1 AND closed_at IS NULL`, publicURLID).Scan(&current); err != nil {
+	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT run_number
+		FROM control.service_runs WHERE service_id = $1 AND closed_at IS NULL`, serviceID).Scan(&current); err != nil {
 		t.Fatal(err)
 	}
-	if uint64(current) != publishRunNumber {
-		t.Fatalf("publish run number = %d, want %d", current, publishRunNumber)
+	if current != runNumber {
+		t.Fatalf("service run number = %d, want %d", current, runNumber)
 	}
 }
 
-func integrationRouteOrderCount(t *testing.T, database *sql.DB, publicURLID string) int {
+func integrationServiceOrderCount(t *testing.T, database *sql.DB, serviceID string) int {
 	t.Helper()
 	var count int
-	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*) FROM control.acme_orders WHERE public_url_id = $1`, publicURLID).Scan(&count); err != nil {
+	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*) FROM control.acme_orders WHERE service_id = $1`, serviceID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	return count

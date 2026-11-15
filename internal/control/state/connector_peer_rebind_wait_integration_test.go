@@ -95,7 +95,7 @@ func TestIntegrationConnectorRebindOwnerRenewalIndependentOfMissingRelays(t *tes
 	f := newConnectorPairFixture(t)
 	pair := f.create(t)
 	for _, relay := range pair.Relays {
-		if _, err := f.d.DisconnectServicePublisherConnection(t.Context(), relay.PublisherConnectionID, pair.ServiceRunID, pair.RunNumber, relay.AssignmentRevision, relay.RelayLease, f.now); err != nil {
+		if _, err := f.d.DisconnectServicePublisherConnection(t.Context(), relay.PublisherConnectionID, pair.ServiceRunID, pair.RunNumber, relay.AssignmentRevision, relay.RelayLease, f.now, true); err != nil {
 			t.Fatal(err)
 		}
 	}

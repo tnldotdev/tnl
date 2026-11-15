@@ -14,7 +14,7 @@ import (
 type visitorAuthorityStore interface {
 	GetTeamFeedbackPolicy(context.Context, string, string) (controlstate.TeamFeedbackPolicy, error)
 	SetTeamFeedbackPolicy(context.Context, string, string, string, time.Time) (controlstate.TeamFeedbackPolicy, error)
-	IssueControlBrowserHandoff(context.Context, credentials.AccessToken, credentials.RefreshToken, string, time.Duration, time.Duration, time.Time) (controlstate.BrowserHandoff, string, error)
+	IssueControlBrowserHandoff(ctx context.Context, access credentials.AccessToken, refresh credentials.RefreshToken, serviceID string, accessLifetime, refreshLifetime time.Duration, now time.Time) (controlstate.BrowserHandoff, error)
 }
 
 func (h *handler) GetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request, teamID string) {
@@ -75,7 +75,7 @@ func (h *handler) IssueControlBrowserHandoff(w http.ResponseWriter, r *http.Requ
 		writeBearerProblem(w)
 		return
 	}
-	handoff, host, err := store.IssueControlBrowserHandoff(r.Context(), credentials.AccessToken(access), credentials.RefreshToken(body.RefreshToken), body.PublicUrlId, h.config.AccessTokenLifetime, h.config.RefreshTokenLifetime, time.Now())
+	handoff, err := store.IssueControlBrowserHandoff(r.Context(), credentials.AccessToken(access), credentials.RefreshToken(body.RefreshToken), body.ServiceId, h.config.AccessTokenLifetime, h.config.RefreshTokenLifetime, time.Now())
 	if err != nil {
 		switch {
 		case errors.Is(err, controlstate.ErrControlAuthentication):
@@ -89,5 +89,5 @@ func (h *handler) IssueControlBrowserHandoff(w http.ResponseWriter, r *http.Requ
 	}
 	writeJSON(w, 201, struct {
 		URL string `json:"url"`
-	}{URL: "https://" + host + "/__tnl/team/handoff/" + handoff.Token})
+	}{URL: handoff.Origin + "/__tnl/team/handoff/" + handoff.Token})
 }

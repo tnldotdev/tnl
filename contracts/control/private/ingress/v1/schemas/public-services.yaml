@@ -102,6 +102,11 @@ schemas:
       anonymous:
         type: boolean
         description: Current HTTP policy allows anonymous visitors, so ordinary traffic accounting starts before relay setup. This does not authorize application requests or bypass publisher checks.
+      recovery_episode_id:
+        type: integer
+        format: int64
+        minimum: 1
+        description: Open recovery episode for this exact service run. Report only after successfully writing a publisher byte to this visitor.
       connected_relays:
         type: array
         minItems: 1

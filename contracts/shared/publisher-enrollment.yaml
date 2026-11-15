@@ -1,0 +1,34 @@
+schemas:
+  PublisherEnrollmentResult:
+    type: object
+    additionalProperties: false
+    required: [client_id, key_id, grant_id, kind]
+    description: Enrolled publisher key and its exact grant. Exactly one of team_id or guest_id identifies its owner. A guest receives only an exact service grant, bounded by the trial's fixed expiry; enrollment grants no service management or connector permission.
+    properties:
+      client_id: { type: string }
+      key_id: { type: string }
+      grant_id: { type: string }
+      team_id: { type: string, minLength: 1, x-go-type-skip-optional-pointer: true }
+      guest_id:
+        $ref: "../control/public/v1/openapi.yaml#/components/schemas/GuestID"
+        x-go-type-skip-optional-pointer: true
+      kind: { type: string, enum: [namespace, service] }
+      service_id: { $ref: "../control/public/v1/openapi.yaml#/components/schemas/ServiceID" }
+      domain_id: { type: string }
+      namespace: { type: string }
+      expires_at: { type: string, format: date-time }
+    not:
+      anyOf:
+        - required: [team_id, guest_id]
+        - not:
+            anyOf:
+              - required: [team_id]
+              - required: [guest_id]
+        - required: [guest_id]
+          anyOf:
+            - not:
+                required: [service_id, expires_at]
+                properties:
+                  kind: { const: service }
+            - required: [domain_id]
+            - required: [namespace]

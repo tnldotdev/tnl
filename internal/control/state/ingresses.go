@@ -37,35 +37,24 @@ type IngressLeaseIdentity struct {
 	IngressLeaseRevision uint64
 }
 
-// IngressRenewal reports load and applied routing-table state.
+// IngressRenewal reports the current connection load for one process lease.
 type IngressRenewal struct {
 	IngressLeaseIdentity
-	ReportedConnections  uint64
-	RoutingTableRevision uint64
-	PreparedPublicRuns   []IngressPublicRunObservation
-}
-
-// IngressPublicRunObservation reports installed state, never a pending fetch.
-type IngressPublicRunObservation struct {
-	PublishRunID     string
-	PublishRunNumber int64
-	EntryRevision    int64
-	ValidUntil       time.Time
+	ReportedConnections uint64
 }
 
 // IngressLease is the control-issued lease for one ingress process.
 type IngressLease struct {
 	IngressLeaseIdentity
-	Region               region.ID
-	ProtocolVersion      uint64
-	ConnectionCapacity   uint64
-	ReportedConnections  uint64
-	RoutingTableRevision uint64
-	Draining             bool
-	DrainDeadline        *time.Time
-	RegisteredAt         time.Time
-	RenewedAt            time.Time
-	LeaseExpiresAt       time.Time
+	Region              region.ID
+	ProtocolVersion     uint64
+	ConnectionCapacity  uint64
+	ReportedConnections uint64
+	Draining            bool
+	DrainDeadline       *time.Time
+	RegisteredAt        time.Time
+	RenewedAt           time.Time
+	LeaseExpiresAt      time.Time
 }
 
 // RegisterIngress creates or renews one ingress process lease.
@@ -141,24 +130,12 @@ func (d *Database) RenewIngress(
 	if leaseDuration <= 0 {
 		return IngressLease{}, errors.New("controlstate: ingress lease duration must be positive")
 	}
-	if len(renewal.PreparedPublicRuns) > 1000 {
-		return IngressLease{}, errors.New("too many public run observations")
-	}
-	for _, observation := range renewal.PreparedPublicRuns {
-		if !validStateText(observation.PublishRunID) || observation.PublishRunNumber <= 0 || observation.EntryRevision <= 0 || observation.ValidUntil.IsZero() {
-			return IngressLease{}, errors.New("invalid public run observation")
-		}
-	}
 	if err := d.requireOpen(); err != nil {
 		return IngressLease{}, err
 	}
 	reportedConnections, ok := nonnegativeInt64(renewal.ReportedConnections)
 	if !ok {
 		return IngressLease{}, errors.New("controlstate: reported ingress connection count is too large")
-	}
-	routingTableRevision, ok := nonnegativeInt64(renewal.RoutingTableRevision)
-	if !ok {
-		return IngressLease{}, errors.New("controlstate: ingress routing-table revision is too large")
 	}
 	leaseRevision, _ := positiveInt64(renewal.IngressLeaseRevision)
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
@@ -168,8 +145,8 @@ func (d *Database) RenewIngress(
 	defer rollback(ctx, tx, "renew ingress", &retErr)()
 	queries := controlstatedb.New(tx)
 	row, err := queries.RenewIngress(ctx, controlstatedb.RenewIngressParams{
-		ReportedConnections: reportedConnections, RoutingTableRevision: routingTableRevision,
-		RenewedAt: timestamptz(now), LeaseExpiresAt: timestamptz(now.Add(leaseDuration)),
+		ReportedConnections: reportedConnections,
+		RenewedAt:           timestamptz(now), LeaseExpiresAt: timestamptz(now.Add(leaseDuration)),
 		IngressID: renewal.IngressID, IngressRunID: renewal.IngressRunID,
 		IngressLeaseRevision: leaseRevision,
 	})
@@ -178,26 +155,6 @@ func (d *Database) RenewIngress(
 	}
 	if err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: renew ingress: %w", err)
-	}
-	if !row.Draining {
-		if err := queries.DeleteExpiredIngressPublicRunObservations(ctx, controlstatedb.DeleteExpiredIngressPublicRunObservationsParams{
-			IngressID: row.IngressID, Now: timestamptz(now),
-		}); err != nil {
-			return IngressLease{}, fmt.Errorf("remove expired public run observations: %w", err)
-		}
-		for _, observation := range renewal.PreparedPublicRuns {
-			// stale observations can arrive after closure or projection expiry.
-			// discard them without turning a healthy lease renewal into a failure.
-			if _, err := queries.ObserveIngressPublicRun(ctx, controlstatedb.ObserveIngressPublicRunParams{
-				IngressID: row.IngressID, IngressRunID: row.IngressRunID, IngressLeaseRevision: row.IngressLeaseRevision,
-				IngressPoolID: row.IngressPoolID, LeaseExpiresAt: row.LeaseExpiresAt,
-				RoutingTableRevision: routingTableRevision,
-				PublishRunID:         observation.PublishRunID, PublishRunNumber: observation.PublishRunNumber,
-				EntryRevision: observation.EntryRevision, ValidUntil: timestamptz(observation.ValidUntil), Now: timestamptz(now),
-			}); err != nil {
-				return IngressLease{}, fmt.Errorf("record installed public run: %w", err)
-			}
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: renew ingress: commit: %w", err)
@@ -329,7 +286,7 @@ func ingressLease(row controlstatedb.ControlIngressLease) (IngressLease, error) 
 		return IngressLease{}, region.ErrPreference
 	}
 	if row.IngressLeaseRevision <= 0 || row.ProtocolVersion <= 0 || row.ConnectionCapacity < 0 ||
-		row.ReportedConnections < 0 || row.RoutingTableRevision < 0 || !row.RegisteredAt.Valid ||
+		row.ReportedConnections < 0 || !row.RegisteredAt.Valid ||
 		!row.RenewedAt.Valid || !row.LeaseExpiresAt.Valid {
 		return IngressLease{}, errors.New("controlstate: invalid ingress lease row")
 	}
@@ -345,8 +302,8 @@ func ingressLease(row controlstatedb.ControlIngressLease) (IngressLease, error) 
 			IngressLeaseRevision: uint64(row.IngressLeaseRevision),
 		},
 		ProtocolVersion: uint64(row.ProtocolVersion), ConnectionCapacity: uint64(row.ConnectionCapacity),
-		ReportedConnections: uint64(row.ReportedConnections), RoutingTableRevision: uint64(row.RoutingTableRevision),
-		Draining: row.Draining, DrainDeadline: drainDeadline, RegisteredAt: row.RegisteredAt.Time,
+		ReportedConnections: uint64(row.ReportedConnections),
+		Draining:            row.Draining, DrainDeadline: drainDeadline, RegisteredAt: row.RegisteredAt.Time,
 		RenewedAt: row.RenewedAt.Time, LeaseExpiresAt: row.LeaseExpiresAt.Time,
 	}, nil
 }

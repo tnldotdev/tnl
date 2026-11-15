@@ -32,11 +32,8 @@ func RealizeLocalService(ctx context.Context, control *clientcontrol.Client, sel
 		if resolver == nil {
 			resolver = target.Resolver{}
 		}
-		resolved, err := target.ResolveTarget(ctx, project.Project, name, resolver)
-		if err != nil {
-			return "", err
-		}
-		return string(*resolved.Target), nil
+		address, _, err := resolver.ResolveTargetIdentity(ctx, project.Project, name)
+		return address, err
 	}, name)
 	if err != nil {
 		return controlv1.LocalProjectService{}, err

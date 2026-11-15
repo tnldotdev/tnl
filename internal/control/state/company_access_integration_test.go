@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -450,7 +451,7 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 		t.Fatal(err)
 	}
 	namespace, _ := naming.PublicURLNamespace(naming.NamespaceFacts{Domain: domains[0].CanonicalDomain, Managed: true, Mode: d.managedURLMode, TeamName: team.DisplayName, MemberSlug: member.MemberSlug, ManagedLabel: member.ManagedLabel})
-	public, err := d.CreatePublicURL(companyCtx, CreatePublicURLRequest{TeamID: team.ID, DomainID: domains[0].ID, MembershipID: member.ID, ActingIdentityID: person.Identity.ID, IdempotencyKey: "company-visitor", CanonicalHostname: "app." + namespace, Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeApp, DNSState: PublicURLDNSUnmanaged}, now)
+	public, err := d.CreatePublicURL(companyCtx, CreatePublicURLRequest{TeamID: team.ID, DomainID: domains[0].ID, MembershipID: member.ID, ActingIdentityID: person.Identity.ID, IdempotencyKey: "company-visitor", CanonicalHostname: "app." + namespace, Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeApp, DNSState: ServiceEndpointDNSUnmanaged}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -603,8 +604,8 @@ func TestIntegrationCompanyOffboardingClosesMemberPublicAndServiceRuns(t *testin
 		name := fmt.Sprintf("plan-relay-%d", i)
 		leases[name] = RelayLease{RelayLeaseIdentity: RelayLeaseIdentity{RelayServiceID: name, RelayID: name, RelayRunID: name + "-run", RelayLeaseRevision: 1}}
 	}
-	serviceRun := readyAppliedServiceRun(t, d, PublisherAccess{PublisherIdentity: memberPrivate}, memberPrivateKey, service, leases, now)
-	teamServiceRun := readyAppliedServiceRun(t, d, PublisherAccess{PublisherIdentity: teamPrivate}, teamPrivateKey, service, leases, now)
+	serviceRun := readyAppliedServiceRun(t, d, PublisherAccess{PublisherIdentity: memberPrivate}, memberPrivateKey, service, netip.MustParseAddr("127.0.0.1"), leases, now)
+	teamServiceRun := readyAppliedServiceRun(t, d, PublisherAccess{PublisherIdentity: teamPrivate}, teamPrivateKey, service, netip.MustParseAddr("127.0.0.1"), leases, now)
 	var beforeRefresh int64
 	if err = d.pool.QueryRow(t.Context(), `SELECT policy_revision FROM control.teams WHERE id=$1`, team).Scan(&beforeRefresh); err != nil {
 		t.Fatal(err)

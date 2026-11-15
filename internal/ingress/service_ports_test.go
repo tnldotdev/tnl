@@ -14,7 +14,7 @@ func TestIngressInventoryValidationAndOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
-	configuration := Config{MaxConnections: 8, Lookup: func(string) ([]PublicURL, LookupReason) { return nil, LookupNotFound }}
+	configuration, _, _, _ := publicServiceTestConfig(t)
 	public, err := New(listener, configuration)
 	if err != nil {
 		t.Fatal("public-only ingress requires no inventory", err)

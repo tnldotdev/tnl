@@ -6,13 +6,16 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 )
 
-func readControl(r io.Reader) error    { _, err := ReadControl(r); return err }
-func readVisitor(r io.Reader) error    { _, err := ReadVisitorStreamHeader(r); return err }
-func readForwarding(r io.Reader) error { _, err := ReadInternalForwardingHeader(r); return err }
+func readControl(r io.Reader) error { _, err := ReadControl(r); return err }
+func readServiceForwarding(r io.Reader) error {
+	_, err := ReadServiceForwardingHeader(r)
+	return err
+}
 func readConnectorPeerVisitor(r io.Reader) error {
 	_, err := ReadConnectorPeerVisitorEntry(r)
 	return err
@@ -39,8 +42,7 @@ var frameReaders = []struct {
 	{"control-accepted", MaxControlBytes, readControl},
 	{"connector-peer-visitor-entry", MaxHeaderBytes, readConnectorPeerVisitor},
 	{"connector-peer-connectivity", MaxConnectorPeerConnectivityBytes, readConnectorPeerConnectivity},
-	{"visitor-stream-header", MaxHeaderBytes, readVisitor},
-	{"internal-forwarding-header", MaxHeaderBytes, readForwarding},
+	{"service-forwarding-header", MaxServiceHeaderBytes, readServiceForwarding},
 }
 
 func frame(payload string) io.Reader {
@@ -142,19 +144,15 @@ func TestFrameWritersPropagateErrorsAndShortWrites(t *testing.T) {
 		{"control", func(w io.Writer) error {
 			return WriteControl(w, Message{Type: HelloAccepted, ProtocolVersion: Version})
 		}},
-		{"publisher", func(w io.Writer) error {
-			h, _ := ReadVisitorStreamHeader(bytes.NewReader(goldenWire(t, "visitor-stream-header")))
-			return WriteVisitorStreamHeader(w, h)
-		}},
 		{"connector-peer", func(w io.Writer) error {
 			return WriteConnectorPeerVisitorEntry(w, peerOpeningFixture())
 		}},
 		{"connector-peer-connectivity", func(w io.Writer) error {
 			return WriteConnectorPeerConnectivity(w, connectorPeerConnectivityFixture())
 		}},
-		{"forwarding", func(w io.Writer) error {
-			h, _ := ReadInternalForwardingHeader(bytes.NewReader(goldenWire(t, "internal-forwarding-header")))
-			return WriteInternalForwardingHeader(w, h)
+		{"service-forwarding", func(w io.Writer) error {
+			h, _ := ReadServiceForwardingHeader(bytes.NewReader(goldenWire(t, "service-forwarding-header")))
+			return WriteServiceForwardingHeader(w, h)
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -192,46 +190,27 @@ func TestFrameWritersPropagateErrorsAndShortWrites(t *testing.T) {
 }
 
 func TestStreamWritersAcceptSupportedIdentifierBounds(t *testing.T) {
-	h, err := ReadInternalForwardingHeader(bytes.NewReader(goldenWire(t, "internal-forwarding-header")))
+	h, err := ReadServiceForwardingHeader(bytes.NewReader(goldenWire(t, "service-forwarding-header")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	maximum := strings.Repeat("\x01", 256)
-	h.PublicURLID, h.PublishRunID, h.VisitorConnectionID = maximum, maximum, maximum
-	h.PublisherConnectionID, h.RelayServiceID, h.RelayID, h.RelayRunID = maximum, maximum, maximum, maximum
+	h.PublicService.IngressID = maximum
+	h.RelayServiceID, h.RelayID = maximum, maximum
 	h.TraceContext = TraceContext{TraceParent: goldenTraceParent}
 	if err := h.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := WriteInternalForwardingHeader(&out, h); err != nil {
+	if err := WriteServiceForwardingHeader(&out, h); err != nil {
 		t.Fatal("supported forwarding identifiers exceeded aggregate cap", err)
 	}
-	if got, err := ReadInternalForwardingHeader(&out); err != nil || got != h {
+	if got, err := ReadServiceForwardingHeader(&out); err != nil || !reflect.DeepEqual(got, h) {
 		t.Fatal("maximum forwarding header did not round trip", err)
 	}
-	publisher, err := ReadVisitorStreamHeader(bytes.NewReader(goldenWire(t, "visitor-stream-header")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	publisher.PublicURLID, publisher.PublishRunID, publisher.VisitorConnectionID, publisher.PublisherConnectionID = maximum, maximum, maximum, maximum
-	publisher.TraceContext = TraceContext{TraceParent: goldenTraceParent}
-	if err := publisher.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	if err := WriteVisitorStreamHeader(&out, publisher); err != nil {
-		t.Fatal("supported visitor identifiers exceeded aggregate cap", err)
-	}
-	if got, err := ReadVisitorStreamHeader(&out); err != nil || got != publisher {
-		t.Fatal("maximum visitor header did not round trip", err)
-	}
-	h.VisitorConnectionID += "x"
-	if err := WriteInternalForwardingHeader(&out, h); err == nil || out.Len() != 0 {
+	h.RelayID += "x"
+	if err := WriteServiceForwardingHeader(&out, h); err == nil || out.Len() != 0 {
 		t.Fatal("oversized forwarding identifier wrote bytes")
-	}
-	publisher.VisitorConnectionID += "x"
-	if err := WriteVisitorStreamHeader(&out, publisher); err == nil || out.Len() != 0 {
-		t.Fatal("oversized visitor identifier wrote bytes")
 	}
 }
 

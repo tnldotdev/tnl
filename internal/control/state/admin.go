@@ -17,22 +17,24 @@ const adminRelayPageSize = 100
 type MaintenanceControlName string
 
 const (
-	MaintenanceControlPublicURLCreation   MaintenanceControlName = "public_url_creation"
-	MaintenanceControlPublishRunCreation  MaintenanceControlName = "publish_run_creation"
+	MaintenanceControlServiceCreation     MaintenanceControlName = "service_creation"
+	MaintenanceControlServiceRunCreation  MaintenanceControlName = "service_run_creation"
 	MaintenanceControlCertificateIssuance MaintenanceControlName = "certificate_issuance"
 )
 
 var (
 	ErrAdminInvalid               = errors.New("controlstate: invalid administration request")
 	ErrMaintenanceControlNotFound = errors.New("controlstate: maintenance control not found")
+	ErrServiceCreationGated       = errors.New("controlstate: service creation is disabled")
+	ErrServiceRunCreationGated    = errors.New("controlstate: service run creation is disabled")
 )
 
 // AdminRuntimeCounts contains current stored state counts for server status.
 type AdminRuntimeCounts struct {
-	EnabledPublicURLs   int64
-	SuspendedPublicURLs int64
-	StartingPublishRuns int64
-	ReadyPublishRuns    int64
+	EnabledServices     int64
+	SuspendedServices   int64
+	StartingServiceRuns int64
+	ReadyServiceRuns    int64
 	IngressLeases       int64
 	RelayLeases         int64
 }
@@ -62,8 +64,8 @@ func (d *Database) AdminRuntimeCounts(ctx context.Context, now time.Time) (Admin
 		return AdminRuntimeCounts{}, fmt.Errorf("controlstate: read admin server status: %w", err)
 	}
 	values := []int64{
-		row.EnabledPublicURLs, row.SuspendedPublicURLs, row.StartingPublishRuns,
-		row.ReadyPublishRuns, row.IngressLeases, row.RelayLeases,
+		row.EnabledServices, row.SuspendedServices, row.StartingServiceRuns,
+		row.ReadyServiceRuns, row.IngressLeases, row.RelayLeases,
 	}
 	for _, value := range values {
 		if value < 0 {
@@ -71,8 +73,8 @@ func (d *Database) AdminRuntimeCounts(ctx context.Context, now time.Time) (Admin
 		}
 	}
 	return AdminRuntimeCounts{
-		EnabledPublicURLs: row.EnabledPublicURLs, SuspendedPublicURLs: row.SuspendedPublicURLs,
-		StartingPublishRuns: row.StartingPublishRuns, ReadyPublishRuns: row.ReadyPublishRuns,
+		EnabledServices: row.EnabledServices, SuspendedServices: row.SuspendedServices,
+		StartingServiceRuns: row.StartingServiceRuns, ReadyServiceRuns: row.ReadyServiceRuns,
 		IngressLeases: row.IngressLeases, RelayLeases: row.RelayLeases,
 	}, nil
 }
@@ -272,6 +274,29 @@ func maintenanceControl(row controlstatedb.ControlMaintenanceControl) (Maintenan
 }
 
 func validMaintenanceControlName(name MaintenanceControlName) bool {
-	return name == MaintenanceControlPublicURLCreation || name == MaintenanceControlPublishRunCreation ||
+	return name == MaintenanceControlServiceCreation || name == MaintenanceControlServiceRunCreation ||
 		name == MaintenanceControlCertificateIssuance
+}
+
+// requireNewServiceWork holds the persisted gate through the caller's mutation
+// and commit. exact recovery precedes this boundary; renewals never use it.
+// certificate issuance retains its existing independent gate owner.
+func requireNewServiceWork(ctx context.Context, queries *controlstatedb.Queries, name MaintenanceControlName) error {
+	var denied error
+	switch name {
+	case MaintenanceControlServiceCreation:
+		denied = ErrServiceCreationGated
+	case MaintenanceControlServiceRunCreation:
+		denied = ErrServiceRunCreationGated
+	default:
+		return ErrAdminInvalid
+	}
+	allowed, err := queries.LockMaintenanceControl(ctx, string(name))
+	if err != nil {
+		return fmt.Errorf("controlstate: read %s maintenance control: %w", name, publisherLookupError(err, ErrMaintenanceControlNotFound))
+	}
+	if !allowed {
+		return denied
+	}
+	return nil
 }

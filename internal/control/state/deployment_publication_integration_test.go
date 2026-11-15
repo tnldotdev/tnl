@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"net/netip"
 	"reflect"
 	"strings"
 	"testing"
@@ -102,7 +103,7 @@ func readyDeploymentServiceRun(t *testing.T, d *Database, fixture deploymentServ
 	installPrivateTestCertificate(t, d, fixture.prepared, fixture.run, now)
 	for _, slot := range fixture.run.Connections {
 		lease := leases[slot.RelayServiceID].RelayLeaseIdentity
-		if _, err := d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, fixture.run.ServiceID, fixture.run.RunID, fixture.run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+		if _, err := d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, fixture.run.ServiceID, fixture.run.RunID, fixture.run.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), lease, now); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := d.ReadyServicePublisherConnection(t.Context(), slot.PublisherConnectionID, fixture.run.RunID, fixture.run.RunNumber, slot.Revision, lease, now); err != nil {

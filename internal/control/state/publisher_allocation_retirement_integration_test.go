@@ -32,10 +32,10 @@ func completeAllocationRetirementDNS(t *testing.T, d *Database, now time.Time) {
 		if !found {
 			return
 		}
-		if dns.State != PublicURLDNSRemoving {
+		if dns.State != ServiceEndpointDNSRemoving {
 			t.Fatal("deleted allocation retained publication DNS work", dns.State)
 		}
-		dns.State, dns.AvailableAt = PublicURLDNSRemoved, time.Time{}
+		dns.State, dns.AvailableAt = ServiceEndpointDNSRemoved, time.Time{}
 		if _, err := d.SaveServiceEndpointDNSWork(t.Context(), dns, now); err != nil {
 			t.Fatal(err)
 		}

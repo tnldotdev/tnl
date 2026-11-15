@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/api/serviceaccess"
@@ -18,9 +19,11 @@ import (
 
 type serviceVisitorStore interface {
 	CreateServiceAt(context.Context, string, string, string, string, controlstate.ServicePlacement, time.Time, controlstate.ServiceMetadata, *controlstate.ProjectServiceConfiguration) (controlstate.ServiceRecord, error)
-	ConfigureService(context.Context, string, string, controlstate.ServiceMetadata, time.Time) (controlstate.ServiceRecord, error)
+	ConfigureService(context.Context, string, string, controlstate.ServiceMetadata, *controlstate.ProjectServiceConfiguration, controlstate.ServiceUpdateConditions, time.Time) (controlstate.ServiceRecord, error)
 	GetService(context.Context, string, string) (controlstate.ServiceRecord, error)
+	GetServiceConfiguration(context.Context, string, string) (*controlstate.ProjectServiceConfiguration, string, error)
 	DeleteService(context.Context, string, string, time.Time) error
+	SetServiceEnabled(context.Context, string, string, bool, time.Time) (controlstate.ServiceRecord, error)
 	ReleaseServiceEndpoint(context.Context, string, string, int64, int, time.Time) (controlstate.ServiceRecord, error)
 	CreateServiceGrant(context.Context, string, string, string, string, string, *time.Time, time.Time) (controlstate.ServiceGrant, error)
 	ListServiceGrants(context.Context, string, string, string) ([]controlstate.ServiceGrant, string, error)
@@ -30,7 +33,7 @@ type serviceVisitorStore interface {
 	AcceptServiceInvitation(context.Context, string, string, time.Time) (controlstate.ServiceGrant, error)
 	RevokeServiceInvitation(context.Context, string, string, string, time.Time) error
 	ListServices(context.Context, string, string, string) ([]controlstate.ServiceRecord, string, error)
-	ListAvailableServices(context.Context, string, string, time.Time) ([]controlstate.ServiceInventory, string, error)
+	ListAvailableServices(context.Context, string, string, controlv1.ServiceAccessPath, time.Time) ([]controlstate.ServiceInventory, string, error)
 	EnrollVisitorDevice(context.Context, string, ed25519.PublicKey, time.Time) (controlstate.VisitorDevice, error)
 	RevokeVisitorDevice(context.Context, string, string, time.Time) error
 	SelectServiceRun(context.Context, string, string, string, time.Time) (controlstate.ServiceSelection, error)
@@ -52,7 +55,7 @@ func (h *handler) serviceVisitor(w http.ResponseWriter, r *http.Request) (servic
 func serviceVisitorError(ctx context.Context, w http.ResponseWriter, operation string, err error) {
 	switch {
 	case errors.Is(err, controlstate.ErrProjectConfigurationInvalid):
-		writeProblem(w, 400, controlv1.InvalidRequest, "select a ready team domain and a valid source-bound worktree placement")
+		writeProblem(w, 400, controlv1.InvalidRequest, "provide a valid service declaration and select a ready team domain")
 	case errors.Is(err, controlstate.ErrServiceAccess):
 		writeProblem(w, 404, controlv1.NotFound, "service not found or unavailable")
 	case errors.Is(err, controlstate.ErrServiceEndpointPublic):
@@ -82,10 +85,13 @@ func targetTLSInput(t *controlv1.ServiceTargetTLS) *controlstate.ServiceTargetTL
 
 func (h *handler) ConfigureService(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
 	var body struct {
-		ExpectedTrustRevision int64                     `json:"expected_trust_revision,string"`
-		Protocol              controlv1.ServiceProtocol `json:"protocol"`
-		PublisherPool         *bool                     `json:"publisher_pool"`
-		TargetTLS             json.RawMessage           `json:"target_tls"`
+		ExpectedTrustRevision       int64                     `json:"expected_trust_revision,string"`
+		Protocol                    controlv1.ServiceProtocol `json:"protocol"`
+		PublisherPool               *bool                     `json:"publisher_pool"`
+		TargetTLS                   json.RawMessage           `json:"target_tls"`
+		Configuration               json.RawMessage           `json:"configuration"`
+		ExpectedConfigurationDigest json.RawMessage           `json:"expected_configuration_digest"`
+		ExpectedPublisherPool       json.RawMessage           `json:"expected_publisher_pool"`
 	}
 	if decodeJSONLimited(w, r, &body, 2<<20) != nil ||
 		body.ExpectedTrustRevision < 1 ||
@@ -110,7 +116,35 @@ func (h *handler) ConfigureService(w http.ResponseWriter, r *http.Request, id co
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service protocol or TLS trust")
 		return
 	}
-	record, err := store.ConfigureService(r.Context(), id, identity, metadata, time.Now())
+	var configuration *controlstate.ProjectServiceConfiguration
+	if len(body.Configuration) > 0 {
+		var declaration *controlv1.ProjectServiceConfiguration
+		if err := httpjson.Decode(json.NewDecoder(bytes.NewReader(body.Configuration)), &declaration); err != nil || declaration == nil {
+			writeProblem(w, 400, controlv1.InvalidRequest, "invalid service declaration")
+			return
+		}
+		encoded, err := json.Marshal(declaration)
+		if err != nil || json.Unmarshal(encoded, &configuration) != nil {
+			writeProblem(w, 400, controlv1.InvalidRequest, "invalid service declaration")
+			return
+		}
+	}
+	conditions := controlstate.ServiceUpdateConditions{}
+	if len(body.ExpectedConfigurationDigest) > 0 {
+		if err := httpjson.Decode(json.NewDecoder(bytes.NewReader(body.ExpectedConfigurationDigest)), &conditions.ConfigurationDigest); err != nil ||
+			configuration == nil || !controlstate.ValidServiceConfigurationDigest(conditions.ConfigurationDigest) {
+			writeProblem(w, 400, controlv1.InvalidRequest, "send a valid expected_configuration_digest only with configuration")
+			return
+		}
+	}
+	if len(body.ExpectedPublisherPool) > 0 {
+		if err := httpjson.Decode(json.NewDecoder(bytes.NewReader(body.ExpectedPublisherPool)), &conditions.PublisherPool); err != nil ||
+			conditions.PublisherPool == nil {
+			writeProblem(w, 400, controlv1.InvalidRequest, "send a boolean expected_publisher_pool or omit it")
+			return
+		}
+	}
+	record, err := store.ConfigureService(r.Context(), id, identity, metadata, configuration, conditions, time.Now())
 	if err != nil {
 		serviceVisitorError(r.Context(), w, "update service", err)
 		return
@@ -202,6 +236,29 @@ func (h *handler) GetService(w http.ResponseWriter, r *http.Request, id controlv
 	writeJSON(w, 200, serviceaccess.Service(record))
 }
 
+func (h *handler) GetServiceConfiguration(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
+	w.Header().Set("Cache-Control", "no-store")
+	store, identity, ok := h.serviceVisitor(w, r)
+	if !ok {
+		return
+	}
+	declaration, digest, err := store.GetServiceConfiguration(r.Context(), id, identity)
+	if err != nil {
+		serviceVisitorError(r.Context(), w, "get service configuration", err)
+		return
+	}
+	if !controlstate.ValidServiceConfigurationDigest(digest) {
+		writeProblem(w, 503, controlv1.Unavailable, "service configuration is unavailable")
+		return
+	}
+	w.Header().Set("ETag", strconv.Quote(digest))
+	if declaration == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, http.StatusOK, declaration)
+}
+
 func (h *handler) GetPublisherService(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID) {
 	_, publisher, ok := h.authenticatePublisher(w, r)
 	if !ok {
@@ -222,6 +279,24 @@ func (h *handler) GetPublisherService(w http.ResponseWriter, r *http.Request, se
 }
 
 func (h *handler) DeleteService(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
+	credential, guest, proceed := h.guestServiceCredential(w, r)
+	if !proceed {
+		return
+	}
+	if guest {
+		store := h.dependencies.Services
+		if store == nil {
+			writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "services are unavailable")
+			return
+		}
+		ctx := controlstate.WithGuestServiceCredential(r.Context(), credential)
+		if err := store.DeleteService(ctx, id, "", time.Now()); err != nil {
+			guestProblem(ctx, w, "delete guest service", err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	store, identity, ok := h.serviceVisitor(w, r)
 	if !ok {
 		return
@@ -380,6 +455,14 @@ func (h *handler) RevokeServiceInvitation(w http.ResponseWriter, r *http.Request
 }
 
 func (h *handler) ListAvailableServices(w http.ResponseWriter, r *http.Request, params controlv1.ListAvailableServicesParams) {
+	path := controlv1.ServiceAccessPathConnector
+	if params.AccessPath != nil {
+		path = *params.AccessPath
+	}
+	if !path.Valid() {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service access path")
+		return
+	}
 	store, identity, ok := h.serviceVisitor(w, r)
 	if !ok {
 		return
@@ -388,15 +471,20 @@ func (h *handler) ListAvailableServices(w http.ResponseWriter, r *http.Request, 
 	if params.Cursor != nil {
 		cursor = *params.Cursor
 	}
-	rows, next, err := store.ListAvailableServices(r.Context(), identity, cursor, time.Now())
+	rows, next, err := store.ListAvailableServices(r.Context(), identity, cursor, path, time.Now())
 	if err != nil {
 		serviceVisitorError(r.Context(), w, "list available services", err)
 		return
 	}
 	page := controlv1.ServicePage{Services: make([]controlv1.ServiceSummary, 0, len(rows))}
 	for _, row := range rows {
-		entry := serviceaccess.Summary(controlstate.ServiceRecord{ID: row.ID, TeamID: row.TeamID, Name: row.Name, Enabled: true, CreatedAt: row.CreatedAt, ServiceMetadata: row.ServiceMetadata})
-		entry.KubernetesAuth = row.KubernetesAuth
+		entry := controlv1.ServiceSummary{Id: row.ID, TeamId: row.TeamID, TeamName: row.TeamName, Name: row.Name,
+			Enabled: true, CreatedAt: row.CreatedAt, Protocol: controlv1.ServiceProtocol(row.Protocol),
+			PublisherPool: row.PublisherPool, TrustRevision: row.TrustRevision, KubernetesAuth: row.KubernetesAuth,
+			VisitorAccess: controlv1.ServiceSummaryVisitorAccess(row.VisitorAccess)}
+		if endpoint := row.Endpoint; endpoint != nil {
+			entry.Endpoint = &controlv1.ServiceEndpoint{Hostname: endpoint.Hostname, Port: endpoint.Port, Public: endpoint.Public}
+		}
 		if row.ServiceRunID != "" {
 			entry.ServiceRunId, entry.RunNumber = &row.ServiceRunID, &row.RunNumber
 		}

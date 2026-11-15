@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +12,14 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestPortablePublisherCommandFlags(t *testing.T) {
@@ -40,6 +48,62 @@ func TestPortablePublisherCommandFlags(t *testing.T) {
 		if tc.command == "publish <service-or-target>" && flags.Publish.PublisherCredentialFile != "/tmp/publisher.json" {
 			t.Fatal("file flag was lost")
 		}
+	}
+}
+
+func TestPublisherAddressSelectsExactManagedServiceWithoutVisitorAuthority(t *testing.T) {
+	const team = "tm_0123456789abcdefghijkl"
+	const id = "svc_0123456789abcdefghijkl"
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer manager" {
+			t.Error("publisher enrollment scope did not use the control session")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/teams/" + team:
+			_ = json.NewEncoder(w).Encode(authorityv1.Team{Id: team})
+		case "GET /v1/services":
+			if r.URL.Query().Get("team_id") != team {
+				t.Error("address selection lost its team")
+			}
+			_ = json.NewEncoder(w).Encode(controlv1.ServicePage{Services: []controlv1.ServiceSummary{
+				{Id: id, TeamId: team, Enabled: true, Protocol: controlv1.ServiceProtocolHTTP, Endpoint: &controlv1.ServiceEndpoint{Hostname: "app.example.test", Port: 443, Public: true}},
+			}})
+		case "GET /v1/services/" + id:
+			_ = json.NewEncoder(w).Encode(controlv1.Service{Id: id, TeamId: team, Enabled: true, Protocol: controlv1.ServiceProtocolHTTP})
+		default:
+			t.Errorf("publisher selection used visitor or retired URL authority: %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	control, err := clientcontrol.New(server.URL, server.Client(), credentials.AccessToken("manager"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := clientauthority.New(server.URL, server.Client(), credentials.AccessToken("manager"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := clientteam.NewSession(nil, nil, &auth.Client{Control: control, Authority: authority},
+		authorityv1.IdentityContext{Memberships: []authorityv1.Membership{{TeamId: team}}}, clientteam.Options{SelectedTeam: team})
+	current, err := session.Current(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, selector := range []string{id, "app.example.test", "https://app.example.test"} {
+		service, domain, err := publisherCLIGrantScope(t.Context(), session, current, selector, "", false, "")
+		if err != nil || service == nil || *service != id || domain != nil {
+			t.Fatalf("publisher address %q did not resolve one service: %v", selector, err)
+		}
+	}
+	for _, selector := range []string{"url_0123456789abcdefghijkl", "https://app.example.test/path"} {
+		if _, _, err := publisherCLIGrantScope(t.Context(), session, current, selector, "", false, ""); err == nil {
+			t.Fatalf("retired or invalid selector %q was accepted", selector)
+		}
+	}
+	if _, _, err := publisherCLIGrantScope(t.Context(), session, current, id, id, false, ""); err == nil {
+		t.Fatal("two exact selectors were accepted")
 	}
 }
 

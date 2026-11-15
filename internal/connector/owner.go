@@ -49,7 +49,7 @@ type connectorConnectionBackend struct {
 	deadlineChanged                                        chan struct{}
 	listeners                                              map[string]*ownedServiceListener
 	initialServices                                        []string
-	services                                               map[string]controlv1.Service
+	services                                               map[string]controlv1.ServiceSummary
 	metadata                                               meta.PublicMetadata
 	lifetime                                               context.Context
 	kubeMu                                                 sync.Mutex
@@ -194,7 +194,7 @@ func (b *connectorConnectionBackend) Start(ctx context.Context) (meta.PublicMeta
 	lifetime, cancel := context.WithCancel(observability.Independent(context.WithoutCancel(ctx)))
 	b.cancel = cancel
 	b.lifetime = lifetime
-	services := map[string]controlv1.Service{}
+	services := map[string]controlv1.ServiceSummary{}
 	if b.deployment != nil {
 		// the owner renews a finite horizon without moving the credential's cap.
 		b.deadline = minTime(time.Now().Add(time.Hour), b.deployment.source.Credential.Approval.ExpiresAt)
@@ -413,7 +413,7 @@ func (b *connectorConnectionBackend) Connect(ctx context.Context, name string) (
 	return b.Prepared(name)
 }
 
-func (b *connectorConnectionBackend) refreshService(ctx context.Context, name string, approved controlv1.Service, client *workload.Client) (controlv1.Service, error) {
+func (b *connectorConnectionBackend) refreshService(ctx context.Context, name string, approved controlv1.ServiceSummary, client *workload.Client) (controlv1.ServiceSummary, error) {
 	service := approved
 	if client != nil {
 		inventory, err := client.ListServices(ctx)
@@ -778,7 +778,7 @@ func (b *connectorConnectionBackend) Kubeconfig() string {
 	}
 	return ""
 }
-func (b *connectorConnectionBackend) prepareKube(ctx context.Context, name string, service controlv1.Service, connection connectorruntime.Connection) (serviceKubeconfig, error) {
+func (b *connectorConnectionBackend) prepareKube(ctx context.Context, name string, service controlv1.ServiceSummary, connection connectorruntime.Connection) (serviceKubeconfig, error) {
 	b.kubeMu.Lock()
 	defer b.kubeMu.Unlock()
 	source, err := kubeconfig.ResolveSource(kubeconfig.Source{TokenFile: b.kubeOptions.KubeTokenFile, ConfigFile: b.kubeOptions.KubeUserConfig, ExistingUser: b.kubeOptions.KubeUser}, service.KubernetesAuth)

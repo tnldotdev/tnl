@@ -56,30 +56,6 @@ type Config struct {
 	RelayReadiness                    func() error
 }
 
-// PublicURLStore owns saved public URL and publish run state.
-type PublicURLStore interface {
-	ListAuthorizedPublicURLs(context.Context, string, string) (controlstate.PublicURLPage, error)
-	GetAuthorizedPublicURLByHostname(context.Context, string, string) (controlstate.PublicURL, error)
-	CreatePublicURL(context.Context, controlstate.CreatePublicURLRequest, time.Time) (controlstate.PublicURL, error)
-	UpdateAuthorizedPublicURL(context.Context, controlstate.AuthorizedPublicURLUpdateRequest, time.Time) (controlstate.PublicURL, error)
-	GetPublicURLForAuthorization(context.Context, string) (controlstate.PublicURL, error)
-	GetPublicURLForFeedbackAuthorization(context.Context, string) (controlstate.PublicURL, error)
-	GetPublicURLForPublishRunAuthorization(context.Context, string, string) (controlstate.PublicURL, error)
-	DeleteAuthorizedPublicURL(context.Context, controlstate.AuthorizedPublicURLDeleteRequest, time.Time) error
-	CreatePublishRun(context.Context, controlstate.PublishRunRequest, time.Time, time.Duration, time.Duration) (controlstate.PublishRunSetup, error)
-	PublishRunAuthentication(context.Context, string, uint64, credentials.PublishRunToken) (controlstate.PublishRunAuthentication, error)
-	HeartbeatPublishRun(context.Context, controlstate.PublishRunAuthentication, time.Time, time.Duration, time.Duration) (controlstate.PublishRunSetup, error)
-	MarkPublicURLCertificateInstalled(context.Context, controlstate.PublishRunAuthentication, string, time.Time, time.Time) (controlstate.PublishRunLifecycle, error)
-	MarkPublishRunReady(context.Context, controlstate.PublishRunAuthentication, time.Time) (controlstate.PublishRunLifecycle, error)
-	ClosePublishRun(context.Context, string, credentials.PublishRunToken, time.Time) error
-}
-
-// CertificateStore owns publish run certificate issuance state.
-type CertificateStore interface {
-	CreateCertificateIssuance(context.Context, controlstate.CreateCertificateIssuanceRequest, time.Time) (controlstate.CertificateIssuance, error)
-	GetCertificateIssuance(context.Context, string, credentials.PublishRunToken, time.Time) (controlstate.CertificateIssuance, error)
-}
-
 // AdminStore owns administrator operations.
 type AdminStore interface {
 	AdminRuntimeCounts(context.Context, time.Time) (controlstate.AdminRuntimeCounts, error)
@@ -101,20 +77,13 @@ type PreviewTeamAccessStore interface {
 }
 
 type BrowserAccessStore interface {
-	BeginBrowserLogin(context.Context, string, string, string, string, string, []byte, *controlstate.CompanyLoginIntent, time.Time) (string, error)
 	ConsumeBrowserLogin(context.Context, string, []byte, time.Time) (controlstate.BrowserLoginAttempt, error)
 	IssueBrowserHandoff(context.Context, controlstate.BrowserLoginAttempt, controlstate.BrowserAccessSession, time.Time) (controlstate.BrowserHandoff, error)
-	RedeemBrowserHandoff(context.Context, controlstate.PublishRunAuthentication, string, time.Time) (string, string, string, bool, time.Time, error)
-	BrowserAuthorizationForRun(context.Context, controlstate.PublishRunAuthentication, string, time.Time) (controlstate.VisitorPermission, error)
-	BrowserSession(context.Context, string, string, time.Time) (controlstate.BrowserAccessSession, error)
-	RotateBrowserSession(context.Context, string, string, string, time.Time) error
-	RefreshBrowserSession(context.Context, string, string, time.Time, func(context.Context, string) (controlstate.BrowserTokenRotation, error)) (controlstate.BrowserAccessSession, error)
-	RevokeBrowserSession(context.Context, string, string, time.Time) error
 }
 
 type ShareStore interface {
 	CreateShare(context.Context, controlstate.CreateShareRequest, time.Time) (controlstate.Share, error)
-	CreateGuestShare(context.Context, string, string, string, string, [32]byte, time.Time, time.Time) (controlstate.Share, error)
+	CreateGuestShare(context.Context, controlstate.GuestCredential, string, string, string, [32]byte, time.Time, time.Time) (controlstate.Share, error)
 	GetShare(context.Context, string) (controlstate.Share, error)
 	ListShares(context.Context, string, string) (controlstate.SharePage, error)
 	ListTeamShares(context.Context, string, string, string) (controlstate.SharePage, error)
@@ -126,16 +95,17 @@ type ShareAccessStore interface {
 }
 
 type FeedbackStore interface {
-	ListFeedbackForPublicURL(context.Context, string, string, string, string, string) (controlstate.FeedbackThreadPage, error)
+	ListFeedbackForService(context.Context, string, string, string, string, string) (controlstate.FeedbackThreadPage, error)
+	AuthorizeFeedbackService(context.Context, string, string, time.Time) error
 	CreateServiceRunPreview(context.Context, controlstate.ServiceHTTPRun, time.Time) (controlstate.Preview, error)
-	CreateFeedback(context.Context, controlstate.PublishRunAuthentication, controlstate.CreateFeedbackRequest, time.Time) (controlstate.FeedbackThread, error)
+	CreateFeedback(context.Context, controlstate.ServiceHTTPRun, controlstate.CreateFeedbackRequest, time.Time) (controlstate.FeedbackThread, error)
 	AppendFeedback(context.Context, controlstate.AppendFeedbackRequest, time.Time) (controlstate.FeedbackEvent, error)
 	GetFeedback(context.Context, string) (controlstate.FeedbackThread, error)
 	ListFeedbackForTeam(context.Context, string, string) (controlstate.FeedbackThreadPage, error)
 	ListFeedbackForPage(context.Context, string, string, string, string) (controlstate.FeedbackThreadPage, error)
 	ListFeedbackEventsForTeam(context.Context, string, uint64) (controlstate.FeedbackEventPage, error)
 	ListFeedbackEventsForThread(context.Context, string, uint64) (controlstate.FeedbackEventPage, error)
-	ReviewerFeedbackScope(context.Context, controlstate.PublishRunAuthentication, string, controlstate.FeedbackActor, time.Time) (string, string, error)
+	ReviewerFeedbackScope(context.Context, controlstate.ServiceHTTPRun, string, controlstate.FeedbackActor, time.Time) (string, string, error)
 }
 
 // AuthorizationStore provides the identity state needed for public URL authorization.
@@ -148,10 +118,7 @@ type AuthorizationStore interface {
 
 type handler struct {
 	dependencies      Stores
-	visitorState      VisitorStore
 	config            Config
-	store             PublicURLStore
-	certificates      CertificateStore
 	admin             AdminStore
 	previews          PreviewStore
 	previewTeamAccess PreviewTeamAccessStore
@@ -187,8 +154,8 @@ func NewHandler(
 	}
 	cfg.TrafficDefaults.RatePer = cfg.TrafficDefaults.Period()
 	cfg.TrafficCeiling.RatePer = cfg.TrafficCeiling.Period()
-	h := &handler{dependencies: stores, config: cfg, store: stores.PublicURLs, certificates: stores.Certificates, admin: stores.Admin, readiness: readiness,
-		visitorState: stores.Visitors, previews: stores.Previews, previewTeamAccess: stores.PreviewTeamAccess,
+	h := &handler{dependencies: stores, config: cfg, admin: stores.Admin, readiness: readiness,
+		previews: stores.Previews, previewTeamAccess: stores.PreviewTeamAccess,
 		browserAccess: stores.BrowserAccess, shares: stores.Shares, shareAccess: stores.ShareAccess,
 		feedback: stores.Feedback, guests: stores.Guests}
 	h.webhookCatalog = cfg.WebhookCatalog
@@ -199,10 +166,7 @@ func NewHandler(
 		h.config.StartedAt = time.Now().UTC()
 	}
 	if authorizationStore != nil {
-		h.authorizer = localAuthorizer{
-			store: authorizationStore, dnsAutomation: cfg.DNSAutomation,
-			managedDomainMaxMemberChildLabels: cfg.ManagedDomainMaxMemberChildLabels, managedURLMode: cfg.ManagedURLMode,
-		}
+		h.authorizer = localAuthorizer{store: authorizationStore}
 	}
 	if cfg.OIDCClientID != "" {
 		var err error
@@ -220,20 +184,13 @@ func NewHandler(
 			return nil, err
 		}
 	}
-	if cfg.GuestDemoEnabled && h.guests != nil && h.authorizer != nil {
-		if guestStore := stores.GuestAuthorization; guestStore != nil {
-			h.authorizer = guestAuthorizer{
-				fallback: h.authorizer, store: guestStore, managedDomain: cfg.ManagedDomain,
-				dnsAutomation: cfg.DNSAutomation,
-			}
-		}
-	}
 	mux := http.NewServeMux()
 	parameterError := func(response http.ResponseWriter, _ *http.Request, _ error) {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 	}
 	controlv1.HandlerWithOptions(h, controlv1.StdHTTPServerOptions{
 		BaseRouter: mux, ErrorHandlerFunc: parameterError,
+		Middlewares: []controlv1.MiddlewareFunc{publisherRequestSourceMiddleware},
 	})
 	mux.HandleFunc("/", notFound)
 	return mux, nil

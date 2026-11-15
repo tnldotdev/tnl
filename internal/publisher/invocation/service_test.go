@@ -221,7 +221,7 @@ func TestLocalServiceRealizationCapturesOnlySelectedTargetTrust(t *testing.T) {
 		if name != "web" {
 			return "", "", errors.New("unselected target was discovered")
 		}
-		return address, "selected-container", nil
+		return "127.0.0.1:8443", "selected-container", nil
 	})
 	requests := make(chan controlv1.RealizeLocalProjectServiceRequest, 1)
 	mux := http.NewServeMux()
@@ -252,9 +252,13 @@ func TestLocalServiceRealizationCapturesOnlySelectedTargetTrust(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	declaration, err := want.Declaration()
+	if err != nil {
+		t.Fatal(err)
+	}
 	trust := request.Configuration.TargetTls
 	if !reflect.DeepEqual(resolved, []string{"web"}) || request.Configuration.Target != "docker:selected:8443" ||
-		trust == nil || trust.Hostname != want.Hostname || trust.Digest != want.Digest || trust.CaPem == nil || *trust.CaPem != string(want.PEM) {
+		trust == nil || trust.Hostname != declaration.Hostname || trust.Digest != declaration.Digest || trust.CaPem == nil || *trust.CaPem != string(want.PEM) {
 		t.Fatal("realization lost selected portable target trust or sent a discovered address", resolved, request.Configuration)
 	}
 	project.Config.Services["web"].Target.TLS.CA = new("invalid CA")

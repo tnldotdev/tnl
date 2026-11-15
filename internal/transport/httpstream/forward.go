@@ -10,11 +10,13 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/http/httputil"
 	"net/url"
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
@@ -38,50 +40,381 @@ func Forward(ctx context.Context, client, upstream net.Conn, target *url.URL) er
 	return Serve(ctx, client, target, func(context.Context) (net.Conn, error) { return upstream, nil }, nil, ResponseHooks{}, Drain{})
 }
 
-// Serve checks each request before the first target dial or any target bytes.
-// wrap can serve bounded authentication endpoints without opening the target.
-// one failed/closed upstream is final, including on an idempotent HTTP request.
-func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(context.Context) (net.Conn, error), wrap func(http.Handler) http.Handler, hooks ResponseHooks, drain Drain) error {
-	if client == nil || target == nil || target.Host == "" || connect == nil || target.Scheme != "http" && target.Scheme != "https" {
+// SelectedTransport owns connections to one target without replaying requests.
+// constructors select strict single-attempt or bounded concurrent ownership.
+// the caller owns requests and response bodies; Close joins entered target work.
+type SelectedTransport struct {
+	life         context.Context
+	connect      func(context.Context) (net.Conn, error)
+	capacity     int
+	strict       bool
+	mu           sync.Mutex
+	closed       bool
+	terminal     error
+	slots        map[*selectedSlot]struct{}
+	wake         chan struct{}
+	stopped      chan struct{}
+	work         sync.WaitGroup
+	shutdownDone chan struct{}
+	stopOwner    func() bool
+	ownerDone    chan struct{}
+	closeErr     error
+}
+
+type selectedSlot struct {
+	client   *http.ClientConn
+	socket   net.Conn
+	cancel   context.CancelFunc
+	ready    chan struct{}
+	err      error
+	retiring bool
+	used     bool
+	headers  int
+	upgraded bool
+}
+
+// NewSelectedTransport permits one connection attempt total. failed setup,
+// connection loss, or idle retirement fences every later request.
+func NewSelectedTransport(ctx context.Context, connect func(context.Context) (net.Conn, error)) (*SelectedTransport, error) {
+	return newSelectedTransport(ctx, connect, 1, true)
+}
+
+// NewTargetTransport bounds live connections and setup to one visitor's target.
+// a failed request is never retried; later requests may open replacements.
+// connect returns a connection already secured when the target uses HTTPS.
+func NewTargetTransport(ctx context.Context, connect func(context.Context) (net.Conn, error), capacity int) (*SelectedTransport, error) {
+	return newSelectedTransport(ctx, connect, capacity, false)
+}
+
+func newSelectedTransport(ctx context.Context, connect func(context.Context) (net.Conn, error), capacity int, strict bool) (*SelectedTransport, error) {
+	if ctx == nil || connect == nil || capacity < 1 {
+		return nil, ErrClosed
+	}
+	t := &SelectedTransport{life: ctx, connect: connect, capacity: capacity, strict: strict, slots: make(map[*selectedSlot]struct{}), wake: make(chan struct{}, 1), stopped: make(chan struct{}), shutdownDone: make(chan struct{}), ownerDone: make(chan struct{})}
+	t.stopOwner = context.AfterFunc(ctx, func() { defer close(t.ownerDone); t.shutdown() })
+	return t, nil
+}
+
+func (t *SelectedTransport) notify() {
+	select {
+	case t.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (t *SelectedTransport) stopLocked(err error) {
+	if t.terminal == nil {
+		t.terminal = err
+		close(t.stopped)
+	}
+}
+
+func (t *SelectedTransport) currentLocked() error {
+	if t.closed || t.life.Err() != nil {
 		return ErrClosed
 	}
-	var mu sync.Mutex
-	dialed := false
-	closed := false
-	var upstream net.Conn
+	for slot := range t.slots {
+		if slot.client != nil && slot.client.Err() != nil {
+			if t.strict {
+				t.stopLocked(ErrClosed)
+			} else if slot.headers == 0 && !slot.upgraded {
+				t.retireLocked(slot)
+			}
+		}
+	}
+	return t.terminal
+}
+
+func (t *SelectedTransport) RoundTrip(r *http.Request) (response *http.Response, result error) {
+	defer func() {
+		// a canceled waiter must not consume the only availability signal.
+		t.notify()
+		if result != nil && r.Body != nil {
+			_ = r.Body.Close()
+		}
+	}()
+	t.mu.Lock()
+	err := t.currentLocked()
+	t.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if r.URL == nil || r.URL.Scheme != "http" && r.URL.Scheme != "https" || r.URL.Hostname() == "" {
+		return nil, ErrClosed
+	}
+	port := r.URL.Port()
+	if port == "" {
+		port = "80"
+		if r.URL.Scheme == "https" {
+			port = "443"
+		}
+	}
+	address := net.JoinHostPort(r.URL.Hostname(), port)
+	trace := httptrace.ContextClientTrace(r.Context())
+	if trace != nil && trace.GetConn != nil {
+		trace.GetConn(address)
+	}
+	var started *selectedSlot
+	for {
+		t.mu.Lock()
+		if err := t.currentLocked(); err != nil {
+			t.mu.Unlock()
+			return nil, err
+		}
+		if err := r.Context().Err(); err != nil {
+			t.mu.Unlock()
+			return nil, err
+		}
+		if started != nil {
+			select {
+			case <-started.ready:
+				if started.err != nil {
+					t.mu.Unlock()
+					return nil, errors.Join(ErrClosed, started.err)
+				}
+				if started.client == nil || started.client.Err() != nil {
+					t.mu.Unlock()
+					return nil, ErrClosed
+				}
+			default:
+			}
+		}
+		for slot := range t.slots {
+			client := slot.client
+			if slot.retiring || client == nil || client.Available() == 0 || client.Reserve() != nil {
+				continue
+			}
+			socket, reused := slot.socket, slot.used
+			slot.used = true
+			slot.headers++
+			t.mu.Unlock()
+			t.notify()
+			if trace != nil && trace.GotConn != nil {
+				trace.GotConn(httptrace.GotConnInfo{Conn: socket, Reused: reused})
+			}
+			response, err := client.RoundTrip(r)
+			t.mu.Lock()
+			slot.headers--
+			// ClientConn hands a 101 socket to Body and then reports it unusable.
+			// retain that socket until owner Close, without an EOF/upgrade wrapper.
+			slot.upgraded = response != nil && response.StatusCode == http.StatusSwitchingProtocols
+			if err != nil && client.Err() != nil {
+				if t.strict {
+					t.stopLocked(errors.Join(ErrClosed, err))
+				} else if !t.closed {
+					t.retireLocked(slot)
+				}
+			}
+			t.mu.Unlock()
+			if err != nil {
+				return nil, errors.Join(ErrClosed, err)
+			}
+			return response, nil
+		}
+		if err := t.currentLocked(); err != nil {
+			t.mu.Unlock()
+			return nil, err
+		}
+		if started == nil && len(t.slots) < t.capacity {
+			started = &selectedSlot{ready: make(chan struct{})}
+			t.slots[started] = struct{}{}
+			// preserve request values without letting a departed handler abandon
+			// entered setup. shutdown owns cancellation and the completion join.
+			setup, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
+			started.cancel = cancel
+			t.work.Add(1)
+			go t.open(setup, cancel, started, r.URL.Scheme, address)
+		}
+		t.mu.Unlock()
+		select {
+		case <-r.Context().Done():
+			return nil, context.Cause(r.Context())
+		case <-t.life.Done():
+			return nil, ErrClosed
+		case <-t.stopped:
+		case <-t.wake:
+		}
+	}
+}
+
+// CloseIdleConnections closes current idle sockets without interrupting responses.
+// strict ownership also retires admission; concurrent targets remain usable until Close.
+func (t *SelectedTransport) CloseIdleConnections() {
+	t.mu.Lock()
+	if t.closed {
+		t.mu.Unlock()
+		return
+	}
+	if t.strict {
+		t.stopLocked(ErrClosed)
+	}
+	var idle []*selectedSlot
+	for slot := range t.slots {
+		if t.strict && slot.cancel != nil {
+			slot.cancel()
+		}
+		if !slot.retiring && slot.client != nil && !slot.upgraded && slot.headers == 0 && slot.client.Err() == nil && slot.client.InFlight() == 0 {
+			slot.retiring = true
+			t.work.Add(1)
+			idle = append(idle, slot)
+		}
+	}
+	t.mu.Unlock()
+	for _, slot := range idle {
+		t.retire(slot)
+	}
+}
+
+// Close fences new target work before joining dials and owner cancellation.
+// repeated or concurrent closes return the same cleanup failures.
+func (t *SelectedTransport) Close() error {
+	t.shutdown()
+	if t.stopOwner() {
+		close(t.ownerDone)
+	}
+	<-t.ownerDone
+	t.work.Wait()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.closeErr
+}
+
+func (t *SelectedTransport) shutdown() {
+	t.mu.Lock()
+	if t.closed {
+		t.mu.Unlock()
+		<-t.shutdownDone
+		return
+	}
+	t.closed = true
+	t.stopLocked(ErrClosed)
+	var slots []*selectedSlot
+	for slot := range t.slots {
+		if slot.cancel != nil {
+			slot.cancel()
+		}
+		slots = append(slots, slot)
+	}
+	t.mu.Unlock()
+	// potentially blocking cleanup runs outside the entry fence. concurrent
+	// closers join the same completion rather than holding its lock.
+	defer close(t.shutdownDone)
+	for _, slot := range slots {
+		t.closeSlot(slot)
+	}
+}
+
+func (t *SelectedTransport) closeError(err error) {
+	// net/http may already have closed the same socket. do not hide an
+	// independent cleanup failure joined with that expected closed result.
+	if err != nil && !failure.Only(err, net.ErrClosed) {
+		t.mu.Lock()
+		t.closeErr = errors.Join(t.closeErr, err)
+		t.mu.Unlock()
+	}
+}
+
+func (t *SelectedTransport) closeSlot(slot *selectedSlot) {
+	t.mu.Lock()
+	socket, client := slot.socket, slot.client
+	slot.socket = nil
+	t.mu.Unlock()
+	if client != nil {
+		// the hook only makes a nonblocking notification. the standard API
+		// detaches it here, with no separate callback worker or body ownership.
+		client.SetStateHook(nil)
+	}
+	if socket != nil {
+		t.closeError(socket.Close())
+	}
+	if client != nil {
+		t.closeError(client.Close())
+	}
+}
+
+func (t *SelectedTransport) retireLocked(slot *selectedSlot) {
+	if !slot.retiring {
+		slot.retiring = true
+		t.work.Add(1)
+		go t.retire(slot)
+	}
+}
+
+func (t *SelectedTransport) retire(slot *selectedSlot) {
+	defer t.work.Done()
+	t.closeSlot(slot)
+	t.mu.Lock()
+	delete(t.slots, slot)
+	t.mu.Unlock()
+	t.notify()
+}
+
+func (t *SelectedTransport) open(ctx context.Context, cancel context.CancelFunc, slot *selectedSlot, scheme, address string) {
+	defer t.work.Done()
+	defer cancel()
 	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
-		mu.Lock()
-		if dialed || closed {
-			mu.Unlock()
+		t.mu.Lock()
+		if t.currentLocked() != nil {
+			t.mu.Unlock()
 			return nil, ErrClosed
 		}
-		dialed = true
-		mu.Unlock()
-		conn, err := connect(ctx)
-		mu.Lock()
-		if closed {
-			mu.Unlock()
+		t.mu.Unlock()
+		conn, err := t.connect(ctx)
+		t.mu.Lock()
+		stopped := t.currentLocked() != nil
+		if !stopped {
+			slot.socket = conn
+		}
+		t.mu.Unlock()
+		if stopped {
 			if conn != nil {
-				_ = conn.Close()
+				t.closeError(conn.Close())
 			}
 			return nil, ErrClosed
 		}
-		upstream = conn
-		mu.Unlock()
 		return conn, err
 	}
-	transport := &http.Transport{Proxy: nil, DisableCompression: true, MaxConnsPerHost: 1, MaxResponseHeaderBytes: 64 << 10, ExpectContinueTimeout: time.Second, DialContext: dial, DialTLSContext: dial}
-	defer transport.CloseIdleConnections()
-	defer func() {
-		mu.Lock()
-		closed = true
-		conn := upstream
-		upstream = nil
-		mu.Unlock()
-		if conn != nil {
-			_ = conn.Close()
+	transport := &http.Transport{Proxy: nil, DisableCompression: true, MaxResponseHeaderBytes: 64 << 10, ExpectContinueTimeout: time.Second, DialContext: dial, DialTLSContext: dial}
+	client, err := transport.NewClientConn(ctx, scheme, address)
+	t.mu.Lock()
+	if err != nil {
+		slot.err = err
+		if t.strict {
+			t.stopLocked(errors.Join(ErrClosed, err))
 		}
-	}()
+	}
+	stopped := t.currentLocked() != nil || err != nil
+	if !stopped {
+		slot.client = client
+		client.SetStateHook(func(*http.ClientConn) { t.notify() })
+	}
+	close(slot.ready)
+	t.mu.Unlock()
+	if stopped {
+		if client != nil {
+			client.SetStateHook(nil)
+			t.closeError(client.Close())
+		}
+		t.closeSlot(slot)
+		t.mu.Lock()
+		delete(t.slots, slot)
+		t.mu.Unlock()
+	}
+	t.notify()
+}
+
+// Serve checks each request before the first target dial or any target bytes.
+// wrap can serve bounded authentication endpoints without opening the target.
+// one failed/closed upstream is final, including on an idempotent HTTP request.
+func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(context.Context) (net.Conn, error), wrap func(http.Handler) http.Handler, hooks ResponseHooks, drain Drain) (result error) {
+	if client == nil || target == nil || target.Host == "" || connect == nil || target.Scheme != "http" && target.Scheme != "https" {
+		return ErrClosed
+	}
+	transport, err := NewSelectedTransport(ctx, connect)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, transport.Close()) }()
 	proxy := &httputil.ReverseProxy{Transport: transport, FlushInterval: -1,
 		Rewrite: func(request *httputil.ProxyRequest) {
 			ForwardTrailers(request.In, request.Out)
@@ -108,11 +441,23 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 			}
 			http.Error(w, "service connection closed", http.StatusBadGateway)
 		}, ErrorLog: log.New(io.Discard, "", 0)}
-	var handler http.Handler = proxy
+	var cleanupMu sync.Mutex
+	var cleanupErr error
+	var handler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ServeProxy(proxy, w, r, func(err error) {
+			cleanupMu.Lock()
+			cleanupErr = errors.Join(cleanupErr, err)
+			cleanupMu.Unlock()
+		})
+	})
 	if wrap != nil {
 		handler = wrap(handler)
 	}
-	return ServeHandler(ctx, client, handler, drain)
+	result = ServeHandler(ctx, client, handler, drain)
+	cleanupMu.Lock()
+	result = errors.Join(result, cleanupErr)
+	cleanupMu.Unlock()
+	return result
 }
 
 // ServeHandler serves an in-process HTTP application on the admitted visitor

@@ -3,14 +3,17 @@ package service
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
@@ -21,6 +24,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -30,11 +34,12 @@ import (
 type HTTPControl interface {
 	httpaccess.PolicyClient
 	httpaccess.TokenClient
+	httpaccess.BrowserClient
+	httpaccess.ShareClient
+	FeedbackClient
 	ControlURL() string
+	CreateServiceRunPreview(context.Context, string, string, int64, credentials.ServiceRunToken) (controlv1.Preview, error)
 	AuthorizeServiceHTTPVisitor(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error)
-	RedeemServiceBrowserHandoff(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) (controlv1.BrowserHandoffResponse, error)
-	CheckServiceBrowserSession(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) (controlv1.BrowserAccessResponse, error)
-	RevokeServiceBrowserSession(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) error
 }
 
 // HTTPRun contains the validated publication facts used by response observers.
@@ -53,6 +58,11 @@ type HTTP struct {
 	AdmitRequest   func(*http.Request) error
 	ReadinessProof *httpaccess.ReadinessProof
 	ResponseHooks  httpstream.ResponseHooks
+	Feedback       bool
+	PreviewID      string
+	ProjectService string
+	ProjectRoot    string
+	Demo           bool
 	Control        HTTPControl
 	Subject        visitorscope.Scope
 	RunID          string
@@ -64,14 +74,33 @@ type HTTP struct {
 	Requests       *requestlimit.HTTP
 	Policy         *visitorlease.Lease
 	browser        *httpaccess.Browser
+	feedback       *feedbackRuntime
 	probes         *requestlimit.HTTP
 }
 
 func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
-	if f.Control == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || !f.InspectionMode.Valid() {
+	if f.Control == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || !f.InspectionMode.Valid() ||
+		!opaqueid.Valid(f.RunID, opaqueid.ServiceRunPrefix) || f.Number < 1 || f.Token == "" {
 		return HTTP{}, nil, servicestream.ErrEndpoint
 	}
-	var err error
+	controlURL, err := naming.CanonicalControlURL(f.Control.ControlURL())
+	if err != nil {
+		return HTTP{}, nil, servicestream.ErrEndpoint
+	}
+	if f.Demo {
+		// control creates or recovers this exact run's preview. never substitute
+		// caller metadata or start browser/feedback work before validating it.
+		preview, err := f.Control.CreateServiceRunPreview(ctx, f.Subject.ID, f.RunID, f.Number, f.Token)
+		if err != nil {
+			return HTTP{}, nil, fmt.Errorf("service: create demo feedback preview: %w", err)
+		}
+		if !opaqueid.Valid(preview.Id, opaqueid.PreviewPrefix) || preview.SchemaVersion != 1 ||
+			len(preview.ServiceIds) != 1 || preview.ServiceIds[0] != f.Subject.ID {
+			return HTTP{}, nil, failure.Wrap("create demo feedback preview", failure.ServerResponseInvalid,
+				errors.New("preview has an invalid ID, schema, or service membership"))
+		}
+		f.PreviewID = preview.Id
+	}
 	f.probes, err = requestlimit.NewHTTP(&controlv1.ProjectHTTPApplicationLimits{Concurrency: new(4)})
 	if err != nil {
 		return HTTP{}, nil, err
@@ -86,7 +115,16 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
 		return HTTP{}, nil, err
 	}
 	f.Policy = policy.Lease()
-	f.browser = &httpaccess.Browser{Subject: f.Subject, Client: serviceBrowserClient{f}, RunID: f.RunID, Number: uint64(f.Number), ControlURL: strings.TrimSuffix(f.Control.ControlURL(), "/"), Policy: policy, Tokens: tokens}
+	f.browser = &httpaccess.Browser{Subject: f.Subject, Client: f.Control, PreviewID: f.PreviewID, RunID: f.RunID, Number: f.Number, Token: f.Token, ControlURL: controlURL, Policy: policy, Tokens: tokens}
+	f.feedback, err = newFeedbackRuntime(f)
+	if err != nil {
+		tokens.Close()
+		policy.Close()
+		return HTTP{}, nil, err
+	}
+	if f.feedback != nil {
+		f.ResponseHooks = f.feedback.responseHooks(f.ResponseHooks)
+	}
 	return f, func() { tokens.Close(); policy.Close() }, nil
 }
 
@@ -102,10 +140,6 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 	view, enabled, _ := f.Policy.Current()
 	if !enabled || view.Scope != f.Subject || view.Hostname != f.Hostname || view.Port != f.Port {
 		return servicestream.ErrEndpoint
-	}
-	scheme := "http"
-	if target.Transport.TLS != nil {
-		scheme = "https"
 	}
 	// ingress admission belongs to this exact visitor connection. each HTTP
 	// request still needs its own local permission and policy guard.
@@ -151,29 +185,16 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 				servicestream.DenyHTTP(w, http.StatusMisdirectedRequest)
 				return
 			}
-			// explicit preparation endpoints never send application bytes. TLS
-			// certificate holders cannot switch identity through browser endpoints.
-			if strings.HasPrefix(r.URL.Path, "/__tnl/") {
-				// browser preparation does not claim application access.
-				reported = true
-				if len(client.ConnectionState().PeerCertificates) != 0 || r.ContentLength != 0 || len(r.TransferEncoding) != 0 || r.Header.Get("Upgrade") != "" {
-					servicestream.DenyHTTP(w, http.StatusForbidden)
-					return
-				}
-				if f.browser != nil && f.browser.Handle(w, r) {
-					return
-				}
-				if f.browser != nil && httpaccess.SharePath(r.URL.Path) && r.Method == http.MethodGet {
-					f.share(w, r)
-					return
-				}
-				http.NotFound(w, r)
-				return
-			}
-			// PROXY metadata supplies the source, never an HTTP forwarding header.
+			// only the validated forwarding header supplies the visitor source.
+			// reserved feedback requests need these same TLS and source facts.
 			r.RemoteAddr = netip.AddrPortFrom(source.Unmap(), 1).String()
 			state := client.ConnectionState()
 			r.TLS = &state
+			if f.reserved(w, r, f.authorizeFeedback) {
+				// browser preparation does not claim application access.
+				reported = true
+				return
+			}
 			proof := len(state.PeerCertificates) == 0 && f.ReadinessProof.Consume(r, httpaccess.ReadinessRun{Subject: f.Subject, ID: f.RunID, Number: uint64(f.Number), Hostname: f.Hostname})
 			r.Header.Del(httpstream.ReadinessProbeHeader)
 			if f.AdmitRequest != nil {
@@ -236,17 +257,120 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 				servicestream.DenyHTTP(w, http.StatusServiceUnavailable)
 				return
 			}
-			r = httpstream.WithVisitorHost(serviceApplicationRequest(r), f.Hostname)
+			r = httpstream.WithVisitorHost(f.ConnectorApplication(w, r), f.Hostname)
 			// report the decision before an upgrade or long-lived response.
 			outcome, reason = "allowed", ""
 			report()
 			next.ServeHTTP(w, r)
 		})
 	}
-	if target.Handler != nil {
-		return httpstream.ServeHandler(ctx, client, wrap(target.Handler), target.Drain)
+	return target.Serve(ctx, client, f.Hostname, wrap, f.ResponseHooks)
+}
+
+func (f HTTP) authorizeFeedback(w http.ResponseWriter, r *http.Request) (feedbackAuthorization, *httpaccess.Guard, *http.Request, error) {
+	var tokens *httpaccess.Tokens
+	if f.browser != nil {
+		tokens = f.browser.Tokens
 	}
-	return httpstream.Serve(ctx, client, &url.URL{Scheme: scheme, Host: target.Address}, target.Dial, wrap, f.ResponseHooks, target.Drain)
+	authorization, guard, guarded, err := httpaccess.AuthorizeRequest(w, r, f.Policy, tokens)
+	if err != nil {
+		return feedbackAuthorization{permission: authorization.Permission()}, guard, guarded, err
+	}
+	access, err := bearerFeedbackAuthorization(authorization)
+	return access, guard, guarded, err
+}
+
+// reserved composes the same service-owned handlers for public and connector
+// HTTP. each path supplies its own admission; this code assumes no public header.
+func (f HTTP) reserved(w http.ResponseWriter, r *http.Request, authorize func(http.ResponseWriter, *http.Request) (feedbackAuthorization, *httpaccess.Guard, *http.Request, error)) bool {
+	if !strings.HasPrefix(r.URL.Path, "/__tnl/") {
+		return false
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method == http.MethodConnect || r.URL.IsAbs() || r.URL.Host != "" || r.Header.Get("Upgrade") != "" ||
+		r.TLS != nil && len(r.TLS.PeerCertificates) != 0 {
+		servicestream.DenyHTTP(w, http.StatusForbidden)
+		return true
+	}
+	status := r.URL.Path == "/__tnl/access" && r.Method == http.MethodGet && f.PreviewID != ""
+	if status || f.feedback != nil && strings.HasPrefix(r.URL.Path, "/__tnl/feedback") {
+		authorization, guard, guarded, err := authorize(w, r)
+		if guard != nil {
+			defer guard.Finish()
+		}
+		if status {
+			if err != nil && servicestream.HTTPDecisionStatus(err) != http.StatusForbidden {
+				servicestream.DenyHTTP(w, servicestream.HTTPDecisionStatus(err))
+				return true
+			}
+			writePreviewAccessStatus(w, previewAccessStatus(f, authorization.permission, err == nil))
+			return true
+		}
+		if err != nil {
+			servicestream.DenyHTTP(w, servicestream.HTTPDecisionStatus(err))
+			return true
+		}
+		if guard != nil {
+			w = guard
+		}
+		f.feedback.handle(w, guarded, authorization)
+		return true
+	}
+	if r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
+		servicestream.DenyHTTP(w, http.StatusForbidden)
+		return true
+	}
+	if f.browser != nil && f.browser.Handle(w, r) {
+		return true
+	}
+	if f.browser != nil && httpaccess.SharePath(r.URL.Path) && r.Method == http.MethodGet {
+		f.share(w, r)
+		return true
+	}
+	http.NotFound(w, r)
+	return true
+}
+
+func (f HTTP) ConnectorReserved(w http.ResponseWriter, r *http.Request, authorization servicestream.ConnectorHTTPAuthorization) bool {
+	if !strings.HasPrefix(r.URL.Path, "/__tnl/") {
+		return false
+	}
+	facts := authorization.Permission.Facts()
+	if authorization.ServiceID != f.Subject.ID || authorization.RunID != f.RunID || authorization.RunNumber != uint64(f.Number) ||
+		!opaqueid.Valid(authorization.PairID, "cpp_") || authorization.DeliveryGeneration < 1 ||
+		!authorization.Source.IsValid() || authorization.Source.IsUnspecified() || authorization.Source.Zone() != "" ||
+		!authorization.ValidUntil.After(time.Now()) || !authorization.Permission.Valid() || facts.Scope != f.Subject ||
+		facts.Hostname != f.Hostname || authorization.PermissionToken == "" {
+		servicestream.DenyHTTP(w, http.StatusForbidden)
+		return true
+	}
+	if _, err := visitortoken.ConnectorSubject(facts.Subject); err != nil {
+		servicestream.DenyHTTP(w, http.StatusForbidden)
+		return true
+	}
+	// HTTP cannot replace the connector's admitted subject with a bearer.
+	for key := range r.Header {
+		if strings.EqualFold(key, httpaccess.VisitorTokenHeader) || strings.EqualFold(key, "Tnl-Access-Token") {
+			servicestream.DenyHTTP(w, http.StatusForbidden)
+			return true
+		}
+	}
+	if httpaccess.SuppliedCookieCount(r, httpaccess.VisitorTokenCookie) != 0 {
+		servicestream.DenyHTTP(w, http.StatusForbidden)
+		return true
+	}
+	r.RemoteAddr = netip.AddrPortFrom(authorization.Source.Unmap(), 1).String()
+	return f.reserved(w, r, func(http.ResponseWriter, *http.Request) (feedbackAuthorization, *httpaccess.Guard, *http.Request, error) {
+		access, err := connectorFeedbackAuthorization(authorization)
+		return access, nil, r, err
+	})
+}
+
+func (f HTTP) ConnectorApplication(w http.ResponseWriter, r *http.Request) *http.Request {
+	if f.feedback != nil {
+		r = f.feedback.prepareBrowser(w, r)
+	}
+	return serviceApplicationRequest(r)
 }
 
 // awaitServiceVisitorAdmission uses the same ingress acknowledgment for HTTP and
@@ -292,64 +416,14 @@ func serviceApplicationRequest(r *http.Request) *http.Request {
 }
 
 func (f HTTP) share(w http.ResponseWriter, r *http.Request) {
-	source, err := json.Marshal(controlv1.VisitorTokenGrantSource{Kind: controlv1.VisitorTokenGrant, Credential: strings.TrimPrefix(r.URL.Path, "/__tnl/share/")})
-	if err != nil {
-		servicestream.DenyHTTP(w, 403)
-		return
-	}
-	permission, err := f.Control.IssueVisitorToken(r.Context(), controlv1.VisitorTokenRequest{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: f.Subject.ID}, Source: source})
+	access := httpaccess.Shares{Client: f.Control, Browser: f.browser}
+	redemption, err := access.Redeem(r.Context(), r.URL.Path)
 	if err != nil {
 		servicestream.DenyHTTP(w, servicestream.HTTPDecisionStatus(err))
 		return
 	}
-	// control rechecks the grant's parent on every renewal. the first short
-	// permission is not the grant deadline.
-	permission, err = f.browser.PrepareSessionToken(r.Context(), source, permission)
-	if err != nil {
-		servicestream.DenyHTTP(w, 503)
-		return
-	}
-	if err := httpaccess.PermissionCookie(w, permission); err != nil {
-		servicestream.DenyHTTP(w, 503)
-		return
-	}
-	http.SetCookie(w, &http.Cookie{Name: httpaccess.ShareCookieName, Value: strings.TrimPrefix(r.URL.Path, "/__tnl/share/"), Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
-	w.Header().Set("Referrer-Policy", "no-referrer")
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
-
-type serviceBrowserClient struct{ frontend HTTP }
-
-func (a serviceBrowserClient) request(run string, number uint64, secret string, token credentials.PublishRunToken) (controlv1.ServiceBrowserRequest, error) {
-	f := a.frontend
-	if run != f.RunID || number != uint64(f.Number) || token != "" {
-		return controlv1.ServiceBrowserRequest{}, servicestream.ErrEndpoint
-	}
-	return controlv1.ServiceBrowserRequest{RunNumber: f.Number, Secret: secret}, nil
-}
-func (a serviceBrowserClient) RedeemBrowserHandoff(ctx context.Context, run string, number uint64, secret, share, shareSecret string, token credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
-	input, err := a.request(run, number, secret, token)
-	if err != nil || share != "" || shareSecret != "" {
-		return controlv1.BrowserHandoffResponse{}, servicestream.ErrEndpoint
-	}
-	f := a.frontend
-	return f.Control.RedeemServiceBrowserHandoff(ctx, f.Subject.ID, f.RunID, f.Token, input)
-}
-func (a serviceBrowserClient) CheckBrowserAccess(ctx context.Context, run string, number uint64, secret string, token credentials.PublishRunToken) (controlv1.BrowserAccessResponse, error) {
-	input, err := a.request(run, number, secret, token)
-	if err != nil {
-		return controlv1.BrowserAccessResponse{}, err
-	}
-	f := a.frontend
-	return f.Control.CheckServiceBrowserSession(ctx, f.Subject.ID, f.RunID, f.Token, input)
-}
-func (a serviceBrowserClient) RevokeBrowserAccess(ctx context.Context, run string, number uint64, secret string, token credentials.PublishRunToken) error {
-	input, err := a.request(run, number, secret, token)
-	if err != nil {
-		return err
-	}
-	f := a.frontend
-	return f.Control.RevokeServiceBrowserSession(ctx, f.Subject.ID, f.RunID, f.Token, input)
+	httpaccess.ShareRedirect(w, redemption)
 }
 
 var _ servicestream.HTTPFrontend = HTTP{}
+var _ servicestream.ConnectorHTTPFrontend = HTTP{}

@@ -34,7 +34,7 @@ func TestIntegrationURLStatusUsesPublisherLeaseAndProjectIdentity(t *testing.T) 
 	if _, err := database.IntegrationURLHostname(t.Context(), server, project, "root.member.example.test", "oauth", oauthHost); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.MarkIntegrationURLReady(t.Context(), server, oauthHost, "publisher"); err != nil {
+	if err := database.MarkIntegrationURLReady(t.Context(), server, oauthHost, "publisher", "svc_0123456789abcdefghijkl", 1); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := database.Snapshot(t.Context())

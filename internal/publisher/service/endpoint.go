@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"slices"
 	"time"
 
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
@@ -39,6 +40,10 @@ type ManagedControl interface {
 }
 
 func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved controlv1.Service, cfg RunConfig) (*Prepared, error) {
+	if (len(cfg.Mounts) != 0 || cfg.ResolveHTTPTarget != nil) &&
+		(approved.Protocol != controlv1.ServiceProtocolHTTP || cfg.Handler != nil || cfg.TargetResolver != nil) {
+		return nil, ErrPrivateStream
+	}
 	traffic, err := serviceTraffic(preparation.Traffic)
 	if err != nil {
 		return nil, err
@@ -75,6 +80,8 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 	prepared.managedPublic = approved.Endpoint.Public
 	prepared.metadataRevision = approved.TrustRevision
 	prepared.targetResolver = cfg.TargetResolver
+	prepared.mounts = slices.Clone(cfg.Mounts)
+	prepared.resolveHTTPTarget = cfg.ResolveHTTPTarget
 	if cfg.HTTPResponseHooks != nil {
 		if prepared.managedProtocol != serviceconfig.ProtocolHTTP || cfg.Handler != nil {
 			return nil, ErrPrivateStream
@@ -163,13 +170,17 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 			InspectionMode: config.InspectionMode, ObserveSummary: config.ObserveSummary,
 			AdmitRequest: config.AdmitRequest, ReadinessProof: proof,
 			ResponseHooks: prepared.httpResponseHooks,
-			Control:       control, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
+			Feedback:      config.Feedback, PreviewID: config.PreviewID,
+			ProjectService: config.ProjectService, ProjectRoot: config.ProjectRoot, Demo: config.Demo,
+			Control: control, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
 			RunID: setup.ServiceRunId, Number: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken),
 			Hostname: prepared.managedHostname, Port: prepared.servicePort, Requests: prepared.serviceHTTPRequests,
 		})
 		if err != nil {
 			return nil, nil, err
 		}
+		prepared.connectorHTTP = httpFrontend
+		prepared.httpResponseHooks = httpFrontend.ResponseHooks
 	}
 	decision := func(result controlv1.ServiceClientCertificateDecision, err error) (servicestream.Decision, error) {
 		if errors.Is(err, clientcontrol.ErrNotFound) || errors.Is(err, clientcontrol.ErrUnauthenticated) {

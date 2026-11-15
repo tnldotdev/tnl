@@ -2,7 +2,11 @@ import { expect, test, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { createFeedbackAPI } from "./api.ts";
 import { reportInputSchema } from "./model.ts";
-import { feedbackThreadSchema, feedbackEventSchema } from "../browserapi/model.gen.ts";
+import {
+  browserAccessStatusSchema,
+  feedbackThreadSchema,
+  feedbackEventSchema,
+} from "../browserapi/model.gen.ts";
 
 function fixture(name: string): unknown {
   return JSON.parse(
@@ -78,6 +82,11 @@ test("shared Go wire fixtures produce a readable report and a bounded browser su
   expect(thread.report.text).toBe(input.text);
   expect(thread.scope.page_path).toBe(input.page_path);
   expect(thread.report.author?.display_name).toBe("Sam");
+  expect(wire.scope).toMatchObject({
+    service_id: "svc_0123456789abcdefghijkl",
+    service_run_id: "srun_0123456789abcdefghijkl",
+    run_number: "2",
+  });
   expect(fetcher).toHaveBeenCalledWith(
     "/__tnl/feedback",
     expect.objectContaining({
@@ -96,4 +105,38 @@ test("shared Go wire fixtures produce a readable report and a bounded browser su
       new AbortController().signal,
     ),
   ).toMatchObject({ cursor: "5", type: "reply" });
+});
+
+test("browser access binds the exact service run without publication compatibility fields", () => {
+  const status = {
+    schema_version: 1,
+    allowed: true,
+    preview_id: "pv_0123456789abcdefghijkl",
+    service_id: "svc_0123456789abcdefghijkl",
+    service_run_id: "srun_0123456789abcdefghijkl",
+    run_number: "2",
+    access_method: "share",
+  };
+  expect(browserAccessStatusSchema.parse(status)).toEqual(status);
+  expect(
+    browserAccessStatusSchema.safeParse({
+      schema_version: status.schema_version,
+      allowed: status.allowed,
+      preview_id: status.preview_id,
+      public_url_id: "url_0123456789abcdefghijkl",
+      publish_run_number: "2",
+    }).success,
+  ).toBe(false);
+});
+
+test("browser report input cannot select service scope, run, or source state", () => {
+  const input = reportInputSchema.parse(fixture("report-request"));
+  for (const forged of [
+    { service_id: "svc_0123456789abcdefghijkl" },
+    { service_run_id: "srun_0123456789abcdefghijkl" },
+    { run_number: "99" },
+    { source_at_report: { complete: true } },
+  ]) {
+    expect(reportInputSchema.safeParse({ ...input, ...forged }).success).toBe(false);
+  }
 });

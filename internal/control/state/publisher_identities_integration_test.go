@@ -5,14 +5,15 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"net/netip"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
@@ -68,13 +69,13 @@ func TestIntegrationPublisherResolvedScopeUsesAuthorizedFacts(t *testing.T) {
 
 func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 	d, _ := newControlStateIntegrationDatabase(t, "publisher_baseline")
-	for _, name := range []string{"public_url_publish_credentials", "publish_run_publish_credentials", "ephemeral_public_url_allocations", "authority_revision_states", "tcp_port_claims", "ingress_pool_ports", "service_tickets", "publish_run_publisher_grants"} {
+	for _, name := range []string{"public_url_publish_credentials", "publish_run_publish_credentials", "ephemeral_public_url_allocations", "authority_revision_states", "tcp_port_claims", "ingress_pool_ports", "service_tickets", "publish_run_publisher_grants", "browser_access_sessions", "browser_access_handoffs", "browser_login_attempts"} {
 		var absent bool
 		if err := d.pool.QueryRow(t.Context(), `SELECT to_regclass('control.' || $1) IS NULL`, name).Scan(&absent); err != nil || !absent {
 			t.Fatalf("legacy table %s exists: %v", name, err)
 		}
 	}
-	for _, name := range []string{"publisher_identities", "publisher_identity_keys", "publisher_grants", "publisher_enrollments", "publisher_assertions", "publisher_access_tokens", "publisher_namespace_allocations", "publisher_certificate_checkpoints", "previews", "shares", "feedback_threads", "browser_access_sessions", "publisher_service_runs", "publisher_service_connection_slots", "visitor_devices", "connector_peer_pairs"} {
+	for _, name := range []string{"publisher_identities", "publisher_identity_keys", "publisher_grants", "publisher_enrollments", "publisher_assertions", "publisher_access_tokens", "publisher_namespace_allocations", "publisher_certificate_checkpoints", "previews", "shares", "feedback_threads", "service_http_browser_sessions", "service_http_browser_logins", "service_http_browser_handoffs", "publisher_service_runs", "publisher_service_connection_slots", "visitor_devices", "connector_peer_pairs"} {
 		var present bool
 		if err := d.pool.QueryRow(t.Context(), `SELECT to_regclass('control.' || $1) IS NOT NULL`, name).Scan(&present); err != nil || !present {
 			t.Fatalf("final table %s missing: %v", name, err)
@@ -419,53 +420,69 @@ func TestIntegrationPublisherReplayRecordsAreBounded(t *testing.T) {
 
 func TestIntegrationGuestPublisherScopeSourceAndExpiry(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "guest_publisher")
-	guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
+	guest := newGuestTrialForTest(t, d, now)
+	now = guestOperationTime(guest)
+	u, err := d.AllocateGuestDemoService(t.Context(), AllocateGuestDemoServiceRequest{
+		Credential: guestCredentialForTest(guest), IdempotencyKey: "demo", Target: guestLoopbackTarget(t), Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	domain, err := d.CreateGuestTrial(t.Context(), guest, "example.test", now)
+	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.AllocateGuestDemoNumber(t.Context(), guest.ID, now); err != nil {
-		t.Fatal(err)
+	for _, source := range []netip.Addr{{}, netip.IPv4Unspecified(), netip.IPv6Unspecified(), netip.MustParseAddr("fe80::1%en0"), netip.MustParseAddr("192.0.2.8")} {
+		credential := GuestCredential{Token: guest.Token, SourceIP: source}
+		want := ErrGuestUnknown
+		if source == netip.MustParseAddr("192.0.2.8") {
+			want = authorization.ErrGuestIPChanged
+		}
+		if _, err := d.EnrollGuestPublisher(t.Context(), credential, u.ID, public, now); !errors.Is(err, want) {
+			t.Fatalf("source %s enrolled publisher: %v", source, err)
+		}
 	}
-	if _, err := d.EnsureGuestPrincipal(t.Context(), guest.ID, now); err != nil {
-		t.Fatal(err)
-	}
-	u := createTestPublicURL(t, d, CreatePublicURLRequest{GuestID: guest.ID, TeamID: guest.TeamID, DomainID: domain, MembershipID: guest.MembershipID, ActingIdentityID: guest.ID, IdempotencyKey: "demo", CanonicalHostname: "demo-1." + guest.NamespaceLabel + ".example.test", Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeDemo, AllowedIPPrefixes: []string{"192.0.2.7/32"}, DNSState: PublicURLDNSUnmanaged, PolicyRevision: 1, Ephemeral: true}, now)
-	public, private, _ := ed25519.GenerateKey(rand.Reader)
-	if _, err := d.EnrollGuestPublisher(t.Context(), guest.ID, u.ID, "192.0.2.8/32", public, now); !errors.Is(err, ErrPublisherIdentity) {
-		t.Fatalf("foreign source enrollment = %v", err)
-	}
-	p, err := d.EnrollGuestPublisher(t.Context(), guest.ID, u.ID, "192.0.2.7/32", public, now)
+	p, err := d.EnrollGuestPublisher(t.Context(), guestCredentialForTest(guest), u.ID, public, now)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if p.Kind != "guest" || p.GuestID != guest.ID || p.Scope.GuestID != guest.ID || p.Scope.TeamID != "" ||
+		p.CreatorID != "" || p.OwnerMembershipID != "" || p.Scope.Kind != "service" || p.Scope.ServiceID != u.ID {
+		t.Fatalf("guest enrollment invented authority: %+v", p)
+	}
+	recovered, err := d.EnrollGuestPublisher(t.Context(), guestCredentialForTest(guest), u.ID, public, now.Add(time.Second))
+	if err != nil || !reflect.DeepEqual(recovered, p) {
+		t.Fatalf("enrollment retry changed publisher: %+v, %v", recovered, err)
+	}
+	wrongPublic, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.EnrollGuestPublisher(t.Context(), guestCredentialForTest(guest), u.ID, wrongPublic, now); !errors.Is(err, ErrPublisherIdentity) {
+		t.Fatalf("different key replaced guest publisher: %v", err)
 	}
 	a := publisherAccess(t, d, p, private, "192.0.2.7/32", now)
-	if _, err := d.AuthenticatePublisherAccess(t.Context(), a.Token, "192.0.2.8/32", now); !errors.Is(err, ErrPublisherIdentity) {
-		t.Fatal("guest token moved to another IP")
+	if p.ExpiresAt == nil || !p.ExpiresAt.Equal(guest.ExpiresAt) || a.ExpiresAt == nil ||
+		!a.ExpiresAt.Equal(*p.ExpiresAt) || !a.Until.Equal(now.Add(PublisherAccessLifetime)) || a.Until.Equal(*a.ExpiresAt) {
+		t.Fatalf("guest grant expiry was replaced by token expiry: %+v, %+v", p, a)
+	}
+	for _, source := range []string{"", "192.0.2.8/32", "192.0.2.0/24", "0.0.0.0/32", "::/128"} {
+		if _, err := d.AuthenticatePublisherAccess(t.Context(), a.Token, source, now); !errors.Is(err, ErrPublisherIdentity) {
+			t.Fatalf("source %q authenticated guest publisher: %v", source, err)
+		}
 	}
 	if _, err := d.AllocatePublisherService(t.Context(), p, AllocateServiceRequest{}, now); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatal("guest received namespace allocation")
 	}
 	if owns, err := d.PublisherMayStartRun(t.Context(), p, "some-other-demo"); err != nil || owns {
-		t.Fatal("guest can publish an unassigned URL")
+		t.Fatal("guest can publish an unassigned service")
 	}
-	for _, reason := range []string{"expires_at=$2", "used_ready_ns=1200000000000"} {
-		query := fmt.Sprintf(`UPDATE control.guest_trials SET %s WHERE id=$1`, reason)
-		args := []any{guest.ID}
-		if strings.Contains(reason, "$2") {
-			args = append(args, now.Add(time.Second))
-		}
-		if _, err := d.pool.Exec(t.Context(), query, args...); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := d.AuthenticatePublisherAccess(t.Context(), a.Token, "192.0.2.7/32", now.Add(2*time.Second)); !errors.Is(err, ErrPublisherIdentity) {
-			t.Fatalf("guest exhaustion accepted: %s", reason)
-		}
-		if _, err := d.pool.Exec(t.Context(), `UPDATE control.guest_trials SET expires_at=$2, used_ready_ns=0 WHERE id=$1`, guest.ID, now.Add(GuestLifetime)); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.guest_trials SET used_ready_ns=$2 WHERE id=$1`, guest.ID, int64(GuestReadyAllowance)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.AuthenticatePublisherAccess(t.Context(), a.Token, "192.0.2.7/32", now.Add(2*time.Second)); !errors.Is(err, ErrPublisherIdentity) {
+		t.Fatalf("READY exhaustion authenticated publisher: %v", err)
+	}
+	if _, err := d.EnrollGuestPublisher(t.Context(), guestCredentialForTest(guest), u.ID, public, guest.ExpiresAt); !errors.Is(err, ErrGuestTrialSpent) {
+		t.Fatalf("absolute trial expiry enrolled publisher: %v", err)
 	}
 }

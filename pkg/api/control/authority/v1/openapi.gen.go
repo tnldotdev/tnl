@@ -322,37 +322,16 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
-// Defines values for PublicURLScope.
-const (
-	PublicURLScopeMember PublicURLScope = "member"
-	PublicURLScopeShared PublicURLScope = "shared"
-)
-
-// Valid indicates whether the value is a known member of the PublicURLScope enum.
-func (e PublicURLScope) Valid() bool {
-	switch e {
-	case PublicURLScopeMember:
-		return true
-	case PublicURLScopeShared:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for PublisherEnrollmentResultKind.
 const (
-	Namespace      PublisherEnrollmentResultKind = "namespace"
-	SavedPublicUrl PublisherEnrollmentResultKind = "saved_public_url"
-	Service        PublisherEnrollmentResultKind = "service"
+	Namespace PublisherEnrollmentResultKind = "namespace"
+	Service   PublisherEnrollmentResultKind = "service"
 )
 
 // Valid indicates whether the value is a known member of the PublisherEnrollmentResultKind enum.
 func (e PublisherEnrollmentResultKind) Valid() bool {
 	switch e {
 	case Namespace:
-		return true
-	case SavedPublicUrl:
 		return true
 	case Service:
 		return true
@@ -844,23 +823,18 @@ type Problem struct {
 // ProblemCode defines model for Problem.Code.
 type ProblemCode string
 
-// PublicURLID defines model for PublicURLID.
-type PublicURLID = ResourceID
-
-// PublicURLScope defines model for PublicURLScope.
-type PublicURLScope string
-
-// PublisherEnrollmentResult defines model for PublisherEnrollmentResult.
+// PublisherEnrollmentResult Enrolled publisher key and its exact grant. Exactly one of team_id or guest_id identifies its owner. A guest receives only an exact service grant, bounded by the trial's fixed expiry; enrollment grants no service management or connector permission.
 type PublisherEnrollmentResult struct {
-	ClientId    string                        `json:"client_id"`
-	DomainId    *string                       `json:"domain_id,omitempty"`
-	GrantId     string                        `json:"grant_id"`
-	KeyId       string                        `json:"key_id"`
-	Kind        PublisherEnrollmentResultKind `json:"kind"`
-	Namespace   *string                       `json:"namespace,omitempty"`
-	PublicUrlId *string                       `json:"public_url_id,omitempty"`
-	ServiceId   *ServiceID                    `json:"service_id,omitempty"`
-	TeamId      string                        `json:"team_id"`
+	ClientId  string                        `json:"client_id"`
+	DomainId  *string                       `json:"domain_id,omitempty"`
+	ExpiresAt *time.Time                    `json:"expires_at,omitempty"`
+	GrantId   string                        `json:"grant_id"`
+	GuestId   externalRef0.GuestID          `json:"guest_id,omitempty"`
+	KeyId     string                        `json:"key_id"`
+	Kind      PublisherEnrollmentResultKind `json:"kind"`
+	Namespace *string                       `json:"namespace,omitempty"`
+	ServiceId *externalRef0.ServiceID       `json:"service_id,omitempty"`
+	TeamId    string                        `json:"team_id,omitempty"`
 }
 
 // PublisherEnrollmentResultKind defines model for PublisherEnrollmentResult.Kind.
@@ -1116,8 +1090,8 @@ type BearerProblem = Problem
 
 // IssueControlBrowserHandoffJSONBody defines parameters for IssueControlBrowserHandoff.
 type IssueControlBrowserHandoffJSONBody struct {
-	PublicUrlId  string `json:"public_url_id"`
 	RefreshToken string `json:"refresh_token"`
+	ServiceId    string `json:"service_id"`
 }
 
 // RequestCompanyAdmissionJSONBody defines parameters for RequestCompanyAdmission.

@@ -462,7 +462,21 @@ func (s *quicStream) Write(b []byte) (int, error) {
 
 func (s *quicStream) Close() error {
 	s.Stream.CancelRead(0)
-	return s.Stream.Close()
+	err := s.Stream.Close()
+	if err != nil {
+		// quic's Close returns an untyped error after a send reset. our own
+		// reset, or a peer's normal stop, already released that direction.
+		// retain an abnormal peer reset as its typed cause, not the generic
+		// "close called for canceled stream" cleanup error.
+		var reset *quic.StreamError
+		if cause := context.Cause(s.Stream.Context()); errors.As(cause, &reset) {
+			if !reset.Remote || reset.ErrorCode == 0 {
+				return nil
+			}
+			return cause
+		}
+	}
+	return err
 }
 
 func (s *quicStream) CloseWrite() error { return s.Stream.Close() }

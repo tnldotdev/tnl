@@ -10,12 +10,13 @@ FROM control.feedback_event_clock WHERE id = 1;
 
 -- name: CreateFeedbackThread :one
 INSERT INTO control.feedback_threads (
-    id, preview_id, team_id, service_id, service_run_id,
+    id, preview_id, team_id, guest_id, service_id, service_run_id,
     run_number, service_name, page_path, page_title, report_text, author_display_name, author_identity_id, author_verified,
     pin, evidence, report_source_state, created_at, state_updated_at,
     idempotency_key, request_digest
 ) VALUES (
-    sqlc.arg(id), sqlc.arg(preview_id), sqlc.arg(team_id), sqlc.arg(service_id),
+    sqlc.arg(id), sqlc.arg(preview_id), sqlc.narg(team_id),
+    (SELECT service.guest_id FROM control.services service WHERE service.id=sqlc.arg(service_id)),sqlc.arg(service_id),
     sqlc.arg(service_run_id), sqlc.arg(run_number), sqlc.arg(service),
     sqlc.arg(page_path), sqlc.arg(page_title), sqlc.arg(report_text), sqlc.narg(author_display_name), sqlc.narg(author_identity_id), sqlc.arg(author_verified),
     convert_from(sqlc.narg(anchor)::bytea, 'UTF8')::jsonb,
@@ -61,11 +62,12 @@ WHERE feedback_id = sqlc.arg(feedback_id)
 
 -- name: InsertFeedbackEvent :one
 INSERT INTO control.feedback_events (
-    cursor, feedback_id, team_id, event_type, actor_kind,
+    cursor, feedback_id, team_id, guest_id, event_type, actor_kind,
     actor_reference, idempotency_key, request_digest, text,
     evidence, source_state, occurred_at, author_identity_id, author_display_name, author_verified
 ) VALUES (
-    sqlc.arg(cursor), sqlc.arg(feedback_id), sqlc.arg(team_id),
+    sqlc.arg(cursor), sqlc.arg(feedback_id), sqlc.narg(team_id),
+    (SELECT thread.guest_id FROM control.feedback_threads thread WHERE thread.id=sqlc.arg(feedback_id)),
     sqlc.arg(event_type), sqlc.arg(actor_kind), sqlc.arg(actor_reference),
     sqlc.arg(idempotency_key), sqlc.arg(request_digest),
     sqlc.narg(text),
@@ -100,7 +102,7 @@ ORDER BY cursor LIMIT 26;
 
 -- name: FeedbackRunScope :one
 SELECT run.id AS service_run_id, run.service_id, run.run_number,
-       service.team_id, preview.id AS preview_id
+       service.team_id, service.guest_id, preview.id AS preview_id
 FROM control.service_runs AS run
 JOIN control.services AS service ON service.id = run.service_id
 JOIN control.preview_services AS included ON included.service_id = service.id
@@ -115,9 +117,8 @@ WHERE run.id = sqlc.arg(service_run_id)
 FOR UPDATE OF run;
 
 -- name: CreateServiceRunPreview :one
--- guest provenance is added only with the paused guest service ownership seam.
-INSERT INTO control.previews (id, team_id, created_by_identity_id, idempotency_key, created_at, demo_service_run_id)
-SELECT sqlc.arg(id), u.team_id, u.created_by_identity_id, 'demo/' || r.id,
+INSERT INTO control.previews (id, team_id, guest_id, created_by_identity_id, idempotency_key, created_at, demo_service_run_id)
+SELECT sqlc.arg(id), u.team_id, u.guest_id, u.created_by_identity_id, 'demo/' || r.id,
     sqlc.arg(now)::timestamptz, r.id
 FROM control.service_runs r JOIN control.services u ON u.id = r.service_id
 WHERE r.id = sqlc.arg(service_run_id) AND r.service_id=sqlc.arg(service_id) AND r.run_number = sqlc.arg(run_number)
@@ -127,8 +128,8 @@ ON CONFLICT (demo_service_run_id) DO UPDATE SET idempotency_key = EXCLUDED.idemp
 RETURNING *;
 
 -- name: AddServiceRunPreviewService :exec
-INSERT INTO control.preview_services (preview_id, team_id, service_id, added_at)
-SELECT p.id, p.team_id, r.service_id, sqlc.arg(now)::timestamptz
+INSERT INTO control.preview_services (preview_id, team_id, guest_id, service_id, added_at)
+SELECT p.id, p.team_id, p.guest_id, r.service_id, sqlc.arg(now)::timestamptz
 FROM control.previews p JOIN control.service_runs r ON r.id = p.demo_service_run_id
 WHERE p.id = sqlc.arg(preview_id)
 ON CONFLICT (preview_id, service_id) DO NOTHING;

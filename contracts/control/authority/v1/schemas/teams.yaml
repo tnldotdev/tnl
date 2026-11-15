@@ -34,6 +34,7 @@ schemas:
   TeamRole:
     type: string
     enum: [member, admin, owner]
+    x-enum-varnames: [TeamRoleMember, TeamRoleAdmin, TeamRoleOwner]
   TeamKind:
     type: string
     enum: [personal, organization]
