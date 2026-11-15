@@ -447,10 +447,11 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 			}
 		}
 	}
-	if publicService.Endpoint == nil || !publicService.Endpoint.Public {
+	if publicService.Endpoint == nil || !publicService.Endpoint.Public || publicService.Endpoint.Port != 443 {
 		t.Fatal("public deployment lost service HTTP endpoint")
 	}
-	f.connectDirectListener(t, publicService.Endpoint)
+	// shared HTTPS already uses the fixture's ingress listener and trusted
+	// destination metadata; only allocated native ports need another listener.
 	grant, err := control.CreateServiceHTTPGrant(t.Context(), publicService.Id, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
