@@ -176,7 +176,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 	}
 	first := waitIntegrationURLWorkerReady(t, apps[0].ready)
 	waitForReadyPublisherConnections(t, fixture.inspect, first.ServiceId, first.RunNumber, 2)
-	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
+	waitForAppliedServiceRouting(t, fixture.inspect, first.ServiceRunId, fixture.process.metricsAddress)
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -220,7 +220,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 		t.Fatal("handoff did not replace the alias publish run")
 	}
 	waitForReadyPublisherConnections(t, fixture.inspect, second.ServiceId, second.RunNumber, 2)
-	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
+	waitForAppliedServiceRouting(t, fixture.inspect, second.ServiceRunId, fixture.process.metricsAddress)
 	if _, body := visit("https://" + aliasHost + "/"); body != "feature" {
 		t.Fatal("forced handoff did not reach the selected worktree")
 	}
@@ -232,8 +232,12 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 		t.Fatal(err)
 	}
 	third := waitIntegrationURLWorkerReady(t, apps[0].ready)
+	if third.ServiceId != first.ServiceId || third.ServiceRunId == first.ServiceRunId ||
+		third.ServiceRunId == second.ServiceRunId || third.RunNumber <= second.RunNumber {
+		t.Fatal("release did not prepare a newer run of the same alias service")
+	}
 	waitForReadyPublisherConnections(t, fixture.inspect, third.ServiceId, third.RunNumber, 2)
-	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
+	waitForAppliedServiceRouting(t, fixture.inspect, third.ServiceRunId, fixture.process.metricsAddress)
 	if _, body := visit("https://" + aliasHost + "/"); body != "main" {
 		t.Fatal("release did not restore the primary checkout")
 	}

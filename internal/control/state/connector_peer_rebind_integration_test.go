@@ -95,8 +95,10 @@ func TestIntegrationConnectorRebindRetainsOwnerAndFencesOldBinding(t *testing.T)
 	for slot := range 2 {
 		f.claim(t, pair, slot, f.now)
 	}
-	f.report(t, pair, pair.ExpiresAt, f.now)
-	prepare := connectorRebindRequest(t, f, pair, "prepare", f.now.Add(time.Second))
+	// claims record elapsed authorization time. a later operation cannot restart
+	// its synthetic clock before those observations.
+	f.report(t, pair, pair.ExpiresAt, f.now.Add(time.Second))
+	prepare := connectorRebindRequest(t, f, pair, "prepare", f.now.Add(2*time.Second))
 	state, err := f.d.RebindConnectorPeerPair(f.visitor, pair.ServiceID, pair.ID, prepare, prepare.Proof.RequestedAt)
 	if err != nil || state.Pending == nil || state.Active == nil {
 		t.Fatal("prepare", err)
@@ -105,27 +107,27 @@ func TestIntegrationConnectorRebindRetainsOwnerAndFencesOldBinding(t *testing.T)
 	if pending.ID != pair.ID || pending.SessionKey != pair.SessionKey || pending.Key == pair.Key || pending.DeliveryID != pair.DeliveryID || pending.DeliveryGeneration <= pair.DeliveryGeneration || pending.TrustRevision != pair.TrustRevision || state.Active.DeliveryGeneration != pair.DeliveryGeneration {
 		t.Fatal("prepare transferred session identity")
 	}
-	retry, err := f.d.RebindConnectorPeerPair(f.visitor, pair.ServiceID, pair.ID, prepare, f.now.Add(2*time.Second))
+	retry, err := f.d.RebindConnectorPeerPair(f.visitor, pair.ServiceID, pair.ID, prepare, f.now.Add(3*time.Second))
 	if err != nil || retry.Pending == nil || retry.Pending.Key != pending.Key || !retry.PendingUntil.Equal(state.PendingUntil) {
 		t.Fatal("uncertain preparation issued new authority", err)
 	}
-	connectorRebindClaimBoth(t, f, pending, netip.MustParseAddr("192.0.2.11"), f.now.Add(2*time.Second))
+	connectorRebindClaimBoth(t, f, pending, netip.MustParseAddr("192.0.2.11"), f.now.Add(3*time.Second))
 	var unreported bool
 	if err := f.d.pool.QueryRow(t.Context(), `SELECT publisher_prepared_until IS NULL AND publisher_proved_until IS NULL AND publisher_proof_digest IS NULL FROM control.connector_peer_pending_bindings WHERE pair_id=$1`, pair.ID).Scan(&unreported); err != nil || !unreported {
 		t.Fatal("relay claims fabricated publisher installation or path evidence", err)
 	}
-	delivery, err := f.d.DeliverConnectorPeerPair(t.Context(), pair.ServiceID, pair.ServiceRunID, pair.ID, pending.DeliveryGeneration, f.run.Token, f.now.Add(2*time.Second))
+	delivery, err := f.d.DeliverConnectorPeerPair(t.Context(), pair.ServiceID, pair.ServiceRunID, pair.ID, pending.DeliveryGeneration, f.run.Token, f.now.Add(4*time.Second))
 	if err != nil || delivery.SessionKey != pair.SessionKey || delivery.Key != pending.Key || delivery.BindingState != "prepared" {
 		t.Fatal("pending publisher delivery", err)
 	}
-	connectorRebindReport(t, f, pending, "installed", f.now.Add(2*time.Second))
+	connectorRebindReport(t, f, pending, "installed", f.now.Add(4*time.Second))
 	activate := prepare.Proof
 	activate.Phase = "activate"
 	activate.ExpectedGeneration = pending.DeliveryGeneration
 	activate.ExpectedRelays = nil
 	activate.BindingChallenge = pending.BindingChallenge
 	activate.PathProofs = connectorRebindProofs(t, pending, 0)
-	activate.RequestedAt = f.now.Add(3 * time.Second)
+	activate.RequestedAt = f.now.Add(5 * time.Second)
 	request := signConnectorRebind(t, f, activate)
 	var hasProof bool
 	if err := f.d.pool.QueryRow(t.Context(), `SELECT publisher_proved_until IS NOT NULL FROM control.connector_peer_pending_bindings WHERE pair_id=$1`, pair.ID).Scan(&hasProof); err != nil || hasProof {
@@ -134,12 +136,12 @@ func TestIntegrationConnectorRebindRetainsOwnerAndFencesOldBinding(t *testing.T)
 	if got, err := f.d.RebindConnectorPeerPair(f.visitor, pair.ServiceID, pair.ID, request, activate.RequestedAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("activation skipped publisher path proof: phase=%s status=%s generation=%d error=%v", request.Proof.Phase, got.OperationStatus, got.OperationGeneration, err)
 	}
-	proved := connectorRebindReport(t, f, pending, "proved", f.now.Add(2*time.Second))
+	proved := connectorRebindReport(t, f, pending, "proved", f.now.Add(4*time.Second))
 	var proofUntil time.Time
 	if err := f.d.pool.QueryRow(t.Context(), `SELECT publisher_proved_until FROM control.connector_peer_pending_bindings WHERE pair_id=$1`, pair.ID).Scan(&proofUntil); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.d.ConfirmConnectorPeerPairPrepared(t.Context(), pair.ServiceID, pair.ServiceRunID, pair.ID, f.run.Token, proved, f.now.Add(3*time.Second)); err != nil {
+	if err := f.d.ConfirmConnectorPeerPairPrepared(t.Context(), pair.ServiceID, pair.ServiceRunID, pair.ID, f.run.Token, proved, f.now.Add(5*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	var after time.Time
@@ -150,14 +152,14 @@ func TestIntegrationConnectorRebindRetainsOwnerAndFencesOldBinding(t *testing.T)
 	if err != nil || active.Active == nil || active.Pending != nil || active.Active.DeliveryGeneration != pending.DeliveryGeneration || active.Active.SourceIP.String() != "192.0.2.11" || active.Active.SessionKey != pair.SessionKey {
 		t.Fatal("activation", err)
 	}
-	if retry, err := f.d.RebindConnectorPeerPair(f.visitor, pair.ServiceID, pair.ID, request, f.now.Add(4*time.Second)); err != nil || retry.Active == nil || !retry.Active.ExpiresAt.Equal(active.Active.ExpiresAt) {
+	if retry, err := f.d.RebindConnectorPeerPair(f.visitor, pair.ServiceID, pair.ID, request, f.now.Add(6*time.Second)); err != nil || retry.Active == nil || !retry.Active.ExpiresAt.Equal(active.Active.ExpiresAt) {
 		t.Fatal("lost activation reply extended authority", err)
 	}
-	oldProof := testConnectorLegProof(t, pair, 0, f.now.Add(4*time.Second), f.key)
+	oldProof := testConnectorLegProof(t, pair, 0, f.now.Add(6*time.Second), f.key)
 	if _, err := testClaimConnectorPeerPairLeg(t, f.d, t.Context(), pair.Relays[0].RelayLease, netip.MustParseAddr("192.0.2.10"), oldProof, oldProof.RequestedAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("retired generation regained claim", err)
 	}
-	newProof := testConnectorLegProof(t, *active.Active, 0, f.now.Add(4*time.Second), f.key)
+	newProof := testConnectorLegProof(t, *active.Active, 0, f.now.Add(6*time.Second), f.key)
 	claim, err := testClaimConnectorPeerPairLeg(t, f.d, t.Context(), active.Active.Relays[0].RelayLease, active.Active.SourceIP, newProof, newProof.RequestedAt)
 	if err != nil || claim.BindingState != tunnelv1.ConnectorPeerLegBindingActive || claim.Key != pending.Key {
 		t.Fatal("active claim observation", err)
