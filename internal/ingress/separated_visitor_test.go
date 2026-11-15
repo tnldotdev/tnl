@@ -233,5 +233,18 @@ func serviceHTTPStreamClosed(err error) bool {
 	if wrapped := errors.Unwrap(err); wrapped != nil {
 		return serviceHTTPStreamClosed(wrapped)
 	}
-	return err == io.ErrUnexpectedEOF || err == yamux.ErrStreamReset || err == net.ErrClosed
+	return err == io.ErrUnexpectedEOF || err == yamux.ErrStreamReset || err == yamux.ErrStreamClosed || err == net.ErrClosed
+}
+
+func TestServiceHTTPStreamClosureRetainsIndependentFailures(t *testing.T) {
+	for _, closed := range []error{io.ErrUnexpectedEOF, yamux.ErrStreamReset, yamux.ErrStreamClosed, net.ErrClosed} {
+		if !serviceHTTPStreamClosed(closed) ||
+			serviceHTTPStreamClosed(errors.Join(closed, errors.New("independent copy failure"))) ||
+			serviceHTTPStreamClosed(errors.Join(closed, context.Canceled)) {
+			t.Fatal("expected HTTP stream closure hid an independent failure")
+		}
+	}
+	if serviceHTTPStreamClosed(errors.New("stream closed")) {
+		t.Fatal("HTTP stream closure accepted an unrelated error with the same text")
+	}
 }

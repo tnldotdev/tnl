@@ -197,10 +197,11 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		})
 		runIntegrationBinaryCommand(t, project, fixture.environment, fixture.tnlPath,
 			"wait", "--service", "api", "--timeout", "30s", "--output=json")
+		// join renewal before unregistering the ownership it keeps alive.
+		stop()
 		if status := request("unregister", registration, nil); status != http.StatusNoContent {
 			t.Fatalf("unregister status %d", status)
 		}
-		stop()
 		waitForIntegrationCondition(t, 15*time.Second, func(ctx context.Context) (bool, error) {
 			snapshot, err := state.SnapshotProject(ctx, project)
 			return err == nil && len(snapshot.Tunnels) == 0, err

@@ -244,7 +244,7 @@ func TestNativeEnrollmentDoesNotPromoteRetiredURLGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := opaqueid.New(opaqueid.PublicURLPrefix)
+	id, err := opaqueid.New("url_")
 	if err != nil {
 		t.Fatal(err)
 	}

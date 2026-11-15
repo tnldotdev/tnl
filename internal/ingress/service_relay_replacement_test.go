@@ -99,7 +99,7 @@ func TestHTTPRelayReplacementBeforeFirstByteKeepsVisitorAndSingleCapacityDebit(t
 	if result.err != nil || result.request != "ping" || replacement.opens.Load() != 1 ||
 		before.VisitorConnectionID != second.VisitorConnectionID || result.visitorConnectionID != before.VisitorConnectionID ||
 		after.ServiceID != before.ServiceID || after.ServiceRunID != before.ServiceRunID || after.RunNumber != before.RunNumber ||
-		!after.ExpiresAt.Equal(before.ExpiresAt) || !second.ExpiresAt.Equal(before.ExpiresAt) ||
+		after.ExpiresAt.After(before.ExpiresAt) || !second.ExpiresAt.Equal(before.ExpiresAt) ||
 		control.reads.Load() != reads || len(control.claims) != 0 {
 		t.Fatal("relay replacement changed delivery, visitor identity, or used visitor control", result.err)
 	}

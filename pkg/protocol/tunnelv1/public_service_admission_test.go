@@ -19,8 +19,8 @@ func publicServiceAdmissionFixture() ServiceForwardingHeader {
 func TestManagedAdmissionValidatesExactKindsAndIdentities(t *testing.T) {
 	header := publicServiceAdmissionFixture()
 	for name, mutate := range map[string]func(*ServiceForwardingHeader){
-		"public-service":        func(h *ServiceForwardingHeader) { h.ServiceID = testOpaqueID(opaqueid.PublicURLPrefix) },
-		"public-run":            func(h *ServiceForwardingHeader) { h.ServiceRunID = testOpaqueID(opaqueid.PublishRunPrefix) },
+		"public-service":        func(h *ServiceForwardingHeader) { h.ServiceID = testOpaqueID("url_") },
+		"public-run":            func(h *ServiceForwardingHeader) { h.ServiceRunID = testOpaqueID("pr_") },
 		"missing-run":           func(h *ServiceForwardingHeader) { h.RunNumber = 0 },
 		"source":                func(h *ServiceForwardingHeader) { h.SourceIP = "192.0.2.10%spoof" },
 		"assignment":            func(h *ServiceForwardingHeader) { h.ConnectionAssignmentRevision = 0 },

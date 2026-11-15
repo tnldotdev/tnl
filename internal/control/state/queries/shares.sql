@@ -64,13 +64,13 @@ SELECT * FROM control.shares WHERE created_by_identity_id=$1 AND idempotency_key
 SELECT service_id FROM control.share_services WHERE share_id=$1 ORDER BY service_id;
 
 -- name: ListShares :many
-SELECT * FROM control.shares WHERE preview_id=sqlc.arg(preview_id) AND id>sqlc.arg(after_id)
-ORDER BY id LIMIT 101;
+SELECT * FROM control.shares WHERE preview_id=sqlc.arg(preview_id) AND id COLLATE "C">sqlc.arg(after_id)
+ORDER BY id COLLATE "C" LIMIT 101;
 
 -- name: ListTeamShares :many
 SELECT * FROM control.shares WHERE team_id=sqlc.arg(team_id)
-    AND created_by_identity_id=sqlc.arg(identity_id) AND id>sqlc.arg(after_id)
-ORDER BY id LIMIT 101;
+    AND created_by_identity_id=sqlc.arg(identity_id) AND id COLLATE "C">sqlc.arg(after_id)
+ORDER BY id COLLATE "C" LIMIT 101;
 
 -- name: RevokeShare :one
 UPDATE control.shares SET revoked_at=COALESCE(revoked_at,sqlc.arg(revoked_at)::timestamptz),

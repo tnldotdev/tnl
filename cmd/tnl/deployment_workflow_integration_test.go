@@ -232,6 +232,29 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 		t.Fatal("local webhook metadata was not generated")
 	}
 	webhookURL := assignment.Project.Webhooks["review"].URL
+	logWebhookState := func() {
+		if snapshot, err := session.Database().SnapshotProject(t.Context(), root); err == nil {
+			for _, integration := range snapshot.IntegrationURLs {
+				t.Logf("integration %s: %s %s", integration.Kind, integration.State, integration.Reason)
+				for _, endpoint := range integration.Endpoints {
+					t.Logf("endpoint %s: %s %s, receivers=%d", endpoint.Name, endpoint.State, endpoint.Reason, len(endpoint.ReadyReceivers))
+				}
+			}
+		}
+		inspect, err := pgx.Connect(t.Context(), f.databaseURL)
+		if err != nil {
+			t.Logf("webhook control diagnostic: %v", err)
+			return
+		}
+		defer inspect.Close(t.Context())
+		var runs string
+		err = inspect.QueryRow(t.Context(), `SELECT COALESCE(jsonb_agg(jsonb_build_object(
+			'hostname',service.certificate_hostname,'public',service.public,'run',run.id,
+			'state',run.state,'number',run.run_number,'ready_at',run.ready_at)),'[]')::text
+			FROM control.services service LEFT JOIN control.service_runs run ON run.service_id=service.id
+			WHERE service.certificate_hostname LIKE 'hooks-%'`).Scan(&runs)
+		t.Logf("webhook control runs=%s error=%v routing_ready=%t", runs, err, f.publicIngress.RoutingReady(time.Now()))
+	}
 	lastWebhookState := ""
 	workflowWait(t, 25*time.Second, func() bool {
 		response, err := visitor.Post(webhookURL, "application/octet-stream", strings.NewReader("public webhook delivery"))
@@ -240,6 +263,7 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 			if state != lastWebhookState {
 				t.Log(state)
 				lastWebhookState = state
+				logWebhookState()
 			}
 			return false
 		}
@@ -249,14 +273,7 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 		if state != lastWebhookState {
 			t.Log(state)
 			lastWebhookState = state
-			if snapshot, err := session.Database().SnapshotProject(t.Context(), root); err == nil {
-				for _, integration := range snapshot.IntegrationURLs {
-					t.Logf("integration %s: %s %s", integration.Kind, integration.State, integration.Reason)
-					for _, endpoint := range integration.Endpoints {
-						t.Logf("endpoint %s: %s %s, receivers=%d", endpoint.Name, endpoint.State, endpoint.Reason, len(endpoint.ReadyReceivers))
-					}
-				}
-			}
+			logWebhookState()
 		}
 		return response.StatusCode == 200 && len(body) == 0 && webhookBody.Load() == "public webhook delivery"
 	})
@@ -975,7 +992,10 @@ func (f *cliWorkflow) relay(t *testing.T, database *controlstate.Database, id st
 	if err != nil {
 		t.Fatal(err)
 	}
-	forward, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{ServiceRegistry: registry, CurrentLease: controller.Lease, ClusterSecrets: secrets, StreamCapacity: 128})
+	forward, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{
+		ServiceRegistry: registry, CurrentLease: controller.Lease, ClusterSecrets: secrets, StreamCapacity: 128,
+		Report: func(err error) { t.Logf("workflow relay forwarding: %v", err) },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1027,7 +1047,7 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 	publicServer, err := ingress.New(publicListener, ingress.Config{Control: client, Forwarder: forwarder, CurrentLease: controller.Lease,
 		IngressPoolID:      "ingress-a",
 		RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
-		MaxConnections: 128})
+		MaxConnections: 128, OnError: func(err error) { t.Logf("workflow ingress visitor: %v", err) }})
 	if err != nil {
 		t.Fatal(err)
 	}

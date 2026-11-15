@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -70,11 +71,26 @@ func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service
 		done <- publisherservice.Publish(ctx, cfg)
 	}()
 	join := sync.OnceValue(func() error {
-		select {
-		case err := <-done:
-			return err
-		case <-time.After(12 * time.Second):
-			return errors.New("private HTTP publisher did not join")
+		diagnose := time.NewTimer(2 * time.Second)
+		defer diagnose.Stop()
+		deadline := time.NewTimer(12 * time.Second)
+		defer deadline.Stop()
+		var stacks strings.Builder
+		diagnostic := diagnose.C
+		for {
+			select {
+			case err := <-done:
+				if err != nil && stacks.Len() != 0 {
+					t.Logf("private HTTP publisher before failed join:\n%s", stacks.String())
+				}
+				return err
+			case <-diagnostic:
+				diagnostic = nil
+				_ = pprof.Lookup("goroutine").WriteTo(&stacks, 2)
+			case <-deadline.C:
+				t.Logf("private HTTP publisher before join deadline:\n%s", stacks.String())
+				return errors.New("private HTTP publisher did not join")
+			}
 		}
 	})
 	f.owner.publishers = append(f.owner.publishers, runtimeProcess{name: "private HTTP publisher", cancel: cancel, wait: join})

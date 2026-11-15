@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -155,7 +154,7 @@ func TestDeploymentPollRequiresServiceIDProtocolAndTrustRevisionForEveryProtocol
 					a.Configuration.Protocol = new(controlv1.ServiceProtocol("unknown"))
 				},
 				func(a *controlv1.DeploymentPublisherServiceAssignment) {
-					a.ServiceId = opaqueid.PublicURLPrefix + "0000000000000000000001"
+					a.ServiceId = "url_0000000000000000000001"
 				},
 				func(a *controlv1.DeploymentPublisherServiceAssignment) { a.ServiceId = "" },
 			} {
