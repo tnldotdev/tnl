@@ -166,6 +166,9 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 			}
 			options := publisheradhoc.Options{State: profile, Publisher: native, ControlURL: server,
 				InvocationID: invocation, Target: address, TargetTLS: targetTLS, AccessMode: policy.access, IP: policy.prefixes, Limits: flags.Limits}
+			if service := project.Config.Services[flags.Service]; service.HTTP != nil {
+				options.Protection = service.HTTP.Protection
+			}
 			if flags.RequirePostQuantum != nil {
 				options.RequirePostQuantum = *flags.RequirePostQuantum
 			}

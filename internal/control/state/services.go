@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 )
 
 var ErrServiceAccess = errors.New("service access denied or no current run")
@@ -32,6 +33,7 @@ type ServiceRecord struct {
 	Source                              *LocalServiceSource `json:"source,omitempty"`
 	HTTPLimits                          *ProjectHTTPApplicationLimits
 	HTTPRequestBodyIdleTimeout          *string
+	HTTPProtection                      *httpprotection.Settings
 	Enabled                             bool
 	Ephemeral, RequirePostQuantum       bool
 	ExpiresAt                           *time.Time

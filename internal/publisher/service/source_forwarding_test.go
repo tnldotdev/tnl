@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	protectionpolicy "github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
@@ -58,6 +59,9 @@ func newSourceForwardingFixture(t *testing.T) *sourceForwardingFixture {
 		t.Fatal(err)
 	}
 	approved.Protocol, approved.Endpoint.Port, approved.Endpoint.Public = controlv1.ServiceProtocolHTTP, 443, true
+	// source and capacity proofs stream through to the application; inspection
+	// buffering and its independent process-wide budget have separate tests.
+	approved.HttpProtection = &protectionpolicy.Settings{WAF: protectionpolicy.Off}
 	control.approved = &approved
 	cfg.Target = ""
 	cfg.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -166,6 +170,7 @@ func (f *sourceForwardingFixture) request(t *testing.T, slot int) {
 		t.Fatal(err)
 	}
 	request.Header.Set("Authorization", "Bearer application-secret")
+	request.Header.Set("Content-Type", "text/plain")
 	request.Header.Set("X-Forwarded-For", "203.0.113.9")
 	request.Close = true
 	if err := request.Write(secure); err != nil {

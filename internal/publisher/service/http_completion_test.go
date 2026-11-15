@@ -125,7 +125,7 @@ func TestServiceHTTPSharedCompletionAcrossPublicConnectorAndBase(t *testing.T) {
 			frontend := HTTP{Control: serviceHTTPControl{}, Subject: scope, RunID: header.ServiceRunID,
 				Number: int64(header.RunNumber), Token: "run-token", Hostname: update.View.Hostname, Port: 443,
 				Source: netip.AddrPortFrom(netip.MustParseAddr(header.SourceIP), 4321),
-				Header: header, Policy: policy, Requests: budget, ReserveCapacity: func(context.Context) error { return nil }}
+				Header: header, Policy: policy, Requests: budget, ReserveCapacity: func(context.Context) error { return nil }, protection: serviceHTTPInspector(t, b.prepared.httpProtection)}
 			certificate := b.prepared.certificate
 			// base HTTP uses certificate authorization; connector HTTP proves its
 			// signed opening through the real peer owner below.

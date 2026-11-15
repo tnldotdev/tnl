@@ -85,6 +85,11 @@ with `mise exec -- task go:test:race:service` and
 example. `mise exec -- task go:test:race` still runs the complete routine suite.
 Both CI partitions must pass the `Go race` check.
 
+The separated HTTP transport load workload explicitly disables WAF inspection
+to measure forwarding capacity, recovery, and unbounded bandwidth. It does not
+measure WAF throughput; HTTP protection and its fail-fast capacity limits have
+separate application and inspector tests.
+
 For warm PostgreSQL latency, run `mise exec -- task go:test:load:postgres`.
 It compares a direct database connection with the connector/publisher path using
 the same query and retained sessions. The task owns its disposable databases;

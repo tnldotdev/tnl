@@ -96,6 +96,7 @@ func observationHTTPFixture(t *testing.T, owner context.Context, handler http.Ha
 		if configure != nil {
 			configure(f)
 		}
+		f.protection = serviceHTTPInspector(t, f.Protection)
 		frontend = *f
 	}, func(application *servicestream.HTTPTarget) { target = *application })
 	certificate := visitorfixture.Certificate(t, frontend.Hostname)

@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
@@ -40,6 +41,7 @@ type Options struct {
 	AccessMode          controlv1.VisitorAccessMode
 	IP                  []string
 	Limits              applicationlimits.Limits
+	Protection          *httpprotection.Settings
 	OnAllocated         func(controlv1.Service) error
 	Ready               func() error
 	// shutdown deadline belongs to the caller's whole publication, including
@@ -79,6 +81,11 @@ func allocationRequest(options Options) (controlv1.AllocateServiceRequest, strin
 	if err := options.Limits.Validate(); err != nil {
 		return body, "", nil, err
 	}
+	if options.Protection != nil {
+		if err := options.Protection.Validate(); err != nil {
+			return body, "", nil, err
+		}
+	}
 	target, err := targetsyntax.ParseCanonicalTarget(options.Target)
 	if err != nil {
 		return body, "", nil, err
@@ -98,7 +105,7 @@ func allocationRequest(options Options) (controlv1.AllocateServiceRequest, strin
 	body.Configuration = controlv1.ProjectServiceConfiguration{
 		Protocol: new(controlv1.ServiceProtocolHTTP), Target: target.Host,
 		Public: new(true), Ephemeral: new(true), RequirePostQuantum: new(options.RequirePostQuantum),
-		Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}},
+		Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}, Protection: options.Protection},
 	}
 	if options.IP != nil {
 		body.Configuration.Http.Access.Ip = &ips

@@ -207,12 +207,16 @@ func TestServiceBrowserTeamAccessIsAdditiveAndStripsCredentials(t *testing.T) {
 	}), false, false, func(f *HTTP) {
 		f.Control, f.Token = control, credentials.ServiceRunToken("run-secret")
 		var err error
-		var closeHTTP func()
+		var closeHTTP func() error
 		frontend, closeHTTP, err = PrepareHTTP(t.Context(), *f)
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(closeHTTP)
+		t.Cleanup(func() {
+			if err := closeHTTP(); err != nil {
+				t.Error(err)
+			}
+		})
 		*f = frontend
 	})
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }

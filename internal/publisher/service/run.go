@@ -22,6 +22,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	protectionpolicy "github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
@@ -47,6 +48,7 @@ var ErrPrivateStream = errors.New("private publisher: stream is not bound to the
 type Prepared struct {
 	Preparation controlv1.ServiceRunPreparation
 	*preparedCertificate
+	httpProtection         protectionpolicy.Settings
 	traffic                trafficlimits.Limits
 	clock                  func() time.Time
 	target                 string

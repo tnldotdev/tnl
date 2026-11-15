@@ -2,6 +2,103 @@
   "schema_version": 1,
   "diagnostics": [
     {
+      "code": "TNL_HTTP_PROTECTION_REJECTED",
+      "slug": "http-protection-rejected",
+      "category": "HTTP protection",
+      "title": "request blocked",
+      "summary": "the request matched a managed HTTP protection rule.",
+      "description": "tnl rejected the request before sending it to the application. visitor authorization is separate.",
+      "diagram_label": "managed rule rejected the request",
+      "surfaces": ["browser"],
+      "http_status": 403,
+      "flow": [
+        { "label": "visitor" },
+        { "label": "tnl", "failure": true },
+        { "label": "local service" }
+      ],
+      "causes": ["the request matched OWASP CRS"],
+      "actions": { "publisher": ["review the rule ID before adding a narrow exclusion"] }
+    },
+    {
+      "code": "TNL_HTTP_PROTECTION_BODY_TOO_LARGE",
+      "slug": "http-protection-body-too-large",
+      "category": "HTTP protection",
+      "title": "request body too large",
+      "summary": "the request exceeds the configured HTTP inspection body ceiling.",
+      "description": "the complete request body, including multipart overhead, must fit the inspection ceiling in both block and detect modes.",
+      "diagram_label": "request body exceeds inspection ceiling",
+      "surfaces": ["browser"],
+      "http_status": 413,
+      "flow": [
+        { "label": "visitor" },
+        { "label": "tnl", "failure": true },
+        { "label": "local service" }
+      ],
+      "causes": ["the complete request body exceeds maxBodyBytes"],
+      "actions": {
+        "publisher": [
+          "set http.protection.maxBodyBytes within supported bounds or deliberately disable WAF inspection"
+        ]
+      }
+    },
+    {
+      "code": "TNL_HTTP_PROTECTION_UNAVAILABLE",
+      "slug": "http-protection-unavailable",
+      "category": "HTTP protection",
+      "title": "inspection unavailable",
+      "summary": "tnl cannot inspect another request right now. retry shortly.",
+      "description": "the publisher's shared inspection capacity is occupied or request buffering failed. the request was not sent to the application.",
+      "diagram_label": "inspection unavailable",
+      "surfaces": ["browser"],
+      "http_status": 503,
+      "flow": [
+        { "label": "visitor" },
+        { "label": "tnl", "failure": true },
+        { "label": "local service" }
+      ],
+      "causes": [
+        "the publisher's inspection slots are occupied",
+        "request buffering is unavailable"
+      ],
+      "actions": { "visitor": ["retry shortly"] }
+    },
+    {
+      "code": "TNL_HTTP_PROTECTION_BODY_INVALID",
+      "slug": "http-protection-body-invalid",
+      "category": "HTTP protection",
+      "title": "request body could not be inspected",
+      "summary": "tnl could not read or parse the request body.",
+      "description": "the request was rejected before forwarding to the application.",
+      "diagram_label": "request body invalid",
+      "surfaces": ["browser"],
+      "http_status": 400,
+      "flow": [
+        { "label": "visitor" },
+        { "label": "tnl", "failure": true },
+        { "label": "local service" }
+      ],
+      "causes": ["the upload failed or its declared structured format is malformed"],
+      "actions": { "visitor": ["check the body and Content-Type before retrying"] }
+    },
+    {
+      "code": "TNL_HTTP_PROTECTION_ENCODING_UNSUPPORTED",
+      "slug": "http-request-encoding",
+      "category": "HTTP protection",
+      "title": "request encoding unsupported",
+      "summary": "send an uncompressed request body for HTTP inspection.",
+      "description": "blocking inspection does not decode compressed request bodies. response compression is unaffected.",
+      "diagram_label": "compressed request body unsupported",
+      "surfaces": ["browser"],
+      "http_status": 415,
+      "flow": [
+        { "label": "visitor" },
+        { "label": "tnl", "failure": true },
+        { "label": "local service" }
+      ],
+      "causes": ["Content-Encoding requires a decoder"],
+      "actions": { "visitor": ["send the body without Content-Encoding"] }
+    },
+    {
       "code": "TNL_ALIAS_UNAVAILABLE",
       "slug": "alias-unavailable",
       "category": "alias",

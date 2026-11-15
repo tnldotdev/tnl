@@ -108,6 +108,12 @@ func foregroundServiceDeclaration(flags PublicOptions, policy resolvedVisitorAcc
 	if flags.RequirePostQuantum != nil {
 		declaration.RequirePostQuantum = new(*flags.RequirePostQuantum)
 	}
+	if service, found := flags.Project.Config.Services[flags.Service]; found && service.HTTP != nil && service.HTTP.Protection != nil {
+		if declaration.Http == nil {
+			declaration.Http = &controlv1.ProjectServiceHTTP{}
+		}
+		declaration.Http.Protection = service.HTTP.Protection
+	}
 	if err := flags.Limits.Validate(); err != nil {
 		return declaration, err
 	}

@@ -44,7 +44,11 @@ func serviceHTTPSessionFixture(t *testing.T, control *visitorfixture.HTTPControl
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(closeHTTP)
+	t.Cleanup(func() {
+		if err := closeHTTP(); err != nil {
+			t.Error(err)
+		}
+	})
 	control.Lease = frontend.Policy
 	control.Prepare = func(ctx context.Context, source json.RawMessage, response controlv1.VisitorTokenResponse, parent time.Time) error {
 		_, err := frontend.browser.PrepareToken(ctx, source, response, parent)
@@ -121,6 +125,7 @@ func TestServiceHTTPLiveRenewalAndHTTP2Isolation(t *testing.T) {
 				t.Fatal(err)
 			}
 			r.Header.Set("Authorization", "app-secret")
+			r.Header.Set("Content-Type", "text/plain")
 			r.Header.Set("Cookie", "app=unchanged; "+httpaccess.VisitorTokenCookie+"="+control.Credential(t, secret, false))
 			control.Mu.Lock()
 			before := control.Calls
@@ -210,6 +215,7 @@ func TestServiceHTTPStreamingKeepsOriginalPermissionDeadline(t *testing.T) {
 					t.Fatal(err)
 				}
 				request.AddCookie(&http.Cookie{Name: httpaccess.VisitorTokenCookie, Value: control.Credential(t, visitorfixture.BrowserCookie, strings.HasPrefix(mode, "share"))})
+				request.Header.Set("Content-Type", "text/plain")
 				result := make(chan error, 1)
 				go func() {
 					response, err := client.Do(request)
@@ -283,7 +289,8 @@ func TestServiceHTTPReplacementOnlyAuthorizesFutureRequests(t *testing.T) {
 				t.Fatal(err)
 			}
 			if response.StatusCode != http.StatusOK || response.ProtoMajor != 2 {
-				t.Fatal("replacement request did not retain HTTP/2", response.StatusCode, response.Proto)
+				body, _ := io.ReadAll(response.Body)
+				t.Fatal("replacement request did not retain HTTP/2", response.StatusCode, response.Proto, response.Header.Get("Tnl-Error-Code"), string(body))
 			}
 			return response
 		}

@@ -268,7 +268,7 @@ func projectAliasPublisher(state *clientstate.Database, services publisherServic
 			accessPolicy.Ip = &prefixes
 		}
 		declaration := controlv1.ProjectServiceConfiguration{Target: "app", RequirePostQuantum: new(parent.RequirePostQuantum),
-			Http: &controlv1.ProjectServiceHTTP{Access: accessPolicy, Limits: parent.HttpLimits}}
+			Http: &controlv1.ProjectServiceHTTP{Access: accessPolicy, Limits: parent.HttpLimits, Protection: parent.HttpProtection}}
 		trust, err := publisheridentity.ServiceTrust(parent)
 		if err != nil {
 			return integrations.Snapshot{}, err

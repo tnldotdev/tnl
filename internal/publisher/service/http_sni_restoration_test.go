@@ -80,6 +80,7 @@ func TestServiceHTTPCaseInsensitiveSNIKeepsAuthorityAndAccessFences(t *testing.T
 						budget = f.Requests
 						f.AdmitRequest = func(*http.Request) error { ownerChecks.Add(1); return nil }
 						f.ReserveCapacity = func(context.Context) error { capacity.Add(1); return nil }
+						f.protection = serviceHTTPInspector(t, f.Protection)
 						frontend = *f
 					}, func(target *servicestream.HTTPTarget) { application = *target })
 

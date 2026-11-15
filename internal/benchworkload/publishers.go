@@ -21,6 +21,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	protectionpolicy "github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
@@ -314,6 +315,8 @@ func benchmarkDeclaration(config PublisherConfig) (controlv1.ProjectServiceConfi
 		Protocol: new(controlv1.ServiceProtocolHTTP), Public: new(true), Ephemeral: &config.Ephemeral,
 		Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: new(controlv1.VisitorAccessMode("anonymous"))}},
 	}
+	// transport-only workloads do not measure application inspection capacity.
+	declaration.Http.Protection = &protectionpolicy.Settings{WAF: protectionpolicy.Off}
 	origin, err := targetsyntax.NormalizeTarget(config.Target)
 	if err != nil {
 		return declaration, "", nil, err

@@ -8,6 +8,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
@@ -53,7 +54,8 @@ func nativeIntegrationConfig(ctx context.Context, services publisherServices, ho
 	}
 	declaration := controlv1.ProjectServiceConfiguration{Target: string(intent),
 		Http: &controlv1.ProjectServiceHTTP{Access: access,
-			Limits: &controlv1.ProjectHTTPApplicationLimits{Concurrency: new(32)}}}
+			Protection: &httpprotection.Settings{WAF: httpprotection.Off},
+			Limits:     &controlv1.ProjectHTTPApplicationLimits{Concurrency: new(32)}}}
 	native, saved, err := selectNativeProjectPublisher(ctx, services, declaration, func(_ controlv1.Service, current *controlv1.ProjectServiceConfiguration) (*controlv1.ProjectServiceConfiguration, error) {
 		if current == nil || current.Target != string(intent) || current.TargetTls != nil || current.TargetDiscovery != nil || current.Http == nil ||
 			current.Http.Access == nil || current.Http.Access.Mode == nil || *current.Http.Access.Mode != controlv1.Anonymous {

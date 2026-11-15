@@ -49,13 +49,14 @@ func TestServiceConnectionDeadlineClosesSetupAndIdleVisitors(t *testing.T) {
 						t.Fatal(err)
 					}
 					prepared.policy = policy
+					inspector := serviceHTTPInspector(t, prepared.httpProtection)
 					events := make(chan serviceaudit.Observation, 4)
 					bound.audit = connectorAuditSink(func(event serviceaudit.Observation) bool { events <- event; return true })
 					prepared.managedVisitor = func(header tunnelv1.ServiceForwardingHeader, source netip.AddrPort, reserveCapacity func(context.Context) error) servicestream.Authentication {
 						return servicestream.HTTPVisitor{Frontend: HTTP{Control: serviceHTTPControl{}, Subject: scope,
 							RunID: header.ServiceRunID, Number: int64(header.RunNumber), Token: "run-token",
 							Hostname: prepared.managedHostname, Port: 443, Header: header, Source: source,
-							Policy: policy, Requests: prepared.serviceHTTPRequests, ReserveCapacity: reserveCapacity}}
+							Policy: policy, Requests: prepared.serviceHTTPRequests, ReserveCapacity: reserveCapacity, protection: inspector}}
 					}
 					header := privateHeader(t, ref)
 					header.PublicService.DestinationPort = 443

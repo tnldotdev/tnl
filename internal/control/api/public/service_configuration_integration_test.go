@@ -13,6 +13,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -47,8 +48,9 @@ func TestIntegrationServiceConfigurationManagementBoundary(t *testing.T) {
 	configuration := &controlv1.ProjectServiceConfiguration{
 		Target: "http://" + privateTarget, RequirePostQuantum: new(true),
 		Http: &controlv1.ProjectServiceHTTP{
-			Access: &controlv1.ProjectHTTPAccess{Mode: new(controlv1.VisitorAccessMode("anonymous")), Ip: new([]string{"192.0.2.10"})},
-			Limits: &controlv1.ProjectHTTPApplicationLimits{Total: new(100)},
+			Protection: &httpprotection.Settings{WAF: httpprotection.Detect, MaxBodyBytes: new(2048)},
+			Access:     &controlv1.ProjectHTTPAccess{Mode: new(controlv1.VisitorAccessMode("anonymous")), Ip: new([]string{"192.0.2.10"})},
+			Limits:     &controlv1.ProjectHTTPApplicationLimits{Total: new(100)},
 		},
 	}
 	updated, err := owner.ConfigureService(ctx, service.ID, controlv1.UpdateServiceRequest{
@@ -63,6 +65,9 @@ func TestIntegrationServiceConfigurationManagementBoundary(t *testing.T) {
 		read.Http.Access == nil || read.Http.Access.Mode == nil || *read.Http.Access.Mode != "anonymous" ||
 		read.RequirePostQuantum == nil || !*read.RequirePostQuantum || read.Http.Limits == nil || read.Http.Limits.Total == nil || *read.Http.Limits.Total != 100 {
 		t.Fatal("protected read lost canonical private settings", err)
+	}
+	if read.Http.Protection == nil || read.Http.Protection.WAF != httpprotection.Detect || *read.Http.Protection.MaxBodyBytes != 2048 {
+		t.Fatal("protected read lost HTTP inspection settings")
 	}
 	read.Http.Limits.Total = new(101)
 	next, err := owner.ConfigureService(ctx, service.ID, controlv1.UpdateServiceRequest{
@@ -134,6 +139,9 @@ func TestIntegrationServiceConfigurationManagementBoundary(t *testing.T) {
 	publisherMetadata, err := newClient("").GetPublisherService(ctx, service.ID, access.Token)
 	if err != nil {
 		t.Fatal("publisher denial fixture has no real exact-service publication permission", err)
+	}
+	if publisherMetadata.HttpProtection == nil || publisherMetadata.HttpProtection.WAF != httpprotection.Detect || *publisherMetadata.HttpProtection.MaxBodyBytes != 2048 {
+		t.Fatal("scoped publisher metadata lost approved HTTP inspection settings")
 	}
 	if declaration, digest, err := newClient(credentials.AccessToken(access.Token)).GetServiceConfiguration(ctx, service.ID); !errors.Is(err, clientcontrol.ErrUnauthenticated) || declaration != nil || digest != "" {
 		t.Fatal("publisher credential exposed the protected management declaration", err)

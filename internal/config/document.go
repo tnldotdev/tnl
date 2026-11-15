@@ -15,6 +15,7 @@ import (
 	json "encoding/json/v2"
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -111,12 +112,20 @@ type TargetTLS struct {
 }
 
 type HTTPService struct {
-	RequestBodyIdleTimeout *Duration            `json:"request_body_idle_timeout,omitempty" yaml:"request_body_idle_timeout,omitempty" jsonschema:"default=30s" jsonschema_description:"Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout."`
-	Access                 *Access              `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"HTTP visitor access; restricted by default. Anonymous access and IP rules are independent of public endpoint access."`
-	Limits                 *WorkLimits          `json:"limits,omitempty" yaml:"limits,omitempty" jsonschema_description:"HTTP request limits for a local or remote service."`
-	Readiness              *Readiness           `json:"readiness,omitempty" yaml:"readiness,omitempty" jsonschema_description:"Readiness probe for a local HTTP service. Remote publisher assignments do not support readiness overrides."`
-	Paths                  map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Path mounts between local HTTP services. Remote publisher assignments do not support path mounts."`
-	Open                   *bool                `json:"open,omitempty" yaml:"open,omitempty"`
+	Protection             *httpprotection.Settings `json:"protection,omitempty" yaml:"protection,omitempty" jsonschema_description:"Managed public HTTP request inspection. Omitted settings block with OWASP CRS; authorization and connector access are unchanged."`
+	RequestBodyIdleTimeout *Duration                `json:"request_body_idle_timeout,omitempty" yaml:"request_body_idle_timeout,omitempty" jsonschema:"default=30s" jsonschema_description:"Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout."`
+	Access                 *Access                  `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"HTTP visitor access; restricted by default. Anonymous access and IP rules are independent of public endpoint access."`
+	Limits                 *WorkLimits              `json:"limits,omitempty" yaml:"limits,omitempty" jsonschema_description:"HTTP request limits for a local or remote service."`
+	Readiness              *Readiness               `json:"readiness,omitempty" yaml:"readiness,omitempty" jsonschema_description:"Readiness probe for a local HTTP service. Remote publisher assignments do not support readiness overrides."`
+	Paths                  map[string]PathMount     `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Path mounts between local HTTP services. Remote publisher assignments do not support path mounts."`
+	Open                   *bool                    `json:"open,omitempty" yaml:"open,omitempty"`
+}
+
+func ServiceProtection(service Service) httpprotection.Settings {
+	if service.HTTP != nil && service.HTTP.Protection != nil {
+		return *service.HTTP.Protection
+	}
+	return httpprotection.Settings{}
 }
 
 func ServicePaths(service Service) map[string]PathMount {

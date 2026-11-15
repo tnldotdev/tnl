@@ -19,7 +19,9 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	protectionpolicy "github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/publisher/httpprotection"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 
 	"github.com/tnldotdev/tnl/internal/config"
@@ -79,6 +81,9 @@ func serviceHTTPConfiguredFixture(t *testing.T, target http.Handler, h2, inline 
 	if configure != nil {
 		configure(&frontend)
 	}
+	if frontend.protection == nil {
+		frontend.protection = serviceHTTPInspector(t, frontend.Protection)
+	}
 	transport := &http.Transport{ForceAttemptHTTP2: h2, TLSClientConfig: &tls.Config{RootCAs: visitorfixture.Roots(t, certificate)}, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		visitor, raw := net.Pipe()
 		server := tls.Server(raw, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13, NextProtos: []string{"h2", "http/1.1"}})
@@ -99,6 +104,20 @@ func serviceHTTPConfiguredFixture(t *testing.T, target http.Handler, h2, inline 
 	}}
 	t.Cleanup(transport.CloseIdleConnections)
 	return &http.Client{Transport: transport, Timeout: 5 * time.Second}, policy, update, token
+}
+
+func serviceHTTPInspector(t *testing.T, settings protectionpolicy.Settings) *httpprotection.Inspector {
+	t.Helper()
+	inspector, err := httpprotection.New(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := inspector.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return inspector
 }
 
 type serviceHTTPShareControl struct {

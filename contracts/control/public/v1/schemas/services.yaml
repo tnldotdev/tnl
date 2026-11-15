@@ -237,6 +237,9 @@ schemas:
         minLength: 1
         maxLength: 64
         description: Approved request-body idle timeout returned only to the scoped HTTP publisher. Omission uses 30s; a configured value is a positive Go duration. Counts active incoming body reads, not target backpressure, responses, or upgrades.
+      http_protection:
+        $ref: "../openapi.yaml#/components/schemas/HTTPProtection"
+        description: Approved protection for public HTTP endpoint access. Connector traffic is not inspected.
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       kubernetes_auth: { $ref: "../openapi.yaml#/components/schemas/KubernetesAuth" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }

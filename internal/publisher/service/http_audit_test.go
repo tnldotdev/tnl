@@ -41,6 +41,7 @@ func TestServiceHTTPAuditUsesOnlyRunAndDecisionFacts(t *testing.T) {
 					t.Fatal(err)
 				}
 				request.Header.Set("Authorization", "application-secret")
+				request.Header.Set("Content-Type", "text/plain")
 				if test.credential != "" {
 					request.Header.Set(httpaccess.VisitorTokenHeader, test.credential)
 				}

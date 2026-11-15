@@ -54,11 +54,19 @@ func Requests(next http.Handler, timeout time.Duration) http.Handler {
 // their maps loses values or races header validation with incoming body reads.
 func ForwardTrailers(in, out *http.Request) {
 	if body, ok := in.Context().Value(requestBodyKey{}).(*requestBody); ok && out.Body != nil {
+		body.mu.Lock()
+		defer body.mu.Unlock()
 		out.Trailer = make(http.Header, len(body.source.Trailer))
-		for key := range body.source.Trailer {
-			out.Trailer[key] = nil
+		for key, values := range body.source.Trailer {
+			if body.complete {
+				out.Trailer[key] = slices.Clone(values)
+			} else {
+				out.Trailer[key] = nil
+			}
 		}
-		body.trailers = out.Trailer
+		if !body.complete {
+			body.trailers = out.Trailer
+		}
 	}
 }
 
@@ -84,6 +92,8 @@ func (b *requestBody) Read(p []byte) (int, error) {
 	}
 	b.mu.Unlock()
 	n, err := b.ReadCloser.Read(p)
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if errors.Is(err, io.EOF) {
 		// only this read owns completed incoming trailers. publish their values
 		// before the transport sees EOF and writes its final chunk.
@@ -93,8 +103,6 @@ func (b *requestBody) Read(p []byte) (int, error) {
 			}
 		}
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	if b.remaining > 0 {
 		b.remaining -= int64(n)
 	}

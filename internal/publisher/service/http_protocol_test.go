@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	protectionpolicy "github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 )
 
@@ -24,7 +25,7 @@ func serviceHTTPAwait[T any](t *testing.T, events <-chan T) T {
 	}
 }
 
-func TestServiceHTTPProtocolsKeepStreamingBodiesAndTrailers(t *testing.T) {
+func TestServiceHTTPProtectionOffKeepsStreamingBodiesAndTrailers(t *testing.T) {
 	for _, h2 := range []bool{false, true} {
 		name, protocol := "http1", 1
 		if h2 {
@@ -33,7 +34,7 @@ func TestServiceHTTPProtocolsKeepStreamingBodiesAndTrailers(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			var calls atomic.Int32
 			received := make(chan http.Header, 1)
-			client, _, _, token := serviceHTTPProtocolFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			client, _, _, token := serviceHTTPConfiguredFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls.Add(1)
 				if r.Header.Get("Cookie") != "app=kept" || r.Header.Get("Authorization") != "Bearer application" || r.Header.Get("X-Api-Key") != "application-key" {
 					t.Error("cookie filtering changed application credentials")
@@ -61,7 +62,7 @@ func TestServiceHTTPProtocolsKeepStreamingBodiesAndTrailers(t *testing.T) {
 				received <- r.Trailer.Clone()
 				_, _ = io.WriteString(w, "done\n")
 				w.Header().Set("X-Response-Digest", "complete")
-			}), h2)
+			}), h2, false, func(f *HTTP) { f.Protection.WAF = protectionpolicy.Off })
 			reader, writer := io.Pipe()
 			defer writer.Close()
 			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "https://preview.example.test/upload", reader)

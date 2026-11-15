@@ -93,6 +93,18 @@ export interface TnlConfig {
                     uploadBytes?: number;
                   };
                   http?: {
+                    protection?: {
+                      waf?: "block" | "detect" | "off";
+                      /**
+                       * @maxItems 32
+                       */
+                      exclusions?: {
+                        path: string;
+                        parameter?: string;
+                        ruleId: number;
+                      }[];
+                      maxBodyBytes?: number;
+                    };
                     access?:
                       | ("restricted" | "anonymous")
                       | {
@@ -201,6 +213,18 @@ export interface TnlConfig {
                     uploadBytes?: number;
                   };
                   http?: {
+                    protection?: {
+                      waf?: "block" | "detect" | "off";
+                      /**
+                       * @maxItems 32
+                       */
+                      exclusions?: {
+                        path: string;
+                        parameter?: string;
+                        ruleId: number;
+                      }[];
+                      maxBodyBytes?: number;
+                    };
                     access?:
                       | ("restricted" | "anonymous")
                       | {
@@ -309,6 +333,18 @@ export interface TnlConfig {
                     uploadBytes?: number;
                   };
                   http?: {
+                    protection?: {
+                      waf?: "block" | "detect" | "off";
+                      /**
+                       * @maxItems 32
+                       */
+                      exclusions?: {
+                        path: string;
+                        parameter?: string;
+                        ruleId: number;
+                      }[];
+                      maxBodyBytes?: number;
+                    };
                     access?:
                       | ("restricted" | "anonymous")
                       | {
@@ -417,6 +453,18 @@ export interface TnlConfig {
                     uploadBytes?: number;
                   };
                   http?: {
+                    protection?: {
+                      waf?: "block" | "detect" | "off";
+                      /**
+                       * @maxItems 32
+                       */
+                      exclusions?: {
+                        path: string;
+                        parameter?: string;
+                        ruleId: number;
+                      }[];
+                      maxBodyBytes?: number;
+                    };
                     access?:
                       | ("restricted" | "anonymous")
                       | {
@@ -513,6 +561,18 @@ export interface TnlConfig {
                     uploadBytes?: number;
                   };
                   http?: {
+                    protection?: {
+                      waf?: "block" | "detect" | "off";
+                      /**
+                       * @maxItems 32
+                       */
+                      exclusions?: {
+                        path: string;
+                        parameter?: string;
+                        ruleId: number;
+                      }[];
+                      maxBodyBytes?: number;
+                    };
                     access?:
                       | ("restricted" | "anonymous")
                       | {
@@ -609,6 +669,18 @@ export interface TnlConfig {
                     uploadBytes?: number;
                   };
                   http?: {
+                    protection?: {
+                      waf?: "block" | "detect" | "off";
+                      /**
+                       * @maxItems 32
+                       */
+                      exclusions?: {
+                        path: string;
+                        parameter?: string;
+                        ruleId: number;
+                      }[];
+                      maxBodyBytes?: number;
+                    };
                     access?:
                       | ("restricted" | "anonymous")
                       | {
@@ -705,6 +777,18 @@ export interface TnlConfig {
                     uploadBytes?: number;
                   };
                   http?: {
+                    protection?: {
+                      waf?: "block" | "detect" | "off";
+                      /**
+                       * @maxItems 32
+                       */
+                      exclusions?: {
+                        path: string;
+                        parameter?: string;
+                        ruleId: number;
+                      }[];
+                      maxBodyBytes?: number;
+                    };
                     access?:
                       | ("restricted" | "anonymous")
                       | {

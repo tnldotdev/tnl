@@ -18,6 +18,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 )
 
@@ -57,6 +58,26 @@ func TestNormalizeProjectConfiguration(t *testing.T) {
 		if err := decoder.Decode(&c); err == nil {
 			t.Fatal("configuration accepted an unknown field")
 		}
+	}
+}
+
+func TestNormalizeServiceHTTPProtection(t *testing.T) {
+	input := ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{
+		"web": {Target: "app", HTTP: &config.HTTPService{Protection: &httpprotection.Settings{
+			WAF: httpprotection.Detect, MaxBodyBytes: new(2048),
+			Exclusions: []httpprotection.Exclusion{{RuleID: 942100, Path: "/search", Parameter: "q"}},
+		}}},
+	}}
+	result, digest, err := NormalizeProjectConfiguration(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := result.Services["web"].HTTP.Protection
+	if got.WAF != httpprotection.Detect || *got.MaxBodyBytes != 2048 || got.Exclusions[0].Parameter != "q" {
+		t.Fatal("service normalization lost protection settings", got)
+	}
+	if _, retry, err := NormalizeProjectConfiguration(result); err != nil || retry != digest {
+		t.Fatal("protection configuration is not stable", err)
 	}
 }
 

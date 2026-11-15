@@ -19,6 +19,7 @@ import (
 
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
+	httpprotection "github.com/tnldotdev/tnl/internal/policy/httpprotection"
 )
 
 // Defines values for AdminServerStatusRole.
@@ -2942,6 +2943,9 @@ type GuestDemoSession struct {
 // GuestID defines model for GuestID.
 type GuestID = string
 
+// HTTPProtection defines model for HTTPProtection.
+type HTTPProtection = httpprotection.Settings
+
 // HashedIPPrefix defines model for HashedIPPrefix.
 type HashedIPPrefix struct {
 	Digest       string               `json:"digest"`
@@ -3220,7 +3224,8 @@ type ProjectServiceHTTP struct {
 		Service     string `json:"service"`
 		StripPrefix *bool  `json:"strip_prefix,omitempty"`
 	} `json:"paths,omitempty"`
-	Readiness *struct {
+	Protection *HTTPProtection `json:"protection,omitempty"`
+	Readiness  *struct {
 		Path string `json:"path"`
 	} `json:"readiness,omitempty"`
 
@@ -3699,6 +3704,9 @@ type Service struct {
 
 	// HttpLimits Approved run-local HTTP request limits returned to the scoped publisher. Applies after visitor authorization on public and connector admissions.
 	HttpLimits *ProjectHTTPApplicationLimits `json:"http_limits,omitempty"`
+
+	// HttpProtection Approved protection for public HTTP endpoint access. Connector traffic is not inspected.
+	HttpProtection *HTTPProtection `json:"http_protection,omitempty"`
 
 	// HttpRequestBodyIdleTimeout Approved request-body idle timeout returned only to the scoped HTTP publisher. Omission uses 30s; a configured value is a positive Go duration. Counts active incoming body reads, not target backpressure, responses, or upgrades.
 	HttpRequestBodyIdleTimeout *string   `json:"http_request_body_idle_timeout,omitempty"`

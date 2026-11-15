@@ -366,6 +366,9 @@ func (d *Database) publisherServiceRecord(ctx context.Context, tx pgx.Tx, row co
 	if err != nil {
 		return result, err
 	}
+	if settings != nil {
+		result.HTTPProtection = settings.Protection
+	}
 	if settings != nil && settings.Limits != nil {
 		limits := settings.Limits
 		result.HTTPLimits = &ProjectHTTPApplicationLimits{Total: limits.Total, Concurrency: limits.Concurrency}

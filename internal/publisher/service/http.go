@@ -17,10 +17,12 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	protectionpolicy "github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/publisher/httpprotection"
 	"github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
@@ -80,13 +82,15 @@ type HTTP struct {
 	Requests              *requestlimit.HTTP
 	Policy                *visitorlease.Lease
 	ReserveCapacity       func(context.Context) error
+	Protection            protectionpolicy.Settings
+	protection            *httpprotection.Inspector
 	browser               *httpaccess.Browser
 	feedback              *feedbackRuntime
 	probes                *requestlimit.HTTP
 	preparations          chan struct{}
 }
 
-func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
+func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
 	if f.Control == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || !f.InspectionMode.Valid() ||
 		!opaqueid.Valid(f.RunID, opaqueid.ServiceRunPrefix) || f.Number < 1 || f.Token == "" {
 		return HTTP{}, nil, servicestream.ErrEndpoint
@@ -129,10 +133,16 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
 	if err != nil {
 		return HTTP{}, nil, err
 	}
-	tokens, err := httpaccess.StartTokens(ctx, f.Control, policy.Lease(), nil)
+	protection, err := httpprotection.New(f.Protection)
 	if err != nil {
 		policy.Close()
 		return HTTP{}, nil, err
+	}
+	f.protection = protection
+	tokens, err := httpaccess.StartTokens(ctx, f.Control, policy.Lease(), nil)
+	if err != nil {
+		policy.Close()
+		return HTTP{}, nil, errors.Join(err, protection.Close())
 	}
 	f.Policy = policy.Lease()
 	f.browser = &httpaccess.Browser{Subject: f.Subject, Client: f.Control, PreviewID: f.PreviewID, RunID: f.RunID, Number: f.Number, Token: f.Token, ControlURL: controlURL, Policy: policy, Tokens: tokens}
@@ -140,17 +150,17 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
 	if err != nil {
 		tokens.Close()
 		policy.Close()
-		return HTTP{}, nil, err
+		return HTTP{}, nil, errors.Join(err, protection.Close())
 	}
 	if f.feedback != nil {
 		f.ResponseHooks = f.feedback.responseHooks(f.ResponseHooks)
 	}
-	return f, func() { tokens.Close(); policy.Close() }, nil
+	return f, func() error { tokens.Close(); policy.Close(); return protection.Close() }, nil
 }
 
 func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestream.HTTPTarget) error {
 	h := f.Header
-	if f.ReserveCapacity == nil || f.Policy == nil || f.ReadinessProof != nil && f.probes == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || h.PublicService == nil || h.ServiceID != f.Subject.ID || h.ServiceRunID != f.RunID || h.RunNumber != uint64(f.Number) || h.PublicService.DestinationPort != f.Port || f.Port != 443 || h.Validate() != nil {
+	if f.ReserveCapacity == nil || f.Policy == nil || f.protection == nil || f.ReadinessProof != nil && f.probes == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || h.PublicService == nil || h.ServiceID != f.Subject.ID || h.ServiceRunID != f.RunID || h.RunNumber != uint64(f.Number) || h.PublicService.DestinationPort != f.Port || f.Port != 443 || h.Validate() != nil {
 		return servicestream.ErrEndpoint
 	}
 	source, err := netip.ParseAddr(h.SourceIP)
@@ -304,10 +314,13 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 				}
 			}
 			r = httpstream.WithVisitorHost(f.ConnectorApplication(w, r), f.Hostname)
-			// report the decision before an upgrade or long-lived response.
-			outcome, reason = "allowed", ""
-			report()
-			next.ServeHTTP(w, r)
+			reason = "invalid_request"
+			f.protection.Handler(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				// report the decision before an upgrade or long-lived response.
+				outcome, reason = "allowed", ""
+				report()
+				next.ServeHTTP(w, request)
+			}), nil).ServeHTTP(w, r)
 		})
 	}
 	return target.Serve(ctx, client, f.Hostname, wrap, f.ResponseHooks)

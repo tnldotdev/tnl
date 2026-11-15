@@ -243,6 +243,7 @@ internal/
     invocation/        publication operations used by callers
     httpaccess/        shared HTTP policy and browser access
     requestlimit/      shared per-run HTTP request budgets
+    httpprotection/     request-only WAF and bounded request buffers
     service/           saved service runs and certificates
       stream/          visitor TLS, protocol, expiry, and target connection
     processidentity/   signed process identity and control lease
@@ -336,6 +337,9 @@ invocation + deployment --> publisher/service
   workers. It does not own accepted visitor connections.
 - `requestlimit` keeps one HTTP request budget per run, shared across that run's
   visitor connections.
+- `httpprotection` inspects authorized public HTTP requests before target access.
+  The service run owns its inspector; connector traffic bypasses WAF inspection.
+  All runs share two process-wide inspection slots without a waiting queue.
 - `httpaccess.ReadinessProof` accepts one body-free GET at an exact path for one
   run. Service HTTP strips its secret before forwarding and uses a separate,
   bounded probe budget. The app owner still checks its current registration and

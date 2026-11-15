@@ -17,6 +17,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	protectionpolicy "github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
@@ -58,6 +59,8 @@ func serviceHTTPLimitedRun(t *testing.T, address string, limit int, number int64
 	})
 	finished := make(chan struct{}, 16)
 	client, _, _, token := serviceHTTPConfiguredFixture(t, http.HandlerFunc(forwarder.ServeAdmittedHTTP), true, true, func(f *HTTP) {
+		// this fixture holds uploads open at the target to test streaming limits.
+		f.Protection.WAF = protectionpolicy.Off
 		f.Number, f.Header.RunNumber = number, uint64(number)
 		f.RunID = "srun_" + strings.Repeat(string(rune('R'+number)), 22)
 		f.Header.ServiceRunID = f.RunID

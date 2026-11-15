@@ -37,6 +37,11 @@ type dependencyRule struct {
 
 var dependencyRules = []dependencyRule{
 	{
+		owner:     dependencyTree("internal/publisher/httpprotection"),
+		forbidden: []dependencyMatch{dependencyExact("internal/publisher"), dependencyExact("internal/publisher/service"), dependencyTree("cmd"), dependencyTree("internal/installed"), dependencyTree("internal/daemon")},
+		reason:    "shared inspection must not depend on run or process orchestration",
+	},
+	{
 		owner:     dependencyTree("internal/client"),
 		forbidden: []dependencyMatch{dependencyTree("internal/publisher"), dependencyTree("internal/connector"), dependencyTree("internal/installed"), dependencyTree("internal/daemon")},
 		reason:    "client facilities must not depend on process owners",

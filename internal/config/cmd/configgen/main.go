@@ -18,6 +18,7 @@ import (
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 )
 
 func main() {
@@ -246,6 +247,7 @@ func deploymentBindingSchema() *jsonschema.Schema {
 	httpProperties.Set("request_body_idle_timeout", &jsonschema.Schema{Type: "string", Pattern: config.DurationPattern,
 		Default:     applicationlimits.DefaultRequestBodyIdleTimeout.String(),
 		Description: "Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout."})
+	httpProperties.Set("protection", (&jsonschema.Reflector{Anonymous: true, ExpandedStruct: true, DoNotReference: true, RequiredFromJSONSchemaTags: true}).Reflect(httpprotection.Settings{}))
 	httpProperties.Set("access", accessSchema("restricted", "anonymous"))
 	httpProperties.Set("limits", workLimitsSchema())
 	readiness := jsonschema.NewProperties()
@@ -513,7 +515,7 @@ func collectTypeScriptKeys(valueType reflect.Type, result map[string]string) {
 		}
 		if fieldType.Kind() == reflect.Struct && fieldType != reflect.TypeOf(config.Target("")) && fieldType != reflect.TypeOf(config.Duration(0)) {
 			collectTypeScriptKeys(fieldType, result)
-		} else if fieldType.Kind() == reflect.Map {
+		} else if fieldType.Kind() == reflect.Map || fieldType.Kind() == reflect.Slice {
 			elementType := fieldType.Elem()
 			if elementType.Kind() == reflect.Pointer {
 				elementType = elementType.Elem()

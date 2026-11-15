@@ -211,6 +211,42 @@
                               "description": "Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.",
                               "default": "30s"
                             },
+                            "protection": {
+                              "$schema": "https://json-schema.org/draft/2020-12/schema",
+                              "properties": {
+                                "waf": {
+                                  "type": "string",
+                                  "enum": ["block", "detect", "off"]
+                                },
+                                "max_body_bytes": {
+                                  "type": "integer",
+                                  "maximum": 2097152,
+                                  "minimum": 1
+                                },
+                                "exclusions": {
+                                  "items": {
+                                    "properties": {
+                                      "rule_id": {
+                                        "type": "integer"
+                                      },
+                                      "path": {
+                                        "type": "string"
+                                      },
+                                      "parameter": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": ["rule_id", "path"]
+                                  },
+                                  "type": "array",
+                                  "maxItems": 32
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object"
+                            },
                             "access": {
                               "oneOf": [
                                 {
@@ -471,6 +507,42 @@
                               "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
                               "description": "Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.",
                               "default": "30s"
+                            },
+                            "protection": {
+                              "$schema": "https://json-schema.org/draft/2020-12/schema",
+                              "properties": {
+                                "waf": {
+                                  "type": "string",
+                                  "enum": ["block", "detect", "off"]
+                                },
+                                "max_body_bytes": {
+                                  "type": "integer",
+                                  "maximum": 2097152,
+                                  "minimum": 1
+                                },
+                                "exclusions": {
+                                  "items": {
+                                    "properties": {
+                                      "rule_id": {
+                                        "type": "integer"
+                                      },
+                                      "path": {
+                                        "type": "string"
+                                      },
+                                      "parameter": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": ["rule_id", "path"]
+                                  },
+                                  "type": "array",
+                                  "maxItems": 32
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object"
                             },
                             "access": {
                               "oneOf": [
@@ -736,6 +808,42 @@
                               "description": "Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.",
                               "default": "30s"
                             },
+                            "protection": {
+                              "$schema": "https://json-schema.org/draft/2020-12/schema",
+                              "properties": {
+                                "waf": {
+                                  "type": "string",
+                                  "enum": ["block", "detect", "off"]
+                                },
+                                "max_body_bytes": {
+                                  "type": "integer",
+                                  "maximum": 2097152,
+                                  "minimum": 1
+                                },
+                                "exclusions": {
+                                  "items": {
+                                    "properties": {
+                                      "rule_id": {
+                                        "type": "integer"
+                                      },
+                                      "path": {
+                                        "type": "string"
+                                      },
+                                      "parameter": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": ["rule_id", "path"]
+                                  },
+                                  "type": "array",
+                                  "maxItems": 32
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object"
+                            },
                             "access": {
                               "oneOf": [
                                 {
@@ -993,6 +1101,42 @@
                               "description": "Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.",
                               "default": "30s"
                             },
+                            "protection": {
+                              "$schema": "https://json-schema.org/draft/2020-12/schema",
+                              "properties": {
+                                "waf": {
+                                  "type": "string",
+                                  "enum": ["block", "detect", "off"]
+                                },
+                                "max_body_bytes": {
+                                  "type": "integer",
+                                  "maximum": 2097152,
+                                  "minimum": 1
+                                },
+                                "exclusions": {
+                                  "items": {
+                                    "properties": {
+                                      "rule_id": {
+                                        "type": "integer"
+                                      },
+                                      "path": {
+                                        "type": "string"
+                                      },
+                                      "parameter": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": ["rule_id", "path"]
+                                  },
+                                  "type": "array",
+                                  "maxItems": 32
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object"
+                            },
                             "access": {
                               "oneOf": [
                                 {
@@ -1231,6 +1375,42 @@
                               "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
                               "description": "Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.",
                               "default": "30s"
+                            },
+                            "protection": {
+                              "$schema": "https://json-schema.org/draft/2020-12/schema",
+                              "properties": {
+                                "waf": {
+                                  "type": "string",
+                                  "enum": ["block", "detect", "off"]
+                                },
+                                "max_body_bytes": {
+                                  "type": "integer",
+                                  "maximum": 2097152,
+                                  "minimum": 1
+                                },
+                                "exclusions": {
+                                  "items": {
+                                    "properties": {
+                                      "rule_id": {
+                                        "type": "integer"
+                                      },
+                                      "path": {
+                                        "type": "string"
+                                      },
+                                      "parameter": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": ["rule_id", "path"]
+                                  },
+                                  "type": "array",
+                                  "maxItems": 32
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object"
                             },
                             "access": {
                               "oneOf": [
@@ -1477,6 +1657,42 @@
                               "description": "Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.",
                               "default": "30s"
                             },
+                            "protection": {
+                              "$schema": "https://json-schema.org/draft/2020-12/schema",
+                              "properties": {
+                                "waf": {
+                                  "type": "string",
+                                  "enum": ["block", "detect", "off"]
+                                },
+                                "max_body_bytes": {
+                                  "type": "integer",
+                                  "maximum": 2097152,
+                                  "minimum": 1
+                                },
+                                "exclusions": {
+                                  "items": {
+                                    "properties": {
+                                      "rule_id": {
+                                        "type": "integer"
+                                      },
+                                      "path": {
+                                        "type": "string"
+                                      },
+                                      "parameter": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": ["rule_id", "path"]
+                                  },
+                                  "type": "array",
+                                  "maxItems": 32
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object"
+                            },
                             "access": {
                               "oneOf": [
                                 {
@@ -1722,6 +1938,42 @@
                               "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
                               "description": "Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.",
                               "default": "30s"
+                            },
+                            "protection": {
+                              "$schema": "https://json-schema.org/draft/2020-12/schema",
+                              "properties": {
+                                "waf": {
+                                  "type": "string",
+                                  "enum": ["block", "detect", "off"]
+                                },
+                                "max_body_bytes": {
+                                  "type": "integer",
+                                  "maximum": 2097152,
+                                  "minimum": 1
+                                },
+                                "exclusions": {
+                                  "items": {
+                                    "properties": {
+                                      "rule_id": {
+                                        "type": "integer"
+                                      },
+                                      "path": {
+                                        "type": "string"
+                                      },
+                                      "parameter": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": ["rule_id", "path"]
+                                  },
+                                  "type": "array",
+                                  "maxItems": 32
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object"
                             },
                             "access": {
                               "oneOf": [
