@@ -116,7 +116,6 @@ CREATE TABLE local_tunnels (
     hostname TEXT CHECK (hostname IS NULL OR hostname <> ''),
     target TEXT CHECK (target IS NULL OR target <> ''),
     framework TEXT CHECK (framework IS NULL OR framework <> ''),
-    public_url_id TEXT CHECK (public_url_id IS NULL OR public_url_id <> ''),
     publish_run_number INTEGER CHECK (publish_run_number IS NULL OR publish_run_number > 0),
     state TEXT NOT NULL CHECK (state IN ('starting', 'provisioning', 'ready', 'draining', 'stopped', 'failed')),
     started_at INTEGER NOT NULL,
@@ -522,7 +521,7 @@ SELECT id,
         'server', server_origin, 'project', project_root, 'service', coalesce(service, ''),
         'service_protocol', service_protocol,
         'service_id', coalesce(service_id, ''),
-        'public_url_id', coalesce(public_url_id, ''), 'publish_run_number', coalesce(publish_run_number, 0),
+        'publish_run_number', coalesce(publish_run_number, 0),
         'hostname', coalesce(hostname, ''),
         'public_url', CASE WHEN hostname IS NULL THEN '' ELSE 'https://' || hostname END,
         'target', coalesce(target, ''), 'framework', coalesce(framework, ''), 'failure', coalesce(failure_code, ''),
@@ -560,7 +559,7 @@ END;
 CREATE TRIGGER project_publication_changed AFTER UPDATE ON local_tunnels
 WHEN NEW.state IS NOT OLD.state OR NEW.hostname IS NOT OLD.hostname
     OR NEW.target IS NOT OLD.target OR NEW.publish_run_number IS NOT OLD.publish_run_number
-    OR NEW.public_url_id IS NOT OLD.public_url_id OR NEW.framework IS NOT OLD.framework OR NEW.failure_code IS NOT OLD.failure_code
+    OR NEW.service_id IS NOT OLD.service_id OR NEW.framework IS NOT OLD.framework OR NEW.failure_code IS NOT OLD.failure_code
 BEGIN
     UPDATE project_journals SET last_sequence = last_sequence + 1, last_observed_at = NEW.updated_at WHERE project_root = NEW.project_root;
     INSERT INTO project_events (project_root, sequence, event_type, occurred_at, payload_json, stored_bytes)

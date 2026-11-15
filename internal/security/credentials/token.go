@@ -15,7 +15,6 @@ const (
 	accessPrefix     = "tnl_access_"
 	refreshPrefix    = "tnl_refresh_"
 	invitationPrefix = "tnl_invitation_"
-	sessionPrefix    = "tnl_publish_run_"
 	connectionPrefix = "tnl_connection_"
 	lookupBytes      = 16
 	secretBytes      = 32
@@ -28,8 +27,6 @@ var (
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 	// ErrInvalidInvitationToken is returned for malformed or rejected invitation tokens.
 	ErrInvalidInvitationToken = errors.New("invalid invitation token")
-	// ErrInvalidPublishRunToken is returned for malformed or rejected publish run tokens.
-	ErrInvalidPublishRunToken = errors.New("invalid publish run token")
 	// ErrInvalidPublisherConnectionCredential is returned for malformed publisher connection credentials.
 	ErrInvalidPublisherConnectionCredential = errors.New("invalid publisher connection credential")
 )
@@ -42,9 +39,6 @@ type RefreshToken string
 
 // InvitationToken authorizes accepting one team invitation.
 type InvitationToken string
-
-// PublishRunToken authorizes operations on one publish run.
-type PublishRunToken string
 
 // PublisherConnectionCredential authorizes one publisher connection assignment claim.
 type PublisherConnectionCredential string
@@ -106,39 +100,11 @@ func ParseInvitationToken(token InvitationToken) (SecretHash, error) {
 	return hash, err
 }
 
-// NewPublishRunToken creates a publish run token and its storage values.
-func NewPublishRunToken() (PublishRunToken, CredentialID, SecretHash, error) {
-	token, lookupID, hash, err := newToken(sessionPrefix)
-	return PublishRunToken(token), lookupID, hash, err
-}
-
-// DerivePublishRunToken returns the same publish run token when a request is
-// retried with the same secret and context.
-func DerivePublishRunToken(retrySecret []byte, retryContext string) (PublishRunToken, CredentialID, SecretHash, error) {
-	if len(retrySecret) < secretBytes || retryContext == "" {
-		return "", "", SecretHash{}, ErrInvalidPublishRunToken
-	}
-	idMAC := hmac.New(sha256.New, retrySecret)
-	_, _ = idMAC.Write([]byte("tnl/session-id/v1\x00" + retryContext))
-	lookupID := CredentialID(base64.RawURLEncoding.EncodeToString(idMAC.Sum(nil)[:lookupBytes]))
-	secretMAC := hmac.New(sha256.New, retrySecret)
-	_, _ = secretMAC.Write([]byte("tnl/session-secret/v1\x00" + retryContext))
-	secret := secretMAC.Sum(nil)
-	hash := sha256.Sum256(secret)
-	token := sessionPrefix + lookupID.String() + "." + base64.RawURLEncoding.EncodeToString(secret)
-	return PublishRunToken(token), lookupID, hash, nil
-}
-
 func validatedTokenSecret(token, prefix string) []byte {
 	value, _ := strings.CutPrefix(token, prefix)
 	_, encodedSecret, _ := strings.Cut(value, ".")
 	secret, _ := base64.RawURLEncoding.DecodeString(encodedSecret)
 	return secret
-}
-
-// ParsePublishRunToken validates a publish run token and returns its storage lookup values.
-func ParsePublishRunToken(token PublishRunToken) (CredentialID, SecretHash, error) {
-	return parseToken(string(token), sessionPrefix, ErrInvalidPublishRunToken)
 }
 
 // NewPublisherConnectionCredential creates a credential for one connection assignment.
@@ -154,21 +120,11 @@ func ParsePublisherConnectionCredential(credential PublisherConnectionCredential
 	return hash, err
 }
 
-// DerivePublisherConnectionCredential returns the same assignment credential
-// for the same publish run token and assignment context.
-func DerivePublisherConnectionCredential(publishRunToken PublishRunToken, assignmentContext string) (PublisherConnectionCredential, SecretHash, error) {
-	if _, _, err := ParsePublishRunToken(publishRunToken); err != nil || assignmentContext == "" {
-		return "", SecretHash{}, ErrInvalidPublishRunToken
-	}
-	sessionSecret := validatedTokenSecret(publishRunToken.String(), sessionPrefix)
-	return deriveConnectionCredential(sessionSecret, assignmentContext)
-}
-
-func deriveConnectionCredential(sessionSecret []byte, assignmentContext string) (PublisherConnectionCredential, SecretHash, error) {
-	idMAC := hmac.New(sha256.New, sessionSecret)
+func deriveConnectionCredential(seedSecret []byte, assignmentContext string) (PublisherConnectionCredential, SecretHash, error) {
+	idMAC := hmac.New(sha256.New, seedSecret)
 	_, _ = idMAC.Write([]byte("tnl/publisher-connection-id/v1\x00" + assignmentContext))
 	lookupID := CredentialID(base64.RawURLEncoding.EncodeToString(idMAC.Sum(nil)[:lookupBytes]))
-	secretMAC := hmac.New(sha256.New, sessionSecret)
+	secretMAC := hmac.New(sha256.New, seedSecret)
 	_, _ = secretMAC.Write([]byte("tnl/publisher-connection-secret/v1\x00" + assignmentContext))
 	secret := secretMAC.Sum(nil)
 	hash := sha256.Sum256(secret)
@@ -184,9 +140,6 @@ func (t RefreshToken) String() string { return string(t) }
 
 // String returns the serialized invitation token.
 func (t InvitationToken) String() string { return string(t) }
-
-// String returns the serialized publish run token.
-func (t PublishRunToken) String() string { return string(t) }
 
 // String returns the serialized publisher connection credential.
 func (t PublisherConnectionCredential) String() string { return string(t) }

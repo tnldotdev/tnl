@@ -94,16 +94,12 @@ func (f *privateFixtureDNS) PublishAddress(_ context.Context, r controldns.Addre
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ip[dns.Fqdn(r.CanonicalHostname)] = slices.Clone(r.IngressIPv4Addresses)
-	if r.WildcardHostname != "" {
-		f.ip[dns.Fqdn(r.WildcardHostname)] = slices.Clone(r.IngressIPv4Addresses)
-	}
 	return controldns.Zone{ID: r.ZoneID, Nameservers: []string{f.address}, ChangeID: "fixture-address"}, nil
 }
 func (f *privateFixtureDNS) RemoveAddress(_ context.Context, r controldns.AddressRecord) (controldns.Zone, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.ip, dns.Fqdn(r.CanonicalHostname))
-	delete(f.ip, dns.Fqdn(r.WildcardHostname))
 	return controldns.Zone{ID: r.ZoneID, Nameservers: []string{f.address}, ChangeID: "fixture-remove"}, nil
 }
 func (f *privateFixtureDNS) EnsureCustomZone(context.Context, controlstate.DNSAuthorityWork) (controldns.Zone, error) {

@@ -159,7 +159,7 @@ func serveAdminRequest(handler http.Handler, method, path, body string) *httptes
 }
 
 type adminStoreStub struct {
-	Store
+	AdminStore
 	AuthorizationStore
 	principal      controlstate.ControlPrincipal
 	counts         controlstate.AdminRuntimeCounts

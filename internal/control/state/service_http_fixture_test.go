@@ -55,7 +55,7 @@ func (f serviceHTTPFixture) local(t *testing.T, name string, http *config.HTTPSe
 
 func (f serviceHTTPFixture) publish(t *testing.T, service ServiceRecord) ServiceRunState {
 	t.Helper()
-	enrollment := publisherEnrollment(t, f.database, CreatePublicURLRequest{TeamID: f.project.TeamID, ActingIdentityID: f.project.ActorID},
+	enrollment := publisherEnrollment(t, f.database, serviceTestAuthority{TeamID: f.project.TeamID, ActingIdentityID: f.project.ActorID},
 		PublisherScope{TeamID: f.project.TeamID, Kind: "service", ServiceID: service.ID}, f.now)
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

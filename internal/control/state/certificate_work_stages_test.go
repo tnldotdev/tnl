@@ -19,7 +19,7 @@ func TestCertificateWorkIssuedPayload(t *testing.T) {
 	for _, name := range []string{"valid", "missing_pem", "missing_not_before", "missing_not_after", "missing_renewal", "zero_date", "early_renewal", "late_renewal"} {
 		t.Run(name, func(t *testing.T) {
 			work := ACMEOrderWork{
-				ID: "order", Subject: CertificateSubject{Kind: CertificateSubjectPublicURL, ID: "url", RunID: "run", RunNumber: 1},
+				ID: "order", Subject: CertificateSubject{Kind: CertificateSubjectService, ID: "service", RunID: "run", RunNumber: 1},
 				State: ACMEOrderWaitingForInstall, CertificatePEM: []byte("issued"), NotBefore: &notBefore, NotAfter: &notAfter, RenewAt: &renewAt,
 				WorkerID: "worker", OrderRevision: 1, WorkEpoch: 1, WorkExpiresAt: now.Add(time.Minute), AvailableAt: now, ChallengeMethod: "dns-01",
 			}
@@ -223,7 +223,7 @@ func TestCertificateWorkChallengeMethodStorageBoundary(t *testing.T) {
 				t.Fatal("unsupported or reused authorization fabricated challenge work", challengeErr)
 			}
 			order := controlstatedb.ControlAcmeOrder{
-				ID: "order", PublicURLID: "public-url", PublishRunID: "run", PublishRunNumber: 1,
+				ID: "order", ServiceID: "service", ServiceRunID: "run", ServiceRunNumber: 1,
 				OrderRevision: 1, WorkEpoch: 1, Attempts: 1, WorkOwner: text("worker"), WorkExpiresAt: timestamptz(expires),
 				AvailableAt: timestamptz(now), CreatedAt: timestamptz(now), UpdatedAt: timestamptz(now),
 				CsrDigest: make([]byte, 32), State: "authorizing", ChallengeMethod: "dns-01", CertificateIdentifiers: []string{authorization.Identifier},

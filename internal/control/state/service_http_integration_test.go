@@ -229,15 +229,15 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		t.Fatal("publisher revived a closed visitor", err)
 	}
 	wrongAuth := a
-	wrongAuth.Subject.Kind = visitorscope.PublicURL
+	wrongAuth.Subject.Kind = "public_url"
 	check(wrongAuth, GrantTokenSource{Credential: grant.RefreshCredential}, false)
 	check(b, GrantTokenSource{Credential: grant.RefreshCredential}, false)
 	check(a, GrantTokenSource{Credential: "shr_0123456789abcdefghijkl." + strings.Repeat("A", 43)}, false)
 	if _, err := d.ReadPublisherVisitorPolicy(t.Context(), a.Subject, a.RunID, a.Number+1, a.Token.String(), 0, now); err == nil {
 		t.Fatal("wrong run number fetched policy")
 	}
-	// browser credentials capture ready runs and stay separate from legacy URL
-	// sessions and managed bearer grants. a new pool member cannot redeem them.
+	// browser credentials capture ready runs and stay separate from bearer
+	// grants. a new pool member cannot redeem them.
 	binding := bytes.Repeat([]byte{7}, 32)
 	state, err := d.BeginServiceBrowserLogin(t.Context(), a.Subject, "", "/settings?tab=1", strings.Repeat("n", 43), strings.Repeat("v", 43), binding, nil, now)
 	if err != nil {
@@ -339,8 +339,8 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 			t.Fatal("refresh extended the original browser lifetime", err)
 		}
 	})
-	if _, err = d.IssueVisitorToken(t.Context(), testVisitorIssuer, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}, BrowserSessionTokenSource{Secret: redemption.CookieSecret}, now); err == nil {
-		t.Fatal("service browser widened public URL scope")
+	if _, err = d.IssueVisitorToken(t.Context(), testVisitorIssuer, visitorscope.Scope{Kind: "public_url", ID: "url_" + strings.Repeat("A", 22)}, BrowserSessionTokenSource{Secret: redemption.CookieSecret}, now); err == nil {
+		t.Fatal("service browser accepted a retired scope")
 	}
 	if _, err = d.ServiceBrowserSession(t.Context(), later, redemption.CookieSecret, false, now); err == nil {
 		t.Fatal("browser session widened run scope")

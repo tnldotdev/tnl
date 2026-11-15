@@ -1,108 +1,118 @@
 package state
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"net/netip"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
-	"github.com/tnldotdev/tnl/internal/security/visitortoken"
-	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
 func TestIntegrationIngressVisitorPolicyBindsExactRunProjectionAndProcess(t *testing.T) {
-	f, _ := finalVisitorRun(t, "http")
-	d := f.database
-	if err := d.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, f.now); err != nil {
-		t.Fatal(err)
+	f, _ := guestAuthorityFixture(t, true)
+	d, now := f.database, f.now
+	register := func(id string, lifetime time.Duration) IngressLease {
+		t.Helper()
+		lease, err := d.RegisterIngress(t.Context(), IngressRegistration{
+			IngressID: id, IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix),
+			ProtocolVersion: 1, HTTPS: true, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
+		}, now, lifetime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return lease
 	}
-	owner := registerServingIngress(t, *f, "policy-ingress", f.now)
-	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: f.setup.PublicURLID}
-	var revision int64
-	if err := d.pool.QueryRow(t.Context(), `SELECT policy_revision FROM control.public_urls WHERE id=$1`, scope.ID).Scan(&revision); err != nil {
-		t.Fatal(err)
+	owner := register("policy-ingress", time.Minute)
+	second := register("second-policy-ingress", 3*time.Second)
+	source := netip.MustParseAddr("192.0.2.1")
+	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
+	admit := func(lease IngressLeaseIdentity, id string, ip netip.Addr) (PublicServiceVisitorAdmission, error) {
+		return d.AdmitPublicServiceVisitor(t.Context(), lease, PrimaryIngressPoolID, id,
+			f.service.Endpoint.Hostname, 443, ip, now)
 	}
-	update, err := d.ReadIngressVisitorPolicy(t.Context(), owner, scope, f.setup.PublishRunID, int64(f.setup.PublishRunNumber), revision, 0, f.now)
-	if err != nil || update.Policy.Resource.Id != scope.ID || update.Policy.Hostname != f.request.CertificateIdentifiers[0] || !update.Policy.ValidUntil.Equal(f.now.Add(10*time.Second)) {
-		t.Fatal("ingress did not prepare the scoped current policy", err)
+	admission, err := admit(owner.IngressLeaseIdentity, visitor, source)
+	if err != nil || admission.ServiceID != f.service.ID || admission.RunID != f.run.RunID ||
+		admission.RunNumber != f.run.RunNumber || !admission.ExpiresAt.Equal(now.Add(10*time.Second)) {
+		t.Fatal("ingress admission lost its exact run or setup deadline", admission, err)
 	}
-	publisher, err := d.ReadPublisherVisitorPolicy(t.Context(), scope, f.setup.PublishRunID, int64(f.setup.PublishRunNumber), string(f.setup.PublishRunToken), 0, f.now)
-	if err != nil || publisher.VisitorSourceKey == nil || len(*publisher.VisitorSourceKey) != 32 || publisher.VisitorSourceAuthority != nil ||
-		update.VisitorSourceKey == nil || len(*update.VisitorSourceKey) != 32 || update.VisitorSourceAuthority == nil || bytes.Equal(*publisher.VisitorSourceKey, *update.VisitorSourceKey) {
-		t.Fatal("preparation did not separate the publisher master from ingress delegation", err)
+	auth := ServiceHTTPRun{Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: f.service.ID},
+		RunID: f.run.RunID, Number: f.run.RunNumber, Token: credentials.ServiceRunToken(f.run.Token)}
+	policy, err := d.ReadPublisherVisitorPolicy(f.ctx, auth.Subject, auth.RunID, auth.Number, auth.Token.String(), 0, now)
+	if err != nil || policy.Policy.Resource.Id != f.service.ID || policy.Policy.Resource.Kind != "service" ||
+		policy.Policy.Hostname != f.service.Endpoint.Hostname {
+		t.Fatal("publisher policy lost its exact service/run binding", err)
 	}
-	authority, err := tunnelv1.ReadVisitorSourceAuthority(*update.VisitorSourceAuthority)
-	if err != nil || authority.IngressID != owner.IngressID || authority.IngressRunID != owner.IngressRunID || authority.IngressLeaseRevision != owner.IngressLeaseRevision ||
-		authority.VisitorPolicyRevision != update.Policy.VisitorPolicyRevision || authority.ValidUntil != update.Policy.ValidUntil.Unix() {
-		t.Fatal("control lost process, policy or deadline binding", err)
+	bounded, err := admit(second.IngressLeaseIdentity, mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), source)
+	if err != nil || !bounded.ExpiresAt.Equal(second.LeaseExpiresAt) {
+		t.Fatal("admission outlived its ingress process lease", bounded, err)
 	}
-	binding := tunnelv1.VisitorSourceBinding{PublicURLID: scope.ID, PublishRunID: f.setup.PublishRunID, PublishRunNumber: f.setup.PublishRunNumber,
-		VisitorID: "visitor", Source: netip.MustParseAddrPort("192.0.2.1:1234"), Destination: netip.MustParseAddrPort("203.0.113.1:443")}
-	proof, err := visitortoken.SignVisitorSource([32]byte(*update.VisitorSourceKey), authority, 1, binding, f.now)
-	if err != nil || visitortoken.VerifyVisitorSource([32]byte(*publisher.VisitorSourceKey), proof, binding, update.Policy.VisitorPolicyRevision, f.now) != nil {
-		t.Fatal("control-issued delegation did not authenticate source at the publisher", err)
+	// source authority is now the stored admission tuple, not an ingress policy
+	// projection or a delegated signing key.
+	if _, err := admit(second.IngressLeaseIdentity, visitor, source); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("another ingress process reused the visitor reservation", err)
 	}
-	second := registerServingIngress(t, *f, "second-policy-ingress", f.now)
-	other, err := d.ReadIngressVisitorPolicy(t.Context(), second, scope, f.setup.PublishRunID, int64(f.setup.PublishRunNumber), revision, 0, f.now)
-	if err != nil || other.VisitorSourceKey == nil || bytes.Equal(*update.VisitorSourceKey, *other.VisitorSourceKey) {
-		t.Fatal("two ingress processes received the same delegated key", err)
+	if _, err := admit(owner.IngressLeaseIdentity, visitor, netip.MustParseAddr("192.0.2.2")); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("a changed source reused the visitor reservation", err)
 	}
-	short := f.now.Add(3 * time.Second)
-	if _, err := d.pool.Exec(t.Context(), `UPDATE control.ingress_leases SET lease_expires_at=$2 WHERE ingress_id=$1`, second.IngressID, short); err != nil {
-		t.Fatal(err)
+	status, err := d.PublicServiceVisitorStatus(t.Context(), second.IngressLeaseIdentity, visitor, now)
+	if err != nil || status.State != PublicServiceVisitorDenied {
+		t.Fatal("another ingress process observed the visitor's permission", status, err)
 	}
-	bounded, err := d.ReadIngressVisitorPolicy(t.Context(), second, scope, f.setup.PublishRunID, int64(f.setup.PublishRunNumber), revision, 0, f.now)
-	if err != nil || bounded.VisitorSourceAuthority == nil {
-		t.Fatal(err)
-	}
-	shortAuthority, err := tunnelv1.ReadVisitorSourceAuthority(*bounded.VisitorSourceAuthority)
-	if err != nil || shortAuthority.ValidUntil != short.Unix() {
-		t.Fatal("delegation extended its process lease", err)
-	}
-	for _, test := range []struct {
-		name     string
-		run      string
-		number   int64
-		revision int64
-	}{
-		{"run", "different-run", int64(f.setup.PublishRunNumber), revision},
-		{"number", f.setup.PublishRunID, int64(f.setup.PublishRunNumber) + 1, revision},
-		{"projection policy", f.setup.PublishRunID, int64(f.setup.PublishRunNumber), revision + 1},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if _, err := d.ReadIngressVisitorPolicy(t.Context(), owner, scope, test.run, test.number, test.revision, 0, f.now); !errors.Is(err, ErrVisitorPolicy) {
-				t.Fatal("wrong run/projection received permission state", err)
+	for _, field := range []string{"service", "run", "number", "token", "source", "port"} {
+		t.Run(field, func(t *testing.T) {
+			crossed, ip, port := auth, source, 443
+			switch field {
+			case "service":
+				crossed.Subject.ID = mustOpaqueID(t, opaqueid.ServicePrefix)
+			case "run":
+				crossed.RunID = mustOpaqueID(t, opaqueid.ServiceRunPrefix)
+			case "number":
+				crossed.Number++
+			case "token":
+				crossed.Token = credentials.ServiceRunToken("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+			case "source":
+				ip = netip.MustParseAddr("192.0.2.2")
+			case "port":
+				port = 25443
+			}
+			if _, err := d.AuthorizeServiceHTTPVisitor(f.ctx, crossed, visitor, ip, port, now); err == nil {
+				t.Fatal("publisher authorization crossed its admission tuple")
 			}
 		})
 	}
-	stale := owner
+	stale := owner.IngressLeaseIdentity
 	stale.IngressLeaseRevision++
-	if _, err := d.ReadIngressVisitorPolicy(t.Context(), stale, scope, f.setup.PublishRunID, int64(f.setup.PublishRunNumber), revision, 0, f.now); !errors.Is(err, ErrIngressLeaseStale) {
-		t.Fatal("stale process prepared policy", err)
+	if _, err := admit(stale, mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), source); !errors.Is(err, ErrIngressLeaseStale) {
+		t.Fatal("an older ingress lease admitted a visitor", err)
 	}
-	if err := d.ClosePublishRun(t.Context(), f.setup.PublishRunID, f.setup.PublishRunToken, f.now); err != nil {
+	if _, err := d.AuthorizeServiceHTTPVisitor(f.ctx, auth, visitor, source, 443, now); err != nil {
+		t.Fatal("the exact publisher/admission tuple was rejected", err)
+	}
+	if err := d.CloseServiceRun(f.ctx, f.service.ID, f.run.RunID, f.run.Token, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.ReadIngressVisitorPolicy(t.Context(), owner, scope, f.setup.PublishRunID, int64(f.setup.PublishRunNumber), revision, 0, f.now); !errors.Is(err, ErrVisitorPolicy) {
-		t.Fatal("closed run prepared policy", err)
+	if _, err := d.ReadPublisherVisitorPolicy(f.ctx, auth.Subject, auth.RunID, auth.Number, auth.Token.String(), 0, now); err == nil {
+		t.Fatal("a closed run prepared publisher policy")
+	}
+	if _, err := admit(owner.IngressLeaseIdentity, mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), source); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("a closed run admitted a visitor", err)
 	}
 }
 
 func TestIntegrationIngressVisitorPolicyDoesNotWaitForRenewalRow(t *testing.T) {
-	f, _ := finalVisitorRun(t, "http")
-	d := f.database
-	if err := d.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, f.now); err != nil {
+	f, _ := guestAuthorityFixture(t, true)
+	owner, err := f.database.RegisterIngress(t.Context(), IngressRegistration{
+		IngressID: "policy-row-lock", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix),
+		ProtocolVersion: 1, HTTPS: true, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
+	}, f.now, time.Minute)
+	if err != nil {
 		t.Fatal(err)
 	}
-	owner := registerServingIngress(t, *f, "policy-row-lock", f.now)
-	var revision int64
-	if err := d.pool.QueryRow(t.Context(), `SELECT policy_revision FROM control.public_urls WHERE id=$1`, f.setup.PublicURLID).Scan(&revision); err != nil {
-		t.Fatal(err)
-	}
-	held, err := d.pool.Begin(t.Context())
+	held, err := f.database.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,10 +120,10 @@ func TestIntegrationIngressVisitorPolicyDoesNotWaitForRenewalRow(t *testing.T) {
 	if _, err := held.Exec(t.Context(), `SELECT ingress_id FROM control.ingress_leases WHERE ingress_id=$1 FOR UPDATE`, owner.IngressID); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(f.ctx, 2*time.Second)
 	defer cancel()
-	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: f.setup.PublicURLID}
-	if _, err := d.ReadIngressVisitorPolicy(ctx, owner, scope, f.setup.PublishRunID, int64(f.setup.PublishRunNumber), revision, 0, f.now); err != nil {
-		t.Fatal("read-only policy preparation waited behind process renewal", err)
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: f.service.ID}
+	if _, err := f.database.ReadPublisherVisitorPolicy(ctx, scope, f.run.RunID, f.run.RunNumber, f.run.Token, 0, f.now); err != nil {
+		t.Fatal("publisher policy preparation waited behind ingress renewal", err)
 	}
 }

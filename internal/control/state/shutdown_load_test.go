@@ -3,33 +3,30 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/failure"
 )
 
-// a finite shutdown workload with one-hour logical leases, not a cadence test.
-// half the public URLs stop while the other half heartbeat and both ingress
-// sources follow routing events. publisher transports and visitor sockets
-// are absent; the separate runtime load test exercises them.
+// half the services close while the others heartbeat. two ingress observers
+// check current admission and exact terminal tuples, not retired routing history.
 func TestLoadShutdown(t *testing.T) {
 	f := newControlLoadFixture(t)
 	if f.routes < 2 {
-		t.Fatal("shutdown load requires at least two routes")
+		t.Fatal("shutdown load requires at least two services")
 	}
 	sessions := readySteadyLoadSessions(t, f)
-	initialRevision := seedLoadRoutingHistory(t, f, 2, f.history)
 	closing := len(sessions) / 2
-	byID := make(map[string]int, len(sessions))
-	for index, session := range sessions {
-		byID[session.setup.PublicURLID] = index
-	}
 	var ingresses [2]IngressLease
 	for index := range ingresses {
 		lease, err := f.database.RegisterIngress(t.Context(), IngressRegistration{
-			IngressID: fmt.Sprintf("shutdown-ingress-%d", index), IngressRunID: "run", ProtocolVersion: 1, ConnectionCapacity: uint64(f.routes),
+			IngressID: fmt.Sprintf("shutdown-ingress-%d", index), IngressRunID: "run", ProtocolVersion: 1,
+			HTTPS: true, IngressPoolID: PrimaryIngressPoolID, ConnectionCapacity: uint64(max(64, f.routes)),
 		}, f.now, time.Hour)
 		if err != nil {
 			t.Fatal(err)
@@ -52,15 +49,15 @@ func TestLoadShutdown(t *testing.T) {
 		})
 	}
 	var heartbeats, closed, maximumClose atomic.Int64
-	stopBackground := make(chan struct{})
-	allWritesDone := make(chan struct{})
+	stopBackground, allWritesDone := make(chan struct{}), make(chan struct{})
 	ready := make(chan struct{}, 3)
 	var heartbeatReady sync.Once
 	var background sync.WaitGroup
 	f.startMetrics(t)
 	started := time.Now()
 	defer func() {
-		t.Logf("shutdown routes=%d closed=%d heartbeats=%d close_workers=16 heartbeat_workers=48 max_close=%s elapsed=%s", f.routes, closed.Load(), heartbeats.Load(), time.Duration(maximumClose.Load()), time.Since(started))
+		t.Logf("shutdown services=%d closed=%d heartbeats=%d close_workers=16 heartbeat_workers=48 max_close=%s elapsed=%s",
+			f.routes, closed.Load(), heartbeats.Load(), time.Duration(maximumClose.Load()), time.Since(started))
 		f.logStats(t)
 	}()
 	for worker := range 48 {
@@ -76,14 +73,11 @@ func TestLoadShutdown(t *testing.T) {
 					}
 					session := sessions[index]
 					callCtx, stop := context.WithTimeout(ctx, 10*time.Second)
-					updated, err := f.controls[worker%2].HeartbeatPublishRun(callCtx, session.authentication(), f.now.Add(time.Duration(sweep)*time.Millisecond), time.Hour, time.Hour)
+					run, err := f.controls[worker%2].HeartbeatServiceRun(callCtx, session.service.ID, session.run.RunID,
+						session.run.Token, f.now.Add(time.Duration(sweep)*time.Millisecond), ServiceRunHealth{Healthy: true, StreamCapacity: 64})
 					stop()
-					if err != nil {
-						fail(fmt.Errorf("healthy heartbeat: %w", err))
-						return
-					}
-					if updated.PublishRunNumber != session.setup.PublishRunNumber || updated.State != PublishRunReady {
-						fail(fmt.Errorf("healthy session changed: %s", session.setup.PublicURLID))
+					if err != nil || run.RunID != session.run.RunID || run.RunNumber != session.run.RunNumber || run.State != "ready" {
+						fail(fmt.Errorf("healthy service changed: service=%s err=%v", session.service.ID, err))
 						return
 					}
 					heartbeats.Add(1)
@@ -101,7 +95,7 @@ func TestLoadShutdown(t *testing.T) {
 	}
 	for index, ingress := range ingresses {
 		actors.Go(func() {
-			if err := observeShutdownLoad(t, ctx, f.controls[index], ingress, f.now, uint64(initialRevision), byID, closing, allWritesDone, ready); err != nil {
+			if err := observeShutdownLoad(t, ctx, f.controls[index], ingress, f.now.Add(time.Second), sessions, closing, allWritesDone, ready); err != nil {
 				fail(err)
 			}
 		})
@@ -129,7 +123,7 @@ func TestLoadShutdown(t *testing.T) {
 					session := sessions[index]
 					callCtx, stop := context.WithTimeout(ctx, 10*time.Second)
 					at := time.Now()
-					err := f.controls[worker%2].ClosePublishRun(callCtx, session.setup.PublishRunID, session.setup.PublishRunToken, f.now.Add(time.Second))
+					err := f.controls[worker%2].CloseServiceRun(callCtx, session.service.ID, session.run.RunID, session.run.Token, f.now.Add(time.Second))
 					elapsed := time.Since(at)
 					stop()
 					for old := maximumClose.Load(); int64(elapsed) > old; old = maximumClose.Load() {
@@ -138,7 +132,7 @@ func TestLoadShutdown(t *testing.T) {
 						}
 					}
 					if err != nil {
-						fail(fmt.Errorf("close route=%s elapsed=%s: %w", session.setup.PublicURLID, elapsed, err))
+						fail(fmt.Errorf("close service=%s elapsed=%s: %w", session.service.ID, elapsed, err))
 						return
 					}
 					closed.Add(1)
@@ -147,8 +141,7 @@ func TestLoadShutdown(t *testing.T) {
 		}
 		closers.Wait()
 	}
-	closeStarted := time.Now()
-	beforeHeartbeats := heartbeats.Load()
+	closeStarted, beforeHeartbeats := time.Now(), heartbeats.Load()
 	closeRange(0, closing)
 	duringHeartbeats := heartbeats.Load() - beforeHeartbeats
 	t.Logf("shutdown_under_load closed=%d elapsed=%s background_heartbeats=%d", closed.Load(), time.Since(closeStarted), duringHeartbeats)
@@ -159,54 +152,56 @@ func TestLoadShutdown(t *testing.T) {
 	if firstErr != nil || ctx.Err() != nil {
 		t.Fatalf("shutdown under load: %v (context %v)", firstErr, ctx.Err())
 	}
-	// tiny smoke fixtures can close between the 100ms heartbeat sweeps. larger
-	// load cases must demonstrate completed background work during closure itself.
 	if f.routes >= 128 && duringHeartbeats == 0 {
-		t.Fatal("background work made no progress while closing routes")
+		t.Fatal("background work made no progress while closing services")
 	}
 	assertAssignmentTotals(t, f.database.pool, int64(len(sessions)-closing)*2)
-	middle, err := f.database.ReadIngressRoutingTableSnapshot(ctx, ingresses[0].IngressLeaseIdentity, f.now.Add(time.Second))
-	if err != nil || len(middle.Entries) != len(sessions)-closing {
-		t.Fatalf("healthy routes after partial shutdown: count=%d, %v", len(middle.Entries), err)
-	}
-	for _, event := range middle.Entries {
-		index, exists := byID[event.PublicURLID]
-		if !exists || index < closing || event.PublishRunNumber != sessions[index].setup.PublishRunNumber || len(event.Projection.PublisherConnections) != 2 {
-			t.Fatalf("unexpected surviving route %s", event.PublicURLID)
-		}
-	}
-	// verify each run's identity and closure, not only global totals.
 	for index, session := range sessions {
 		var matches bool
-		if err := f.database.pool.QueryRow(ctx, `SELECT public_url_id=$2 AND publish_run_number=$3 AND (closed_at IS NOT NULL)=$4
-			FROM control.publish_runs WHERE id=$1`, session.setup.PublishRunID, session.setup.PublicURLID, session.setup.PublishRunNumber, index < closing).Scan(&matches); err != nil || !matches {
-			t.Fatalf("shutdown run public_url_id=%s closed=%t: %v", session.setup.PublicURLID, index < closing, err)
+		if err := f.database.pool.QueryRow(ctx, `SELECT service_id=$2 AND run_number=$3 AND (closed_at IS NOT NULL)=$4
+			FROM control.service_runs WHERE id=$1`, session.run.RunID, session.service.ID, session.run.RunNumber, index < closing).Scan(&matches); err != nil || !matches {
+			t.Fatalf("shutdown changed the durable tuple for service=%s closed=%t: %v", session.service.ID, index < closing, err)
 		}
 	}
 	closeRange(closing, len(sessions))
 	if firstErr != nil || ctx.Err() != nil {
 		t.Fatalf("final close: %v (context %v)", firstErr, ctx.Err())
 	}
-	var openSessions, activeConnections int64
+	var openRuns, activeConnections int64
 	if err := f.database.pool.QueryRow(ctx, `SELECT
-		(SELECT count(*) FROM control.publish_runs WHERE closed_at IS NULL OR assignments_open OR state <> 'closed'),
-		(SELECT count(*) FROM control.publish_run_connection_slots WHERE state <> 'closed')`).Scan(&openSessions, &activeConnections); err != nil || openSessions != 0 || activeConnections != 0 {
-		t.Fatalf("remaining sessions=%d connections=%d: %v", openSessions, activeConnections, err)
+		(SELECT count(*) FROM control.service_runs WHERE closed_at IS NULL OR state<>'closed'),
+		(SELECT count(*) FROM control.service_connection_slots WHERE state<>'closed' OR session_open)`).Scan(&openRuns, &activeConnections); err != nil || openRuns != 0 || activeConnections != 0 {
+		t.Fatalf("remaining runs=%d connections=%d: %v", openRuns, activeConnections, err)
 	}
 	assertAssignmentTotals(t, f.database.pool, 0)
-	// a repeated close must not publish another tombstone or release capacity twice.
-	if err := f.controls[0].ClosePublishRun(ctx, sessions[0].setup.PublishRunID, sessions[0].setup.PublishRunToken, f.now.Add(time.Second)); err != nil {
+	// a late close rejects the old run instead of releasing capacity twice.
+	var before, after time.Time
+	if err := f.database.pool.QueryRow(ctx, `SELECT closed_at FROM control.service_runs WHERE id=$1`, sessions[0].run.RunID).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	final, err := f.database.ReadIngressRoutingTableSnapshot(ctx, ingresses[0].IngressLeaseIdentity, f.now.Add(time.Second))
-	wantRevision := uint64(initialRevision) + uint64(heartbeats.Load()) + uint64(len(sessions))
-	if err != nil || len(final.Entries) != 0 || final.RoutingTableRevision != wantRevision {
-		t.Fatalf("final routing rows=%d revision=%d want=%d: %v", len(final.Entries), final.RoutingTableRevision, wantRevision, err)
+	if err := f.controls[0].CloseServiceRun(ctx, sessions[0].service.ID, sessions[0].run.RunID, sessions[0].run.Token, f.now.Add(2*time.Second)); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("a repeated close did not reject the terminal run", err)
 	}
-	t.Logf("shutdown_verified sessions=%d connections=%d final_revision=%d", len(sessions), 2*len(sessions), wantRevision)
+	if err := f.database.pool.QueryRow(ctx, `SELECT closed_at FROM control.service_runs WHERE id=$1`, sessions[0].run.RunID).Scan(&after); err != nil || !before.Equal(after) {
+		t.Fatal("repeated close changed terminal state", err)
+	}
+	assertAssignmentTotals(t, f.database.pool, 0)
+	for _, ingress := range ingresses {
+		for start := 0; start < len(sessions); start += 128 {
+			var refs []ServiceRunReference
+			for _, session := range sessions[start:min(start+128, len(sessions))] {
+				refs = append(refs, ServiceRunReference{ServiceID: session.service.ID, RunID: session.run.RunID, RunNumber: session.run.RunNumber})
+			}
+			proof, err := f.database.ClosedServiceRuns(ctx, ingress.IngressLeaseIdentity, refs, f.now.Add(2*time.Second))
+			if err != nil || len(proof) != len(refs) {
+				t.Fatal("final shutdown lost exact terminal proofs", len(proof), len(refs), err)
+			}
+		}
+	}
+	t.Logf("shutdown_verified runs=%d connections=%d", len(sessions), 2*len(sessions))
 }
 
-func observeShutdownLoad(t *testing.T, ctx context.Context, database *Database, ingress IngressLease, now time.Time, cursor uint64, routes map[string]int, closing int, finished <-chan struct{}, ready chan<- struct{}) error {
+func observeShutdownLoad(t *testing.T, ctx context.Context, database *Database, ingress IngressLease, now time.Time, sessions []servicePublicationFixture, closing int, finished <-chan struct{}, ready chan<- struct{}) error {
 	retired := make(map[string]bool)
 	first := true
 	for ctx.Err() == nil {
@@ -216,57 +211,44 @@ func observeShutdownLoad(t *testing.T, ctx context.Context, database *Database, 
 			done = true
 		default:
 		}
-		callCtx, stop := context.WithTimeout(ctx, 10*time.Second)
-		page, err := database.ReadIngressRoutingTableEvents(callCtx, ingress.IngressLeaseIdentity, cursor, MaximumIngressRoutingTablePageSize, now)
-		stop()
-		if err != nil || page.ResnapshotRequired {
-			return fmt.Errorf("shutdown routing read: resnapshot=%t: %w", page.ResnapshotRequired, err)
-		}
-		for _, event := range page.Events {
-			index, exists := routes[event.PublicURLID]
-			if !exists || event.RoutingTableRevision != cursor+1 || retired[event.PublicURLID] {
-				return fmt.Errorf("shutdown routing lost order or resurrected route %s", event.PublicURLID)
-			}
-			switch event.Kind {
-			case IngressPublicURLTombstone:
-				if index >= closing {
-					return fmt.Errorf("healthy route %s retired", event.PublicURLID)
+		for index, session := range sessions {
+			callCtx, stop := context.WithTimeout(ctx, 10*time.Second)
+			err := observeLoadService(callCtx, database, ingress.IngressLeaseIdentity, session, now)
+			stop()
+			if err == nil {
+				if retired[session.service.ID] {
+					return fmt.Errorf("shutdown resurrected service %s", session.service.ID)
 				}
-				retired[event.PublicURLID] = true
-			case IngressPublicURLUpsert:
-				if index < closing || len(event.Projection.PublisherConnections) != 2 {
-					return fmt.Errorf("unexpected shutdown upsert %s", event.PublicURLID)
-				}
-			default:
-				return fmt.Errorf("unexpected shutdown event %s", event.Kind)
+				continue
 			}
-			cursor = event.RoutingTableRevision
+			if index >= closing || !failure.Only(err, ErrServiceAccess) {
+				return fmt.Errorf("shutdown admission service=%s: %w", session.service.ID, err)
+			}
+			ref := ServiceRunReference{ServiceID: session.service.ID, RunID: session.run.RunID, RunNumber: session.run.RunNumber}
+			proof, err := database.ClosedServiceRuns(ctx, ingress.IngressLeaseIdentity, []ServiceRunReference{ref}, now)
+			if err != nil || len(proof) != 1 || proof[0] != ref {
+				return fmt.Errorf("unavailable service %s had no exact terminal proof: %w", session.service.ID, err)
+			}
+			retired[session.service.ID] = true
 		}
-		if page.NextRevision != cursor {
-			return fmt.Errorf("shutdown cursor mismatch %d != %d", page.NextRevision, cursor)
-		}
-		callCtx, stop = context.WithTimeout(ctx, 10*time.Second)
-		_, err = database.RenewIngress(callCtx, IngressRenewal{IngressLeaseIdentity: ingress.IngressLeaseIdentity, RoutingTableRevision: cursor}, now, time.Hour)
-		stop()
-		if err != nil {
+		if _, err := database.RenewIngress(ctx, IngressRenewal{IngressLeaseIdentity: ingress.IngressLeaseIdentity}, now, time.Hour); err != nil {
 			return err
 		}
 		if first {
 			ready <- struct{}{}
 			first = false
 		}
-		if done && !page.More {
+		if done {
 			if len(retired) != closing {
-				return fmt.Errorf("ingress saw %d tombstones, want %d", len(retired), closing)
+				return fmt.Errorf("ingress observed %d terminal services, want %d", len(retired), closing)
 			}
-			t.Logf("shutdown_ingress=%s retired=%d cursor=%d", ingress.IngressID, len(retired), cursor)
+			t.Logf("shutdown_ingress=%s retired=%d", ingress.IngressID, len(retired))
 			return nil
 		}
-		if !page.More {
-			select {
-			case <-ctx.Done():
-			case <-time.After(100 * time.Millisecond):
-			}
+		select {
+		case <-ctx.Done():
+		case <-finished:
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
 	return ctx.Err()

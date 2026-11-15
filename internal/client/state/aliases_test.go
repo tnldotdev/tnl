@@ -120,7 +120,7 @@ func TestAliasSelectionPersistsAcrossServiceRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	current, receiver, err := other.AliasCandidate(t.Context(), initial.ID)
-	if err != nil || current.Project != project || receiver.ID != restarted.ID() || receiver.ServiceID == "" || receiver.PublicURLID != "" {
+	if err != nil || current.Project != project || receiver.ID != restarted.ID() || receiver.ServiceID == "" {
 		t.Fatalf("restarted selected receiver = %q, %v", receiver.ID, err)
 	}
 }

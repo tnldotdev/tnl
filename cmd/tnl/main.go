@@ -697,7 +697,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 		return runConnectJobs(ctx, flags.Connect.Stop.connectListCommand, flags.Connect.Stop.Name, "stop", stdout)
 	case "connect remove <name>":
 		return runConnectJobs(ctx, flags.Connect.Remove.connectListCommand, flags.Connect.Remove.Name, "remove", stdout)
-	case "publisher enroll <public-url-id>", "publisher enroll":
+	case "publisher enroll <service-or-address>", "publisher enroll":
 		return runPublisherEnroll(ctx, flags.Publisher.Enroll, stdout, stderr)
 	case "publisher current":
 		return runPublisherCurrent(ctx, flags.Publisher.Current, stdout)
@@ -820,9 +820,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 		return runURLAccessShow(ctx, flags.URL.Access.Show, stdout, stderr)
 	case "url access set <url> <mode>":
 		return runURLAccessSet(ctx, flags.URL.Access.Set, stdout, stderr)
-	case "url update <public-url-id>":
+	case "url update <service-or-address>":
 		return runURLUpdate(ctx, flags.URL.Update, stdout, stderr)
-	case "url delete <public-url-id>":
+	case "url delete <service-or-address>":
 		return runURLDelete(ctx, flags.URL.Delete, stdout, stderr)
 	case "endpoint release <service-id>":
 		return runEndpointRelease(ctx, flags.Endpoint.Release, stdout, stderr)
@@ -964,9 +964,7 @@ func canonicalParsedCommand(command string) string {
 	case "publish":
 		return "publish <service-or-target>"
 	case "publisher enroll":
-		return "publisher enroll <public-url-id>"
-	case "url ip set <url>":
-		return "url ip set <url> <prefixes>"
+		return "publisher enroll <service-or-address>"
 	case "share link create":
 		return "share link create <url>"
 	case "share team create":

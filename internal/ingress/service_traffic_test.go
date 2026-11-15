@@ -252,7 +252,7 @@ func TestPublicServiceDirectionalTotalsShareOnlyTheExactRunAndProcess(t *testing
 func TestPublicServiceAnonymousAccountingSkipsPendingBudgetsAndKeepsRestrictedSetupIndependent(t *testing.T) {
 	p, c, _, _ := publicServiceTestSetup(t)
 	a := p.traffic
-	a.pending.SourceConnections, a.pending.PublicURLConnections = 1, 1
+	a.pending.SourceConnections, a.pending.ServiceConnections = 1, 1
 	key := trafficKey{service: c.service, id: c.run, run: 1}
 	limits := a.config.Default
 	limits.TotalConnections, limits.TotalUploadBytes = 1, 4

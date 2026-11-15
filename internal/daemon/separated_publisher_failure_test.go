@@ -26,8 +26,7 @@ func captureSeparatedPublisherFailure(database *sql.DB, index int) error {
 		'order_available_at', o.available_at, 'order_updated_at', o.updated_at,
 		'order_error_present', o.last_error IS NOT NULL,
 		'ready_connections', connections.ready,
-		'routing_table_head', (SELECT current_revision FROM control.ingress_routing_table_clock),
-		'ingress_applied_revision', (SELECT min(routing_table_revision) FROM control.ingress_leases
+		'active_ingresses', (SELECT count(*) FROM control.ingress_leases
 			WHERE NOT draining AND lease_expires_at > now()),
 		'endpoint_revision', r.endpoint_revision, 'trust_revision', r.trust_revision,
 		'authorizations', (SELECT jsonb_agg(jsonb_build_object(
@@ -39,8 +38,8 @@ func captureSeparatedPublisherFailure(database *sql.DB, index int) error {
 	FROM control.services r
 	LEFT JOIN LATERAL (SELECT * FROM control.service_runs WHERE service_id = r.id ORDER BY run_number DESC LIMIT 1) s ON true
 	LEFT JOIN LATERAL (SELECT * FROM control.acme_orders WHERE service_id = r.id AND service_run_id=s.id ORDER BY created_at DESC LIMIT 1) o ON true
-	LEFT JOIN LATERAL (SELECT count(*) AS ready FROM control.publisher_service_connection_slots
-		WHERE service_kind='private' AND run_id = s.id AND state = 'ready' AND session_open) connections ON true
+	LEFT JOIN LATERAL (SELECT count(*) AS ready FROM control.service_connection_slots
+		WHERE service_run_id = s.id AND state = 'ready' AND session_open) connections ON true
 	WHERE r.certificate_hostname LIKE $1 LIMIT 1`, fmt.Sprintf("tnl-load-r%06d.%%", index)).Scan(&state)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err

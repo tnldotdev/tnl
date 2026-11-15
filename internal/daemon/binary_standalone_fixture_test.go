@@ -128,7 +128,6 @@ func startIntegrationBinaryStandaloneWithBind(t *testing.T, containerReachable b
 		"TNLD_RELAY_TLS_CERTIFICATE_FILE": serverCertificate.certificateFile,
 		"TNLD_RELAY_TLS_PRIVATE_KEY_FILE": serverCertificate.privateKeyFile,
 		"TNLD_RELAY_UDP_LISTEN":           relayUDPListen,
-		"TNLD_ROUTING_TABLE_WAIT":         "1s",
 		"TNLD_SERVER_DOMAIN":              "127.0.0.1.nip.io",
 		"TNLD_STORAGE_KEY":                testStorageKey,
 	}

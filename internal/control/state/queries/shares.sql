@@ -1,10 +1,10 @@
 -- name: CreateShare :one
 INSERT INTO control.shares (
-    id, preview_id, team_id, scope, label, entry_service_id, control_session_id,
+    id, preview_id, team_id, scope, label, entry_service_id, control_session_id, issuer_company_context,
     created_by_identity_id,idempotency_key,request_digest,secret_digest,created_at,expires_at
 ) VALUES (
     sqlc.arg(id),sqlc.narg(preview_id),sqlc.arg(team_id),sqlc.arg(scope),sqlc.arg(label),
-    sqlc.arg(entry_service_id),sqlc.narg(control_session_id),sqlc.arg(created_by_identity_id),
+    sqlc.arg(entry_service_id),sqlc.narg(control_session_id),sqlc.narg(issuer_company_context)::text::jsonb,sqlc.arg(created_by_identity_id),
     sqlc.arg(idempotency_key),sqlc.arg(request_digest),sqlc.arg(secret_digest),sqlc.arg(created_at),sqlc.arg(expires_at)
 )
 ON CONFLICT (created_by_identity_id,idempotency_key)

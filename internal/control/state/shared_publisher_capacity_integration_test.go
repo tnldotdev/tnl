@@ -6,23 +6,39 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
 
 func TestIntegrationPublicAndPrivatePublishersShareRelayPlacementCapacity(t *testing.T) {
-	d, now, request, _ := newPublishRunPrerequisites(t)
+	f := newServicePublicationFixture(t)
+	d, now := f.database, f.now
 	if _, err := d.pool.Exec(t.Context(), `UPDATE control.relay_leases SET connection_capacity=1`); err != nil {
 		t.Fatal(err)
 	}
-	publicRun, err := d.CreatePublishRun(t.Context(), request, now, time.Minute, time.Minute)
+	if err := d.CloseServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, now); err != nil {
+		t.Fatal(err)
+	}
+	f.start(t, "public", now)
+	publicRun := f.run
+
+	editorID := f.actor(t)
+	private, err := d.CreateServiceAt(t.Context(), f.service.TeamID, editorID, "private", "private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	privateRequest := oidcRouteRequest(t, d, now)
-	service, err := d.CreateServiceAt(t.Context(), privateRequest.TeamID, privateRequest.ActingIdentityID, "private", "private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
+	actor, err := controlstatedb.New(d.pool).GetTeamActorContext(t.Context(), controlstatedb.GetTeamActorContextParams{TeamID: f.service.TeamID, IdentityID: editorID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment := publisherEnrollment(t, d, privateRequest, PublisherScope{TeamID: privateRequest.TeamID, Kind: "service", ServiceID: service.ID}, now)
+	enrollment, err := d.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{
+		Scope: PublisherScope{TeamID: f.service.TeamID, Kind: "service", ServiceID: private.ID},
+		Name:  "private", Kind: "installed", EditorID: editorID, EditorMembershipID: actor.ActorMembershipID,
+		PolicyRevision: uint64(actor.PolicyRevision), Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	public, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -31,28 +47,28 @@ func TestIntegrationPublicAndPrivatePublishersShareRelayPlacementCapacity(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := d.PrepareServiceRun(t.Context(), service.ID, publisher, "private", now, ServiceRunRequest{Metadata: ServiceMetadata{Protocol: "tcp", TrustRevision: 1}})
+	prepared, err := d.PrepareServiceRun(t.Context(), private.ID, publisher, "private", now, ServiceRunRequest{Metadata: ServiceMetadata{Protocol: "tcp", TrustRevision: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.StartServiceRun(t.Context(), service.ID, prepared.RunID, prepared.RunNumber, publisher, now); !errors.Is(err, ErrInsufficientRelayServices) {
+	if _, err = d.StartServiceRun(t.Context(), private.ID, prepared.RunID, prepared.RunNumber, publisher, now); !errors.Is(err, ErrInsufficientRelayServices) {
 		t.Fatalf("private run bypassed HTTP relay reservations: %v", err)
 	}
-	if err = d.ClosePublishRun(t.Context(), publicRun.PublishRunID, publicRun.PublishRunToken, now); err != nil {
+	if err = d.CloseServiceRun(t.Context(), f.service.ID, publicRun.RunID, publicRun.Token, now); err != nil {
 		t.Fatal(err)
 	}
-	serviceRun, err := d.StartServiceRun(t.Context(), service.ID, prepared.RunID, prepared.RunNumber, publisher, now)
+	serviceRun, err := d.StartServiceRun(t.Context(), private.ID, prepared.RunID, prepared.RunNumber, publisher, now)
 	if err != nil || len(serviceRun.Connections) != 2 {
 		t.Fatalf("released HTTP capacity could not serve private run: %+v %v", serviceRun, err)
 	}
 	var slots int
-	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.publisher_service_connection_slots WHERE session_open AND state='assigned'`).Scan(&slots); err != nil || slots != 2 {
+	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.service_connection_slots WHERE session_open AND state='assigned'`).Scan(&slots); err != nil || slots != 2 {
 		t.Fatalf("shared live slots=%d: %v", slots, err)
 	}
-	if expired, err := d.ExpireSavedPublishRuns(t.Context(), now.Add(time.Minute)); err != nil || expired != 1 {
+	if expired, err := d.ExpireServiceRuns(t.Context(), now.Add(time.Minute)); err != nil || expired != 1 {
 		t.Fatalf("shared worker did not expire private run: %d %v", expired, err)
 	}
-	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.publisher_service_connection_slots WHERE session_open`).Scan(&slots); err != nil || slots != 0 {
+	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.service_connection_slots WHERE session_open`).Scan(&slots); err != nil || slots != 0 {
 		t.Fatalf("expired private run held relay capacity: %d %v", slots, err)
 	}
 }

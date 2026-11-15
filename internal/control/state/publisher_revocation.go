@@ -88,35 +88,43 @@ func closePublisherServiceRuns(ctx context.Context, tx pgx.Tx, q *controlstatedb
 // callers hold the team mutation guard. close runs bound to the member's
 // publisher identity or namespace grant before returning the policy mutation.
 func closeMembershipServiceRuns(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, team, member string, now time.Time) error {
-	rows, err := tx.Query(ctx, `SELECT DISTINCT run.service_id FROM control.service_runs run
+	rows, err := tx.Query(ctx, `SELECT run.service_id,run.id FROM control.service_runs run
 		JOIN control.services service ON service.id=run.service_id
 		JOIN control.publisher_identities publisher ON publisher.id=run.publisher_identity_id
-		JOIN control.publisher_grants grant ON grant.id=run.publisher_grant_id
+		JOIN control.publisher_grants grant_record ON grant_record.id=run.publisher_grant_id
 		WHERE service.team_id=$1 AND run.closed_at IS NULL
-		  AND (publisher.owner_membership_id=$2 OR grant.membership_id=$2)
-		ORDER BY run.service_id`, team, member)
+		  AND (publisher.owner_membership_id=$2 OR grant_record.membership_id=$2)
+		ORDER BY run.service_id,run.id`, team, member)
 	if err != nil {
 		return err
 	}
-	var services []string
+	type affectedRun struct{ service, run string }
+	var runs []affectedRun
 	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
+		var candidate affectedRun
+		if err = rows.Scan(&candidate.service, &candidate.run); err != nil {
 			rows.Close()
 			return err
 		}
-		services = append(services, id)
+		runs = append(runs, candidate)
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
 		return err
 	}
-	for _, id := range services {
-		if _, err = q.LockService(ctx, id); err != nil {
+	for _, candidate := range runs {
+		if _, err = q.LockService(ctx, candidate.service); err != nil {
 			return err
 		}
-		if err = closeServiceRuns(ctx, tx, id, now); err != nil {
+		run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: candidate.run, ServiceID: candidate.service})
+		if err != nil {
+			return err
+		}
+		if run.ClosedAt.Valid {
+			continue
+		}
+		if _, err = closeServiceRun(ctx, q, run, now); err != nil {
 			return err
 		}
 	}

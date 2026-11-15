@@ -199,7 +199,19 @@ async function publishServerUntraced(
             ? {}
             : { ip: [...options.access.ip] }),
         }),
-    ...(options.limits === undefined ? {} : { limits: structuredClone(options.limits) }),
+    ...(options.limits === undefined
+      ? {}
+      : {
+          limits: {
+            ...(options.limits.requests === undefined ? {} : { total: options.limits.requests }),
+            ...(options.limits.concurrency === undefined
+              ? {}
+              : { concurrency: options.limits.concurrency }),
+            ...(options.limits.rate === undefined
+              ? {}
+              : { rate: { count: options.limits.rate.requests, per: options.limits.rate.per } }),
+          },
+        }),
     ...(options.requirePostQuantum === undefined
       ? {}
       : { require_post_quantum: options.requirePostQuantum }),

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
+	"github.com/zalando/go-keyring"
 )
 
 // hold the same lock across actual HTTP decisions and the outage transition.
@@ -35,6 +37,23 @@ type nativeDefaultFaults struct {
 	initial, connectorUntil, publisherUntil, publisherOwnerUntil time.Time
 	runUntil, permissionUntil, tokenUntil                        time.Time
 	changedPair                                                  bool
+	connectorLease, publisherLease, publisherOwnerLease          nativeDefaultLeaseObservation
+}
+
+type nativeDefaultLeaseObservation struct {
+	reported, observed, until time.Time
+}
+
+func (o *nativeDefaultLeaseObservation) record(started, observed, reported time.Time) time.Time {
+	if !o.observed.IsZero() && !observed.After(o.observed) {
+		return o.until
+	}
+	until := started.Add(reported.Sub(observed))
+	if !o.reported.IsZero() && !reported.After(o.reported) {
+		until = minTime(until, o.until)
+	}
+	o.reported, o.observed, o.until = reported, observed, until
+	return until
 }
 
 type defaultConnectorOwnerControl struct {
@@ -43,15 +62,16 @@ type defaultConnectorOwnerControl struct {
 }
 
 func (c defaultConnectorOwnerControl) PrepareConnectorPeerPair(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
+	// the caller's authority interval includes time waiting for the fault lock.
+	started := time.Now()
 	c.faults.mu.Lock()
 	defer c.faults.mu.Unlock()
 	if c.faults.outage {
 		return controlv1.ConnectorPeerPair{}, clientcontrol.ErrUnavailable
 	}
-	started := time.Now()
 	pair, err := c.Control.PrepareConnectorPeerPair(ctx, service, body)
 	if err == nil {
-		until := started.Add(pair.ExpiresAt.Sub(pair.ObservedAt))
+		until := c.faults.connectorLease.record(started, pair.ObservedAt, pair.ExpiresAt)
 		if c.faults.pair == "" {
 			c.faults.pair, c.faults.initial = pair.PairId, until
 		}
@@ -62,21 +82,22 @@ func (c defaultConnectorOwnerControl) PrepareConnectorPeerPair(ctx context.Conte
 }
 
 func (c defaultConnectorOwnerControl) RenewConnectorPeerPair(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+	started := time.Now()
 	c.faults.mu.Lock()
 	defer c.faults.mu.Unlock()
 	if c.faults.outage {
 		return controlv1.ConnectorPeerPairRenewal{}, clientcontrol.ErrUnavailable
 	}
-	started := time.Now()
 	renewal, err := c.Control.RenewConnectorPeerPair(ctx, service, body)
 	if err == nil {
 		c.faults.changedPair = c.faults.changedPair || c.faults.pair != renewal.Pair.PairId
-		c.faults.connectorUntil = started.Add(renewal.Pair.ExpiresAt.Sub(renewal.Pair.ObservedAt))
-		c.faults.runUntil = started.Add(renewal.RunValidUntil.Sub(renewal.Pair.ObservedAt))
-		c.faults.permissionUntil = started.Add(renewal.VisitorPermission.ExpiresAt.Sub(renewal.Pair.ObservedAt))
+		bound := c.faults.connectorLease.record(started, renewal.Pair.ObservedAt, renewal.Pair.ExpiresAt)
+		c.faults.connectorUntil = bound
+		c.faults.runUntil = bound.Add(renewal.RunValidUntil.Sub(renewal.Pair.ExpiresAt))
+		c.faults.permissionUntil = bound.Add(renewal.VisitorPermission.ExpiresAt.Sub(renewal.Pair.ExpiresAt))
 		// signed visitor tokens carry whole-second expiry, independently of the
 		// API interval. account for that exact fence rather than widening tolerance.
-		c.faults.tokenUntil = started.Add(renewal.VisitorPermission.ExpiresAt.Truncate(time.Second).Sub(renewal.Pair.ObservedAt))
+		c.faults.tokenUntil = bound.Add(renewal.VisitorPermission.ExpiresAt.Truncate(time.Second).Sub(renewal.Pair.ExpiresAt))
 		c.faults.renewals++
 	}
 	return renewal, err
@@ -97,9 +118,9 @@ type defaultConnectorPublisherControl struct {
 }
 
 func (c defaultConnectorPublisherControl) ListConnectorPeerPairs(ctx context.Context, service, run, after string, token credentials.ServiceRunToken) (controlv1.ConnectorPeerPairCandidates, error) {
+	started := time.Now()
 	c.faults.mu.Lock()
 	defer c.faults.mu.Unlock()
-	started := time.Now()
 	page, err := c.RunControl.ListConnectorPeerPairs(ctx, service, run, after, token)
 	for index := range page.Items {
 		candidate := &page.Items[index]
@@ -111,21 +132,22 @@ func (c defaultConnectorPublisherControl) ListConnectorPeerPairs(ctx context.Con
 			continue
 		}
 		observation := candidate.OwnerAuthority
-		c.faults.publisherOwnerUntil = started.Add(observation.ExpiresAt.Sub(observation.ObservedAt))
+		c.faults.publisherOwnerUntil = c.faults.publisherOwnerLease.record(started, observation.ObservedAt, observation.ExpiresAt)
 	}
 	return page, err
 }
 
 func (c defaultConnectorPublisherControl) DeliverConnectorPeerPair(ctx context.Context, service, run, pair string, generation int64, token credentials.ServiceRunToken) (controlv1.ConnectorPeerPairDelivery, error) {
+	started := time.Now()
 	c.faults.mu.Lock()
 	defer c.faults.mu.Unlock()
 	if c.faults.outage && pair == c.faults.pair {
 		return controlv1.ConnectorPeerPairDelivery{}, clientcontrol.ErrUnavailable
 	}
-	started := time.Now()
 	delivery, err := c.RunControl.DeliverConnectorPeerPair(ctx, service, run, pair, generation, token)
 	if err == nil && pair == c.faults.pair {
-		c.faults.publisherUntil = started.Add(delivery.ExpiresAt.Sub(delivery.ObservedAt))
+		c.faults.publisherUntil = c.faults.publisherLease.record(started, delivery.ObservedAt, delivery.ExpiresAt)
+		c.faults.publisherOwnerUntil = c.faults.publisherOwnerLease.record(started, delivery.ObservedAt, delivery.ExpiresAt)
 	}
 	return delivery, err
 }
@@ -313,6 +335,9 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	// native policy is run-owned, not selectively fetched per stream. use an
 	// independently enrolled sibling device: its current revocation must close
 	// that owner without extending or prematurely closing the unavailable owner.
+	if runtime.GOOS == "darwin" {
+		keyring.MockInit()
+	}
 	state, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "sibling-state"))
 	if err != nil {
 		t.Fatal(err)
@@ -379,6 +404,8 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	}
 	closed := <-localClosed
 	assertClosed(closed)
+	t.Logf("outage TCP stream closed at=%s connector_deadline=%s publisher_deadline=%s earliest_deadline=%s",
+		closed.at.Format(time.RFC3339Nano), latest.Format(time.RFC3339Nano), publisherDeadline.Format(time.RFC3339Nano), earliestExpiry.Format(time.RFC3339Nano))
 	target.mu.Lock()
 	fencedArrivals := target.received[fenced]
 	target.mu.Unlock()
@@ -412,6 +439,31 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 		return defaultConnectorRevocationDenied(err) || errors.Is(err, connectorstream.ErrServiceConnection) ||
 			errors.As(err, &denial) && denial.Code == tunnelv1.Unauthenticated
 	})
+}
+
+func TestDefaultNativeLeaseObservation(t *testing.T) {
+	at := time.Date(2026, time.November, 15, 12, 0, 0, 0, time.UTC)
+	var observation nativeDefaultLeaseObservation
+	started := at.Add(-400 * time.Millisecond)
+	reported := at.Add(30 * time.Second)
+	want := started.Add(30 * time.Second)
+	if got := observation.record(started, at, reported); !got.Equal(want) {
+		t.Fatal("observation restored time spent waiting for the fixture fault lock")
+	}
+	if got := observation.record(at.Add(time.Second), at.Add(time.Second), reported); !got.Equal(want) {
+		t.Fatal("unchanged absolute expiry slid its local fence")
+	}
+	if got := observation.record(at.Add(-time.Second), at.Add(-time.Second), reported.Add(time.Minute)); !got.Equal(want) {
+		t.Fatal("older evidence replaced the current observation")
+	}
+	next := reported.Add(10 * time.Second)
+	if got := observation.record(at.Add(2*time.Second), at.Add(2*time.Second), next); !got.Equal(next) {
+		t.Fatal("new authority did not advance the original owner's fence")
+	}
+	shorter := next.Add(-time.Second)
+	if got := observation.record(at.Add(3*time.Second), at.Add(3*time.Second), shorter); !got.Equal(shorter) {
+		t.Fatal("shorter authority did not narrow the current fence")
+	}
 }
 
 // only the deliberately revoked sibling may end with these typed denials:

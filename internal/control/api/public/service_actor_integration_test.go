@@ -192,18 +192,18 @@ func TestIntegrationServiceActorRequestBindingAndCurrentManager(t *testing.T) {
 	jti := map[string]any{"jti": "one-operation-only"}
 	serviceResult(t, f.serviceCall("GET", base, serviceOwnerSub, nil, jti), 200, nil)
 	serviceProblem(t, f.serviceCall("GET", base+"/grants", serviceOwnerSub, nil, jti), 401, authorityv1.Unauthenticated)
-	// no service assertion authenticates the existing public URL control API.
+	// no website actor assertion authenticates a control session operation.
 	public, err := NewHandler(Config{}, DatabaseStores(f.d), f.d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := httptest.NewRequest("GET", "/v1/public-urls", nil)
+	r := httptest.NewRequest("GET", "/v1/services?team_id="+team.ID, nil)
 	r.Header.Set("Authorization", "Bearer "+companyWebsiteSecret)
-	r.Header.Set("X-Tnl-Actor-Token", f.serviceToken(serviceOwnerSub, "GET", "/v1/public-urls", nil, nil))
+	r.Header.Set("X-Tnl-Actor-Token", f.serviceToken(serviceOwnerSub, "GET", "/v1/services?team_id="+team.ID, nil, nil))
 	w := httptest.NewRecorder()
 	public.ServeHTTP(w, r)
-	if w.Code < 400 {
-		t.Fatal("service proof authenticated public URL operation")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatal("website actor proof authenticated a control session operation", w.Code)
 	}
 	serviceProblem(t, f.serviceCall("GET", "/v1/service/services/purl_0123456789ABCDEFGHIJKL", serviceOwnerSub, nil, nil), 403, authorityv1.Forbidden)
 	named := serviceActorNamedService(t, f, team.ID, owner.Identity.Identity.Id)

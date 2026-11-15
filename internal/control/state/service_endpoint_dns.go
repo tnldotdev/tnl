@@ -125,6 +125,8 @@ func (d *Database) ValidateServiceEndpointDNSWork(ctx context.Context, work Serv
 		if err := d.pool.QueryRow(ctx, `SELECT EXISTS(
 		    SELECT 1 FROM control.services service JOIN control.service_runs run ON run.service_id=service.id
 		    WHERE service.id=$1 AND service.public AND service.enabled AND service.deleted_at IS NULL
+		      AND service.certificate_hostname=$3 AND service.domain_id=$4
+		      AND run.certificate_hostname=$3 AND run.certificate_domain_id=$4
 		      AND run.state='ready' AND run.healthy AND run.closed_at IS NULL AND run.publisher_expires_at>$2 AND run.certificate_expires_at>$2
 		      AND EXISTS(SELECT 1 FROM control.service_connection_slots slot
 		        JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
@@ -135,7 +137,7 @@ func (d *Database) ValidateServiceEndpointDNSWork(ctx context.Context, work Serv
 		        AND NOT ingress.draining AND ingress.lease_expires_at>$2)
 		      AND NOT EXISTS(SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=service.ingress_pool_id
 		        AND NOT (CASE WHEN service.protocol='http' THEN ingress.https ELSE service.service_port=ANY(ingress.service_ports) END)
-		        AND NOT ingress.draining AND ingress.lease_expires_at>$2))`, work.ServiceID, now).Scan(&current); err != nil {
+		        AND NOT ingress.draining AND ingress.lease_expires_at>$2))`, work.ServiceID, now, work.Hostname, work.DomainID).Scan(&current); err != nil {
 			return err
 		}
 		if !current {

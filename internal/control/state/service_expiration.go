@@ -87,6 +87,13 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 			count++
 		}
 	}
+	q := controlstatedb.New(d.pool)
+	if err = q.DeleteExpiredShareCookies(ctx, timestamptz(now)); err != nil {
+		return count, err
+	}
+	if err = q.DeleteFinishedShareHandoffs(ctx, timestamptz(now)); err != nil {
+		return count, err
+	}
 	if _, err = d.pool.Exec(ctx, `DELETE FROM control.service_client_certificates WHERE certificate_digest IN(SELECT certificate_digest FROM control.service_client_certificates WHERE expires_at<$1 ORDER BY expires_at LIMIT 1000)`, now.Add(-24*time.Hour)); err != nil {
 		return count, err
 	}

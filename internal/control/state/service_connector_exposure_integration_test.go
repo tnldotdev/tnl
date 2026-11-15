@@ -71,10 +71,10 @@ func TestIntegrationServiceEndpointChangesRetainConnectorAuthority(t *testing.T)
 		t.Fatal("first exposure did not allocate a separately revisioned endpoint", first)
 	}
 	assertRetained()
-	change(false)
+	disabled := change(false)
 	assertRetained()
-	released, err := d.ReleaseServiceEndpoint(ctx, service.ID, f.request.Subject.IdentityID, first.EndpointRevision, first.Endpoint.Port, now)
-	if err != nil || released.Endpoint.Port != 0 || released.TrustRevision != service.TrustRevision || released.EndpointRevision != first.EndpointRevision+1 {
+	released, err := d.ReleaseServiceEndpoint(ctx, service.ID, f.request.Subject.IdentityID, disabled.EndpointRevision, first.Endpoint.Port, now)
+	if err != nil || released.Endpoint.Port != 0 || released.TrustRevision != service.TrustRevision || released.EndpointRevision != disabled.EndpointRevision+1 {
 		t.Fatal("release changed connector trust or retained the old public binding", released, err)
 	}
 	assertRetained()

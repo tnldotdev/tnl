@@ -168,8 +168,8 @@ func TestIntegrationServiceAuditBatchAPI(t *testing.T) {
 	if err = json.NewDecoder(response.Body).Decode(&page); err != nil || response.StatusCode != 200 || len(page.Events) < 3 {
 		t.Fatalf("safe generated audit read: %+v %d %v", page, response.StatusCode, err)
 	}
-	var obsolete int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM control.public_urls`).Scan(&obsolete); err != nil || obsolete != 0 {
-		t.Fatal("service audit created an obsolete publication resource", obsolete, err)
+	var obsolete *string
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('control.public_urls')::text`).Scan(&obsolete); err != nil || obsolete != nil {
+		t.Fatal("retired publication table remains in the service baseline", obsolete, err)
 	}
 }

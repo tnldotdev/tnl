@@ -334,7 +334,7 @@ func TestIntegrationDeploymentPublicationSignedRunAndRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	var open int
-	if err := f.d.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM control.publish_runs WHERE publisher_identity_id=$1 AND closed_at IS NULL)+(SELECT count(*) FROM control.service_runs WHERE publisher_identity_id=$1 AND closed_at IS NULL)`, credential.ClientID).Scan(&open); err != nil || open != 0 {
+	if err := f.d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.service_runs WHERE publisher_identity_id=$1 AND closed_at IS NULL`, credential.ClientID).Scan(&open); err != nil || open != 0 {
 		t.Fatal("revocation retained active publication", err)
 	}
 }

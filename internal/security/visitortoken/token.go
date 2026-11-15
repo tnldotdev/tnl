@@ -42,7 +42,7 @@ type Permission struct {
 	SigningKeyID          string
 	Scope                 visitorscope.Scope
 	Hostname              string
-	Port                  uint16
+	Port                  uint16 // zero is exact signed data, never a wildcard.
 	VisitorPolicyRevision int64
 	Subject               Subject
 	ExpiresAt             time.Time
@@ -87,18 +87,16 @@ func validText(value string, maximum int) bool {
 	return value != "" && len(value) <= maximum && !strings.ContainsAny(value, "\x00\r\n\t ")
 }
 
-func validResource(scope visitorscope.Scope, hostname string, port uint16) bool {
+func validResource(scope visitorscope.Scope, hostname string) bool {
 	canonical, err := naming.CanonicalizeHostname(hostname)
-	// service permission binds the immutable service and hostname even when no
-	// ingress port exists. zero is exact signed data, never a wildcard port.
-	return err == nil && canonical == hostname && !strings.Contains(hostname, "*") && scope.Valid() && (scope.Kind != visitorscope.PublicURL || port == 443)
+	return err == nil && canonical == hostname && !strings.Contains(hostname, "*") && scope.Valid()
 }
 
 // Sign receives a decision already authorized by control. the supplied deadline
 // must be capped by every parent; renewable callers also cap it at five minutes.
 func Sign(issuer, keyID string, private ed25519.PrivateKey, permission Permission, now time.Time) (Token, error) {
 	if !validText(issuer, 256) || !validText(keyID, 128) || len(private) != ed25519.PrivateKeySize ||
-		!validResource(permission.Scope, permission.Hostname, permission.Port) || permission.VisitorPolicyRevision < 1 || !permission.ExpiresAt.After(now) || permission.ExpiresAt.Unix() <= now.Unix() {
+		!validResource(permission.Scope, permission.Hostname) || permission.VisitorPolicyRevision < 1 || !permission.ExpiresAt.After(now) || permission.ExpiresAt.Unix() <= now.Unix() {
 		return "", ErrToken
 	}
 	visitor, err := encodeSubject(permission.Subject)
@@ -218,7 +216,7 @@ func (v View) LocalDeadline(deadline time.Time) time.Time {
 }
 
 func (v View) current(now time.Time) bool {
-	return validText(v.Issuer, 256) && validResource(v.Scope, v.Hostname, v.Port) && v.VisitorPolicyRevision > 0 &&
+	return validText(v.Issuer, 256) && validResource(v.Scope, v.Hostname) && v.VisitorPolicyRevision > 0 &&
 		!v.ObservedAt.IsZero() && !now.Before(v.ObservedAt) && v.ValidUntil.After(v.ObservedAt) && !v.ValidUntil.After(v.ObservedAt.Add(PolicyLifetime)) && now.Before(v.ValidUntil)
 }
 

@@ -52,6 +52,26 @@ func serviceCertificatePlan(ctx context.Context, tx pgx.Tx, service controlstate
 	return CertificatePlan{CacheKey: plan.CacheKey, Scope: plan.Scope, Identifiers: slices.Clone(plan.Identifiers), ChallengeMethod: certificateidentity.ChallengeDNS01}, nil
 }
 
+// the run captured this plan under publisher and namespace authority at
+// preparation. a public endpoint edit does not replace that connector identity;
+// current publisher permission and domain authority still bound every renewal.
+func serviceRunCertificatePlan(ctx context.Context, tx pgx.Tx, run controlstatedb.ControlServiceRun) (CertificatePlan, error) {
+	if !run.CertificateDomainID.Valid {
+		return CertificatePlan{}, ErrServiceAccess
+	}
+	if _, err := controlstatedb.New(tx).GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{
+		ID: run.CertificateDomainID.String, TeamID: run.TeamID,
+	}); err != nil {
+		return CertificatePlan{}, publisherLookupError(err, ErrServiceAccess)
+	}
+	plan := authorization.ServiceCertificatePlan(run.CertificateHostname, run.CertificateScope, false, true)
+	if plan == nil || plan.CacheKey != run.CertificateCacheKey || plan.Scope != run.CertificateScope ||
+		!slices.Equal(plan.Identifiers, run.CertificateIdentifiers) || !certificateidentity.Covers(plan.Identifiers, run.CertificateHostname) {
+		return CertificatePlan{}, ErrServiceAccess
+	}
+	return CertificatePlan{CacheKey: plan.CacheKey, Scope: plan.Scope, Identifiers: slices.Clone(plan.Identifiers), ChallengeMethod: certificateidentity.ChallengeDNS01}, nil
+}
+
 func (d *Database) CreateServiceCertificateIssuance(ctx context.Context, service, runID, token, directory, key string, number int64, der []byte, now time.Time) (result CertificateIssuance, retErr error) {
 	clock := newAuthorizationClock(now)
 	csrDigest, err := validateCertificateCSR(directory, key, der)
@@ -74,13 +94,8 @@ func (d *Database) CreateServiceCertificateIssuance(ctx context.Context, service
 	if run.RunNumber != number || len(run.CertificateIdentifiers) == 0 {
 		return result, ErrServiceAccess
 	}
-	row, err := q.LockService(ctx, service)
-	if err != nil {
+	if _, err = serviceRunCertificatePlan(ctx, tx, run); err != nil {
 		return result, err
-	}
-	plan, err := serviceCertificatePlan(ctx, tx, row, run.PublisherIdentityID, run.PublisherGrantID, clock.current())
-	if err != nil || row.DomainID.String != run.CertificateDomainID.String || row.CertificateHostname != run.CertificateHostname || plan.Scope != run.CertificateScope || plan.CacheKey != run.CertificateCacheKey || !slices.Equal(plan.Identifiers, run.CertificateIdentifiers) {
-		return result, errors.Join(ErrServiceAccess, err)
 	}
 	csr, _ := x509.ParseCertificateRequest(der)
 	names, err := canonicalCertificateIdentifiers(csr.DNSNames)
@@ -106,7 +121,7 @@ func (d *Database) CreateServiceCertificateIssuance(ctx context.Context, service
 			return result, publisherLookupError(err, ErrCertificateIssuanceNotFound)
 		}
 	} else if errors.Is(err, pgx.ErrNoRows) {
-		order, err = q.GetServiceCertificateOrderByCSR(ctx, controlstatedb.GetServiceCertificateOrderByCSRParams{PublisherIdentityID: run.PublisherIdentityID, AccountID: account.ID, CsrDigest: csrDigest[:], CertificateCacheKey: run.CertificateCacheKey, CertificateScope: run.CertificateScope, CertificateIdentifiers: run.CertificateIdentifiers, DomainID: row.DomainID})
+		order, err = q.GetServiceCertificateOrderByCSR(ctx, controlstatedb.GetServiceCertificateOrderByCSRParams{PublisherIdentityID: run.PublisherIdentityID, AccountID: account.ID, CsrDigest: csrDigest[:], CertificateCacheKey: run.CertificateCacheKey, CertificateScope: run.CertificateScope, CertificateIdentifiers: run.CertificateIdentifiers, DomainID: run.CertificateDomainID})
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		enabled, err := q.LockCertificateIssuanceControl(ctx)
@@ -136,7 +151,7 @@ func (d *Database) CreateServiceCertificateIssuance(ctx context.Context, service
 			return result, err
 		}
 	}
-	if err = authorizeServiceCertificateOrder(ctx, tx, run, row.DomainID.String, order); err != nil {
+	if err = authorizeServiceCertificateOrder(ctx, tx, run, run.CertificateDomainID.String, order); err != nil {
 		return result, err
 	}
 	created := result.NewOrder
@@ -146,7 +161,7 @@ func (d *Database) CreateServiceCertificateIssuance(ctx context.Context, service
 	}
 	result.NewOrder = created
 	if created {
-		kind, kindErr := q.GetManagedCertificateDomainKind(ctx, row.DomainID.String)
+		kind, kindErr := q.GetManagedCertificateDomainKind(ctx, run.CertificateDomainID.String)
 		if kindErr != nil {
 			return result, kindErr
 		}
@@ -177,15 +192,11 @@ func (d *Database) GetServiceCertificateIssuance(ctx context.Context, service, r
 	if err != nil {
 		return result, err
 	}
-	serviceRow, err := q.GetService(ctx, service)
-	if err != nil {
-		return result, err
-	}
 	order, err := q.GetACMEOrder(ctx, issuance)
 	if err != nil {
 		return result, publisherLookupError(err, ErrCertificateIssuanceNotFound)
 	}
-	if err = authorizeServiceCertificateOrder(ctx, tx, run, serviceRow.DomainID.String, order); err != nil {
+	if err = authorizeServiceCertificateOrder(ctx, tx, run, run.CertificateDomainID.String, order); err != nil {
 		if errors.Is(err, ErrCertificateIssuanceInvalid) {
 			return result, ErrCertificateIssuanceNotFound
 		}
@@ -223,22 +234,17 @@ func (d *Database) MarkServiceCertificateInstalled(ctx context.Context, service,
 	if run.RunNumber != number {
 		return ErrServiceAccess
 	}
-	serviceRow, err := q.LockService(ctx, service)
-	if err != nil {
+	if _, err = serviceRunCertificatePlan(ctx, tx, run); err != nil {
 		return err
-	}
-	plan, err := serviceCertificatePlan(ctx, tx, serviceRow, run.PublisherIdentityID, run.PublisherGrantID, clock.current())
-	if err != nil || serviceRow.DomainID.String != run.CertificateDomainID.String || serviceRow.CertificateHostname != run.CertificateHostname || plan.Scope != run.CertificateScope || !slices.Equal(plan.Identifiers, run.CertificateIdentifiers) {
-		return errors.Join(ErrServiceAccess, err)
 	}
 	order, err := q.LockACMEOrder(ctx, issuance)
 	if err != nil {
 		return publisherLookupError(err, ErrCertificateIssuanceNotFound)
 	}
-	if err = authorizeServiceCertificateOrder(ctx, tx, run, serviceRow.DomainID.String, order); err != nil {
+	if err = authorizeServiceCertificateOrder(ctx, tx, run, run.CertificateDomainID.String, order); err != nil {
 		return err
 	}
-	if order.State != "waiting_for_install" && order.State != "installed" || !order.NotAfter.Time.Equal(notAfter) || !validInstalledCertificate(order, serviceRow.CertificateHostname, clock.current()) {
+	if order.State != "waiting_for_install" && order.State != "installed" || !order.NotAfter.Time.Equal(notAfter) || !validInstalledCertificate(order, run.CertificateHostname, clock.current()) {
 		return ErrCertificateIssuanceInvalid
 	}
 	if run.CertificateIssuanceID.Valid {

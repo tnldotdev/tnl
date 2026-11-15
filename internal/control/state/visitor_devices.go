@@ -35,6 +35,16 @@ func (d *Database) EnrollVisitorDevice(ctx context.Context, identityID string, k
 		return result, err
 	}
 	defer rollback(ctx, tx, "enroll visitor device", &err)()
+	auditDeviceID := id
+	err = tx.QueryRow(ctx, `SELECT id FROM control.visitor_devices WHERE identity_id=$1 AND public_key=$2`,
+		identityID, []byte(key)).Scan(&auditDeviceID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return result, err
+	}
+	scopes, err := lockDeviceAuditServices(ctx, tx, identityID, auditDeviceID)
+	if err != nil {
+		return result, err
+	}
 	err = tx.QueryRow(ctx, `INSERT INTO control.visitor_devices(id,identity_id,public_key,created_at)
 	    SELECT $1,id,$3,$4 FROM control.identities WHERE id=$2 AND disabled_at IS NULL
 	    ON CONFLICT(identity_id,public_key) DO UPDATE SET public_key=EXCLUDED.public_key
@@ -46,7 +56,7 @@ func (d *Database) EnrollVisitorDevice(ctx context.Context, identityID string, k
 	if err != nil {
 		return result, err
 	}
-	if err = auditDeviceMutation(ctx, tx, identityID, result.ID, "device.enroll", result.CreatedAt); err != nil {
+	if err = auditDeviceMutation(ctx, tx, scopes, identityID, result.ID, "device.enroll", result.CreatedAt); err != nil {
 		return result, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -62,6 +72,10 @@ func (d *Database) RevokeVisitorDevice(ctx context.Context, identityID, deviceID
 		return err
 	}
 	defer rollback(ctx, tx, "revoke visitor device", &retErr)()
+	scopes, err := lockDeviceAuditServices(ctx, tx, identityID, deviceID)
+	if err != nil {
+		return err
+	}
 	tag, err := tx.Exec(ctx, `UPDATE control.visitor_devices SET revoked_at=COALESCE(revoked_at,$3) WHERE id=$1 AND identity_id=$2`, deviceID, identityID, now)
 	if err != nil {
 		return err
@@ -69,7 +83,7 @@ func (d *Database) RevokeVisitorDevice(ctx context.Context, identityID, deviceID
 	if tag.RowsAffected() != 1 {
 		return ErrServiceAccess
 	}
-	if err = auditDeviceMutation(ctx, tx, identityID, deviceID, "device.revoke", now); err != nil {
+	if err = auditDeviceMutation(ctx, tx, scopes, identityID, deviceID, "device.revoke", now); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

@@ -25,13 +25,7 @@ func assertDNSChallengeSubjectBinding(t *testing.T, database *Database, expected
 		name   string
 		change func(*CertificateSubject)
 	}{
-		{"kind", func(s *CertificateSubject) {
-			if s.Kind == CertificateSubjectPublicURL {
-				s.Kind = CertificateSubjectService
-			} else {
-				s.Kind = CertificateSubjectPublicURL
-			}
-		}},
+		{"kind", func(s *CertificateSubject) { s.Kind = "invalid" }},
 		{"owner", func(s *CertificateSubject) { s.ID += "-other" }},
 		{"run", func(s *CertificateSubject) { s.RunID += "-other" }},
 		{"run number", func(s *CertificateSubject) { s.RunNumber++ }},
@@ -58,7 +52,7 @@ func TestIntegrationDNSDedicatedWaitExcludedFromPoolActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, clock)
-	if _, err := controlstatedb.New(clock).LockIngressRoutingTableClock(ctx); err != nil {
+	if _, err := clock.Exec(ctx, `SELECT allowed FROM control.maintenance_controls WHERE operation = 'certificate_issuance' FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}
 	workers := newIntegrationWorkers(t, cancel)
@@ -96,10 +90,13 @@ func TestIntegrationDNSDedicatedWaitExcludedFromPoolActivity(t *testing.T) {
 	})
 	waitForPostgresBlock(t, ctx, database, holderPID, secondDone)
 	poolDone := make(chan error, 1)
-	workers.Go(func() { _, err := controlstatedb.New(database.pool).LockIngressRoutingTableClock(ctx); poolDone <- err })
+	workers.Go(func() {
+		_, err := controlstatedb.New(database.pool).LockCertificateIssuanceControl(ctx)
+		poolDone <- err
+	})
 	waitForPostgresBlock(t, ctx, database, int32(observer.PgConn().PID()), poolDone)
 	active, truncated := database.activity.snapshot(time.Now())
-	if truncated || len(active) != 1 || active[0].Operation != "LockIngressRoutingTableClock" {
+	if truncated || len(active) != 1 || active[0].Operation != "LockCertificateIssuanceControl" {
 		t.Fatalf("request-pool activity includes dedicated DNS wait: %+v, truncated=%t", active, truncated)
 	}
 	if callbacks.Load() != 1 {

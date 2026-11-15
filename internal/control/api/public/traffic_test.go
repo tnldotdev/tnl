@@ -10,7 +10,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func TestPublishRunTrafficResponseUsesResolvedPeriod(t *testing.T) {
+func TestServiceRunTrafficResponseUsesResolvedPeriod(t *testing.T) {
 	l := trafficlimits.Default()
 	l.RatePer = 2_000_000_000
 	l.TotalConnections = 10

@@ -1,62 +1,35 @@
 package state
 
 import (
-	"crypto/sha256"
-	"database/sql"
 	"errors"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 func TestIntegrationPublicURLPurposeSurvivesReadAndIsNotRelabeledByRetry(t *testing.T) {
-	database, now := newControlStateIntegrationDatabase(t, "public_url_purpose")
-	metrics := observability.New("control")
-	database.Instrument(metrics)
-	request := oidcRouteRequest(t, database, now)
-	request.Purpose = PublicURLPurposeWebhooks
-	request.Target = ""
-	created, err := database.CreatePublicURL(t.Context(), request, now)
-	if err != nil || created.Purpose != PublicURLPurposeWebhooks {
-		t.Fatalf("created purpose = %q, error=%v", created.Purpose, err)
+	d, now := newControlStateIntegrationDatabase(t, "service_intent")
+	actor := oidcRouteRequest(t, d, now)
+	declaration := ProjectServiceConfiguration{Target: "localhost:3000", Protocol: "http"}
+	service, err := d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, "web", "intent",
+		ServicePlacement{}, now, ServiceMetadata{}, &declaration)
+	if err != nil {
+		t.Fatal(err)
 	}
-	replayed, err := database.CreatePublicURL(t.Context(), request, now.Add(time.Second))
-	if err != nil || replayed.Purpose != created.Purpose || replayed.ID != created.ID {
-		t.Fatalf("idempotent purpose = %q, error=%v", replayed.Purpose, err)
-	}
-	request.Purpose = PublicURLPurposeOAuth
-	if _, err := database.CreatePublicURL(t.Context(), request, now.Add(2*time.Second)); !errors.Is(err, ErrPublicURLIdempotency) {
-		t.Fatalf("relabeling idempotent URL = %v", err)
-	}
-	request.IdempotencyKey, request.RequestDigest = "other", sha256.Sum256([]byte("other"))
-	if _, err := database.CreatePublicURL(t.Context(), request, now.Add(3*time.Second)); !errors.Is(err, ErrPublicURLConflict) {
-		t.Fatalf("relabeling saved hostname = %v", err)
-	}
-	var stored string
-	if err := database.pool.QueryRow(t.Context(), `SELECT purpose FROM control.public_urls WHERE id = $1`, created.ID).Scan(&stored); err != nil || stored != "webhooks" {
-		t.Fatalf("stored purpose = %q, error=%v", stored, err)
-	}
-	var defaultValue sql.NullString
-	if err := database.pool.QueryRow(t.Context(), `SELECT column_default FROM information_schema.columns
-		WHERE table_schema = 'control' AND table_name = 'public_urls' AND column_name = 'purpose'`).Scan(&defaultValue); err != nil || defaultValue.Valid {
-		t.Fatalf("new public URLs must declare a purpose, default = %v, error=%v", defaultValue, err)
-	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET purpose = 'unknown' WHERE id = $1`, created.ID); err == nil {
-		t.Fatal("database accepted an unknown purpose")
-	} else {
-		var postgresError *pgconn.PgError
-		if !errors.As(err, &postgresError) || postgresError.Code != "23514" {
-			t.Fatalf("unknown purpose was rejected for the wrong reason: %v", err)
+	for _, change := range []func(*ProjectServiceConfiguration){
+		func(c *ProjectServiceConfiguration) { c.Protocol = "tcp" },
+		func(c *ProjectServiceConfiguration) { c.Ephemeral = true },
+		func(c *ProjectServiceConfiguration) { c.Public = new(true) },
+	} {
+		changed := declaration
+		change(&changed)
+		if _, err := d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, "web", "intent",
+			ServicePlacement{}, now.Add(time.Second), ServiceMetadata{}, &changed); !errors.Is(err, ErrServiceConflict) {
+			t.Fatal("create retry changed the service intent", err)
 		}
 	}
-	metric := httptest.NewRecorder()
-	metrics.Handler().ServeHTTP(metric, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	if !strings.Contains(metric.Body.String(), `tnl_control_public_urls_created_total{tnl_public_url_purpose="webhooks"} 1`) {
-		t.Fatal("creation and retry were not counted once by public URL purpose")
+	replayed, err := d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, "web", "intent",
+		ServicePlacement{}, now.Add(time.Second), ServiceMetadata{}, &declaration)
+	if err != nil || replayed.ID != service.ID || replayed.Protocol != "http" || replayed.Ephemeral || replayed.Endpoint.Public {
+		t.Fatal("create retry changed the saved service", err)
 	}
 }

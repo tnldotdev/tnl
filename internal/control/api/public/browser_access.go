@@ -175,7 +175,7 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 			}
 		}
 	}()
-	principal, err := h.authorizer.AuthorizePublicURLReads(request.Context(), validated.AccessToken.String())
+	principal, err := h.authorizer.AuthorizeControlReads(request.Context(), validated.AccessToken.String())
 	if errors.Is(err, authorization.ErrUnavailable) || errors.Is(err, clientauthority.ErrUnavailable) {
 		writeUnavailableProblem(request.Context(), response, "authorize browser identity", "browser authorization is unavailable", failure.ServerAuthorityUnavailable, err)
 		return
@@ -203,7 +203,7 @@ func (h *handler) refreshBrowserSignIn(ctx context.Context, scope visitorscope.S
 	if store == nil {
 		return controlstate.BrowserAccessSession{}, clientauthority.ErrUnavailable
 	}
-	if scope.Kind != visitorscope.Service || !scope.Valid() {
+	if !scope.Valid() {
 		return controlstate.BrowserAccessSession{}, controlstate.ErrVisitorSignIn
 	}
 	return store.RefreshServiceBrowserSession(ctx, scope.ID, token, now, h.rotateBrowserCredentials)
@@ -225,16 +225,16 @@ func (h *handler) rotateBrowserCredentials(ctx context.Context, refreshToken str
 		RefreshToken: rotated.RefreshToken, AccessExpiresAt: rotated.AccessExpiresAt}, nil
 }
 
-func (h *handler) browserSessionAccess(ctxRequest *http.Request, auth controlstate.ServiceHTTPRun, token string) (controlstate.BrowserAccessSession, publicURLReadPrincipal, bool, error) {
+func (h *handler) browserSessionAccess(ctxRequest *http.Request, auth controlstate.ServiceHTTPRun, token string) (controlstate.BrowserAccessSession, controlReadPrincipal, bool, error) {
 	session, err := h.refreshBrowserSignIn(ctxRequest.Context(), auth.Subject, token)
 	if err != nil {
-		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, err
+		return controlstate.BrowserAccessSession{}, controlReadPrincipal{}, false, err
 	}
 	decision, err := h.dependencies.ServiceHTTP.ServiceBrowserSession(ctxRequest.Context(), auth, token, false, time.Now())
 	if err != nil {
-		return session, publicURLReadPrincipal{}, false, err
+		return session, controlReadPrincipal{}, false, err
 	}
 	session.IdentityID, session.DisplayName = decision.IdentityID, decision.DisplayName
-	principal := publicURLReadPrincipal{identityID: decision.IdentityID, displayName: decision.DisplayName}
+	principal := controlReadPrincipal{identityID: decision.IdentityID, displayName: decision.DisplayName}
 	return session, principal, decision.TeamMember, nil
 }

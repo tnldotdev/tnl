@@ -44,9 +44,9 @@ func TestIntegrationDeploymentNamespaceAndRename(t *testing.T) {
 	if endpoint.Hostname != "orders."+deployment.Namespace || endpoint.Port != 0 || endpoint.Public {
 		t.Fatal("managed endpoint missing", endpoint)
 	}
-	var urls int
-	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.public_urls WHERE team_id=$1`, r.TeamID).Scan(&urls); err != nil || urls != 0 {
-		t.Fatal("service became a public URL", urls, err)
+	var public int
+	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.services WHERE team_id=$1 AND public`, r.TeamID).Scan(&public); err != nil || public != 0 {
+		t.Fatal("connector-only service enabled public ingress", public, err)
 	}
 	scope := DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID}
 	beforeRename, err := d.GetDeployment(t.Context(), scope, deployment.ID)

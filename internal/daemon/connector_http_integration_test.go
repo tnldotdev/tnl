@@ -233,9 +233,9 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				if posts.Load() != 1 {
 					t.Fatal("revocation replayed a previous operation")
 				}
-				var publicURLs int
-				if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.public_urls`).Scan(&publicURLs); err != nil || publicURLs != 0 {
-					t.Fatalf("private HTTP created public URL state: %d %v", publicURLs, err)
+				var publicServices int
+				if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.services WHERE public`).Scan(&publicServices); err != nil || publicServices != 0 {
+					t.Fatalf("connector-only HTTP enabled public endpoints: %d %v", publicServices, err)
 				}
 				var claims int
 				if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.service_port_claims`).Scan(&claims); err != nil || claims != 0 {

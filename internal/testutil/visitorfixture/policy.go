@@ -1,5 +1,5 @@
 // package visitorfixture provides signed policy, request, and TLS fixtures for
-// publisher HTTP authorization and its public URL and service consumers.
+// service HTTP authorization.
 package visitorfixture
 
 import (
@@ -20,12 +20,12 @@ const BrowserCookie = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 func Policy(t *testing.T, anonymous bool) (*visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
 	t.Helper()
-	return ScopePolicy(t, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}, "preview.example.test", 443, anonymous)
+	return ScopePolicy(t, visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}, "preview.example.test", 443, anonymous)
 }
 
 func PolicyClock(t *testing.T, anonymous bool, clock func() time.Time) (*visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
 	t.Helper()
-	return ScopePolicyClock(t, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}, "preview.example.test", 443, anonymous, clock)
+	return ScopePolicyClock(t, visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}, "preview.example.test", 443, anonymous, clock)
 }
 
 func ScopePolicy(t *testing.T, scope visitorscope.Scope, hostname string, port uint16, anonymous bool) (*visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
@@ -62,9 +62,4 @@ func Request() *http.Request {
 	r.TLS = &tls.ConnectionState{ServerName: "preview.example.test"}
 	r.RemoteAddr = "192.0.2.1:1234"
 	return r
-}
-
-func SourceKeyBytes() *[]byte {
-	key := [32]byte{1}
-	return new(key[:])
 }

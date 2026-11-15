@@ -25,7 +25,7 @@ func TestIntegrationServiceMetadataPoolChangesPreserveAuthority(t *testing.T) {
 	}
 	f.run = f.publish(t, f.service)
 	q := controlstatedb.New(d.pool)
-	policyKey := controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "service", ResourceID: f.service.ID}
+	policyKey := f.service.ID
 	policyRevision := func() int64 {
 		t.Helper()
 		revision, err := q.ReadVisitorPolicyRevision(ctx, policyKey)

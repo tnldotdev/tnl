@@ -102,7 +102,7 @@ func (h *handler) AddPreviewService(response http.ResponseWriter, request *http.
 	writeJSON(response, http.StatusOK, previewResponse(updated))
 }
 
-func (h *handler) readPreview(response http.ResponseWriter, request *http.Request, id string, principal publicURLReadPrincipal) (controlstate.Preview, bool) {
+func (h *handler) readPreview(response http.ResponseWriter, request *http.Request, id string, principal controlReadPrincipal) (controlstate.Preview, bool) {
 	if h.previews == nil {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "previews are unavailable")
 		return controlstate.Preview{}, false

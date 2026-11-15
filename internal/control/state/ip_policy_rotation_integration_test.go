@@ -3,31 +3,83 @@ package state
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
 
-func TestIntegrationStorageRotationVisitorIPGrant(t *testing.T) {
-	d, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "rotation_visitor_grant")
-	request := oidcRouteRequest(t, d, now)
-	u, err := d.CreatePublicURL(t.Context(), request, now)
+func TestIntegrationStorageRotationServiceHTTPIPPolicy(t *testing.T) {
+	d, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "rotation_service_ip_policy")
+	ctx := t.Context()
+	r := appliedProjectRequest(t, d, now)
+	configuration := ProjectServiceConfiguration{
+		Target: "http://app.internal:3000",
+		HTTP:   &config.HTTPService{Access: &config.Access{Mode: "anonymous", IP: []string{"192.0.2.0/24"}}},
+	}
+	r.Configuration.Services["web"] = configuration
+	r = selectedProjectRequest(r, "local")
+	local, err := d.RealizeLocalProjectService(ctx, RealizeLocalProjectServiceRequest{
+		TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint,
+		Service: "web", WorktreeKey: "checkout", WorktreeLabel: "feature",
+		ActorID: r.ActorID, Configuration: configuration, Now: now,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.ReplaceVisitorAccess(t.Context(), u.ID, request.ActingIdentityID, VisitorAccessRestricted, []string{"192.0.2.0/24"}, u.MutationRevision, now); err != nil {
-		t.Fatal(err)
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: local.ServiceID}
+	assertPolicy := func(db *Database) {
+		t.Helper()
+		cfg, _, err := db.GetServiceConfiguration(ctx, local.ServiceID, r.ActorID)
+		if err != nil || cfg == nil || cfg.HTTP == nil || cfg.HTTP.Access == nil || len(cfg.HTTP.Access.IP) != 1 || cfg.HTTP.Access.IP[0] != "192.0.2.0/24" {
+			t.Fatalf("service configuration IP policy after rotation: %+v %v", cfg, err)
+		}
+		if err := db.PrepareVisitorSigningKeys(ctx, testVisitorIssuer, now); err != nil {
+			t.Fatal(err)
+		}
+		policy, err := visitorlease.New(scope, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer policy.Close()
+		tx, err := db.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		result, err := db.readVisitorPolicy(ctx, tx, scope, 0, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		update, err := visitorlease.Decode(result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := policy.Apply(policy.Begin(), update); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := policy.BindAnonymous(netip.MustParseAddr("192.0.2.7"), func() {}); err != nil {
+			t.Fatal("allowed source rejected after rotation", err)
+		}
+		if _, err := policy.BindAnonymous(netip.MustParseAddr("192.0.3.7"), func() {}); err == nil {
+			t.Fatal("denied source allowed after rotation")
+		}
 	}
-	grants, err := d.readVisitorIPs(t.Context(), controlstatedb.New(d.pool), u.ID, now)
-	if err != nil || len(grants) != 1 {
-		t.Fatal(grants, err)
+	assertPolicy(d)
+	var beforeKey, afterKey string
+	var beforeCipher, afterCipher []byte
+	if err := d.pool.QueryRow(t.Context(), `SELECT storage_key_id, configuration_ciphertext FROM control.services WHERE id=$1`, local.ServiceID).Scan(&beforeKey, &beforeCipher); err != nil {
+		t.Fatal(err)
 	}
 	d.Close()
 	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32))
@@ -35,7 +87,6 @@ func TestIntegrationStorageRotationVisitorIPGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkLockedRotationCount(t, rotating, `SELECT id FROM control.visitor_ip_grants FOR UPDATE`)
 	if err := rotating.CompleteStorageKeyRotation(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -45,21 +96,13 @@ func TestIntegrationStorageRotationVisitorIPGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(reopened.Close)
-	listed, err := reopened.readVisitorIPs(t.Context(), controlstatedb.New(reopened.pool), u.ID, now)
-	if err != nil || len(listed) != 1 || listed[0] != grants[0] {
-		t.Fatalf("underlying visitor grant after retiring key A = %+v, %v", listed, err)
-	}
-	q := controlstatedb.New(reopened.pool)
-	url, err := q.LockPublicURLForRun(t.Context(), u.ID)
-	if err != nil {
+	if err := reopened.pool.QueryRow(t.Context(), `SELECT storage_key_id, configuration_ciphertext FROM control.services WHERE id=$1`, local.ServiceID).Scan(&afterKey, &afterCipher); err != nil {
 		t.Fatal(err)
 	}
-	for source, want := range map[string]bool{"192.0.2.7": true, "192.0.3.7": false} {
-		allowed, _, err := reopened.visitorIPAllowed(t.Context(), q, url, source, now)
-		if err != nil || allowed != want {
-			t.Fatalf("grant authorization for %s = %t, %v", source, allowed, err)
-		}
+	if beforeKey == afterKey || bytes.Equal(beforeCipher, afterCipher) {
+		t.Fatal("storage rotation did not re-encrypt service configuration", beforeKey, afterKey)
 	}
+	assertPolicy(reopened)
 }
 
 func TestIntegrationStorageRotationDeviceLogin(t *testing.T) {
@@ -74,7 +117,29 @@ func TestIntegrationStorageRotationDeviceLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkLockedRotationCount(t, rotating, `SELECT credential_digest FROM control.device_logins FOR UPDATE`)
+	tx, err := rotating.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	if _, err := tx.Exec(t.Context(), `SELECT credential_digest FROM control.device_logins FOR UPDATE`); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		n, err := rotating.ReencryptStorageSecrets(t.Context(), 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			break
+		}
+	}
+	if remaining, err := rotating.countPreviousStorageSecrets(t.Context()); err != nil || remaining != 1 {
+		t.Fatalf("locked encrypted row omitted from rotation completion count: remaining=%d err=%v", remaining, err)
+	}
+	if err := tx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	if err := rotating.CompleteStorageKeyRotation(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -87,30 +152,6 @@ func TestIntegrationStorageRotationDeviceLogin(t *testing.T) {
 	polled, err := reopened.PollDeviceLogin(t.Context(), credential, now)
 	if err != nil || polled.UserCode != login.UserCode || polled.Status != DevicePending {
 		t.Fatalf("device login after retiring key A = %+v, %v", polled, err)
-	}
-}
-
-func checkLockedRotationCount(t *testing.T, d *Database, lock string) {
-	t.Helper()
-	tx, err := d.pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(t.Context())
-	if _, err := tx.Exec(t.Context(), lock); err != nil {
-		t.Fatal(err)
-	}
-	for {
-		n, err := d.ReencryptStorageSecrets(t.Context(), 1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if n == 0 {
-			break
-		}
-	}
-	if remaining, err := d.countPreviousStorageSecrets(t.Context()); err != nil || remaining != 1 {
-		t.Fatalf("locked encrypted row omitted from rotation completion count: remaining=%d err=%v", remaining, err)
 	}
 }
 
@@ -175,38 +216,57 @@ func TestIntegrationStorageRotationBrowserSecrets(t *testing.T) {
 	}
 }
 
-func TestIntegrationSignedInIPPolicySurvivesStorageKeyRotation(t *testing.T) {
-	database, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "private_policy_rotation")
-	request := oidcRouteRequest(t, database, now)
-	request.AllowedIPPrefixes = []string{"192.0.2.0/24"}
-	publicURL, err := database.CreatePublicURL(t.Context(), request, now)
+func checkLockedRotationCount(t *testing.T, d *Database, lock string) {
+	t.Helper()
+	tx, err := d.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	var oldPolicyCipher, oldHashes []byte
-	if err := database.pool.QueryRow(t.Context(), `SELECT allowed_ip_policy_ciphertext, allowed_ip_hashes
-		FROM control.public_urls WHERE id=$1`, publicURL.ID).Scan(&oldPolicyCipher, &oldHashes); err != nil {
+	defer tx.Rollback(t.Context())
+	if _, err := tx.Exec(t.Context(), lock); err != nil {
 		t.Fatal(err)
 	}
-	var entries []ippolicy.Entry
-	if err := json.Unmarshal(oldHashes, &entries); err != nil {
-		t.Fatal(err)
+	for {
+		n, err := d.ReencryptStorageSecrets(t.Context(), 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			break
+		}
 	}
-	oldKeyID := database.storageKey.CurrentID()
-	projection := IngressRoutingTableProjection{
-		PublicURLID: publicURL.ID, PublishRunID: "pr_rotation", PublishRunNumber: 1,
-		CanonicalHostname: publicURL.CanonicalHostname, PolicyRevision: 1, IPPolicy: IPPolicyHashedAllowlist,
-		AllowedIPHashes: entries, IPPolicyKeyID: oldKeyID, PublicUrlExpiresAt: now.Add(time.Hour),
+	if remaining, err := d.countPreviousStorageSecrets(t.Context()); err != nil || remaining != 1 {
+		t.Fatalf("locked encrypted row omitted from rotation completion count: remaining=%d err=%v", remaining, err)
 	}
-	payload, err := json.Marshal(projection)
+}
+
+func TestIntegrationSignedInServiceHTTPIPPolicySurvivesStorageKeyRotation(t *testing.T) {
+	database, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "service_policy_rotation")
+	ctx := t.Context()
+	session := newOIDCSession(t, database, now)
+	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
+	actorCtx := WithControlPrincipal(ctx, principal)
+	r := appliedProjectRequest(t, database, now)
+	configuration := ProjectServiceConfiguration{
+		Target: "http://app.internal:3000",
+		HTTP:   &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.0/24"}}},
+	}
+	r.Configuration.Services["web"] = configuration
+	r = selectedProjectRequest(r, "local")
+	local, err := database.RealizeLocalProjectService(ctx, RealizeLocalProjectServiceRequest{
+		TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint,
+		Service: "web", WorktreeKey: "checkout", WorktreeLabel: "feature",
+		ActorID: r.ActorID, Configuration: configuration, Now: now,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.ingress_routing_table_events
-		(event_kind, public_url_id, publish_run_number, canonical_hostname, entry_revision,
-		projection, policy_ciphertext, policy_storage_key_id, public_url_expires_at, created_at)
-		VALUES ('public_url_upsert', $1, 1, $2, 1, $3, $4, $5, $6, $7)`,
-		publicURL.ID, publicURL.CanonicalHostname, payload, oldPolicyCipher, oldKeyID, now.Add(time.Hour), now); err != nil {
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: local.ServiceID}
+	if err := database.PrepareVisitorSigningKeys(ctx, testVisitorIssuer, now); err != nil {
+		t.Fatal(err)
+	}
+	issued, err := database.IssueVisitorToken(actorCtx, testVisitorIssuer, scope, BrowserTokenSource{}, now)
+	if err != nil {
 		t.Fatal(err)
 	}
 	database.Close()
@@ -224,28 +284,49 @@ func TestIntegrationSignedInIPPolicySurvivesStorageKeyRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(reopened.Close)
-	loaded, err := reopened.GetPublicURL(t.Context(), request.ActingIdentityID, publicURL.ID)
-	if err != nil || len(loaded.AllowedIPPrefixes) != 1 || loaded.AllowedIPPrefixes[0].String() != "192.0.2.0/24" {
-		t.Fatalf("rotated route policy = %+v, %v", loaded, err)
+	cfg, _, err := reopened.GetServiceConfiguration(ctx, local.ServiceID, r.ActorID)
+	if err != nil || cfg == nil || cfg.HTTP == nil || cfg.HTTP.Access == nil || len(cfg.HTTP.Access.IP) != 1 || cfg.HTTP.Access.IP[0] != "192.0.2.0/24" {
+		t.Fatalf("rotated service policy = %+v, %v", cfg, err)
 	}
-	var rotatedCiphertext []byte
-	var rotatedKeyID string
-	if err := reopened.pool.QueryRow(t.Context(), `SELECT policy_ciphertext, policy_storage_key_id
-		FROM control.ingress_routing_table_events WHERE public_url_id=$1`, publicURL.ID).Scan(&rotatedCiphertext, &rotatedKeyID); err != nil {
+	if err := reopened.PrepareVisitorSigningKeys(ctx, testVisitorIssuer, now); err != nil {
 		t.Fatal(err)
 	}
-	if rotatedKeyID != reopened.storageKey.CurrentID() || bytes.Equal(rotatedCiphertext, oldPolicyCipher) {
-		t.Fatal("routing event kept old encrypted policy material")
-	}
-	event, err := reopened.ingressRoutingTableEvent(1, "public_url_upsert", publicURL.ID, 1,
-		publicURL.CanonicalHostname, 1, payload, rotatedCiphertext, pgtype.Text{String: rotatedKeyID, Valid: true},
-		pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true}, pgtype.Timestamptz{Time: now, Valid: true})
+	keys := stateTestVisitorKeys(t, reopened, now)
+	policy, err := visitorlease.New(scope, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := ippolicy.New(event.Projection.IPPolicyKey, event.Projection.AllowedIPHashes)
-	if err != nil || !policy.Allows(netip.MustParseAddr("192.0.2.7")) || policy.Allows(netip.MustParseAddr("192.0.3.7")) {
-		t.Fatalf("rotated verifier changed the allowlist: %v", err)
+	defer policy.Close()
+	tx, err := reopened.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	result, err := reopened.readVisitorPolicy(ctx, tx, scope, 0, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	update, err := visitorlease.Decode(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := policy.Apply(policy.Begin(), update); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	view, _, _ := policy.Current()
+	verified, err := visitortoken.VerifyBearer(issued.Token, view, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = keys
+	if _, err := policy.Bind(verified, netip.MustParseAddr("192.0.2.7"), func() {}); err != nil {
+		t.Fatal("rotated verifier rejected allowed signed-in source", err)
+	}
+	if _, err := policy.Bind(verified, netip.MustParseAddr("192.0.3.7"), func() {}); err == nil {
+		t.Fatal("rotated verifier allowed denied signed-in source")
 	}
 }
 
@@ -257,25 +338,6 @@ func TestIntegrationPreviousKeyStaysRequiredUntilGuestTrialExpires(t *testing.T)
 		t.Fatal(err)
 	}
 	if _, err := database.CreateGuestTrial(t.Context(), guest, "routes.example.test", now); err != nil {
-		t.Fatal(err)
-	}
-	const oldPublicURLID = "url_guest_replay"
-	oldKeyID := database.storageKey.CurrentID()
-	oldVerifier, err := database.storageKey.IPPolicyKey(oldKeyID, "url:"+oldPublicURLID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldHash, err := ippolicy.Hash(oldVerifier, netip.MustParsePrefix("192.0.2.7/32"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldProjection, err := json.Marshal(IngressRoutingTableProjection{
-		PublicURLID: oldPublicURLID, PublishRunID: "pr_guest_replay", PublishRunNumber: 1,
-		CanonicalHostname: "demo-1.guest-replay.example.test", PolicyRevision: 1,
-		IPPolicy: IPPolicyHashedAllowlist, AllowedIPHashes: []ippolicy.Entry{oldHash},
-		IPPolicyKeyID: oldKeyID, PublicUrlExpiresAt: now.Add(GuestLifetime + time.Hour),
-	})
-	if err != nil {
 		t.Fatal(err)
 	}
 	database.Close()
@@ -304,17 +366,6 @@ func TestIntegrationPreviousKeyStaysRequiredUntilGuestTrialExpires(t *testing.T)
 	withoutPrevious, err := Open(t.Context(), databaseURL, newKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatalf("expired guest still required its old key: %v", err)
-	}
-	event, err := withoutPrevious.ingressRoutingTableEvent(1, "public_url_upsert", oldPublicURLID, 1,
-		"demo-1.guest-replay.example.test", 1, oldProjection, nil, pgtype.Text{},
-		pgtype.Timestamptz{Time: now.Add(GuestLifetime + time.Hour), Valid: true},
-		pgtype.Timestamptz{Time: now, Valid: true})
-	if err != nil {
-		t.Fatalf("old guest event blocked routing replay: %v", err)
-	}
-	policy, err := ippolicy.New(event.Projection.IPPolicyKey, event.Projection.AllowedIPHashes)
-	if err != nil || policy.Allows(netip.MustParseAddr("192.0.2.7")) {
-		t.Fatalf("old guest event allowed traffic after key retirement: %v", err)
 	}
 	withoutPrevious.Close()
 }

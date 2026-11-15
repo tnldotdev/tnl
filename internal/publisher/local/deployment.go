@@ -4,15 +4,17 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
-	"errors"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
+	publisheradhoc "github.com/tnldotdev/tnl/internal/publisher/adhoc"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -20,13 +22,14 @@ type deploymentInvocation struct {
 	native    *publisheridentity.Native
 	profile   *clientstate.Store
 	service   controlv1.Service
+	config    publisherservice.RunConfig
 	cleanup   func() error
 	expiresAt time.Time
 }
 
 // deployment authority never selects local configuration or a publisher file.
 // the existing invocation manager owns the worker and its exact allocation.
-func (a *appRuntime) prepareDeploymentInvocation(ctx context.Context, r publisherprotocol.Invocation) (result deploymentInvocation, err error) {
+func (a *appRuntime) prepareDeploymentInvocation(ctx context.Context, r publisherprotocol.Invocation, options publisheradhoc.Options) (result deploymentInvocation, err error) {
 	selection := r.Deployment
 	if selection == nil || r.ServerUrl != nil || r.PublisherCredentialFile != "" || r.PublisherIdentityId != "" || selection.Service != "" && (r.AccessMode != nil || r.Ip != nil || r.Limits != nil || r.RequirePostQuantum != nil) {
 		return result, publisheridentity.ErrScope
@@ -62,36 +65,39 @@ func (a *appRuntime) prepareDeploymentInvocation(ctx context.Context, r publishe
 			return result, err
 		}
 		result.native, result.service = native, *service
+		if service.Endpoint == nil || !service.Endpoint.Public || service.Endpoint.Port != 443 {
+			return result, publisheridentity.ErrScope
+		}
+		target, err := targetsyntax.ParseCanonicalTarget(r.Target)
+		if err != nil {
+			return result, err
+		}
+		trust, err := publisheridentity.ServiceTrust(*service)
+		if err != nil {
+			return result, err
+		}
+		if (target.Scheme == "https") != (trust != nil) {
+			return result, publisheridentity.ErrScope
+		}
+		result.config = publisherservice.RunConfig{Control: native, Access: native.Access, State: result.profile,
+			PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
+			ServiceID: service.Id, Target: target.Host, Metadata: publisheridentity.ServiceMetadata(*service)}
 		// named publication borrows a retained service; it never owns deletion.
 		result.cleanup = invocationCleanup(nil, result.expiresAt)
 		return result, nil
 	}
-	allocation, err := invocationAllocation(r)
+	native, err := publisheridentity.NewDeploymentAllocator(control, authority, credential.Approval, key, selection.Name)
 	if err != nil {
 		return result, err
 	}
-	// every recovery uses the captured approval and fixed original deadline.
-	// no fresh identity, grant, invocation, or extended expiration is invented.
-	allocation.ExpiresAt = new(result.expiresAt)
-	native, service, err := publisheridentity.PrepareDeploymentAllocation(ctx, control, authority, credential.Approval, key, selection.Name, allocation)
-	if native == nil {
-		// only the native owner can distinguish an attempted uncertain reply
-		// from pre-attempt failure or already confirmed allocation cleanup.
-		return result, err
+	options.Publisher, options.State, options.ControlURL = native, result.profile, credential.ControlURL
+	options.ExpiresAt = new(result.expiresAt)
+	prepared, err := publisheradhoc.Prepare(ctx, options)
+	if prepared != nil {
+		result.cleanup = invocationCleanup(prepared.Cleanup, result.expiresAt)
 	}
-	result.cleanup = invocationCleanup(func(ctx context.Context) error {
-		if service != nil {
-			return native.DeleteAllocatedService(ctx, service.Id)
-		}
-		recovered, observed, recoveryErr := publisheridentity.PrepareDeploymentAllocation(ctx, control, authority, credential.Approval, key, selection.Name, allocation)
-		if recovered == nil || observed == nil {
-			return recoveryErr
-		}
-		native, service = recovered, observed
-		return errors.Join(recoveryErr, native.DeleteAllocatedService(ctx, service.Id))
-	}, result.expiresAt)
 	if err == nil {
-		result.native, result.service = native, *service
+		result.native, result.service, result.config = prepared.Publisher(), prepared.Service, prepared.Config
 	}
 	return result, err
 }

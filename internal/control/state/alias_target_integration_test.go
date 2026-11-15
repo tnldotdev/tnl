@@ -1,52 +1,34 @@
 package state
 
 import (
-	"errors"
+	"bytes"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/tnldotdev/tnl/internal/config"
 )
 
 func TestIntegrationSavedAliasTargetStaysLocalThroughPolicyUpdates(t *testing.T) {
-	d, now := newControlStateIntegrationDatabase(t, "alias_local_target")
-	request := oidcRouteRequest(t, d, now)
-	request.Purpose, request.Target, request.ServiceProtocol = PublicURLPurposeAlias, "", PublicURLServiceHTTP
-	publicURL, err := d.CreatePublicURL(t.Context(), request, now)
+	d, now := newControlStateIntegrationDatabase(t, "service_app_target")
+	actor := oidcRouteRequest(t, d, now)
+	declaration := ProjectServiceConfiguration{Target: "app"}
+	service, err := d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, "web", "app",
+		ServicePlacement{}, now, ServiceMetadata{}, &declaration)
 	if err != nil {
 		t.Fatal(err)
 	}
-	updated, err := d.UpdateAuthorizedPublicURL(t.Context(), AuthorizedPublicURLUpdateRequest{
-		PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, ActingIdentityID: request.ActingIdentityID,
-		Target: "", AllowedIPPrefixes: []string{"192.0.2.10/32"}, PolicyRevision: uint64(publicURL.PolicyRevision), ExpectedMutationRevision: publicURL.MutationRevision,
-	}, now.Add(time.Second))
-	if err != nil || updated.Target != "" || updated.Purpose != PublicURLPurposeAlias || updated.MutationRevision <= publicURL.MutationRevision {
-		t.Fatalf("alias policy update changed its target ownership: %+v, %v", updated, err)
+	declaration.HTTP = &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.10/32"}}}
+	updated, err := d.ConfigureService(t.Context(), service.ID, actor.ActingIdentityID, service.ServiceMetadata,
+		&declaration, ServiceUpdateConditions{}, now.Add(time.Second))
+	if err != nil || updated.TrustRevision != service.TrustRevision || updated.Endpoint.Hostname != service.Endpoint.Hostname {
+		t.Fatal("policy update changed target trust or endpoint", err)
 	}
-	for _, test := range []struct {
-		purpose   string
-		ephemeral bool
-	}{
-		{"app", true}, {"alias", true}, {"demo", false}, {"unknown", false},
-	} {
-		t.Run(test.purpose, func(t *testing.T) {
-			const statement = `UPDATE control.public_urls SET purpose=$2,ephemeral=$3,expires_at=CASE WHEN $3 THEN created_at+interval '1 hour' ELSE NULL END,target=$4 WHERE id=$1`
-			_, err := d.pool.Exec(t.Context(), statement, publicURL.ID, test.purpose, test.ephemeral, "")
-			var pg *pgconn.PgError
-			if !errors.As(err, &pg) || pg.Code != "23514" {
-				t.Fatalf("database accepted an invalid targetless URL: %v", err)
-			}
-			if test.purpose == "unknown" {
-				return
-			}
-			tx, err := d.pool.Begin(t.Context())
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer tx.Rollback(t.Context())
-			if _, err := tx.Exec(t.Context(), statement, publicURL.ID, test.purpose, test.ephemeral, "http://127.0.0.1:3000"); err != nil {
-				t.Fatalf("nonempty target failed another shape constraint: %v", err)
-			}
-		})
+	loaded, _, err := d.GetServiceConfiguration(t.Context(), service.ID, actor.ActingIdentityID)
+	if err != nil || loaded.Target != "app" {
+		t.Fatal("app-owned target was replaced by a server address", err)
+	}
+	var ciphertext []byte
+	if err := d.pool.QueryRow(t.Context(), `SELECT configuration_ciphertext FROM control.services WHERE id=$1`, service.ID).Scan(&ciphertext); err != nil || bytes.Contains(ciphertext, []byte("192.0.2.10")) {
+		t.Fatal("configuration policy was not encrypted", err)
 	}
 }

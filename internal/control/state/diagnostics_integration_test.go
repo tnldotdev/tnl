@@ -17,7 +17,8 @@ import (
 )
 
 func TestIntegrationDatabaseMetricsDuringPoolExhaustion(t *testing.T) {
-	observer, databaseURL, _ := newControlStateIntegrationDatabaseWithURL(t, "pool_diagnostics")
+	observer, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "pool_diagnostics")
+	actor := oidcRouteRequest(t, observer, now)
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		t.Fatal(err)
@@ -39,16 +40,16 @@ func TestIntegrationDatabaseMetricsDuringPoolExhaustion(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, blocker)
-	if _, err := controlstatedb.New(blocker).LockIngressRoutingTableClock(ctx); err != nil {
+	if err := controlstatedb.New(blocker).LockServiceAuditClock(ctx, controlstatedb.LockServiceAuditClockParams{TeamID: text(actor.TeamID)}); err != nil {
 		t.Fatal(err)
 	}
 	// a named query holds the sole request connection while PostgreSQL waits on
-	// the routing clock. diagnostics must retain it even if their upstream fails.
+	// the audit clock. diagnostics must retain it even if their upstream fails.
 	done := make(chan error, 1)
 	workers := newIntegrationWorkers(t, cancel)
 	defer workers.stop()
 	workers.Go(func() {
-		_, err := controlstatedb.New(pool).LockIngressRoutingTableClock(ctx)
+		err := controlstatedb.New(pool).LockServiceAuditClock(ctx, controlstatedb.LockServiceAuditClockParams{TeamID: text(actor.TeamID)})
 		done <- err
 	})
 	waitForPostgresBlock(t, ctx, observer, int32(blocker.Conn().PgConn().PID()), done)
@@ -106,7 +107,7 @@ func TestIntegrationDatabaseMetricsDuringPoolExhaustion(t *testing.T) {
 	}
 	for _, result := range []DatabaseDiagnostics{snapshot, local} {
 		if result.OperationsTruncated || len(result.ActiveOperations) != 1 ||
-			result.ActiveOperations[0].Operation != "LockIngressRoutingTableClock" || result.ActiveOperations[0].ElapsedSeconds < 0 {
+			result.ActiveOperations[0].Operation != "LockServiceAuditClock" || result.ActiveOperations[0].ElapsedSeconds < 0 {
 			t.Fatalf("pool-exhausted diagnostic lost the waiting query: %+v", result)
 		}
 	}

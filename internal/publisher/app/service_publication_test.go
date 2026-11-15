@@ -22,6 +22,8 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
+const servicePublicationID = "svc_0123456789abcdefghijkl"
+
 func TestPrivateHTTPRunChecksActualTargetAndFencesReplacement(t *testing.T) {
 	w, _ := testWorkers(t)
 	started := make(chan uint64, 4)
@@ -31,7 +33,7 @@ func TestPrivateHTTPRunChecksActualTargetAndFencesReplacement(t *testing.T) {
 	w.Configure = func(_ context.Context, service Service) (Configuration, error) {
 		return Configuration{Service: &ServicePublication{
 			Options: clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: "https://control.example",
-				Project: w.Manager.Snapshot().Project, Service: service.Name, Target: service.Target, ServiceProtocol: controlv1.ServiceProtocolHTTP},
+				Project: w.Manager.Snapshot().Project, Service: service.Name, ServiceID: servicePublicationID, Target: service.Target, ServiceProtocol: controlv1.ServiceProtocolHTTP},
 			Run: func(ctx context.Context, _ *clientstate.Tunnel, observe func(uint64, bool) error, _ inspection.Observer) error {
 				run := number.Add(1)
 				if err := observe(run, false); err != nil {
@@ -186,7 +188,7 @@ func TestServicePublicationJournalsProvisioningBeforeManagerObservations(t *test
 			for _, event := range events {
 				if publication := event.Publication; publication != nil && publication.ID == starting.Services[0].TunnelID && publication.PublishRunNumber == 7 {
 					transitions = append(transitions, "publication."+string(publication.State))
-					if publication.ServiceProtocol != tc.protocol || publication.PublicURLID != "" || tc.url == "" && (publication.PublicURL != "" || publication.Hostname != "") {
+					if publication.ServiceProtocol != tc.protocol || publication.ServiceID != servicePublicationID || tc.url == "" && (publication.PublicURL != "" || publication.Hostname != "") {
 						t.Fatal("publication event lost its protocol or invented an endpoint", publication)
 					}
 				}
@@ -723,7 +725,7 @@ func TestServicePublicationRejectsOlderRunBeforeJournalMutation(t *testing.T) {
 func servicePublicationOptions(w *Workers, service Service) clientstate.BeginTunnelOptions {
 	return clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandPublish, Server: "https://control.example",
-		Project: w.Manager.Snapshot().Project, Service: service.Name, Target: service.Target,
+		Project: w.Manager.Snapshot().Project, Service: service.Name, ServiceID: servicePublicationID, Target: service.Target,
 		ServiceProtocol: controlv1.ServiceProtocol(service.ServiceProtocol),
 	}
 }
@@ -760,9 +762,9 @@ func assertServicePublication(t *testing.T, w *Workers, protocol controlv1.Servi
 	}
 	publication, service := snapshot.Publications[0], snapshot.Services[0]
 	if service.TunnelID == "" || publication.ID != service.TunnelID || service.RunNumber != run ||
-		publication.ServiceProtocol != protocol || publication.State != state || publication.PublishRunNumber != run ||
+		publication.ServiceProtocol != protocol || publication.ServiceID != servicePublicationID || publication.State != state || publication.PublishRunNumber != run ||
 		publication.Target != target || publication.Project != snapshot.Project || publication.Service != service.Name ||
-		publication.PublicURL != url || publication.PublicURLID != "" || url == "" && publication.Hostname != "" {
+		publication.PublicURL != url || url == "" && publication.Hostname != "" {
 		t.Fatalf("service and local publication disagree: service=%+v publication=%+v", service, publication)
 	}
 	local, err := w.Database.SnapshotProject(t.Context(), snapshot.Project)

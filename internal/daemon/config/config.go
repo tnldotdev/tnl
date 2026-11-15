@@ -58,7 +58,7 @@ type Config struct {
 	ControlHostname                   string                `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Control API hostname used by ingress and relay processes."`
 	PrivateControlAddress             string                `name:"private-control-address" env:"TNLD_PRIVATE_CONTROL_ADDRESS" help:"Optional private control host and port dialed by ingress and relay processes."`
 	ManagedDomain                     string                `name:"managed-domain" env:"TNLD_MANAGED_DOMAIN" help:"Server-controlled domain used for namespaces."`
-	ManagedURLMode                    naming.ManagedURLMode `name:"managed-url-mode" env:"TNLD_MANAGED_URL_MODE" default:"simple" enum:"simple,generated" help:"Managed-domain public URL names: ${enum}."`
+	ManagedURLMode                    naming.ManagedURLMode `name:"managed-url-mode" env:"TNLD_MANAGED_URL_MODE" default:"simple" enum:"simple,generated" help:"Managed-domain service hostname labels: ${enum}."`
 	ManagedDomainMaxMemberChildLabels int                   `name:"managed-domain-max-member-child-labels" env:"TNLD_MANAGED_DOMAIN_MAX_MEMBER_CHILD_LABELS" default:"0" help:"Maximum labels beneath a member namespace on the managed domain; 0 uses DNS length limits only."`
 	CustomDomainsEnabled              bool                  `name:"custom-domains-enabled" env:"TNLD_CUSTOM_DOMAINS_ENABLED" help:"Allow teams to add custom domains; requires managed DNS automation."`
 
@@ -92,32 +92,32 @@ type Config struct {
 	Route53Region        string   `name:"route53-region" env:"TNLD_ROUTE53_REGION" default:"us-east-1" help:"AWS region used to sign Route 53 requests."`
 	Route53ManagedZoneID string   `name:"route53-managed-zone-id" env:"TNLD_ROUTE53_MANAGED_ZONE_ID" help:"Existing Route 53 hosted zone ID for the managed domain; enables DNS automation."`
 	Route53ServerZoneID  string   `name:"route53-server-zone-id" env:"TNLD_ROUTE53_SERVER_ZONE_ID" help:"Existing Route 53 hosted zone ID for the server domain; enables relay certificate DNS-01."`
-	IngressIPv4Addresses []string `name:"ingress-ipv4-address" env:"TNLD_INGRESS_IPV4_ADDRESSES" help:"Stable ingress IPv4 address published in owned public URL records; repeat for each address."`
-	IngressIPv6Addresses []string `name:"ingress-ipv6-address" env:"TNLD_INGRESS_IPV6_ADDRESSES" help:"Stable ingress IPv6 address published in owned public URL records; repeat for each address."`
+	IngressIPv4Addresses []string `name:"ingress-ipv4-address" env:"TNLD_INGRESS_IPV4_ADDRESSES" help:"Stable ingress IPv4 address published for public service endpoints; repeat for each address."`
+	IngressIPv6Addresses []string `name:"ingress-ipv6-address" env:"TNLD_INGRESS_IPV6_ADDRESSES" help:"Stable ingress IPv6 address published for public service endpoints; repeat for each address."`
 
 	ClusterSecret         string `name:"cluster-secret" env:"TNLD_CLUSTER_SECRET" help:"Current shared secret for private communication among control, ingress, and relays."`
 	ClusterSecretPrevious string `name:"cluster-secret-previous" env:"TNLD_CLUSTER_SECRET_PREVIOUS" help:"Previous cluster secret accepted only during rotation."`
 	StorageKey            string `name:"storage-key" env:"TNLD_STORAGE_KEY" help:"Unpadded base64url AES-256 key used to encrypt recoverable PostgreSQL secrets."`
 	StorageKeyPrevious    string `name:"storage-key-previous" env:"TNLD_STORAGE_KEY_PREVIOUS" help:"Previous storage key retained only during re-encryption."`
 
-	TrafficDefaultConnections        int           `name:"traffic-default-connections" env:"TNLD_TRAFFIC_DEFAULT_CONNECTIONS" default:"32" help:"Default concurrent visitor connections per public URL publish run on each ingress process."`
+	TrafficDefaultConnections        int           `name:"traffic-default-connections" env:"TNLD_TRAFFIC_DEFAULT_CONNECTIONS" default:"32" help:"Default concurrent visitor connections per service run on each ingress process."`
 	TrafficDefaultRate               int           `name:"traffic-default-rate" env:"TNLD_TRAFFIC_DEFAULT_RATE" default:"20" help:"Default new visitor connections per traffic rate period."`
 	TrafficDefaultRatePer            time.Duration `name:"traffic-default-rate-per" env:"TNLD_TRAFFIC_DEFAULT_RATE_PER" default:"1s" help:"Default visitor connection rate period."`
 	TrafficDefaultBurst              int           `name:"traffic-default-burst" env:"TNLD_TRAFFIC_DEFAULT_BURST" default:"40" help:"Default new visitor connection burst."`
 	TrafficDefaultUploadBytes        int64         `name:"traffic-default-upload-bytes" env:"TNLD_TRAFFIC_DEFAULT_UPLOAD_BYTES" default:"8388608" help:"Default encrypted visitor upload bytes per second."`
 	TrafficDefaultDownloadBytes      int64         `name:"traffic-default-download-bytes" env:"TNLD_TRAFFIC_DEFAULT_DOWNLOAD_BYTES" default:"16777216" help:"Default encrypted visitor download bytes per second."`
-	TrafficDefaultTotalConnections   int64         `name:"traffic-default-total-connections" env:"TNLD_TRAFFIC_DEFAULT_TOTAL_CONNECTIONS" default:"0" help:"Default total visitor connections per publish run and ingress process; 0 is unlimited."`
-	TrafficDefaultTotalUploadBytes   int64         `name:"traffic-default-total-upload-bytes" env:"TNLD_TRAFFIC_DEFAULT_TOTAL_UPLOAD_BYTES" default:"0" help:"Default total encrypted upload bytes per publish run and ingress process; 0 is unlimited."`
-	TrafficDefaultTotalDownloadBytes int64         `name:"traffic-default-total-download-bytes" env:"TNLD_TRAFFIC_DEFAULT_TOTAL_DOWNLOAD_BYTES" default:"0" help:"Default total encrypted download bytes per publish run and ingress process; 0 is unlimited."`
-	TrafficMaxConnections            int           `name:"traffic-max-connections" env:"TNLD_TRAFFIC_MAX_CONNECTIONS" default:"128" help:"Maximum selected concurrent visitor connections per publish run."`
+	TrafficDefaultTotalConnections   int64         `name:"traffic-default-total-connections" env:"TNLD_TRAFFIC_DEFAULT_TOTAL_CONNECTIONS" default:"0" help:"Default total visitor connections per service run and ingress process; 0 is unlimited."`
+	TrafficDefaultTotalUploadBytes   int64         `name:"traffic-default-total-upload-bytes" env:"TNLD_TRAFFIC_DEFAULT_TOTAL_UPLOAD_BYTES" default:"0" help:"Default total encrypted upload bytes per service run and ingress process; 0 is unlimited."`
+	TrafficDefaultTotalDownloadBytes int64         `name:"traffic-default-total-download-bytes" env:"TNLD_TRAFFIC_DEFAULT_TOTAL_DOWNLOAD_BYTES" default:"0" help:"Default total encrypted download bytes per service run and ingress process; 0 is unlimited."`
+	TrafficMaxConnections            int           `name:"traffic-max-connections" env:"TNLD_TRAFFIC_MAX_CONNECTIONS" default:"128" help:"Maximum selected concurrent visitor connections per service run."`
 	TrafficMaxRate                   int           `name:"traffic-max-rate" env:"TNLD_TRAFFIC_MAX_RATE" default:"100" help:"Maximum selected new visitor connections per maximum traffic rate period."`
 	TrafficMaxRatePer                time.Duration `name:"traffic-max-rate-per" env:"TNLD_TRAFFIC_MAX_RATE_PER" default:"1s" help:"Rate period used by the operator connection rate ceiling."`
 	TrafficMaxBurst                  int           `name:"traffic-max-burst" env:"TNLD_TRAFFIC_MAX_BURST" default:"200" help:"Maximum selected visitor connection burst."`
 	TrafficMaxUploadBytes            int64         `name:"traffic-max-upload-bytes" env:"TNLD_TRAFFIC_MAX_UPLOAD_BYTES" default:"67108864" help:"Maximum selected encrypted visitor upload bytes per second."`
 	TrafficMaxDownloadBytes          int64         `name:"traffic-max-download-bytes" env:"TNLD_TRAFFIC_MAX_DOWNLOAD_BYTES" default:"134217728" help:"Maximum selected encrypted visitor download bytes per second."`
-	TrafficMaxTotalConnections       int64         `name:"traffic-max-total-connections" env:"TNLD_TRAFFIC_MAX_TOTAL_CONNECTIONS" default:"0" help:"Maximum selected total connections per publish run and ingress process; 0 is unlimited."`
-	TrafficMaxTotalUploadBytes       int64         `name:"traffic-max-total-upload-bytes" env:"TNLD_TRAFFIC_MAX_TOTAL_UPLOAD_BYTES" default:"0" help:"Maximum selected total encrypted upload bytes per publish run and ingress process; 0 is unlimited."`
-	TrafficMaxTotalDownloadBytes     int64         `name:"traffic-max-total-download-bytes" env:"TNLD_TRAFFIC_MAX_TOTAL_DOWNLOAD_BYTES" default:"0" help:"Maximum selected total encrypted download bytes per publish run and ingress process; 0 is unlimited."`
+	TrafficMaxTotalConnections       int64         `name:"traffic-max-total-connections" env:"TNLD_TRAFFIC_MAX_TOTAL_CONNECTIONS" default:"0" help:"Maximum selected total connections per service run and ingress process; 0 is unlimited."`
+	TrafficMaxTotalUploadBytes       int64         `name:"traffic-max-total-upload-bytes" env:"TNLD_TRAFFIC_MAX_TOTAL_UPLOAD_BYTES" default:"0" help:"Maximum selected total encrypted upload bytes per service run and ingress process; 0 is unlimited."`
+	TrafficMaxTotalDownloadBytes     int64         `name:"traffic-max-total-download-bytes" env:"TNLD_TRAFFIC_MAX_TOTAL_DOWNLOAD_BYTES" default:"0" help:"Maximum selected total encrypted download bytes per service run and ingress process; 0 is unlimited."`
 	TrafficSourceConnections         int           `name:"traffic-source-connections" env:"TNLD_TRAFFIC_SOURCE_CONNECTIONS" default:"64" help:"Concurrent visitor connections per IPv4 address or IPv6 /64 on each ingress process."`
 	TrafficSourceRate                int           `name:"traffic-source-rate" env:"TNLD_TRAFFIC_SOURCE_RATE" default:"30" help:"Visitor connection attempts per source per second."`
 	TrafficSourceBurst               int           `name:"traffic-source-burst" env:"TNLD_TRAFFIC_SOURCE_BURST" default:"60" help:"Visitor connection attempt burst per source."`
@@ -126,13 +126,13 @@ type Config struct {
 	TrafficProcessUploadBytes        int64         `name:"traffic-process-upload-bytes" env:"TNLD_TRAFFIC_PROCESS_UPLOAD_BYTES" default:"268435456" help:"Encrypted visitor upload bytes per second per ingress process."`
 	TrafficProcessDownloadBytes      int64         `name:"traffic-process-download-bytes" env:"TNLD_TRAFFIC_PROCESS_DOWNLOAD_BYTES" default:"268435456" help:"Encrypted visitor download bytes per second per ingress process."`
 	PendingConnectionLimit           int           `name:"pending-connection-limit" env:"TNLD_PENDING_CONNECTION_LIMIT" default:"64" help:"Concurrent visitors awaiting authorization per ingress process."`
-	PendingURLConnectionLimit        int           `name:"pending-url-connection-limit" env:"TNLD_PENDING_URL_CONNECTION_LIMIT" default:"8" help:"Concurrent visitors awaiting authorization per public URL."`
+	PendingServiceConnectionLimit    int           `name:"pending-service-connection-limit" env:"TNLD_PENDING_SERVICE_CONNECTION_LIMIT" default:"8" help:"Concurrent visitors awaiting authorization per service run."`
 	PendingSourceConnectionLimit     int           `name:"pending-source-connection-limit" env:"TNLD_PENDING_SOURCE_CONNECTION_LIMIT" default:"4" help:"Concurrent visitors awaiting authorization per source."`
 	PendingTimeout                   time.Duration `name:"pending-timeout" env:"TNLD_PENDING_TIMEOUT" default:"10s" help:"Maximum time a visitor may await authorization."`
 	PendingUploadBytes               int64         `name:"pending-upload-bytes" env:"TNLD_PENDING_UPLOAD_BYTES" default:"65536" help:"Encrypted upload byte budget while awaiting authorization."`
 	PendingDownloadBytes             int64         `name:"pending-download-bytes" env:"TNLD_PENDING_DOWNLOAD_BYTES" default:"131072" help:"Encrypted download byte budget while awaiting authorization."`
-	PendingURLRate                   int           `name:"pending-url-rate" env:"TNLD_PENDING_URL_RATE" default:"5" help:"Pending visitor attempts per public URL per second."`
-	PendingURLBurst                  int           `name:"pending-url-burst" env:"TNLD_PENDING_URL_BURST" default:"10" help:"Pending visitor attempt burst per public URL."`
+	PendingServiceRate               int           `name:"pending-service-rate" env:"TNLD_PENDING_SERVICE_RATE" default:"5" help:"Pending visitor attempts per service run per second."`
+	PendingServiceBurst              int           `name:"pending-service-burst" env:"TNLD_PENDING_SERVICE_BURST" default:"10" help:"Pending visitor attempt burst per service run."`
 	PendingSourceRate                int           `name:"pending-source-rate" env:"TNLD_PENDING_SOURCE_RATE" default:"3" help:"Pending visitor attempts per source per second."`
 	PendingSourceBurst               int           `name:"pending-source-burst" env:"TNLD_PENDING_SOURCE_BURST" default:"6" help:"Pending visitor attempt burst per source."`
 
@@ -159,7 +159,6 @@ type Config struct {
 	RelayLeaseDuration               time.Duration `name:"relay-lease-duration" env:"TNLD_RELAY_LEASE_DURATION" default:"30s" help:"Control-owned relay lease duration."`
 	LeaseRenewalInterval             time.Duration `name:"lease-renewal-interval" env:"TNLD_LEASE_RENEWAL_INTERVAL" default:"10s" help:"Ingress and relay lease renewal interval."`
 	ControlRetryInterval             time.Duration `name:"control-retry-interval" env:"TNLD_CONTROL_RETRY_INTERVAL" default:"1s" help:"Delay before retrying a transient control failure."`
-	RoutingTableWait                 time.Duration `name:"routing-table-wait" env:"TNLD_ROUTING_TABLE_WAIT" default:"25s" help:"Maximum wait for ingress routing-table updates."`
 	DrainTimeout                     time.Duration `name:"drain-timeout" env:"TNLD_DRAIN_TIMEOUT" default:"30s" help:"Graceful connection drain deadline."`
 }
 
@@ -284,10 +283,9 @@ func (c Config) Validate() (retErr error) {
 	}
 	if c.IngressLeaseDuration <= 0 || c.RelayLeaseDuration <= 0 || c.LeaseRenewalInterval <= 0 ||
 		c.LeaseRenewalInterval >= c.IngressLeaseDuration || c.LeaseRenewalInterval >= c.RelayLeaseDuration ||
-		c.ControlRetryInterval <= 0 || c.RoutingTableWait <= 0 || c.RoutingTableWait > 25*time.Second ||
-		c.RoutingTableWait%time.Second != 0 || c.DrainTimeout <= 0 ||
+		c.ControlRetryInterval <= 0 || c.DrainTimeout <= 0 ||
 		c.QUICIdleTimeout <= 0 {
-		return errors.New("lease, routing-table, transport, or drain timing is invalid")
+		return errors.New("lease, transport, or drain timing is invalid")
 	}
 	return nil
 }

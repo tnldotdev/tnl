@@ -34,9 +34,13 @@ func TestIntegrationServiceAuditActualDeploymentRemovalAndSafeAdminNormalization
 		t.Fatal(err)
 	}
 	replica := enrollAppliedDeployment(t, d, r, enrollment, now)
-	public := createTestPublicURL(t, d, oidcRouteRequest(t, d, now), now).ID
+	service, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActorID, "audit", "audit",
+		ServicePlacement{}, now, ServiceMetadata{}, &ProjectServiceConfiguration{Target: "localhost:3000"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	const secret = "never-copy-admin-details-key-csr-and-plaintext-configuration"
-	if _, err = d.pool.Exec(t.Context(), `INSERT INTO control.admin_audit_events(actor_identity_id,actor,request_id,operation,target_kind,target_id,details,occurred_at) VALUES($1,$1,'audit-secret-regression','public_url.update','public_url',$2,$3,$4)`, r.ActorID, public, []byte(secret), now); err != nil {
+	if _, err = d.pool.Exec(t.Context(), `INSERT INTO control.admin_audit_events(actor_identity_id,actor,request_id,operation,target_kind,target_id,details,occurred_at) VALUES($1,$1,'audit-secret-regression','service.update','service',$2,$3,$4)`, r.ActorID, service.ID, []byte(secret), now); err != nil {
 		t.Fatal(err)
 	}
 	scope := DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID}

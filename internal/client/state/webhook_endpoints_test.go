@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 func TestWebhookRegistrationDoesNotReplaceOtherWorktreePolicies(t *testing.T) {
@@ -78,7 +77,7 @@ func TestWebhookRegistrationDoesNotReplaceOtherWorktreePolicies(t *testing.T) {
 	}
 }
 
-func TestAliasAndWebhookRejectURLOnlyJournal(t *testing.T) {
+func TestAliasAndWebhookRequireServiceIdentityEvenWithAnAddress(t *testing.T) {
 	state, _ := aliasTestDatabase(t)
 	scope := aliasTestScope(t)
 	group := IntegrationScope{PrimaryProjectRoot: scope.ProjectKey, Namespace: scope.Namespace}
@@ -90,13 +89,6 @@ func TestAliasAndWebhookRejectURLOnlyJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = tunnel.Finish(t.Context(), nil) })
-	id, err := opaqueid.New(opaqueid.PublicURLPrefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := tunnel.SetPublicURL(t.Context(), id, "api."+scope.Namespace); err != nil {
-		t.Fatal(err)
-	}
 	if err := tunnel.SetReady(t.Context(), "https://api."+scope.Namespace, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -115,13 +107,13 @@ func TestAliasAndWebhookRejectURLOnlyJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, err := state.AliasCandidate(t.Context(), selection.ID); !errors.Is(err, ErrAliasReceiverUnavailable) {
-		t.Fatalf("URL-only journal became an alias receiver: %v", err)
+		t.Fatalf("address without a service identity became an alias receiver: %v", err)
 	}
 	receivers, err := state.WebhookReceivers(t.Context(), scope.Server, group, "event", digest)
 	if err != nil || len(receivers) != 0 {
-		t.Fatalf("URL-only journal became a webhook receiver: %+v, %v", receivers, err)
+		t.Fatalf("address without a service identity became a webhook receiver: %+v, %v", receivers, err)
 	}
 	if err := state.ClaimWebhookReceiver(t.Context(), scope.Server, group, "event", tunnel.ID(), digest, true); !errors.Is(err, ErrWebhookReceiverUnavailable) {
-		t.Fatalf("forced webhook selection admitted URL-only journal: %v", err)
+		t.Fatalf("forced webhook selection admitted an address without a service identity: %v", err)
 	}
 }

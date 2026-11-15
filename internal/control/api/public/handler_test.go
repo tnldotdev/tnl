@@ -196,19 +196,16 @@ func TestAdminOperationsRequireAuthentication(t *testing.T) {
 }
 
 func TestConnectionAssignmentResponsesExposeClosedSlotsAsReplacing(t *testing.T) {
-	var assignments [2]controlstate.ConnectionAssignment
+	assignments := make([]controlstate.ServiceRunAssignment, 2)
 	for slot := range assignments {
-		assignments[slot] = controlstate.ConnectionAssignment{
-			ConnectionAssignmentIdentity: controlstate.ConnectionAssignmentIdentity{
-				PublisherConnectionID: "connection", PublishRunID: "session", PublicURLID: "route", PublishRunNumber: 1,
-				ConnectionSlot: slot, ConnectionAssignmentRevision: 1, RelayServiceID: "relay-service",
-			},
+		assignments[slot] = controlstate.ServiceRunAssignment{
+			PublisherConnectionID: "connection", ConnectionSlot: int16(slot), Revision: 1, RelayServiceID: "relay-service",
 			RelayAddress: "relay.example:443", TLSServerName: "relay.example",
-			PublisherConnectionCredential: "credential", PublisherConnectionCredentialExpiresAt: time.Now().Add(time.Minute),
+			Credential: "credential", CredentialExpiresAt: time.Now().Add(time.Minute),
 			State: "closed",
 		}
 	}
-	connections := connectionAssignmentResponses(assignments)
+	connections := serviceRunConnections(assignments)
 	if len(connections) != len(assignments) {
 		t.Fatalf("connection assignments = %d, want %d", len(connections), len(assignments))
 	}

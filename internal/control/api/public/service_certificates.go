@@ -29,9 +29,12 @@ func managedCertificatePlan(plan controlstate.CertificatePlan) controlv1.Certifi
 }
 
 func serviceCertificateResponse(value controlstate.CertificateIssuance) controlv1.ServiceCertificateIssuance {
-	result := controlv1.ServiceCertificateIssuance{Id: value.ID, ServiceId: value.ServiceID, ServiceRunId: value.ServiceRunID, RunNumber: int64(value.ServiceRunNumber), PublisherIdentityId: value.PublisherIdentityID, CertificatePlan: managedCertificatePlan(value.CertificatePlan), State: controlv1.CertificateIssuanceState(value.State), NotBefore: value.NotBefore, NotAfter: value.NotAfter, RetryAt: value.RetryAt}
-	if value.CertificatePEM != "" {
-		result.CertificatePem = &value.CertificatePEM
+	result := controlv1.ServiceCertificateIssuance{Id: value.ID, ServiceId: value.ServiceID, ServiceRunId: value.ServiceRunID, RunNumber: int64(value.ServiceRunNumber), PublisherIdentityId: value.PublisherIdentityID, CertificatePlan: managedCertificatePlan(value.CertificatePlan), State: controlv1.CertificateIssuanceState(value.State), RetryAt: value.RetryAt}
+	if value.State == controlstate.ACMEOrderWaitingForInstall || value.State == controlstate.ACMEOrderInstalled {
+		result.NotBefore, result.NotAfter = value.NotBefore, value.NotAfter
+		if value.CertificatePEM != "" {
+			result.CertificatePem = &value.CertificatePEM
+		}
 	}
 	return result
 }

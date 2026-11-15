@@ -1218,24 +1218,25 @@ type ControlServiceVisitorCapacity struct {
 }
 
 type ControlShare struct {
-	ID                  string
-	SchemaVersion       int16
-	PreviewID           pgtype.Text
-	TeamID              pgtype.Text
-	GuestID             pgtype.Text
-	Scope               string
-	EntryServiceID      string
-	ControlSessionID    pgtype.Text
-	Label               string
-	CreatedByIdentityID pgtype.Text
-	IdempotencyKey      string
-	RequestDigest       []byte
-	SecretDigest        []byte
-	CreatedAt           pgtype.Timestamptz
-	ExpiresAt           pgtype.Timestamptz
-	RevokedAt           pgtype.Timestamptz
-	RevokedByIdentityID pgtype.Text
-	RevokedByGuestID    pgtype.Text
+	ID                   string
+	SchemaVersion        int16
+	PreviewID            pgtype.Text
+	TeamID               pgtype.Text
+	GuestID              pgtype.Text
+	Scope                string
+	EntryServiceID       string
+	ControlSessionID     pgtype.Text
+	IssuerCompanyContext []byte
+	Label                string
+	CreatedByIdentityID  pgtype.Text
+	IdempotencyKey       string
+	RequestDigest        []byte
+	SecretDigest         []byte
+	CreatedAt            pgtype.Timestamptz
+	ExpiresAt            pgtype.Timestamptz
+	RevokedAt            pgtype.Timestamptz
+	RevokedByIdentityID  pgtype.Text
+	RevokedByGuestID     pgtype.Text
 }
 
 type ControlShareCookie struct {

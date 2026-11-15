@@ -159,8 +159,8 @@ func rotateConnectorPairStorage(t *testing.T, d *Database, pair ConnectorPeerPai
 }
 
 func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
-	f := newConnectorPairRunFixture(t)
-	d, now, ctx := f.database, f.now, t.Context()
+	d, now, _, leases := newConnectorPairPrerequisites(t)
+	ctx := t.Context()
 	session := newOIDCSession(t, d, now)
 	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
 	visitor := WithControlPrincipal(ctx, principal)
@@ -209,7 +209,7 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, slot := range run.Connections {
-		lease := f.leases[slot.RelayServiceID].RelayLeaseIdentity
+		lease := leases[slot.RelayServiceID].RelayLeaseIdentity
 		if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), lease, now); err != nil {
 			t.Fatal(err)
 		}
@@ -230,7 +230,7 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 	}
 	request := ConnectorPeerPairRequest{ServiceID: service.ID, ServiceRunID: run.RunID, RunNumber: run.RunNumber,
 		PublisherIdentityID: publisher.ID, IdempotencyKey: "one", Subject: VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: principal.IdentityID, DeviceID: device.ID}, Source: DeviceTokenSource{DeviceID: device.ID},
-		Action: "create", RequestedAt: now, ExpectedRelays: testConnectorPairRelays(run, f.leases)}
+		Action: "create", RequestedAt: now, ExpectedRelays: testConnectorPairRelays(run, leases)}
 	sign := func(r *ConnectorPeerPairRequest) {
 		t.Helper()
 		message, err := r.proof().Message()
@@ -285,7 +285,7 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 	}
 	// a cluster-authenticated caller with the lease ID and public key still
 	// cannot claim this leg without the process's private key.
-	publicOnly := f.leases[first.Relays[0].RelayLease.RelayServiceID].PeerSigningPublicKey
+	publicOnly := leases[first.Relays[0].RelayLease.RelayServiceID].PeerSigningPublicKey
 	if _, err := d.ClaimConnectorPeerPairLeg(ctx, first.Relays[0].RelayLease, sourceIP, leg0,
 		ed25519.Sign(ed25519.NewKeyFromSeed(publicOnly), claimMessage), now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("public lease key authorized a connector peer leg", err)

@@ -30,7 +30,6 @@ import (
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
-	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -57,7 +56,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		request.AccessMode != nil && !request.AccessMode.Valid() || request.Ip != nil && len(*request.Ip) > 32 {
 		return publisherprotocol.Registration{}, errors.New("invalid invocation target or policy")
 	}
-	limits, err := requestlimit.ParseLimits(request.Limits)
+	options, err := invocationOptions(request)
 	if err != nil {
 		return publisherprotocol.Registration{}, err
 	}
@@ -86,7 +85,6 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		return publisherprotocol.Registration{Version: 1, RegistrationID: service.RegistrationID, Owner: request.Owner, Target: request.Target}, nil
 	}
 	var native *publisheridentity.Native
-	var profile *clientstate.Store
 	var saved controlv1.Service
 	var cfg publisherservice.RunConfig
 	var credentialExpiry time.Time
@@ -113,49 +111,15 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	server := ""
 	if request.Deployment != nil {
 		var selection deploymentInvocation
-		selection, err = a.prepareDeploymentInvocation(ctx, request)
+		selection, err = a.prepareDeploymentInvocation(ctx, request, options)
 		cleanup = selection.cleanup
 		if err != nil {
 			return publisherprotocol.Registration{}, err
 		}
-		native, profile, saved = selection.native, selection.profile, selection.service
+		native, saved = selection.native, selection.service
 		credentialExpiry = selection.expiresAt
 		server = native.ControlURL()
-		if saved.Endpoint == nil || !saved.Endpoint.Public || saved.Endpoint.Port != 443 {
-			return publisherprotocol.Registration{}, publisheridentity.ErrScope
-		}
-		target, err := targetsyntax.ParseCanonicalTarget(request.Target)
-		if err != nil {
-			return publisherprotocol.Registration{}, err
-		}
-		trust, err := publisheridentity.ServiceTrust(saved)
-		if err != nil {
-			return publisherprotocol.Registration{}, err
-		}
-		if (target.Scheme == "https") != (trust != nil) {
-			return publisherprotocol.Registration{}, publisheridentity.ErrScope
-		}
-		if request.Deployment.Service == "" {
-			if request.RequirePostQuantum != nil && saved.RequirePostQuantum != *request.RequirePostQuantum {
-				return publisherprotocol.Registration{}, publisheridentity.ErrScope
-			}
-			if trust != nil {
-				declaration, err := targettrust.NewDeclaration(target.Hostname(), nil)
-				if err != nil {
-					return publisherprotocol.Registration{}, err
-				}
-				expected, err := declaration.Snapshot()
-				if err != nil {
-					return publisherprotocol.Registration{}, err
-				}
-				if err := publisheridentity.MatchServiceDeclaration(saved, "http", expected); err != nil {
-					return publisherprotocol.Registration{}, err
-				}
-			}
-		}
-		cfg = publisherservice.RunConfig{Control: native, Access: native.Access, State: profile,
-			PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
-			ServiceID: saved.Id, Target: target.Host, Metadata: publisheridentity.ServiceMetadata(saved)}
+		cfg = selection.config
 	} else {
 		server = valueOrEmpty(a.project.Config.Server)
 		if request.ServerUrl != nil {
@@ -172,7 +136,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		if err != nil {
 			return publisherprotocol.Registration{}, err
 		}
-		profile, err = a.state.Server(ctx, server)
+		profile, err := a.state.Server(ctx, server)
 		if err != nil {
 			return publisherprotocol.Registration{}, err
 		}
@@ -191,17 +155,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 			}
 			return publisherprotocol.Registration{}, err
 		}
-		options := publisheradhoc.Options{ControlURL: server, State: profile, Publisher: native,
-			InvocationID: request.InvocationId, Target: request.Target, Limits: limits}
-		if request.RequirePostQuantum != nil {
-			options.RequirePostQuantum = *request.RequirePostQuantum
-		}
-		if request.AccessMode != nil {
-			options.AccessMode = controlv1.VisitorAccessMode(*request.AccessMode)
-		}
-		if request.Ip != nil {
-			options.IP = *request.Ip
-		}
+		options.ControlURL, options.State, options.Publisher = server, profile, native
 		prepared, err := publisheradhoc.Prepare(ctx, options)
 		if prepared != nil {
 			cleanup = invocationCleanup(prepared.Cleanup, time.Time{})
@@ -261,26 +215,24 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	return publisherprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: request.Target}, nil
 }
 
-// invocationAllocation is used only by deployment's credential-scoped allocator.
-func invocationAllocation(request publisherprotocol.Invocation) (controlv1.AllocateServiceRequest, error) {
-	target, err := targetsyntax.ParseCanonicalTarget(request.Target)
+// both allocation authorities receive the same app-selected options. adhoc owns
+// request construction, target trust, saved-fact validation, and native cleanup.
+func invocationOptions(request publisherprotocol.Invocation) (publisheradhoc.Options, error) {
+	limits, err := requestlimit.ParseLimits(request.Limits)
 	if err != nil {
-		return controlv1.AllocateServiceRequest{}, err
+		return publisheradhoc.Options{}, err
 	}
-	declaration := controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocolHTTP), Target: target.Host,
-		Public: new(true), Ephemeral: new(true), RequirePostQuantum: request.RequirePostQuantum,
-		Http: &controlv1.ProjectServiceHTTP{Limits: request.Limits, Access: &controlv1.ProjectHTTPAccess{Ip: request.Ip}}}
+	options := publisheradhoc.Options{InvocationID: request.InvocationId, Target: request.Target, Limits: limits}
+	if request.RequirePostQuantum != nil {
+		options.RequirePostQuantum = *request.RequirePostQuantum
+	}
 	if request.AccessMode != nil {
-		declaration.Http.Access.Mode = new(controlv1.VisitorAccessMode(*request.AccessMode))
+		options.AccessMode = controlv1.VisitorAccessMode(*request.AccessMode)
 	}
-	if target.Scheme == "https" {
-		trust, err := targettrust.NewDeclaration(target.Hostname(), nil)
-		if err != nil {
-			return controlv1.AllocateServiceRequest{}, err
-		}
-		declaration.TargetTls = &controlv1.ProjectTargetTLS{Hostname: trust.Hostname, Digest: trust.Digest}
+	if request.Ip != nil {
+		options.IP = *request.Ip
 	}
-	return controlv1.AllocateServiceRequest{InvocationId: request.InvocationId, Configuration: declaration}, nil
+	return options, nil
 }
 
 // the app worker owns journaling and joined cleanup. these callbacks bind its

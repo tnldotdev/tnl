@@ -261,10 +261,13 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 		transport := http.DefaultTransport
 		defer func() { http.DefaultTransport = transport }()
 		exchanges, allocations := 0, 0
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
 		http.DefaultTransport = invocationTransport(func(r *http.Request) (*http.Response, error) {
 			if r.URL.Host == strings.TrimPrefix(remote.URL, "https://") && r.URL.Path == "/v1/publisher-token" {
 				exchanges++
 				if exchanges == 1 {
+					cancel()
 					return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{"Content-Type": {"application/problem+json"}},
 						Body: io.NopCloser(strings.NewReader(`{"code":"unavailable","status":503,"title":"retry"}`)), Request: r}, nil
 				}
@@ -274,7 +277,7 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 			}
 			return transport.RoundTrip(r)
 		})
-		if _, err := a.invocation(t.Context(), request); err == nil || exchanges != 1 || allocations != 0 {
+		if _, err := a.invocation(ctx, request); err == nil || exchanges != 1 || allocations != 0 {
 			t.Fatal("pre-attempt failure caused cleanup to create an allocation", err, exchanges, allocations)
 		}
 	})
@@ -297,7 +300,12 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 		defer func() { http.DefaultTransport = transport }()
 		var declarations []string
 		var allocated controlv1.Service
+		selections := 0
 		http.DefaultTransport = invocationTransport(func(r *http.Request) (*http.Response, error) {
+			if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/publisher/services/") {
+				selections++
+				return nil, errors.New("publication selection is unavailable during cleanup")
+			}
 			if r.Method != http.MethodPost || r.URL.Path != "/v1/projects/shop/deployments/production/services" {
 				return transport.RoundTrip(r)
 			}
@@ -314,6 +322,7 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 				}
 				_ = response.Body.Close()
 				*request.Limits.Total = 99
+				cancel()
 				return nil, io.ErrUnexpectedEOF
 			}
 			return response, err
@@ -321,11 +330,97 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 		if _, err := a.invocation(ctx, request); !errors.Is(err, io.ErrUnexpectedEOF) {
 			t.Fatal("registered allocation lost its response error", err)
 		}
-		if allocated.Id == "" || len(declarations) != 2 || declarations[0] != declarations[1] {
+		if allocated.Id == "" || len(declarations) != 2 || declarations[0] != declarations[1] || selections != 0 {
 			t.Fatal("registered recovery changed its invocation, declaration, or fixed expiry", declarations)
 		}
 		if _, err := d.GetService(t.Context(), allocated.Id, actor); !errors.Is(err, controlstate.ErrServiceAccess) {
 			t.Fatal("uncertain registered allocation was not deleted with its original approval", err)
+		}
+	})
+	t.Run("lost allocation reply and cleanup retry without publication selection", func(t *testing.T) {
+		invocation, err := opaqueid.New(opaqueid.InvocationPrefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := map[string]any{"version": 1, "invocation_id": invocation, "owner": "0123456789abcdef0123456789abcdef",
+			"pid": os.Getpid(), "target": listener.URL, "limits": map[string]any{"total": 7},
+			"deployment": map[string]string{"project": "acme/shop", "name": "production", "credential": token}}
+		encoded, _ := json.Marshal(body)
+		var request publisherprotocol.Invocation
+		if err := json.Unmarshal(encoded, &request); err != nil {
+			t.Fatal(err)
+		}
+		options, err := invocationOptions(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		transport := http.DefaultTransport
+		defer func() { http.DefaultTransport = transport }()
+		var allocated controlv1.Service
+		var declarations, deletions []string
+		independent := errors.New("cleanup transport failed")
+		selections, exchanges := 0, 0
+		http.DefaultTransport = invocationTransport(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path == "/v1/publisher-token" {
+				exchanges++
+			}
+			if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/publisher/services/") {
+				selections++
+				return nil, errors.New("publication selection is unavailable")
+			}
+			if r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/publisher/services/") {
+				deletions = append(deletions, r.URL.Path)
+				if len(deletions) == 1 {
+					return nil, errors.Join(context.Canceled, independent)
+				}
+			}
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/projects/shop/deployments/production/services" {
+				return transport.RoundTrip(r)
+			}
+			data, err := io.ReadAll(r.Body)
+			if err != nil {
+				return nil, err
+			}
+			declarations = append(declarations, string(data))
+			r.Body = io.NopCloser(bytes.NewReader(data))
+			response, err := transport.RoundTrip(r)
+			if err == nil && len(declarations) == 1 {
+				if err := json.NewDecoder(response.Body).Decode(&allocated); err != nil {
+					return nil, err
+				}
+				_ = response.Body.Close()
+				cancel()
+				return nil, io.ErrUnexpectedEOF
+			}
+			return response, err
+		})
+		prepared, operationErr := a.prepareDeploymentInvocation(ctx, request, options)
+		if prepared.cleanup == nil || !errors.Is(operationErr, io.ErrUnexpectedEOF) {
+			t.Fatal("uncertain allocation lost its cleanup owner", operationErr)
+		}
+		*request.Limits.Total = 99
+		cleanupErr := prepared.cleanup()
+		if combined := errors.Join(operationErr, cleanupErr); !errors.Is(combined, io.ErrUnexpectedEOF) ||
+			!errors.Is(combined, independent) || errors.Is(cleanupErr, publisherapp.ErrCleanupPermanent) {
+			t.Fatal("cleanup discarded a failure or retired transient ownership", combined)
+		}
+		if err := prepared.cleanup(); err != nil {
+			t.Fatal("cleanup could not retry its exact observed allocation", err)
+		}
+		completedExchanges := exchanges
+		for range 3 {
+			if err := prepared.cleanup(); err != nil {
+				t.Fatal("successful cleanup did not remain terminal", err)
+			}
+		}
+		if allocated.Id == "" || len(declarations) != 2 || declarations[0] != declarations[1] || selections != 0 ||
+			len(deletions) != 2 || deletions[0] != "/v1/publisher/services/"+allocated.Id || deletions[0] != deletions[1] || exchanges != completedExchanges {
+			t.Fatal("cleanup reselected publication, changed authority, or replayed a completed invocation", declarations, deletions, selections)
+		}
+		if _, err := d.GetService(t.Context(), allocated.Id, actor); !errors.Is(err, controlstate.ErrServiceAccess) {
+			t.Fatal("successful cleanup did not retire the original allocation", err)
 		}
 	})
 	inspect, err := pgx.Connect(ctx, databaseURL)

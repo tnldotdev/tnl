@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
@@ -91,6 +92,8 @@ func resolvePrivateRelay(ctx context.Context, tx pgx.Tx, lease RelayLeaseIdentit
 // authenticated relay. every claim requires a real bare address, even for a
 // team service; a relay's control peer is not the publisher's source.
 func (d *Database) ClaimServicePublisherConnection(ctx context.Context, connectionID, serviceID, runID string, runNumber, revision int64, credential string, observedSourceIP netip.Addr, lease RelayLeaseIdentity, now time.Time) (result ServicePublisherConnection, retErr error) {
+	ctx, finish := d.observeOperation(ctx, observability.OpClaimPublisherConnection)
+	defer func() { finish(retErr) }()
 	clock := newAuthorizationClock(now)
 	digest, err := credentials.ParsePublisherConnectionCredential(credentials.PublisherConnectionCredential(credential))
 	if err != nil || !observedSourceIP.IsValid() || observedSourceIP.Zone() != "" || observedSourceIP.Unmap().IsUnspecified() {
@@ -199,6 +202,8 @@ func (d *Database) ClaimServicePublisherConnection(ctx context.Context, connecti
 }
 
 func (d *Database) ReadyServicePublisherConnection(ctx context.Context, connectionID, runID string, runNumber, revision int64, lease RelayLeaseIdentity, now time.Time) (result ServicePublisherConnection, retErr error) {
+	ctx, finish := d.observeOperation(ctx, observability.OpMarkPublisherConnectionReady)
+	defer func() { finish(retErr) }()
 	clock := newAuthorizationClock(now)
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {

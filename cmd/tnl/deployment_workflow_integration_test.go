@@ -105,7 +105,7 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 		"external": map[string]any{"targets": map[string]any{"publicapi": map[string]any{"address": target.URL, "public": true, "http": map[string]any{}, "access": map[string]any{"team": true}}}},
 		"local": map[string]any{"targets": map[string]any{
 			"internal": map[string]any{"name": "local-internal", "access": map[string]any{"team": true}},
-			"web":      map[string]any{"public_url": map[string]any{"access": "anonymous"}},
+			"web":      map[string]any{"public": true, "http": map[string]any{"access": "anonymous"}},
 		}},
 	}}})
 	if err != nil {
@@ -580,7 +580,7 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	if err := json.Unmarshal(audit, &page); err != nil || len(page.Events) == 0 {
 		t.Fatalf("real control audit was not readable: %v", err)
 	}
-	t.Log("CLI apply -> real local public app/webhook and private app readiness/traffic -> two signed deployment tasks running public.Run and privatepublisher.Publish -> authenticated connect -> private HTTP bytes; portable generation, runtime endpoint metadata, and audit read passed")
+	t.Log("CLI apply -> local public app/webhook and connector-only app readiness/traffic -> two signed deployment publishers -> authenticated connect -> HTTP bytes; portable generation, runtime endpoint metadata, and audit read passed")
 }
 
 type cliWorkflow struct {
@@ -744,31 +744,17 @@ func newCLIWorkflow(t *testing.T, additionalRoots ...[]byte) *cliWorkflow {
 func (f *cliWorkflow) dnsWork(t *testing.T, database *controlstate.Database) {
 	for f.ctx.Err() == nil {
 		now := time.Now()
-		public, found, err := database.ClaimDNSPublicURLWork(f.ctx, "cli-dns", now, time.Minute)
-		if err == nil && found {
-			if public.State == controlstate.PublicURLDNSRemoving {
-				public.State = controlstate.PublicURLDNSRemoved
-			} else {
-				public.State = controlstate.PublicURLDNSPublished
-			}
-			public.AvailableAt = time.Time{}
-			_, err = database.SaveDNSPublicURLWork(f.ctx, public, time.Now())
-		}
-		if err != nil && !errors.Is(err, controlstate.ErrDNSPublicURLWorkStale) && f.ctx.Err() == nil {
-			t.Error("local DNS public URL exchange", err)
-			return
-		}
 		managed, found, err := database.ClaimServiceEndpointDNSWork(f.ctx, "cli-dns", now, time.Minute)
 		if err == nil && found {
-			if managed.State == controlstate.PublicURLDNSRemoving {
-				managed.State = controlstate.PublicURLDNSRemoved
+			if managed.State == controlstate.ServiceEndpointDNSRemoving {
+				managed.State = controlstate.ServiceEndpointDNSRemoved
 			} else {
-				managed.State = controlstate.PublicURLDNSPublished
+				managed.State = controlstate.ServiceEndpointDNSPublished
 			}
 			managed.AvailableAt = time.Time{}
 			_, err = database.SaveServiceEndpointDNSWork(f.ctx, managed, time.Now())
 		}
-		if err != nil && !errors.Is(err, controlstate.ErrDNSPublicURLWorkStale) && f.ctx.Err() == nil {
+		if err != nil && !errors.Is(err, controlstate.ErrServiceEndpointDNSWorkStale) && f.ctx.Err() == nil {
 			t.Error("local DNS service exchange", err)
 			return
 		}
@@ -789,7 +775,7 @@ func (f *cliWorkflow) logRuns(t *testing.T) {
 		return
 	}
 	defer connection.Close(ctx)
-	rows, err := connection.Query(ctx, `SELECT u.canonical_hostname,coalesce(r.publisher_identity_id,''),r.state,r.certificate_installed_at IS NOT NULL FROM control.publish_runs r JOIN control.public_urls u ON u.id=r.public_url_id WHERE r.closed_at IS NULL ORDER BY u.canonical_hostname,r.publish_run_number`)
+	rows, err := connection.Query(ctx, `SELECT r.certificate_hostname,r.publisher_identity_id,r.state,r.certificate_expires_at IS NOT NULL FROM control.service_runs r WHERE r.closed_at IS NULL ORDER BY r.certificate_hostname,r.run_number`)
 	if err != nil {
 		t.Logf("inspect active runs: %v", err)
 		return
@@ -799,7 +785,7 @@ func (f *cliWorkflow) logRuns(t *testing.T) {
 		var host, id, state string
 		var certificate bool
 		if err := rows.Scan(&host, &id, &state, &certificate); err == nil {
-			t.Logf("active public run %s publisher=%s state=%s certificate=%t", host, id, state, certificate)
+			t.Logf("active service run %s publisher=%s state=%s certificate=%t", host, id, state, certificate)
 		}
 	}
 }
@@ -1010,7 +996,7 @@ func (f *cliWorkflow) relay(t *testing.T, database *controlstate.Database, id st
 
 func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id string) {
 	t.Helper()
-	client, err := controlingress.NewDirectClient(controlingress.DirectConfig{Store: database, LeaseDuration: 30 * time.Second, RoutingPollInterval: 25 * time.Millisecond})
+	client, err := controlingress.NewDirectClient(controlingress.DirectConfig{Store: database, LeaseDuration: 30 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1018,18 +1004,17 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 	if err != nil {
 		t.Fatal(err)
 	}
-	routing := &ingress.RoutingTable{}
 	ports := make([]int, 16)
 	for index := range ports {
 		ports[index] = 20000 + index
 	}
-	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, RoutingTable: routing, Registration: ingressv1.IngressRegistration{Region: "local", ProtocolVersion: 1, IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", Https: true, ServicePorts: ports, ConnectionCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond, RoutingWait: time.Second})
+	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, Registration: ingressv1.IngressRegistration{Region: "local", ProtocolVersion: 1, IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", Https: true, ServicePorts: ports, ConnectionCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.workers.Go(func() { _ = controller.Run(f.ctx) })
 	workflowWait(t, 5*time.Second, func() bool { return controller.Ready(time.Now()) })
-	forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{SignVisitorSource: controller.SignVisitorSource, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}, ClusterSecret: cliWorkflowClusterSecret})
+	forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{Context: f.ctx, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}, ClusterSecret: cliWorkflowClusterSecret})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1041,17 +1026,7 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 	publicServer, err := ingress.New(publicListener, ingress.Config{Control: client, Forwarder: forwarder, CurrentLease: controller.Lease,
 		IngressPoolID:      "ingress-a",
 		RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
-		MaxConnections: 128, Lookup: func(host string) ([]ingress.PublicURL, ingress.LookupReason) {
-			entries, reason := controller.Lookup(host, time.Now())
-			if reason != ingress.LookupCurrent {
-				return nil, reason
-			}
-			result, err := forwarder.PublicURLs(entries)
-			if err != nil {
-				return nil, ingress.LookupInvalidProjection
-			}
-			return result, ingress.LookupCurrent
-		}})
+		MaxConnections: 128})
 	if err != nil {
 		t.Fatal(err)
 	}

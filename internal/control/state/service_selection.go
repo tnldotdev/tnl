@@ -75,7 +75,7 @@ func (d *Database) SelectServiceRun(ctx context.Context, serviceID, identityID, 
 
 // both access paths select only runs with a current relay that can accept work.
 // callers hold service admission while selecting; existing streams never reselect.
-func selectRoutableServiceRun(ctx context.Context, tx pgx.Tx, serviceID string, now time.Time, excluded ...ServiceRunReference) (id string, number int64, until time.Time, err error) {
+func selectRoutableServiceRun(ctx context.Context, tx pgx.Tx, serviceID, endpointHostname string, now time.Time, excluded ...ServiceRunReference) (id string, number int64, until time.Time, err error) {
 	ids, numbers := make([]string, len(excluded)), make([]int64, len(excluded))
 	for i, run := range excluded {
 		if run.ServiceID != serviceID {
@@ -91,6 +91,7 @@ func selectRoutableServiceRun(ctx context.Context, tx pgx.Tx, serviceID string, 
 	    WHERE run.service_id=$1 AND run.state='ready' AND run.healthy AND run.closed_at IS NULL AND run.publisher_expires_at>$2
 	    AND (g.kind='service' OR signing.retired_at IS NULL)
 	    AND run.certificate_expires_at>$2
+	    AND ($5='' OR run.certificate_hostname=$5)
 	    AND NOT EXISTS(SELECT 1 FROM unnest($3::text[],$4::bigint[]) excluded(id,run_number)
 	        WHERE excluded.id=run.id AND excluded.run_number=run.run_number)
 	    AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.relay_leases lease ON lease.relay_id=slot.relay_id
@@ -98,7 +99,7 @@ func selectRoutableServiceRun(ctx context.Context, tx pgx.Tx, serviceID string, 
 	        AND lease.relay_service_id=slot.relay_service_id
 	        WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open AND lease.lease_expires_at>$2 AND NOT lease.draining AND lease.reported_streams<lease.stream_capacity)
 	    AND GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))<run.stream_capacity
-	    ORDER BY GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))::numeric/run.stream_capacity,run.run_number LIMIT 1`, serviceID, now, ids, numbers).
+	    ORDER BY GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))::numeric/run.stream_capacity,run.run_number LIMIT 1`, serviceID, now, ids, numbers, endpointHostname).
 		Scan(&id, &number, &until)
 	return
 }
@@ -122,7 +123,7 @@ func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string
 	}
 	// count only admitted streams with a current hard deadline. no established
 	// stream moves, and expired authority cannot retain capacity indefinitely.
-	result.ServiceRunID, result.RunNumber, result.ExpiresAt, err = selectRoutableServiceRun(ctx, tx, serviceID, now)
+	result.ServiceRunID, result.RunNumber, result.ExpiresAt, err = selectRoutableServiceRun(ctx, tx, serviceID, "", now)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
 	}
@@ -134,6 +135,12 @@ func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string
 	result.ExpiresAt = minTime(result.ExpiresAt, until)
 	result.ServiceMetadata, err = checkedServiceMetadata(service)
 	if err != nil {
+		return result, err
+	}
+	if result.Endpoint == nil {
+		return result, ErrServiceMetadata
+	}
+	if err = tx.QueryRow(ctx, `SELECT certificate_hostname FROM control.service_runs WHERE id=$1`, result.ServiceRunID).Scan(&result.Endpoint.Hostname); err != nil {
 		return result, err
 	}
 	if result.Protocol == "kubernetes" {

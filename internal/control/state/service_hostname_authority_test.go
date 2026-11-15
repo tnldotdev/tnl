@@ -10,7 +10,7 @@ import (
 func TestServiceHostnameDescendantsRetainMembershipOwnership(t *testing.T) {
 	for _, kind := range []string{"managed", "custom"} {
 		t.Run(kind, func(t *testing.T) {
-			context := controlstatedb.GetPublicURLCreationContextRow{
+			context := serviceHostnameFacts{
 				DomainState: "ready", DomainKind: kind, CanonicalDomain: "example.test",
 				ActorMembershipID: "membership_actor", ActorRole: "owner",
 				ActorMemberSlug: "actor", ActorManagedLabel: "actor-unique",

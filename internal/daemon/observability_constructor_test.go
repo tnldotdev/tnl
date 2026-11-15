@@ -34,7 +34,7 @@ func TestIngressConstructorConcurrentMetricCollection(t *testing.T) {
 					<-done
 				}
 			}()
-			settings := ingressSettingsFrom(daemonconfig.Config{VisitorConnectionLimit: 16, LeaseRenewalInterval: time.Minute, ControlRetryInterval: time.Millisecond, RoutingTableWait: time.Second})
+			settings := ingressSettingsFrom(daemonconfig.Config{VisitorConnectionLimit: 16, LeaseRenewalInterval: time.Minute, ControlRetryInterval: time.Millisecond})
 			err = d.startIngressRuntime(ctx, settings, m, ingressRuntimeConfig{client: &wiringControl{}, ingressID: "ingress", listener: listener, clusterSecret: "0123456789abcdef0123456789abcdef", configure: func(*ingress.Config) {
 				// collection begins after the actual constructor registers its
 				// callbacks, before it publishes and starts the ingress runtime.

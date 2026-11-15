@@ -30,14 +30,14 @@ func TestRuntimeJournalUnifiesAppNamedAndDirectPublications(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, options := range []BeginTunnelOptions{
-		{Command: TunnelCommandPublish, Server: "https://server.example", Target: "5432", Project: project, Service: "database"},
-		{Command: TunnelCommandPublish, Server: "https://server.example", Target: "3000", Project: project},
+		{Command: TunnelCommandPublish, Server: "https://server.example", Target: "5432", Project: project, Service: "database", ServiceID: testServiceID},
+		{Command: TunnelCommandPublish, Server: "https://server.example", Target: "3000", Project: project, ServiceID: testServiceID},
 	} {
 		tunnel, err := database.BeginTunnel(t.Context(), options)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := tunnel.SetPublicURL(t.Context(), testPublicURLID, "service.example"); err != nil {
+		if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {
 			t.Fatal(err)
 		}
 		publicURL := "https://service.example"
@@ -462,7 +462,7 @@ func TestRuntimePublicationEventsMatchCompleteSnapshotObservation(t *testing.T) 
 			project := t.TempDir()
 			tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
 				Command: TunnelCommandPublish, Server: "https://server.example", Target: "5432",
-				Project: project, Service: service,
+				Project: project, Service: service, ServiceID: testServiceID,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -470,7 +470,7 @@ func TestRuntimePublicationEventsMatchCompleteSnapshotObservation(t *testing.T) 
 			defer tunnel.Finish(context.Background(), nil)
 			assertCompletePublicationEvent(t, database, project)
 			now = now.Add(time.Second)
-			if err := tunnel.SetPublicURL(t.Context(), testPublicURLID, "service.example"); err != nil {
+			if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {
 				t.Fatal(err)
 			}
 			assertCompletePublicationEvent(t, database, project)
@@ -558,6 +558,9 @@ func assertCompletePublicationEvent(t *testing.T, database *Database, project st
 		t.Fatalf("missing publication observation: %#v", snapshot)
 	}
 	latest := history[len(history)-1]
+	if strings.Contains(string(latest.Payload), `"public_url_id"`) {
+		t.Fatal("publication event retained a retired resource ID")
+	}
 	var event struct {
 		Publication TunnelInfo `json:"publication"`
 	}

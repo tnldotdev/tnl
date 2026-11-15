@@ -131,17 +131,21 @@ func TestIntegrationGuestAuthorityBoundsPreparationPolicyAndPermissions(t *testi
 }
 
 func TestIntegrationGuestAuthorityOrdinaryPolicyUnchanged(t *testing.T) {
-	f := newPublishRunFixture(t)
+	f := newServicePublicationFixture(t)
 	if err := f.database.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, f.now); err != nil {
 		t.Fatal(err)
 	}
-	url := createTestPublicURL(t, f.database, oidcRouteRequest(t, f.database, f.now), f.now)
-	policy := policyObservation(t, f.database, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: url.ID}, 0)
+	policy, err := f.database.ReadPublisherVisitorPolicy(t.Context(), visitorscope.Scope{Kind: visitorscope.Service, ID: f.service.ID},
+		f.run.RunID, f.run.RunNumber, f.run.Token, 0, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !policy.Policy.Enabled || policy.Policy.ConnectionDeadline != nil || !policy.Policy.ValidUntil.Equal(policy.Policy.ObservedAt.Add(visitortoken.PolicyLifetime)) {
 		t.Fatalf("ordinary policy changed: %+v", policy.Policy)
 	}
-	renewed, err := f.database.HeartbeatPublishRun(t.Context(), f.authentication(), f.now.Add(time.Second), time.Hour, time.Minute)
-	if err != nil || !renewed.ExpiresAt.Equal(f.now.Add(time.Hour+time.Second)) {
+	renewed, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now.Add(time.Second),
+		ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+	if err != nil || !renewed.ExpiresAt.Equal(f.now.Add(46*time.Second)) {
 		t.Fatalf("ordinary publisher lease changed: %v, %v", renewed.ExpiresAt, err)
 	}
 }

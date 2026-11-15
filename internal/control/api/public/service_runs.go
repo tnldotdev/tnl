@@ -43,13 +43,17 @@ func serviceRunProblem(ctx context.Context, w http.ResponseWriter, operation str
 func serviceRunConnections(rows []controlstate.ServiceRunAssignment) []controlv1.ConnectionAssignment {
 	result := make([]controlv1.ConnectionAssignment, 0, len(rows))
 	for _, row := range rows {
+		state := controlv1.PublisherConnectionState(row.State)
+		if row.State == "closed" {
+			state = controlv1.PublisherConnectionStateReplacing
+		}
 		result = append(result, controlv1.ConnectionAssignment{
 			PublisherConnectionId: row.PublisherConnectionID,
 			ConnectionSlot:        int(row.ConnectionSlot), ConnectionAssignmentRevision: row.Revision,
 			PublisherConnectionCredential:          row.Credential,
 			PublisherConnectionCredentialExpiresAt: row.CredentialExpiresAt,
 			RelayServiceId:                         row.RelayServiceID, RelayAddress: row.RelayAddress,
-			TlsServerName: row.TLSServerName, State: controlv1.PublisherConnectionState(row.State),
+			TlsServerName: row.TLSServerName, State: state,
 		})
 	}
 	return result

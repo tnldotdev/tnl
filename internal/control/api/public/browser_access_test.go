@@ -160,7 +160,7 @@ func TestBrowserOIDCLoginBindsCodeNonceAndPreviewReturn(t *testing.T) {
 			ID: "pv_0123456789abcdefghijkl", TeamID: "team_1", ServiceIDs: []string{"svc_" + strings.Repeat("A", 22)},
 		}},
 		browserAccess: store, browserOIDC: verifier, browserAuthority: authorityClient,
-		authorizer: &selectiveShareAuthorizer{principal: publicURLReadPrincipal{identityID: "identity_1", displayName: "Sam"}},
+		authorizer: &recordingAuthorizer{principal: controlReadPrincipal{identityID: "identity_1", displayName: "Sam"}},
 	}
 	start := httptest.NewRecorder()
 	h.BeginServiceBrowserLogin(start, httptest.NewRequest(http.MethodGet, "/v1/browser/service-login", nil), controlv1.BeginServiceBrowserLoginParams{

@@ -194,10 +194,12 @@ paths:
       operationId: createServiceShare
       tags: [shares]
       summary: Store one share for an exact authorized HTTP service
-      description: "Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable; revoke and reissue if delivery was lost. Guest shares remain limited to the trial's service, source IP, and expiry."
+      description: "Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable with details.resource_id; revoke and reissue if delivery was lost. The website may use its scoped bearer credential plus X-Tnl-Actor-Token, a fresh configured-issuer assertion bound with ServiceActorNonce to the exact method, escaped path, raw query and body bytes. Current service management and company source checks run in the state transaction, including retries. This signed website permission is limited to these canonical share operations and never authenticates other control APIs or grants connector access. Guest shares remain limited to the trial's service, source IP, and expiry."
       security:
         - bearerAuth: []
         - guestAuth: []
+        - shareWebsiteAuth: []
+          shareActorAuth: []
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
       requestBody:
@@ -224,11 +226,13 @@ paths:
     get:
       operationId: listTeamShares
       tags: [shares]
-      description: Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; retain the original creation link or token_source for visitor access.
+      description: "Read the creator's cursor-paginated share inventory under current management and company source authorization. The website may use its scoped bearer credential plus X-Tnl-Actor-Token bound with ServiceActorNonce to the exact method, escaped path, raw query and empty body. Each page consumes a fresh assertion and issuer JTI in its authorization transaction. Responses omit secrets; retain the original creation link or token_source for visitor access. This does not grant connector access."
       summary: List manageable shares for one team
       security:
         - bearerAuth: []
         - guestAuth: []
+        - shareWebsiteAuth: []
+          shareActorAuth: []
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/TeamIDQuery"
         - $ref: "../openapi.yaml#/components/parameters/Cursor"
@@ -245,11 +249,13 @@ paths:
     get:
       operationId: getShare
       tags: [shares]
-      description: Read a manageable share's captured service IDs, entry service, deadline, and revocation state without its secret. Reading the record does not redeem it or create a visitor session.
+      description: "Read a manageable share's captured service IDs, entry service, deadline, and revocation state without its secret. The website may use its scoped bearer credential plus X-Tnl-Actor-Token bound to the exact method, escaped path, raw query and empty body with ServiceActorNonce. State consumes the assertion and checks current issuer management and company source authorization together. Reading does not redeem the share or create a visitor or control session."
       summary: Read one share
       security:
         - bearerAuth: []
         - guestAuth: []
+        - shareWebsiteAuth: []
+          shareActorAuth: []
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/ShareID"
       responses:
@@ -265,11 +271,13 @@ paths:
     post:
       operationId: revokeShare
       tags: [shares]
-      description: Revoke the share under current management authorization so it cannot grant new visitor access. Retain the saved record and its captured service snapshot for subsequent reads.
+      description: "Revoke the creator's share under current management authorization so it cannot grant new visitor access. The website may use its scoped bearer credential plus X-Tnl-Actor-Token bound to the exact method, escaped path, raw query and empty body with ServiceActorNonce. State consumes the fresh assertion and checks all captured services and current company source authorization in the revocation transaction. Retain the saved record and captured service snapshot for subsequent reads."
       summary: Stop new access through one share
       security:
         - bearerAuth: []
         - guestAuth: []
+        - shareWebsiteAuth: []
+          shareActorAuth: []
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/ShareID"
       responses:

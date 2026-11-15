@@ -168,7 +168,7 @@ func TestIntegrationFeedbackBearerProofRechecksGrantAuthority(t *testing.T) {
 			token := signFeedbackProofFacts(t, f.database, permission, f.now)
 			switch change {
 			case "policy":
-				_, err = f.database.pool.Exec(t.Context(), `UPDATE control.visitor_policies SET revision=revision+1 WHERE resource_kind='service' AND resource_id=$1`, f.service.ID)
+				_, err = f.database.pool.Exec(t.Context(), `UPDATE control.visitor_policies SET revision=revision+1 WHERE resource_id=$1`, f.service.ID)
 			case "key":
 				err = f.database.RotateVisitorSigningKey(t.Context(), testVisitorIssuer, true, f.now.Add(time.Millisecond))
 				at = f.now.Add(time.Second)

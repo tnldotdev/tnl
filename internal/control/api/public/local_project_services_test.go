@@ -44,7 +44,7 @@ func TestRealizeLocalProjectServiceUsesOneConfigurationSelection(t *testing.T) {
 	for _, extra := range []string{"", "domain_id", "public_url_id"} {
 		t.Run("root-field-"+extra, func(t *testing.T) {
 			store := &localProjectRealizationStore{}
-			h := &handler{dependencies: Stores{LocalProjects: store}, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal()}}
+			h := &handler{dependencies: Stores{LocalProjects: store}, authorizer: &recordingAuthorizer{principal: testControlReadPrincipal()}}
 			body := map[string]any{
 				"team_id": "team_1", "source_fingerprint": strings.Repeat("a", 64),
 				"worktree_key": "checkout-a", "configuration": map[string]any{
@@ -92,9 +92,9 @@ func TestGetLocalProjectServiceUsesVisitorAuthorizationAndSafeResponse(t *testin
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &localProjectVisitorStore{err: test.err}
-			principal := testPublicURLReadPrincipal()
+			principal := testControlReadPrincipal()
 			principal.teamIDs = nil // a direct visitor grant does not require team management.
-			h := &handler{store: store, dependencies: Stores{LocalProjects: store}, authorizer: &recordingAuthorizer{principal: principal}}
+			h := &handler{dependencies: Stores{LocalProjects: store}, authorizer: &recordingAuthorizer{principal: principal}}
 			r := httptest.NewRequest(http.MethodGet, "/v1/projects/shop/local-services/orders", nil)
 			if test.auth {
 				r.Header.Set("Authorization", "Bearer visitor-token")

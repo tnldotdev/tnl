@@ -162,6 +162,7 @@ def test_invocation_status_matches_the_exact_native_tunnel() -> None:
         "process_id": 1,
         "server": "https://control.example",
         "project": "/project",
+        "service_id": "svc_" + "A" * 22,
         "publish_run_number": 1,
         "started_at": value["observed_at"],
         "updated_at": value["observed_at"],
@@ -178,6 +179,8 @@ def test_invocation_status_matches_the_exact_native_tunnel() -> None:
     for changed in (
         {**publication, "tunnel_id": "another-tunnel"},
         {**publication, "service": "another-service"},
+        {**publication, "service_id": "url_" + "A" * 22},
+        {**publication, "public_url_id": "url_" + "A" * 22},
     ):
         with pytest.raises(InvalidResponse):
             parse_status(
@@ -287,10 +290,18 @@ def test_lifespan_precedes_registration_and_close_joins_websockets(
                 await receive()
 
         async with await start_publication(
-            app, publisher_identity_id=_publisher, access="anonymous", limits=tnl.Limits(requests=2)
+            app,
+            publisher_identity_id=_publisher,
+            access="anonymous",
+            limits=tnl.Limits(requests=7, concurrency=2, rate=tnl.RateLimit(requests=3, per="1s")),
         ) as tunnel:
             assert tunnel.url == _public_url
             assert tunnel._payload["publisher_identity_id"] == _publisher
+            assert tunnel._payload["limits"] == {
+                "total": 7,
+                "concurrency": 2,
+                "rate": {"count": 3, "per": "1s"},
+            }
             assert events.index("startup") < events.index("register")
             async with httpx.AsyncClient() as client:
                 response = await client.get(

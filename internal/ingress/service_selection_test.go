@@ -35,7 +35,7 @@ func exhaustSelectionRun(t *testing.T, server *Server, run ingressv1.PublicServi
 	case "service_connection_rate":
 		server.traffic.runs[key] = &runTraffic{limits: limits, newConnections: tokenBucket{last: time.Now()}}
 	case "pending_service_connections":
-		server.traffic.pendingRuns[key] = &pendingTraffic{active: server.config.Pending.PublicURLConnections}
+		server.traffic.pendingRuns[key] = &pendingTraffic{active: server.config.Pending.ServiceConnections}
 	case "pending_service_rate":
 		server.traffic.pendingRuns[key] = &pendingTraffic{seen: time.Now(), attempts: tokenBucket{last: time.Now()}}
 	default:
@@ -325,7 +325,7 @@ func TestFailedServiceSelectionLeavesAdmissionUnselectedAndPendingRatesAtomic(t 
 		config, control, _ := serviceSelectionConfig(t, 3, false)
 		config.Pending.SourceBurst, config.Pending.SourceRate = 1, 1
 		config.Pending.SourceConnections = 16
-		config.Pending.PublicURLBurst, config.Pending.PublicURLRate = 1, 1
+		config.Pending.ServiceBurst, config.Pending.ServiceRate = 1, 1
 		server := serviceSelectionServer(t, config)
 		first, reason := server.admitPendingService()
 		if first == nil {

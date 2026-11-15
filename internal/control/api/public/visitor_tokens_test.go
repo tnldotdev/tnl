@@ -52,9 +52,9 @@ func TestVisitorTokenResponseServiceTrustRevision(t *testing.T) {
 	if response := visitorTokenResponse(issued); response.ServiceTrustRevision == nil || *response.ServiceTrustRevision != 3 {
 		t.Fatal("service permission omitted its current metadata revision")
 	}
-	issued.Permission.Scope.Kind = visitorscope.PublicURL
-	if response := visitorTokenResponse(issued); response.ServiceTrustRevision != nil {
-		t.Fatal("public URL permission included a service metadata revision")
+	issued.Permission.Scope = visitorscope.Scope{Kind: visitorscope.Kind("public_url"), ID: "url_" + strings.Repeat("A", 22)}
+	if issued.Permission.Scope.Valid() {
+		t.Fatal("retired public URL resource remained a visitor authority")
 	}
 }
 
@@ -89,7 +89,7 @@ func TestVisitorTokenRefreshesServiceBrowserBeforeIssuingPermission(t *testing.T
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &serviceBrowserTokenStore{err: test.err}
-			h := &handler{store: store, dependencies: Stores{VisitorTokens: store, ServiceHTTP: store}}
+			h := &handler{dependencies: Stores{VisitorTokens: store, ServiceHTTP: store}}
 			request := httptest.NewRequest(http.MethodPost, "/v1/visitor-tokens", strings.NewReader(`{"resource":{"kind":"service","id":"svc_`+strings.Repeat("A", 22)+`"},"source":{"kind":"browser_session","secret":"`+strings.Repeat("B", 43)+`"}}`))
 			response := httptest.NewRecorder()
 			h.IssueVisitorToken(response, request)

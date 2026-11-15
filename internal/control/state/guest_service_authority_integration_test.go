@@ -188,7 +188,7 @@ func TestIntegrationGuestServiceAllocationSerializesRecoveryAndOneCurrentService
 			for range callers {
 				result := <-results
 				if result.err != nil {
-					if sameKey || !errors.Is(result.err, ErrPublishRunOpen) {
+					if sameKey || !errors.Is(result.err, ErrServiceConflict) {
 						t.Fatal(result.err)
 					}
 					continue
@@ -509,7 +509,7 @@ func TestIntegrationGuestServiceRejectsExpiryDuringDatabaseWait(t *testing.T) {
 						} else if operation == "enroll" {
 							table = "publisher_identities"
 						} else if operation == "claim" {
-							table = "publisher_service_connection_slots"
+							table = "service_connection_slots"
 						}
 						trigger := "CREATE TRIGGER guest_deadline_wait BEFORE INSERT OR UPDATE ON control." + table
 						if boundary == "deferred" {

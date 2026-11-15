@@ -17,7 +17,7 @@ import (
 
 func fixture(t *testing.T) (*Lease, Update, ed25519.PrivateKey) {
 	t.Helper()
-	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}
 	lease, err := New(scope, nil)
 	if err != nil {
 		t.Fatal(err)

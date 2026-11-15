@@ -26,6 +26,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/connector/workload"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
@@ -96,8 +97,17 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			if err != nil || continuousSession.ExpiresAt != nil {
 				t.Fatal("continuous session acquired a hard limit", err)
 			}
-			renewRuntimeWorkload(t, continuous, nil)
+			stopContinuousRenew := renewRuntimeWorkload(t, continuous, nil)
 			continuousPaths := openWorkloadPaths(t, f, continuous, byName, pg, transport)
+			finishContinuous := sync.OnceFunc(func() {
+				stopContinuousRenew()
+				cleanup, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+				defer cancel()
+				if err := continuous.Revoke(cleanup); err != nil {
+					t.Error("revoke owned continuous workload during cleanup", err)
+				}
+			})
+			t.Cleanup(finishContinuous)
 			continuousPaths.step(t, 0)
 			continuousBinding := workloadNativeRuntimeBinding(t, f, continuousSession.Id, continuousSession.IdentityExpiresAt)
 			for i, at := range []time.Time{session.LeaseExpiresAt.Add(5 * time.Second), session.LeaseExpiresAt.Add(95 * time.Second)} {
@@ -122,12 +132,13 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 				paths.step(t, int(time.Until(*session.ExpiresAt).Seconds()))
 				continuousPaths.step(t, i+1)
 				currentContinuous, err := continuous.Session()
-				if err != nil || workloadNativeRuntimeBinding(t, f, continuousSession.Id, workload.SessionDeadline(currentContinuous)) != continuousBinding {
-					t.Fatal("uncapped refresh replaced connector owners or exact bindings", err)
+				if err != nil {
+					t.Fatal(err)
 				}
-				if workloadNativeRuntimeBinding(t, f, session.Id, *session.ExpiresAt) != nativeBinding {
-					t.Fatal("workload renewal replaced its connector owners or exact bindings")
-				}
+				assertWorkloadRuntimeBinding(t, "uncapped refresh replaced connector owners or exact bindings", continuousBinding,
+					workloadNativeRuntimeBinding(t, f, continuousSession.Id, workload.SessionDeadline(currentContinuous)))
+				assertWorkloadRuntimeBinding(t, "workload renewal replaced its connector owners or exact bindings", nativeBinding,
+					workloadNativeRuntimeBinding(t, f, session.Id, *session.ExpiresAt))
 			}
 			var humans int
 			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.visitor_devices`).Scan(&humans); err != nil || humans != 0 {
@@ -138,10 +149,17 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			paths.denied(t, 3*time.Second)
 			continuousPaths.step(t, 3)
 			currentContinuous, err := continuous.Session()
-			if err != nil || currentContinuous.ExpiresAt != nil || !time.Now().After(continuousSession.IdentityExpiresAt) || workloadNativeRuntimeBinding(t, f, continuousSession.Id, workload.SessionDeadline(currentContinuous)) != continuousBinding {
+			if err != nil || currentContinuous.ExpiresAt != nil || !time.Now().After(continuousSession.IdentityExpiresAt) {
 				t.Fatal("continuous streams ended at the sibling's hard limit or startup proof", err)
 			}
+			assertWorkloadRuntimeBinding(t, "continuous streams replaced native bindings at the sibling's hard limit", continuousBinding,
+				workloadNativeRuntimeBinding(t, f, continuousSession.Id, workload.SessionDeadline(currentContinuous)))
 			t.Log("original HTTP, PostgreSQL and opaque streams crossed lease and startup-proof expiry with exact native bindings; only the capped sibling ended at its hard deadline")
+			// the controls borrow this source, so stopping a connector is not
+			// workload revocation. retire the owned uncapped authority and require
+			// its original streams to close before publishers begin graceful drain.
+			finishContinuous()
+			continuousPaths.denied(t, 31*time.Second)
 		})
 	}
 }
@@ -447,7 +465,10 @@ func startWorkloadPublishers(t *testing.T, f *privateSeparatedFixture, group, tr
 		if f.processContext != nil {
 			publisherContext = f.processContext("publisher")
 		}
-		ctx, cancel := context.WithCancel(publisherContext)
+		// publishers outlive the test context until the later-registered visitor
+		// cleanups have closed and joined their streams. then cancel and join
+		// the publisher while control, relays, and target listeners still run.
+		ctx, cancel := context.WithCancel(context.WithoutCancel(publisherContext))
 		var control publisherservice.RunControl = native
 		for _, wrap := range wrappers {
 			control = wrap(control)
@@ -461,10 +482,10 @@ func startWorkloadPublishers(t *testing.T, f *privateSeparatedFixture, group, tr
 			select {
 			case err := <-done:
 				if err != nil {
-					t.Error(err)
+					t.Errorf("workload publisher service=%s protocol=%s cleanup: %v", service.Id, service.Protocol, err)
 				}
 			case <-time.After(15 * time.Second):
-				t.Error("workload publisher did not join")
+				t.Errorf("workload publisher service=%s protocol=%s did not join", service.Id, service.Protocol)
 			}
 		})
 		select {
@@ -499,7 +520,7 @@ func renewRuntimeWorkload(t *testing.T, job *workload.Client, expires *time.Time
 			}
 			next, err := job.Renew(ctx)
 			if err != nil {
-				if ctx.Err() != nil || expires != nil && !time.Now().Before(*expires) {
+				if ctx.Err() != nil && failure.Only(err, ctx.Err()) || ctx.Err() == nil && expires != nil && !time.Now().Before(*expires) {
 					err = nil
 				}
 				done <- err
@@ -700,6 +721,66 @@ func workloadNativeRuntimeBinding(t *testing.T, f *privateSeparatedFixture, sess
 		t.Fatalf("workload native source/install/fixed-expiry scope: pairs=%d valid=%t: %v", count, valid, err)
 	}
 	return binding
+}
+
+func assertWorkloadRuntimeBinding(t *testing.T, message, before, after string) {
+	t.Helper()
+	if before == after {
+		return
+	}
+	// compare every original field, but never print owner keys, delivery IDs,
+	// or ciphertext. slot diagnostics contain only connection and relay IDs
+	// and their revisions.
+	var oldRows, newRows [][]json.RawMessage
+	if json.Unmarshal([]byte(before), &oldRows) != nil || json.Unmarshal([]byte(after), &newRows) != nil {
+		t.Fatal("invalid native binding snapshot")
+	}
+	byService := make(map[string][]json.RawMessage, len(newRows))
+	for _, row := range newRows {
+		if len(row) != 9 {
+			t.Fatal("invalid native binding field count")
+		}
+		byService[string(row[1])] = row
+	}
+	fields := [...]string{"pair_id", "service_id", "service_run_id", "run_number", "owner_key", "delivery_id", "delivery_generation", "key_ciphertext", "slots"}
+	for _, old := range oldRows {
+		if len(old) != len(fields) {
+			t.Fatal("invalid original native binding field count")
+		}
+		current, found := byService[string(old[1])]
+		if !found {
+			t.Logf("missing native binding service_id=%s pair_id=%s", old[1], old[0])
+			continue
+		}
+		for index, field := range fields {
+			if string(old[index]) == string(current[index]) {
+				continue
+			}
+			switch index {
+			case 0, 1, 2, 3, 6:
+				t.Logf("native binding service_id=%s field=%s before=%s after=%s", old[1], field, old[index], current[index])
+			case 8:
+				var oldSlots, newSlots []controlstate.ConnectorPeerPairRelay
+				if json.Unmarshal(old[index], &oldSlots) != nil || json.Unmarshal(current[index], &newSlots) != nil {
+					t.Fatal("invalid native slot snapshot")
+				}
+				for label, slots := range map[string][]controlstate.ConnectorPeerPairRelay{"before": oldSlots, "after": newSlots} {
+					for slot, binding := range slots {
+						t.Logf("native binding service_id=%s %s slot=%d publisher_connection_id=%s assignment_revision=%d relay_service_id=%s relay_id=%s relay_run_id=%s relay_lease_revision=%d",
+							old[1], label, slot, binding.PublisherConnectionID, binding.AssignmentRevision, binding.RelayLease.RelayServiceID,
+							binding.RelayLease.RelayID, binding.RelayLease.RelayRunID, binding.RelayLease.RelayLeaseRevision)
+					}
+				}
+			default:
+				t.Logf("native binding service_id=%s pair_id=%s changed_field=%s", old[1], old[0], field)
+			}
+		}
+		delete(byService, string(old[1]))
+	}
+	for _, row := range byService {
+		t.Logf("new native binding service_id=%s pair_id=%s", row[1], row[0])
+	}
+	t.Fatal(message)
 }
 
 func (p *workloadRuntimePaths) wait(t *testing.T, at time.Time) {

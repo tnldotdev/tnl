@@ -277,6 +277,15 @@ paths:
     $ref: "./paths/admin.yaml#/paths/~1v1~1admin~1maintenance-controls~1{control_name}"
 components:
   securitySchemes:
+    shareWebsiteAuth:
+      type: http
+      scheme: bearer
+      description: Scoped website credential, accepted only with shareActorAuth on canonical share management operations.
+    shareActorAuth:
+      type: apiKey
+      in: header
+      name: X-Tnl-Actor-Token
+      description: Fresh configured-issuer ID token bound by ServiceActorNonce to the exact HTTP method, escaped path, raw query and body bytes. State consumes the assertion and issuer JTI transactionally; this is not a control session.
     workloadAuth:
       $ref: "./schemas/common.yaml#/securitySchemes/workloadAuth"
     bearerAuth:

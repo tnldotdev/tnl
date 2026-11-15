@@ -22,7 +22,7 @@ type serviceInventoryStore struct {
 }
 
 func (s *serviceInventoryStore) ListAvailableServices(ctx context.Context, identity, cursor string, path controlv1.ServiceAccessPath, _ time.Time) ([]controlstate.ServiceInventory, string, error) {
-	if ctx.Value(inventoryContextKey{}) != "caller-context" || identity != testPublicURLReadPrincipal().identityID || cursor != "svc_aaaaaaaaaaaaaaaaaaaaaa" {
+	if ctx.Value(inventoryContextKey{}) != "caller-context" || identity != testControlReadPrincipal().identityID || cursor != "svc_aaaaaaaaaaaaaaaaaaaaaa" {
 		panic("visitor inventory changed the authenticated caller context or cursor")
 	}
 	s.calls++
@@ -47,7 +47,7 @@ func TestServiceInventoryHTTPPathUsesSameDefiningSummaryWithoutPrivateFacts(t *t
 		}
 		t.Run(name, func(t *testing.T) {
 			store := &serviceInventoryStore{}
-			h := &handler{dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal()}}
+			h := &handler{dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testControlReadPrincipal()}}
 			request := httptest.NewRequest(http.MethodGet, "/v1/visitor/services", nil)
 			request = request.WithContext(context.WithValue(request.Context(), inventoryContextKey{}, "caller-context"))
 			request.Header.Set("Authorization", "Bearer control-access")

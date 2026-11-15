@@ -143,7 +143,7 @@ func TestBrowserTokensRedemptionWaitsForConcurrentPolicyWithoutReissuingPermissi
 					}
 					return update, err
 				})
-				scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
+				scope := visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}
 				policy, err := PreparePolicy(t.Context(), provider, scope, "run", 1, "run-secret", nil)
 				if err != nil {
 					t.Fatal(err)
@@ -173,7 +173,7 @@ func TestBrowserTokensRedemptionWaitsForConcurrentPolicyWithoutReissuingPermissi
 				if err != nil {
 					t.Fatal(err)
 				}
-				response := controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: scope.ID}, Hostname: view.Hostname, Port: int(view.Port),
+				response := controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: scope.ID}, Hostname: view.Hostname, Port: int(view.Port),
 					VisitorToken: signed.Reveal(), VisitorPolicyRevision: 3, ExpiresAt: permission.ExpiresAt}
 				refresh, prepared := make(chan error, 1), make(chan error, 1)
 				go func() { refresh <- policy.Refresh(t.Context()) }()
@@ -295,7 +295,7 @@ func TestBrowserTokensRenewalWaitsForSignedPolicyRevision(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		response := controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: view.Scope.ID}, Hostname: view.Hostname, Port: int(view.Port), VisitorToken: signed.Reveal(), VisitorPolicyRevision: 2, ExpiresAt: facts.ExpiresAt}
+		response := controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: view.Scope.ID}, Hostname: view.Hostname, Port: int(view.Port), VisitorToken: signed.Reveal(), VisitorPolicyRevision: 2, ExpiresAt: facts.ExpiresAt}
 		client := &visitorfixture.TokenClient{Issue: func(context.Context, controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
 			return response, nil
 		}}
@@ -439,8 +439,8 @@ func browserTokensFixture(t *testing.T) (*Policy, ed25519.PrivateKey, visitortok
 	t.Helper()
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("p", 32)))
 	client := &visitorfixture.PolicyClient{Key: key}
-	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
-	policy, err := PreparePolicy(t.Context(), client, scope, "pr_"+strings.Repeat("B", 22), 1, "run-secret", nil)
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}
+	policy, err := PreparePolicy(t.Context(), client, scope, "srun_"+strings.Repeat("B", 22), 1, "run-secret", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +459,7 @@ func signedBrowserPermission(t *testing.T, policy *Policy, key ed25519.PrivateKe
 	if err != nil {
 		t.Fatal(err)
 	}
-	return controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: view.Scope.ID}, Hostname: view.Hostname, Port: int(view.Port),
+	return controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: view.Scope.ID}, Hostname: view.Hostname, Port: int(view.Port),
 		VisitorToken: token.Reveal(), VisitorPolicyRevision: view.VisitorPolicyRevision, ExpiresAt: permission.ExpiresAt}
 }
 

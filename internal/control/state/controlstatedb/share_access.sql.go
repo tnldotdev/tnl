@@ -113,7 +113,7 @@ func (q *Queries) DeleteFinishedShareHandoffs(ctx context.Context, now pgtype.Ti
 }
 
 const getActiveShareForService = `-- name: GetActiveShareForService :one
-SELECT share.id, share.schema_version, share.preview_id, share.team_id, share.guest_id, share.scope, share.entry_service_id, share.control_session_id, share.label, share.created_by_identity_id, share.idempotency_key, share.request_digest, share.secret_digest, share.created_at, share.expires_at, share.revoked_at, share.revoked_by_identity_id, share.revoked_by_guest_id FROM control.shares share
+SELECT share.id, share.schema_version, share.preview_id, share.team_id, share.guest_id, share.scope, share.entry_service_id, share.control_session_id, share.issuer_company_context, share.label, share.created_by_identity_id, share.idempotency_key, share.request_digest, share.secret_digest, share.created_at, share.expires_at, share.revoked_at, share.revoked_by_identity_id, share.revoked_by_guest_id FROM control.shares share
 JOIN control.share_services included ON included.share_id=share.id
 WHERE share.id=$1 AND included.service_id=$2
     AND share.revoked_at IS NULL AND share.expires_at>$3
@@ -138,6 +138,7 @@ func (q *Queries) GetActiveShareForService(ctx context.Context, arg GetActiveSha
 		&i.Scope,
 		&i.EntryServiceID,
 		&i.ControlSessionID,
+		&i.IssuerCompanyContext,
 		&i.Label,
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,

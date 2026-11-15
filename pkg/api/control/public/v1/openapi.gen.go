@@ -4249,12 +4249,6 @@ type VisitorPolicyUpdate struct {
 	Policy           VisitorPolicySnapshot `json:"policy"`
 	Revisions        RevisionList          `json:"revisions"`
 	SnapshotRequired bool                  `json:"snapshot_required"`
-
-	// VisitorSourceAuthority Opaque tunnelv1 source authority for the exact ingress process and public run. Present only in ingress preparation responses; it supplies neither visitor permission nor capacity.
-	VisitorSourceAuthority *[]byte `json:"visitor_source_authority,omitempty"`
-
-	// VisitorSourceKey Private public-run source key. Publishers receive the run master; ingress receives only the child key bound by visitor_source_authority. Never expose this value to a browser or relay.
-	VisitorSourceKey *[]byte `json:"visitor_source_key,omitempty"`
 }
 
 // VisitorRegisteredKeyLease defines model for VisitorRegisteredKeyLease.
@@ -6822,14 +6816,14 @@ type ClientInterface interface {
 
 	// ListTeamShares List manageable shares for one team
 	//
-	// Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; retain the original creation link or token_source for visitor access.
+	// Read the creator's cursor-paginated share inventory under current management and company source authorization. The website may use its scoped bearer credential plus X-Tnl-Actor-Token bound with ServiceActorNonce to the exact method, escaped path, raw query and empty body. Each page consumes a fresh assertion and issuer JTI in its authorization transaction. Responses omit secrets; retain the original creation link or token_source for visitor access. This does not grant connector access.
 	//
 	// Corresponds with GET /v1/shares (the `ListTeamShares` operationId).
 	ListTeamShares(ctx context.Context, params *ListTeamSharesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateServiceShareWithBody Store one share for an exact authorized HTTP service
 	//
-	// Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable; revoke and reissue if delivery was lost. Guest shares remain limited to the trial's service, source IP, and expiry.
+	// Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable with details.resource_id; revoke and reissue if delivery was lost. The website may use its scoped bearer credential plus X-Tnl-Actor-Token, a fresh configured-issuer assertion bound with ServiceActorNonce to the exact method, escaped path, raw query and body bytes. Current service management and company source checks run in the state transaction, including retries. This signed website permission is limited to these canonical share operations and never authenticates other control APIs or grants connector access. Guest shares remain limited to the trial's service, source IP, and expiry.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6838,7 +6832,7 @@ type ClientInterface interface {
 
 	// CreateServiceShare Store one share for an exact authorized HTTP service
 	//
-	// Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable; revoke and reissue if delivery was lost. Guest shares remain limited to the trial's service, source IP, and expiry.
+	// Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable with details.resource_id; revoke and reissue if delivery was lost. The website may use its scoped bearer credential plus X-Tnl-Actor-Token, a fresh configured-issuer assertion bound with ServiceActorNonce to the exact method, escaped path, raw query and body bytes. Current service management and company source checks run in the state transaction, including retries. This signed website permission is limited to these canonical share operations and never authenticates other control APIs or grants connector access. Guest shares remain limited to the trial's service, source IP, and expiry.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6847,14 +6841,14 @@ type ClientInterface interface {
 
 	// GetShare Read one share
 	//
-	// Read a manageable share's captured service IDs, entry service, deadline, and revocation state without its secret. Reading the record does not redeem it or create a visitor session.
+	// Read a manageable share's captured service IDs, entry service, deadline, and revocation state without its secret. The website may use its scoped bearer credential plus X-Tnl-Actor-Token bound to the exact method, escaped path, raw query and empty body with ServiceActorNonce. State consumes the assertion and checks current issuer management and company source authorization together. Reading does not redeem the share or create a visitor or control session.
 	//
 	// Corresponds with GET /v1/shares/{share_id} (the `GetShare` operationId).
 	GetShare(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokeShare Stop new access through one share
 	//
-	// Revoke the share under current management authorization so it cannot grant new visitor access. Retain the saved record and its captured service snapshot for subsequent reads.
+	// Revoke the creator's share under current management authorization so it cannot grant new visitor access. The website may use its scoped bearer credential plus X-Tnl-Actor-Token bound to the exact method, escaped path, raw query and empty body with ServiceActorNonce. State consumes the fresh assertion and checks all captured services and current company source authorization in the revocation transaction. Retain the saved record and captured service snapshot for subsequent reads.
 	//
 	// Corresponds with POST /v1/shares/{share_id}/revoke (the `RevokeShare` operationId).
 	RevokeShare(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10296,7 +10290,7 @@ func (c *Client) SelectServiceRun(ctx context.Context, serviceId ServiceID, body
 
 // ListTeamShares List manageable shares for one team
 //
-// Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; retain the original creation link or token_source for visitor access.
+// Read the creator's cursor-paginated share inventory under current management and company source authorization. The website may use its scoped bearer credential plus X-Tnl-Actor-Token bound with ServiceActorNonce to the exact method, escaped path, raw query and empty body. Each page consumes a fresh assertion and issuer JTI in its authorization transaction. Responses omit secrets; retain the original creation link or token_source for visitor access. This does not grant connector access.
 //
 // Corresponds with GET /v1/shares (the `ListTeamShares` operationId).
 func (c *Client) ListTeamShares(ctx context.Context, params *ListTeamSharesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -10313,7 +10307,7 @@ func (c *Client) ListTeamShares(ctx context.Context, params *ListTeamSharesParam
 
 // CreateServiceShareWithBody Store one share for an exact authorized HTTP service
 //
-// Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable; revoke and reissue if delivery was lost. Guest shares remain limited to the trial's service, source IP, and expiry.
+// Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable with details.resource_id; revoke and reissue if delivery was lost. The website may use its scoped bearer credential plus X-Tnl-Actor-Token, a fresh configured-issuer assertion bound with ServiceActorNonce to the exact method, escaped path, raw query and body bytes. Current service management and company source checks run in the state transaction, including retries. This signed website permission is limited to these canonical share operations and never authenticates other control APIs or grants connector access. Guest shares remain limited to the trial's service, source IP, and expiry.
 //
 // Takes any type of body and a specified content type.
 //
@@ -10332,7 +10326,7 @@ func (c *Client) CreateServiceShareWithBody(ctx context.Context, params *CreateS
 
 // CreateServiceShare Store one share for an exact authorized HTTP service
 //
-// Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable; revoke and reissue if delivery was lost. Guest shares remain limited to the trial's service, source IP, and expiry.
+// Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable with details.resource_id; revoke and reissue if delivery was lost. The website may use its scoped bearer credential plus X-Tnl-Actor-Token, a fresh configured-issuer assertion bound with ServiceActorNonce to the exact method, escaped path, raw query and body bytes. Current service management and company source checks run in the state transaction, including retries. This signed website permission is limited to these canonical share operations and never authenticates other control APIs or grants connector access. Guest shares remain limited to the trial's service, source IP, and expiry.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10351,7 +10345,7 @@ func (c *Client) CreateServiceShare(ctx context.Context, params *CreateServiceSh
 
 // GetShare Read one share
 //
-// Read a manageable share's captured service IDs, entry service, deadline, and revocation state without its secret. Reading the record does not redeem it or create a visitor session.
+// Read a manageable share's captured service IDs, entry service, deadline, and revocation state without its secret. The website may use its scoped bearer credential plus X-Tnl-Actor-Token bound to the exact method, escaped path, raw query and empty body with ServiceActorNonce. State consumes the assertion and checks current issuer management and company source authorization together. Reading does not redeem the share or create a visitor or control session.
 //
 // Corresponds with GET /v1/shares/{share_id} (the `GetShare` operationId).
 func (c *Client) GetShare(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -10368,7 +10362,7 @@ func (c *Client) GetShare(ctx context.Context, shareId ShareID, reqEditors ...Re
 
 // RevokeShare Stop new access through one share
 //
-// Revoke the share under current management authorization so it cannot grant new visitor access. Retain the saved record and its captured service snapshot for subsequent reads.
+// Revoke the creator's share under current management authorization so it cannot grant new visitor access. The website may use its scoped bearer credential plus X-Tnl-Actor-Token bound to the exact method, escaped path, raw query and empty body with ServiceActorNonce. State consumes the fresh assertion and checks all captured services and current company source authorization in the revocation transaction. Retain the saved record and captured service snapshot for subsequent reads.
 //
 // Corresponds with POST /v1/shares/{share_id}/revoke (the `RevokeShare` operationId).
 func (c *Client) RevokeShare(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -19128,7 +19122,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListTeamSharesWithResponse List manageable shares for one team
 	//
-	// Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; retain the original creation link or token_source for visitor access.
+	// Read the creator's cursor-paginated share inventory under current management and company source authorization. The website may use its scoped bearer credential plus X-Tnl-Actor-Token bound with ServiceActorNonce to the exact method, escaped path, raw query and empty body. Each page consumes a fresh assertion and issuer JTI in its authorization transaction. Responses omit secrets; retain the original creation link or token_source for visitor access. This does not grant connector access.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -19137,7 +19131,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateServiceShareWithBodyWithResponse Store one share for an exact authorized HTTP service
 	//
-	// Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable; revoke and reissue if delivery was lost. Guest shares remain limited to the trial's service, source IP, and expiry.
+	// Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable with details.resource_id; revoke and reissue if delivery was lost. The website may use its scoped bearer credential plus X-Tnl-Actor-Token, a fresh configured-issuer assertion bound with ServiceActorNonce to the exact method, escaped path, raw query and body bytes. Current service management and company source checks run in the state transaction, including retries. This signed website permission is limited to these canonical share operations and never authenticates other control APIs or grants connector access. Guest shares remain limited to the trial's service, source IP, and expiry.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19146,7 +19140,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateServiceShareWithResponse Store one share for an exact authorized HTTP service
 	//
-	// Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable; revoke and reissue if delivery was lost. Guest shares remain limited to the trial's service, source IP, and expiry.
+	// Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable with details.resource_id; revoke and reissue if delivery was lost. The website may use its scoped bearer credential plus X-Tnl-Actor-Token, a fresh configured-issuer assertion bound with ServiceActorNonce to the exact method, escaped path, raw query and body bytes. Current service management and company source checks run in the state transaction, including retries. This signed website permission is limited to these canonical share operations and never authenticates other control APIs or grants connector access. Guest shares remain limited to the trial's service, source IP, and expiry.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19155,7 +19149,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetShareWithResponse Read one share
 	//
-	// Read a manageable share's captured service IDs, entry service, deadline, and revocation state without its secret. Reading the record does not redeem it or create a visitor session.
+	// Read a manageable share's captured service IDs, entry service, deadline, and revocation state without its secret. The website may use its scoped bearer credential plus X-Tnl-Actor-Token bound to the exact method, escaped path, raw query and empty body with ServiceActorNonce. State consumes the assertion and checks current issuer management and company source authorization together. Reading does not redeem the share or create a visitor or control session.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -19164,7 +19158,7 @@ type ClientWithResponsesInterface interface {
 
 	// RevokeShareWithResponse Stop new access through one share
 	//
-	// Revoke the share under current management authorization so it cannot grant new visitor access. Retain the saved record and its captured service snapshot for subsequent reads.
+	// Revoke the creator's share under current management authorization so it cannot grant new visitor access. The website may use its scoped bearer credential plus X-Tnl-Actor-Token bound to the exact method, escaped path, raw query and empty body with ServiceActorNonce. State consumes the fresh assertion and checks all captured services and current company source authorization in the revocation transaction. Retain the saved record and captured service snapshot for subsequent reads.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -28150,7 +28144,7 @@ func (c *ClientWithResponses) SelectServiceRunWithResponse(ctx context.Context, 
 
 // ListTeamSharesWithResponse List manageable shares for one team
 //
-// Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; retain the original creation link or token_source for visitor access.
+// Read the creator's cursor-paginated share inventory under current management and company source authorization. The website may use its scoped bearer credential plus X-Tnl-Actor-Token bound with ServiceActorNonce to the exact method, escaped path, raw query and empty body. Each page consumes a fresh assertion and issuer JTI in its authorization transaction. Responses omit secrets; retain the original creation link or token_source for visitor access. This does not grant connector access.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -28165,7 +28159,7 @@ func (c *ClientWithResponses) ListTeamSharesWithResponse(ctx context.Context, pa
 
 // CreateServiceShareWithBodyWithResponse Store one share for an exact authorized HTTP service
 //
-// Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable; revoke and reissue if delivery was lost. Guest shares remain limited to the trial's service, source IP, and expiry.
+// Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable with details.resource_id; revoke and reissue if delivery was lost. The website may use its scoped bearer credential plus X-Tnl-Actor-Token, a fresh configured-issuer assertion bound with ServiceActorNonce to the exact method, escaped path, raw query and body bytes. Current service management and company source checks run in the state transaction, including retries. This signed website permission is limited to these canonical share operations and never authenticates other control APIs or grants connector access. Guest shares remain limited to the trial's service, source IP, and expiry.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28180,7 +28174,7 @@ func (c *ClientWithResponses) CreateServiceShareWithBodyWithResponse(ctx context
 
 // CreateServiceShareWithResponse Store one share for an exact authorized HTTP service
 //
-// Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable; revoke and reissue if delivery was lost. Guest shares remain limited to the trial's service, source IP, and expiry.
+// Capture one service ID as entry_service_id and return its link and token source once. An identical retry returns credential_delivery_unavailable with details.resource_id; revoke and reissue if delivery was lost. The website may use its scoped bearer credential plus X-Tnl-Actor-Token, a fresh configured-issuer assertion bound with ServiceActorNonce to the exact method, escaped path, raw query and body bytes. Current service management and company source checks run in the state transaction, including retries. This signed website permission is limited to these canonical share operations and never authenticates other control APIs or grants connector access. Guest shares remain limited to the trial's service, source IP, and expiry.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28195,7 +28189,7 @@ func (c *ClientWithResponses) CreateServiceShareWithResponse(ctx context.Context
 
 // GetShareWithResponse Read one share
 //
-// Read a manageable share's captured service IDs, entry service, deadline, and revocation state without its secret. Reading the record does not redeem it or create a visitor session.
+// Read a manageable share's captured service IDs, entry service, deadline, and revocation state without its secret. The website may use its scoped bearer credential plus X-Tnl-Actor-Token bound to the exact method, escaped path, raw query and empty body with ServiceActorNonce. State consumes the assertion and checks current issuer management and company source authorization together. Reading does not redeem the share or create a visitor or control session.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -28210,7 +28204,7 @@ func (c *ClientWithResponses) GetShareWithResponse(ctx context.Context, shareId 
 
 // RevokeShareWithResponse Stop new access through one share
 //
-// Revoke the share under current management authorization so it cannot grant new visitor access. Retain the saved record and its captured service snapshot for subsequent reads.
+// Revoke the creator's share under current management authorization so it cannot grant new visitor access. The website may use its scoped bearer credential plus X-Tnl-Actor-Token bound to the exact method, escaped path, raw query and empty body with ServiceActorNonce. State consumes the fresh assertion and checks all captured services and current company source authorization in the revocation transaction. Retain the saved record and captured service snapshot for subsequent reads.
 //
 // Returns a wrapper object for the known response body format(s).
 //

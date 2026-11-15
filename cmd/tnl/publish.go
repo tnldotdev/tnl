@@ -10,6 +10,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
@@ -66,6 +67,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if flags.Install && flags.Detach {
 		return publisherCLIError("--install and --detach cannot be combined")
 	}
+	if !flags.Install && (flags.System || flags.ServiceName != "" || flags.SystemStateDir != "" || flags.ServerCAFile != "") {
+		return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
+	}
 	credentialOwned := flags.EnrollmentKey != "" || flags.PublisherIdentityID != "" || flags.PublisherCredentialFile != ""
 	if len(flags.PreferredRegions) != 0 && flags.Service != "" && !credentialOwned {
 		return publisherCLIError("--prefer-region requires an ad-hoc target or scoped publisher credentials; named publications use the project owner")
@@ -80,18 +84,26 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		}
 		flags.Target = string(*resolved.Target)
 	}
-	if flags.service && !flags.Install && flags.Service != "" && !credentialOwned {
-		selected, err := resolveNamedPrivate(flags)
+	if !flags.Install && flags.Service != "" && !credentialOwned {
+		selected, err := namedInvocation(flags)
 		if err != nil {
 			return err
+		}
+		binding := selected.project.Config.Services[selected.service]
+		publicHTTP := config.Protocol(binding) == "http" && binding.Public != nil && *binding.Public
+		if flags.Open && !publicHTTP {
+			return publisherCLIError("--open requires a public HTTP service")
 		}
 		output, err := newPublishOutput(flags.Output, "tnl publish", stdout, stderr, nil)
 		if err != nil {
 			return err
 		}
 		output.detachedCtx = ctx
+		if publicHTTP {
+			output.openURL = browserOpener(ctx, flags.Open, true)
+		}
 		defer func() { result = output.finish(ctx, result) }()
-		return runNamedPublish(ctx, selected.resolvedNamedInvocation, flags.StateDir, output)
+		return runNamedPublish(ctx, selected, flags.StateDir, output)
 	}
 	if flags.service || flags.Protocol != "" && flags.Protocol != "http" {
 		return runPrivatePublish(ctx, flags, stdout, stderr)
@@ -104,9 +116,6 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			return runPublicationInstall(ctx, flags, stdout, stderr)
 		}
 		return runEnrolledBackgroundPublish(ctx, flags, selection, flags.backgroundPublishFlags, stdout, os.Stdin, nil)
-	}
-	if flags.System || flags.ServiceName != "" || flags.SystemStateDir != "" || flags.ServerCAFile != "" {
-		return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
 	}
 	output, err := newPublishOutput(flags.Output, "tnl publish", stdout, stderr, nil)
 	if err != nil {
@@ -126,16 +135,6 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	}
 	if err := validateTCPPublishOptions(flags, protocol); err != nil {
 		return err
-	}
-	if flags.Service != "" {
-		selected, err := resolveNamedPublic(flags)
-		if err != nil {
-			return err
-		}
-		if protocol == controlv1.ServiceProtocolHTTP {
-			output.openURL = browserOpener(ctx, flags.Open, true)
-		}
-		return runNamedPublish(ctx, selected.resolvedNamedInvocation, flags.StateDir, output)
 	}
 	if flags.Demo {
 		flags.projectRoot, err = currentProjectRoot(ctx)

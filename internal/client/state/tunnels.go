@@ -97,7 +97,6 @@ type TunnelInfo struct {
 	Service          string                    `json:"service,omitempty"`
 	ServiceProtocol  controlv1.ServiceProtocol `json:"service_protocol,omitempty"`
 	ServiceID        string                    `json:"service_id,omitempty"`
-	PublicURLID      string                    `json:"public_url_id,omitempty"`
 	PublishRunNumber uint64                    `json:"publish_run_number,omitempty"`
 	Hostname         string                    `json:"hostname,omitempty"`
 	PublicURL        string                    `json:"public_url,omitempty"`
@@ -211,18 +210,6 @@ func (t *Tunnel) Context() context.Context { return t.ctx }
 // CancelWithCause stops this tunnel when a local reporting boundary fails.
 // Finish records the original cause after joining lease maintenance.
 func (t *Tunnel) CancelWithCause(err error) { t.cancel(err) }
-
-func (t *Tunnel) SetPublicURL(ctx context.Context, publicURLID, hostname string) error {
-	hostname, err := naming.CanonicalizeHostname(hostname)
-	if err != nil || !validPublicURLID(publicURLID) {
-		return errors.New("clientstate: invalid tunnel route")
-	}
-	rows, err := t.database.queries.SetTunnelPublicURL(ctx, clientstatedb.SetTunnelPublicURLParams{
-		PublicURLID: sql.NullString{String: publicURLID, Valid: true}, Hostname: sql.NullString{String: hostname, Valid: true},
-		Now: t.database.now().UTC().UnixNano(), ID: t.id,
-	})
-	return tunnelUpdateResult(rows, err)
-}
 
 func (t *Tunnel) SetProvisioning(ctx context.Context, publishRunNumber uint64) error {
 	versionValue, err := databaseVersion(publishRunNumber)
@@ -401,8 +388,8 @@ func tunnelInfo(row clientstatedb.LocalTunnel, observedAt time.Time) TunnelInfo 
 		ID: row.ID, Command: TunnelCommand(row.Command), State: state, ProcessID: int(row.ProcessID),
 		Server: row.ServerOrigin, Project: row.ProjectRoot, Service: row.Service.String,
 		ServiceProtocol: controlv1.ServiceProtocol(row.ServiceProtocol), ServiceID: row.ServiceID.String,
-		PublicURLID: row.PublicURLID.String, PublishRunNumber: uint64(row.PublishRunNumber.Int64),
-		Hostname: row.Hostname.String, Target: row.Target.String, Framework: row.Framework.String,
+		PublishRunNumber: uint64(row.PublishRunNumber.Int64),
+		Hostname:         row.Hostname.String, Target: row.Target.String, Framework: row.Framework.String,
 		IntegrationScope: IntegrationScope{PrimaryProjectRoot: row.PrimaryProjectRoot.String, Namespace: row.IntegrationNamespace.String},
 		StartedAt:        unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),
 		HeartbeatAt: unixNanoTime(row.HeartbeatAt), LeaseExpiresAt: unixNanoTime(row.LeaseExpiresAt),

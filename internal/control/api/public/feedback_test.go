@@ -66,15 +66,15 @@ func feedbackTestThread() controlstate.FeedbackThread {
 func TestFeedbackOwnerReadsOnlyManageableServiceThreads(t *testing.T) {
 	thread := feedbackTestThread()
 	store := &feedbackStoreStub{thread: thread}
-	authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal()}
+	authorizer := &recordingAuthorizer{principal: testControlReadPrincipal()}
 	h := &handler{feedback: store, authorizer: authorizer}
 	request := httptest.NewRequest(http.MethodGet, "/v1/feedback/"+thread.ID, nil)
 	request.Header.Set("Authorization", "Bearer access-token")
 	response := httptest.NewRecorder()
 	h.GetFeedbackThread(response, request, thread.ID)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"text":"Save does nothing"`) || len(authorizer.requests) != 0 ||
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"text":"Save does nothing"`) ||
 		store.managedService != thread.ServiceID || store.manager != "identity_1" {
-		t.Fatalf("feedback read = %d %s; auth=%+v", response.Code, response.Body.String(), authorizer.requests)
+		t.Fatalf("feedback read = %d %s", response.Code, response.Body.String())
 	}
 	authorizer.principal.teamIDs = map[string]struct{}{"team_other": {}}
 	denied := httptest.NewRecorder()

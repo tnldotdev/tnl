@@ -147,7 +147,7 @@ func (d *Database) saveServiceConfiguration(ctx context.Context, tx pgx.Tx, serv
 	if reflect.DeepEqual(previousHTTP, serviceHTTPRequestPolicy(value.HTTP)) {
 		return nil
 	}
-	_, err = tx.Exec(ctx, `SELECT control.touch_visitor_policy('service',$1)`, service)
+	_, err = tx.Exec(ctx, `SELECT control.touch_visitor_policy($1)`, service)
 	return err
 }
 

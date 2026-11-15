@@ -28,7 +28,7 @@ func TestIntegrationServiceSuspensionClosesRunsWithoutReplacingAuthority(t *test
 	if err := d.pool.QueryRow(ctx, `SELECT count(*) FROM control.publisher_grants WHERE service_id=$1 AND revoked_at IS NULL`, f.service.ID).Scan(&grants); err != nil || grants != 2 {
 		t.Fatal("fixture did not retain both exact publisher grants", grants, err)
 	}
-	policy := controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "service", ResourceID: f.service.ID}
+	policy := f.service.ID
 	q := controlstatedb.New(d.pool)
 	revision, err := q.ReadVisitorPolicyRevision(ctx, policy)
 	if err != nil {

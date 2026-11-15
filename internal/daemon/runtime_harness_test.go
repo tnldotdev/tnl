@@ -363,7 +363,7 @@ func splitTestConfig(role daemonconfig.Role, metricsAddress string) daemonconfig
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 2 * time.Second,
 		RelayLeaseDuration:   2 * time.Second, LeaseRenewalInterval: 500 * time.Millisecond,
-		ControlRetryInterval: 50 * time.Millisecond, RoutingTableWait: time.Second, DrainTimeout: time.Second,
+		ControlRetryInterval: 50 * time.Millisecond, DrainTimeout: time.Second,
 	}
 }
 

@@ -97,13 +97,13 @@ func separatedAwaitServiceConnections(ctx context.Context, database *sql.DB, exp
 	}
 	return pollCondition(ctx, 25*time.Millisecond, 2*time.Second, func(ctx context.Context) (bool, error) {
 		var count int
-		err := database.QueryRowContext(ctx, `SELECT count(*) FROM control.publisher_service_connection_slots c
+		err := database.QueryRowContext(ctx, `SELECT count(*) FROM control.service_connection_slots c
 			JOIN unnest($1::text[],$2::text[],$3::bigint[]) expected(service_id,run_id,run_number)
-				ON (c.service_id,c.run_id,c.run_number)=(expected.service_id,expected.run_id,expected.run_number)
-			JOIN control.service_runs run ON (run.id,run.service_id,run.run_number)=(c.run_id,c.service_id,c.run_number)
-			JOIN control.relay_leases l ON l.relay_id = c.connected_relay_id AND l.relay_run_id = c.connected_relay_run_id
-			AND l.relay_lease_revision = c.connected_relay_lease_revision
-			WHERE c.service_kind='private' AND c.session_open AND c.state = 'ready' AND run.state='ready'
+				ON (c.service_id,c.service_run_id,c.run_number)=(expected.service_id,expected.run_id,expected.run_number)
+			JOIN control.service_runs run ON (run.id,run.service_id,run.run_number)=(c.service_run_id,c.service_id,c.run_number)
+			JOIN control.relay_leases l ON l.relay_id = c.relay_id AND l.relay_run_id = c.relay_run_id
+			AND l.relay_lease_revision = c.relay_lease_revision
+			WHERE c.session_open AND c.state = 'ready' AND run.state='ready'
 				AND run.closed_at IS NULL AND run.publisher_expires_at>now()
 				AND NOT l.draining AND l.lease_expires_at > now()`, services, runs, numbers).Scan(&count)
 		return count == len(expected)*2, err
@@ -114,11 +114,11 @@ func separatedConnectionAssignments(t *testing.T, database *sql.DB) string {
 	t.Helper()
 	var assignments string
 	if err := database.QueryRowContext(integrationOperationContext(t), `
-		SELECT coalesce(jsonb_agg(jsonb_build_array(service_id, run_id, run_number, connection_slot,
+		SELECT coalesce(jsonb_agg(jsonb_build_array(service_id, service_run_id, run_number, connection_slot,
 			publisher_connection_id, connection_assignment_revision, relay_service_id,
-			connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, state)
+			relay_id, relay_run_id, relay_lease_revision, state)
 			ORDER BY service_id, connection_slot), '[]'::jsonb)::text
-		FROM control.publisher_service_connection_slots WHERE service_kind='private' AND session_open AND state IN ('assigned', 'connected', 'ready')
+		FROM control.service_connection_slots WHERE session_open AND state IN ('assigned', 'connected', 'ready')
 	`).Scan(&assignments); err != nil {
 		t.Fatal(err)
 	}

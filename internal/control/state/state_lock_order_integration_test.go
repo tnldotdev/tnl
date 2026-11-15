@@ -2,85 +2,74 @@ package state
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
 func TestIntegrationStateLockOrderPublisherRevocation(t *testing.T) {
 	for _, kind := range []string{"identity", "grant"} {
 		t.Run(kind, func(t *testing.T) {
-			d, now, r, _ := newPublishRunPrerequisites(t)
-			u, err := d.GetPublicURLForAuthorization(t.Context(), r.PublicURLID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			e := publisherEnrollment(t, d, CreatePublicURLRequest{TeamID: r.TeamID, ActingIdentityID: r.ActingIdentityID}, PublisherScope{TeamID: r.TeamID, Kind: "saved_public_url", PublicURLID: r.PublicURLID}, now)
-			public, private, err := ed25519.GenerateKey(rand.Reader)
-			if err != nil {
-				t.Fatal(err)
-			}
-			p, err := d.RedeemPublisherEnrollment(t.Context(), e.Key, public, now)
-			if err != nil {
-				t.Fatal(err)
-			}
-			plan, err := d.PublisherRunPlan(t.Context(), p, u, false)
-			if err != nil {
-				t.Fatal(err)
-			}
-			r.CertificateCacheKey, r.CertificateScope, r.CertificateIdentifiers, r.CertificateChallenge = plan.CacheKey, plan.Scope, plan.Identifiers, plan.ChallengeMethod
-			r.PublisherIdentityID, r.PublisherGrantID, r.PublisherKeyID = p.ID, p.GrantID, p.KeyID
-			r.PublisherRunProof, err = publisherproof.SignRun(private, r.PublicURLID, r.IdempotencyKey)
-			if err != nil {
-				t.Fatal(err)
-			}
-			r.RetrySecret = nil
-			setup, err := d.CreatePublishRun(t.Context(), r, now, time.Minute, time.Minute)
-			if err != nil {
-				t.Fatal(err)
-			}
-			auth := PublishRunAuthentication{PublicURLID: r.PublicURLID, PublishRunID: setup.PublishRunID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
+			f := newServicePublicationFixture(t)
+			// keep a live run so heartbeat contends with revocation.
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
 			workers := newIntegrationWorkers(t, cancel)
-			gate, err := d.pool.Begin(ctx)
+			defer workers.stop()
+			gate, err := f.database.pool.Begin(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer rollbackTestTransaction(t, gate)
-			if _, err = controlstatedb.New(gate).LockPublishRun(ctx, setup.PublishRunID); err != nil {
+			if _, err = controlstatedb.New(gate).LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: f.run.RunID, ServiceID: f.service.ID}); err != nil {
 				t.Fatal(err)
 			}
 			heartbeat := make(chan error, 1)
 			workers.Go(func() {
-				_, err := d.HeartbeatPublishRun(ctx, auth, now.Add(time.Second), time.Minute, time.Minute)
+				_, err := f.database.HeartbeatServiceRun(ctx, f.service.ID, f.run.RunID, f.run.Token, f.run.ExpiresAt.Add(-time.Second), ServiceRunHealth{StreamCapacity: 64})
 				heartbeat <- err
 			})
-			pid := waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), heartbeat)
+			pid := waitForPostgresBlock(t, ctx, f.database, int32(gate.Conn().PgConn().PID()), heartbeat)
 			revoked := make(chan error, 1)
+			actor := f.actor(t)
 			workers.Go(func() {
 				if kind == "identity" {
-					revoked <- d.RevokePublisherIdentity(ctx, r.TeamID, p.ID, r.ActingIdentityID, now.Add(2*time.Second))
+					revoked <- f.database.RevokePublisherIdentity(ctx, f.service.TeamID, f.publisher.ID, actor, f.now.Add(2*time.Second))
 				} else {
-					revoked <- d.RevokePublisherGrant(ctx, r.TeamID, p.ID, p.GrantID, r.ActingIdentityID, now.Add(2*time.Second))
+					revoked <- f.database.RevokePublisherGrant(ctx, f.service.TeamID, f.publisher.ID, f.publisher.GrantID, actor, f.now.Add(2*time.Second))
 				}
 			})
-			waitForPostgresBlock(t, ctx, d, pid, revoked)
+			waitForPostgresBlock(t, ctx, f.database, pid, revoked)
 			if err = gate.Commit(ctx); err != nil {
 				t.Fatal(err)
 			}
 			heartbeatErr, revokeErr := awaitIntegrationResult(t, ctx, heartbeat), awaitIntegrationResult(t, ctx, revoked)
-			if heartbeatErr != nil || revokeErr != nil {
-				t.Fatalf("heartbeat = %v; revocation = %v", heartbeatErr, revokeErr)
+			if revokeErr != nil {
+				t.Fatalf("revocation = %v", revokeErr)
 			}
-			if _, err = d.HeartbeatPublishRun(ctx, auth, now.Add(3*time.Second), time.Minute, time.Minute); !errors.Is(err, ErrPublisherIdentity) && !errors.Is(err, ErrPublishRunStale) {
-				t.Fatalf("revoked run heartbeat = %v", err)
+			if heartbeatErr != nil && !errors.Is(heartbeatErr, ErrServiceAccess) {
+				t.Fatalf("heartbeat = %v", heartbeatErr)
+			}
+			if _, err = f.database.HeartbeatServiceRun(ctx, f.service.ID, f.run.RunID, f.run.Token, f.run.ExpiresAt.Add(-time.Second), ServiceRunHealth{StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) {
+				t.Fatalf("post-revocation heartbeat = %v", err)
+			}
+			var closed bool
+			if err = f.database.pool.QueryRow(t.Context(), `SELECT state='closed' AND closed_at IS NOT NULL FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&closed); err != nil || !closed {
+				t.Fatalf("revoked run not closed: closed=%t err=%v", closed, err)
+			}
+			if kind == "identity" {
+				var revokedAt bool
+				if err = f.database.pool.QueryRow(t.Context(), `SELECT revoked_at IS NOT NULL FROM control.publisher_identities WHERE id=$1`, f.publisher.ID).Scan(&revokedAt); err != nil || !revokedAt {
+					t.Fatalf("publisher identity not revoked: revoked=%t err=%v", revokedAt, err)
+				}
+			} else {
+				var revokedAt bool
+				if err = f.database.pool.QueryRow(t.Context(), `SELECT revoked_at IS NOT NULL FROM control.publisher_grants WHERE id=$1`, f.publisher.GrantID).Scan(&revokedAt); err != nil || !revokedAt {
+					t.Fatalf("publisher grant not revoked: revoked=%t err=%v", revokedAt, err)
+				}
 			}
 		})
 	}

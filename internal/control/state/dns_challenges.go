@@ -114,6 +114,9 @@ func (d *Database) GetDNSChallengeContextForSubject(ctx context.Context, subject
 }
 
 func dnsChallengeContext(ctx context.Context, queries *controlstatedb.Queries, subject CertificateSubject, authorizationID string) (DNSChallengeContext, error) {
+	if !subject.Valid() || !validStateText(authorizationID) {
+		return DNSChallengeContext{}, ErrDNSChallengeNotFound
+	}
 	row, err := queries.GetPrivateDNSChallengeContext(ctx, controlstatedb.GetPrivateDNSChallengeContextParams{ServiceID: subject.ID, AuthorizationID: authorizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DNSChallengeContext{}, ErrDNSChallengeNotFound

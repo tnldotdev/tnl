@@ -7,8 +7,8 @@ import (
 	"errors"
 )
 
-// ServiceRunToken authorizes one service run, independently of public
-// URL publish run tokens and publisher connection derivation seeds.
+// ServiceRunToken authorizes one service run, independently of publisher
+// connection derivation seeds.
 type ServiceRunToken string
 
 var ErrInvalidServiceRunToken = errors.New("invalid managed run token")
@@ -23,7 +23,7 @@ func NewServiceRunToken() (ServiceRunToken, SecretHash, error) {
 	return ServiceRunToken(base64.RawURLEncoding.EncodeToString(secret[:])), sha256.Sum256(secret[:]), nil
 }
 
-// ParseServiceRunToken accepts only the existing canonical, unprefixed secret.
+// ParseServiceRunToken accepts only the canonical, unprefixed secret.
 func ParseServiceRunToken(token ServiceRunToken) (SecretHash, error) {
 	if len(token) != base64.RawURLEncoding.EncodedLen(secretBytes) {
 		return SecretHash{}, ErrInvalidServiceRunToken

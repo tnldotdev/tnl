@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -20,18 +21,20 @@ import (
 
 func TestIntegrationVisitorTokenIssuanceUsesCurrentScopeAndParentDeadlines(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "visitor_token_issuance")
-	request := oidcRouteRequest(t, d, now)
-	u := createTestPublicURL(t, d, request, now)
 	session := newOIDCSession(t, d, now)
 	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
 	ctx := WithControlPrincipal(t.Context(), principal)
-	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: u.ID}
+	service, err := d.CreateServiceAt(ctx, session.Identity.Memberships[0].TeamID, principal.IdentityID, "web", "web", ServicePlacement{}, now, ServiceMetadata{Protocol: "http"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}
 	issued, err := d.IssueVisitorToken(ctx, testVisitorIssuer, scope, BrowserTokenSource{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if issued.ServiceTrustRevision != 0 {
-		t.Fatal("public URL permission included a service metadata revision")
+	if issued.ServiceTrustRevision != service.TrustRevision {
+		t.Fatal("service permission omitted current trust revision")
 	}
 	keys := stateTestVisitorKeys(t, d, now)
 	verified, err := visitortoken.VerifyBearer(issued.Token, stateTestVisitorView(issued.Permission, keys, now), now)
@@ -41,9 +44,6 @@ func TestIntegrationVisitorTokenIssuanceUsesCurrentScopeAndParentDeadlines(t *te
 	if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, scope, BrowserTokenSource{}, now); !errors.Is(err, ErrVisitorPermission) {
 		t.Fatal("unverified identity minted visitor permission", err)
 	}
-	if _, err := d.IssueVisitorToken(ctx, testVisitorIssuer, visitorscope.Scope{Kind: visitorscope.Service, ID: u.ID}, BrowserTokenSource{}, now); err == nil {
-		t.Fatal("public URL ID became a service permission")
-	}
 	parentDeadline := now.Add(2 * time.Second)
 	if _, err := d.pool.Exec(ctx, `UPDATE control.control_sessions SET access_expires_at=$2 WHERE id=$1`, session.SessionID, parentDeadline); err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func TestIntegrationVisitorTokenIssuanceUsesCurrentScopeAndParentDeadlines(t *te
 	if err != nil || !short.Permission.ExpiresAt.Equal(parentDeadline.Truncate(time.Second)) {
 		t.Fatal("permission outlived its parent session", err)
 	}
-	if _, err := d.pool.Exec(ctx, `UPDATE control.public_urls SET access_mode='anonymous' WHERE id=$1`, u.ID); err != nil {
+	if _, err := d.ConfigureService(ctx, service.ID, principal.IdentityID, ServiceMetadata{Protocol: "http", TrustRevision: service.TrustRevision}, &ProjectServiceConfiguration{Target: "localhost:3000", HTTP: &config.HTTPService{Access: &config.Access{Mode: "anonymous"}}}, ServiceUpdateConditions{}, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.RevokeControlSession(ctx, principal, now); err != nil {
@@ -103,11 +103,13 @@ func TestIntegrationServicePermissionReportsCurrentTrustRevisionWithoutSelecting
 
 func TestIntegrationConcurrentVisitorTokenIssuanceRetriesSerialization(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "visitor_token_concurrent")
-	request := oidcRouteRequest(t, d, now)
-	url := createTestPublicURL(t, d, request, now)
 	session := newOIDCSession(t, d, now)
 	ctx := WithControlPrincipal(t.Context(), ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID})
-	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: url.ID}
+	service, err := d.CreateServiceAt(ctx, session.Identity.Memberships[0].TeamID, session.Identity.Identity.ID, "concurrent", "concurrent", ServicePlacement{}, now, ServiceMetadata{Protocol: "http"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}
 	start := make(chan struct{})
 	var workers sync.WaitGroup
 	for range 8 {
@@ -269,10 +271,13 @@ func TestIntegrationVisitorTokenNativeAndExplicitCredentialsNeedOneScopedGrantMo
 	if _, err := d.IssueVisitorClientCertificate(ctx, testVisitorIssuer, scope, DeviceTokenSource{DeviceID: device.ID}, csr, now); !errors.Is(err, ErrVisitorPermission) {
 		t.Fatal("certificate issuance revived a revoked CSR", err)
 	}
-	// keep a real public URL grant for the same identity and team. it must not
-	// substitute for revoked grants on this service, even for an enrolled device.
-	u := createTestPublicURL(t, d, request, now)
-	if _, err := d.CreateTeamVisitorGrant(ctx, u.ID, principal.IdentityID, "scope-grant", nil, now); err != nil {
+	// keep a real grant on a different service for the same identity and team.
+	// it must not substitute for revoked grants on this service, even for an enrolled device.
+	otherService, err := d.CreateServiceAt(ctx, request.TeamID, principal.IdentityID, "other", "other", ServicePlacement{}, now, ServiceMetadata{Protocol: "http"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateServiceGrant(ctx, otherService.ID, principal.IdentityID, "scope-grant", "team", "", nil, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.pool.Exec(ctx, `UPDATE control.visitor_grants SET revoked_at=$2 WHERE service_id=$1`, service.ID, now); err != nil {

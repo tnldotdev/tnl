@@ -36,10 +36,10 @@ func (c Config) IngressTraffic() trafficlimits.IngressConfig {
 }
 
 func (c Config) IngressPending() trafficlimits.PendingConfig {
-	return trafficlimits.PendingConfig{Connections: c.PendingConnectionLimit, PublicURLConnections: c.PendingURLConnectionLimit,
+	return trafficlimits.PendingConfig{Connections: c.PendingConnectionLimit, ServiceConnections: c.PendingServiceConnectionLimit,
 		SourceConnections: c.PendingSourceConnectionLimit, Timeout: c.PendingTimeout,
 		UploadBytes: c.PendingUploadBytes, DownloadBytes: c.PendingDownloadBytes,
-		PublicURLRate: c.PendingURLRate, PublicURLBurst: c.PendingURLBurst,
+		ServiceRate: c.PendingServiceRate, ServiceBurst: c.PendingServiceBurst,
 		SourceRate: c.PendingSourceRate, SourceBurst: c.PendingSourceBurst}
 }
 

@@ -2,12 +2,16 @@ package state
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"slices"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
@@ -41,11 +45,11 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 	if run.RunNumber != number || run.PublisherIdentityID != publisher.ID || run.PublisherGrantID != publisher.GrantID || run.PublisherKeyID != publisher.KeyID || run.ClosedAt.Valid || len(run.CertificateIdentifiers) == 0 || !run.PublisherExpiresAt.Time.After(clock.current()) {
 		return result, ErrServiceAccess
 	}
-	if run.CertificateHostname != endpoint.CertificateHostname || run.CertificateDomainID != endpoint.DomainID || run.RequirePostQuantum != endpoint.RequirePostQuantum {
+	if run.RequirePostQuantum != endpoint.RequirePostQuantum {
 		return result, ErrServiceAccess
 	}
 	prepared := serviceRunLifecycleState(run.State) == serviceRunPrepared
-	plan, err := serviceCertificatePlan(ctx, tx, endpoint, publisher.ID, publisher.GrantID, clock.current())
+	plan, err := serviceRunCertificatePlan(ctx, tx, run)
 	if err != nil || plan.CacheKey != run.CertificateCacheKey || plan.Scope != run.CertificateScope || !slices.Equal(plan.Identifiers, run.CertificateIdentifiers) {
 		return result, errors.Join(ErrServiceAccess, err)
 	}
@@ -60,11 +64,19 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 	if err != nil {
 		return result, err
 	}
-	token, digest, err := credentials.NewServiceRunToken()
-	if err != nil {
-		return result, err
-	}
+	// recover the same run credential after a lost start response. the run's
+	// protected seed already persists; a separate context keeps this secret
+	// independent from every publisher connection credential.
+	mac := hmac.New(sha256.New, []byte(seed))
+	_, _ = mac.Write([]byte("service-run-token/" + run.ID))
+	secret := mac.Sum(nil)
+	token := credentials.ServiceRunToken(base64.RawURLEncoding.EncodeToString(secret))
+	digest := sha256.Sum256(secret)
+	clear(secret)
 	until := now.Add(45 * time.Second)
+	if !prepared && run.PublisherExpiresAt.Time.After(until) {
+		until = run.PublisherExpiresAt.Time
+	}
 	if permission.Valid {
 		until = minTime(until, permission.Time)
 	}
@@ -116,7 +128,13 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 		return result, ErrServiceAccess
 	}
 	result = ServiceRunState{ServiceID: service, RunID: id, RunNumber: number, Token: token.String(), State: run.State, ExpiresAt: until, Connections: connections}
-	return result, tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return result, err
+	}
+	if prepared {
+		d.activity.metrics.Load().ObservePlacement("create", observability.PlacementPlaced)
+	}
+	return result, nil
 }
 
 func insertServiceRunSlots(ctx context.Context, q *controlstatedb.Queries, seed credentials.AssignmentSeed, run controlstatedb.ControlServiceRun, placements [2]relayServicePlacement, now time.Time) error {

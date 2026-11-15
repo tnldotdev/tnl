@@ -29,10 +29,13 @@ func TestProjectPublicationReasons(t *testing.T) {
 		{"unhealthy publisher", func(r *controlstatedb.ListProjectPublicationsRow) { r.Healthy = false }, 2, "publisher_unhealthy"},
 		{"not committed ready", func(r *controlstatedb.ListProjectPublicationsRow) { r.PublicationState = "starting" }, 2, "starting"},
 		{"pending DNS", func(r *controlstatedb.ListProjectPublicationsRow) {
-			r.ServiceID.Valid = false
-			r.PublicURLID = text("url")
+			r.Public = true
 			r.DnsState = "pending"
 		}, 2, "dns_unavailable"},
+		{"connector-only pending DNS", func(r *controlstatedb.ListProjectPublicationsRow) {
+			r.Public = false
+			r.DnsState = "pending"
+		}, 2, "ready"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			row := ready

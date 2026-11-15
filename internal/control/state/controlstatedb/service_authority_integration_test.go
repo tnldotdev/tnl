@@ -12,6 +12,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	"github.com/tnldotdev/tnl/internal/testutil/managedcert"
@@ -175,15 +176,19 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		t.Fatalf("bind run: %+v, %v", bound, err)
 	}
 	retried, err := d.StartServiceRun(ctx, service.ID, prepared.RunID, prepared.RunNumber, p, now)
-	if err != nil || retried.Token == bound.Token || retried.Connections[0].Credential != bound.Connections[0].Credential {
-		t.Fatalf("retry rotated assignment or failed: %+v, %v", retried, err)
+	if err != nil || retried.Token != bound.Token || retried.Connections[0].Credential != bound.Connections[0].Credential {
+		t.Fatalf("retry rotated run or assignment credentials: %v", err)
+	}
+	wrongToken, _, err := credentials.NewServiceRunToken()
+	if err != nil {
+		t.Fatal(err)
 	}
 	var beforeStaleHeartbeat string
 	if err = conn.QueryRow(ctx, `SELECT to_jsonb(run)::text FROM control.service_runs run WHERE id=$1`, prepared.RunID).Scan(&beforeStaleHeartbeat); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, bound.Token, now.Add(time.Second), controlstate.ServiceRunHealth{Healthy: false, StreamCapacity: 7, ActiveStreams: 3}); !errors.Is(err, controlstate.ErrServiceAccess) {
-		t.Fatalf("old run token survived retry: %v", err)
+	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, wrongToken.String(), now.Add(time.Second), controlstate.ServiceRunHealth{Healthy: false, StreamCapacity: 7, ActiveStreams: 3}); !errors.Is(err, controlstate.ErrServiceAccess) {
+		t.Fatalf("unrelated token authorized a run: %v", err)
 	}
 	var afterStaleHeartbeat string
 	if err = conn.QueryRow(ctx, `SELECT to_jsonb(run)::text FROM control.service_runs run WHERE id=$1`, prepared.RunID).Scan(&afterStaleHeartbeat); err != nil || afterStaleHeartbeat != beforeStaleHeartbeat {
@@ -270,10 +275,10 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		t.Fatalf("retired enrollment key ended already-bound run: %v", err)
 	}
 	afterRotation, err := d.StartServiceRun(ctx, service.ID, prepared.RunID, prepared.RunNumber, p, now)
-	if err != nil || afterRotation.Token == retried.Token ||
+	if err != nil || afterRotation.Token != retried.Token ||
 		afterRotation.Connections[0].PublisherConnectionID != retried.Connections[0].PublisherConnectionID ||
 		afterRotation.Connections[0].Credential != retried.Connections[0].Credential {
-		t.Fatalf("retired key could not retry exact bound run: %+v, %v", afterRotation, err)
+		t.Fatalf("retired key could not retry exact bound run: %v", err)
 	}
 	retried = afterRotation
 	current := admit()

@@ -142,7 +142,7 @@ func TestResolveConfigFileRespectsEnvironmentAndFlags(t *testing.T) {
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		QUICIdleTimeout: time.Second, IngressLeaseDuration: 3 * time.Second,
 		RelayLeaseDuration: 3 * time.Second, LeaseRenewalInterval: time.Second, ControlRetryInterval: time.Second,
-		RoutingTableWait: time.Second, DrainTimeout: time.Second,
+		DrainTimeout: time.Second,
 	}
 	resolved, err := resolveConfigFile(path, base, map[string]bool{"relay_stream_capacity": true})
 	if err != nil {

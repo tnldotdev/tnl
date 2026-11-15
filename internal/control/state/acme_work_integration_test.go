@@ -40,9 +40,12 @@ func TestIntegrationACMEAccount(t *testing.T) {
 }
 
 func TestIntegrationCertificateIssuanceCreation(t *testing.T) {
-	f := newPublishRunFixture(t)
-	request := newTestIssuanceRequest(t, f)
-	issuance, err := f.database.CreateCertificateIssuance(t.Context(), request, f.now)
+	f := newServicePublicationFixture(t)
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.domains SET kind='custom',team_id=$2,dns_authority_reference=NULL WHERE id=$1`, f.service.DomainID, f.service.TeamID); err != nil {
+		t.Fatal(err)
+	}
+	csr := newTestIssuanceCSR(t, f)
+	issuance, err := f.database.CreateServiceCertificateIssuance(t.Context(), f.service.ID, f.run.RunID, f.run.Token, "https://acme.example.test/directory", "issuance", f.run.RunNumber, csr, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,44 +54,41 @@ func TestIntegrationCertificateIssuanceCreation(t *testing.T) {
 	}
 	// creation facts are not part of the durable issuance returned on replay.
 	issuance.NewOrder, issuance.DomainKind = false, ""
-	if issuance.State != "pending" || issuance.PublishRunID != f.setup.PublishRunID ||
-		issuance.PublishRunNumber != f.setup.PublishRunNumber || !reflect.DeepEqual(issuance.CertificatePlan.Identifiers, f.request.CertificateIdentifiers) {
+	if issuance.State != "pending" || issuance.ServiceRunID != f.run.RunID ||
+		issuance.ServiceRunNumber != uint64(f.run.RunNumber) || !reflect.DeepEqual(issuance.CertificatePlan.Identifiers, f.prepared.CertificatePlan.Identifiers) {
 		t.Fatalf("issuance = %#v", issuance)
 	}
-	repeated, err := f.database.CreateCertificateIssuance(t.Context(), request, f.now.Add(time.Millisecond))
+	repeated, err := f.database.CreateServiceCertificateIssuance(t.Context(), f.service.ID, f.run.RunID, f.run.Token, "https://acme.example.test/directory", "issuance", f.run.RunNumber, csr, f.now.Add(time.Millisecond))
 	if err != nil || !reflect.DeepEqual(repeated, issuance) {
 		t.Fatalf("issuance replay = %#v, %v", repeated, err)
 	}
-	request.RequestDigest = sha256.Sum256([]byte("changed"))
-	if _, err := f.database.CreateCertificateIssuance(t.Context(), request, f.now); !errors.Is(err, ErrCertificateIssuanceIdempotency) {
+	changed := newTestIssuanceCSR(t, f)
+	if _, err := f.database.CreateServiceCertificateIssuance(t.Context(), f.service.ID, f.run.RunID, f.run.Token, "https://acme.example.test/directory", "issuance", f.run.RunNumber, changed, f.now); !errors.Is(err, ErrCertificateIssuanceIdempotency) {
 		t.Fatalf("issuance idempotency: %v", err)
 	}
-	loaded, err := f.database.GetCertificateIssuance(t.Context(), issuance.ID, f.setup.PublishRunToken, f.now)
+	loaded, err := f.database.GetServiceCertificateIssuance(t.Context(), f.service.ID, f.run.RunID, f.run.Token, issuance.ID, f.now)
 	if err != nil || !reflect.DeepEqual(loaded, issuance) {
 		t.Fatalf("loaded issuance = %#v, %v", loaded, err)
 	}
 }
 
 func TestIntegrationManagedCertificateOrderFacts(t *testing.T) {
-	f := newPublishRunFixture(t)
-	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.domains SET kind = 'managed', team_id = NULL, dns_authority_reference = NULL WHERE id = 'domain_session'`); err != nil {
-		t.Fatal(err)
-	}
-	request := newTestIssuanceRequest(t, f)
-	created, err := f.database.CreateCertificateIssuance(t.Context(), request, f.now)
+	f := newServicePublicationFixture(t)
+	csr := newTestIssuanceCSR(t, f)
+	created, err := f.database.CreateServiceCertificateIssuance(t.Context(), f.service.ID, f.run.RunID, f.run.Token, "https://acme.example.test/directory", "issuance", f.run.RunNumber, csr, f.now)
 	if err != nil || !created.NewOrder || created.DomainKind != DomainKindManaged {
 		t.Fatalf("managed order creation facts = %t/%q, %v", created.NewOrder, created.DomainKind, err)
 	}
-	repeated, err := f.database.CreateCertificateIssuance(t.Context(), request, f.now)
+	repeated, err := f.database.CreateServiceCertificateIssuance(t.Context(), f.service.ID, f.run.RunID, f.run.Token, "https://acme.example.test/directory", "issuance", f.run.RunNumber, csr, f.now)
 	if err != nil || repeated.NewOrder || repeated.ID != created.ID {
 		t.Fatalf("replayed managed order = new %t, %v", repeated.NewOrder, err)
 	}
 }
 
 func TestIntegrationACMEWorkLeaseRecovery(t *testing.T) {
-	f := newPublishRunFixture(t)
+	f := newServicePublicationFixture(t)
 	database, now := f.database, f.now
-	issuance, err := database.CreateCertificateIssuance(t.Context(), newTestIssuanceRequest(t, f), now)
+	issuance, err := database.CreateServiceCertificateIssuance(t.Context(), f.service.ID, f.run.RunID, f.run.Token, "https://acme.example.test/directory", "issuance", f.run.RunNumber, newTestIssuanceCSR(t, f), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestIntegrationACMEWorkLeaseRecovery(t *testing.T) {
 	}
 	expires := now.Add(time.Hour)
 	recovered.State, recovered.AvailableAt = "authorizing", now
-	recovered.Authorizations = []ACMEAuthorizationWork{{Identifier: f.request.CertificateIdentifiers[0], AuthorizationURL: "https://acme.example.test/authz/1",
+	recovered.Authorizations = []ACMEAuthorizationWork{{Identifier: f.prepared.CertificatePlan.Identifiers[0], AuthorizationURL: "https://acme.example.test/authz/1",
 		ChallengeType: "dns-01", ChallengeURL: "https://acme.example.test/challenge/1", ChallengeToken: "token", ChallengeDigest: sha256.Sum256([]byte("token")),
 		State: "presenting", AvailableAt: now, ExpiresAt: &expires, CreatedAt: now, UpdatedAt: now}}
 	saved, err := database.SaveACMEOrderWork(t.Context(), recovered, now.Add(time.Second))
@@ -129,17 +129,15 @@ func TestIntegrationACMEWorkLeaseRecovery(t *testing.T) {
 }
 
 func TestIntegrationInstalledCertificateRetainsCleanupWork(t *testing.T) {
-	database, now := newCertificatePlanDatabase(t)
-	const hostname = "api.member.routes.example.test"
-	plan := CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: "dns-01"}
-	_, authentication := newExternalPlanSession(t, database, now, "team_external", hostname, "managed:routes.example.test", plan)
+	f := newServicePublicationFixture(t)
+	database, now, authentication, plan := f.database, f.now, f.run, f.prepared.CertificatePlan
 	renewAt := now.Add(16 * time.Hour)
 	prepared := createPlanIssuanceWork(t, database, now, authentication, plan, true, func(work *ACMEOrderWork) {
 		work.Authorizations[0].State = "valid"
 		work.Authorizations[0].CleanupCompletedAt = nil
 		work.RenewAt, work.AvailableAt = &renewAt, now
 	})
-	issued, err := database.GetCertificateIssuance(t.Context(), prepared.ID, authentication.PublishRunToken, now)
+	issued, err := database.GetServiceCertificateIssuance(t.Context(), authentication.ServiceID, authentication.RunID, authentication.Token, prepared.ID, now)
 	if err != nil || issued.State != "waiting_for_install" || issued.CertificatePEM == "" {
 		t.Fatalf("certificate blocked on DNS cleanup: state=%q certificate=%t error=%v", issued.State, issued.CertificatePEM != "", err)
 	}
@@ -149,7 +147,7 @@ func TestIntegrationInstalledCertificateRetainsCleanupWork(t *testing.T) {
 	if err != nil || !found || claimed.ID != prepared.ID || claimed.Authorizations[0].State != "valid" {
 		t.Fatalf("uninstalled cleanup claim: found=%t error=%v", found, err)
 	}
-	if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, prepared.ID, *prepared.NotAfter, now.Add(1500*time.Millisecond)); err != nil {
+	if err := database.MarkServiceCertificateInstalled(t.Context(), authentication.ServiceID, authentication.RunID, authentication.Token, prepared.ID, authentication.RunNumber, *prepared.NotAfter, now.Add(1500*time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
 	claimed.Authorizations[0].State = "cleaning"
@@ -160,7 +158,7 @@ func TestIntegrationInstalledCertificateRetainsCleanupWork(t *testing.T) {
 	if err != nil || !found || current.State != "installed" || current.Authorizations[0].State != "valid" {
 		t.Fatalf("installed cleanup work was lost: found=%t state=%q error=%v", found, current.State, err)
 	}
-	if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, prepared.ID, *prepared.NotAfter, now.Add(2*time.Second)); err != nil {
+	if err := database.MarkServiceCertificateInstalled(t.Context(), authentication.ServiceID, authentication.RunID, authentication.Token, prepared.ID, authentication.RunNumber, *prepared.NotAfter, now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	current.Authorizations[0].State, current.Authorizations[0].AvailableAt = "cleaning", now
@@ -184,7 +182,7 @@ func TestIntegrationInstalledCertificateRetainsCleanupWork(t *testing.T) {
 	if _, found, err := database.ClaimACMEOrderWork(t.Context(), "after-cleanup", now.Add(4*time.Second), time.Second); err != nil || found {
 		t.Fatalf("cleaned installed order remained claimable: found=%t error=%v", found, err)
 	}
-	installed, err := database.GetCertificateIssuance(t.Context(), prepared.ID, authentication.PublishRunToken, now.Add(4*time.Second))
+	installed, err := database.GetServiceCertificateIssuance(t.Context(), authentication.ServiceID, authentication.RunID, authentication.Token, prepared.ID, now.Add(4*time.Second))
 	if err != nil || installed.State != "installed" || installed.CertificatePEM != issued.CertificatePEM {
 		t.Fatalf("cleanup changed installed material: state=%q error=%v", installed.State, err)
 	}
@@ -193,8 +191,8 @@ func TestIntegrationInstalledCertificateRetainsCleanupWork(t *testing.T) {
 func TestIntegrationACMEWorkRejectsStaleState(t *testing.T) {
 	for _, kind := range []string{"lease", "order_revision", "authorization_revision"} {
 		t.Run(kind, func(t *testing.T) {
-			f := newPublishRunFixture(t)
-			prepared := createPlanIssuanceWork(t, f.database, f.now, f.authentication(), f.certificatePlan(), false, nil)
+			f := newServicePublicationFixture(t)
+			prepared := createPlanIssuanceWork(t, f.database, f.now, f.run, f.prepared.CertificatePlan, false, nil)
 			work, found, err := f.database.ClaimACMEOrderWork(t.Context(), "stale-test", f.now, time.Minute)
 			if err != nil || !found || work.ID != prepared.ID {
 				t.Fatalf("claim prerequisite = %t, %v", found, err)
@@ -221,9 +219,8 @@ func TestIntegrationACMEWorkRejectsStaleState(t *testing.T) {
 }
 
 func TestIntegrationClosingSessionCleansDNSAuthorizations(t *testing.T) {
-	database, now := newCertificatePlanDatabase(t)
-	plan := CertificatePlan{CacheKey: "api.example.test", Scope: "api.example.test", Identifiers: []string{"api.example.test"}, ChallengeMethod: "dns-01"}
-	_, authentication := newExternalPlanSession(t, database, now, "team_external", "api.example.test", "managed:example.test", plan)
+	f := newServicePublicationFixture(t)
+	database, now, authentication, plan := f.database, f.now, f.run, f.prepared.CertificatePlan
 	work := createPlanIssuanceWork(t, database, now, authentication, plan, false, nil)
 	if len(work.Authorizations) != 1 || !opaqueid.Valid(work.Authorizations[0].PresentationReference, opaqueid.ACMEPresentationPrefix) {
 		t.Fatalf("DNS authorizations = %#v", work.Authorizations)
@@ -232,20 +229,31 @@ func TestIntegrationClosingSessionCleansDNSAuthorizations(t *testing.T) {
 	if err != nil || len(challenge.Presentations) != 1 || !challenge.Presentations[0].Active || challenge.PresentationReference != work.Authorizations[0].PresentationReference {
 		t.Fatalf("DNS challenge = %#v, %v", challenge, err)
 	}
-	wrong, _, _, err := credentials.NewPublishRunToken()
+	wrong, _, err := credentials.NewServiceRunToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.ClosePublishRun(t.Context(), authentication.PublishRunID, wrong, now); !errors.Is(err, ErrPublishRunCredential) {
+	if err := database.CloseServiceRun(t.Context(), authentication.ServiceID, authentication.RunID, wrong.String(), now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("wrong close credential: %v", err)
 	}
-	if err := database.ClosePublishRun(t.Context(), authentication.PublishRunID, authentication.PublishRunToken, now); err != nil {
+	if err := database.CloseServiceRun(t.Context(), authentication.ServiceID, authentication.RunID, authentication.Token, now); err != nil {
 		t.Fatal(err)
 	}
 	cleanup, found, err := database.ClaimACMEOrderWork(t.Context(), "cleanup", now, time.Minute)
-	if err != nil || !found || cleanup.ID != work.ID || cleanup.State != "canceled" ||
-		len(cleanup.Authorizations) != 1 || cleanup.Authorizations[0].State != "cleaning" {
-		t.Fatalf("canceled cleanup = %#v, %t, %v", cleanup, found, err)
+	if err != nil || !found || cleanup.ID != work.ID || cleanup.State != "authorizing" ||
+		len(cleanup.Authorizations) != 1 || cleanup.Authorizations[0].State != "presenting" {
+		t.Fatalf("closing a run lost resumable issuance: found=%t state=%s error=%v", found, cleanup.State, err)
+	}
+	// the publisher's approved CSR survives a run restart. only a terminal
+	// issuance result removes its DNS presentation, not the old run closing.
+	cleanup.State, cleanup.Authorizations[0].State = "canceled", "cleaning"
+	cleanup, err = database.SaveACMEOrderWork(t.Context(), cleanup, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup, found, err = database.ClaimACMEOrderWork(t.Context(), "terminal-cleanup", now, time.Minute)
+	if err != nil || !found || cleanup.State != "canceled" || cleanup.Authorizations[0].State != "cleaning" {
+		t.Fatal("terminal issuance did not retain required DNS cleanup", found, cleanup.State, err)
 	}
 	challenge, err = database.GetDNSChallengeContextForSubject(t.Context(), cleanup.Subject, cleanup.Authorizations[0].ID)
 	if err != nil || len(challenge.Presentations) != 1 || challenge.Presentations[0].Active {
@@ -256,15 +264,15 @@ func TestIntegrationClosingSessionCleansDNSAuthorizations(t *testing.T) {
 	if _, err := database.SaveACMEOrderWork(t.Context(), cleanup, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.ClosePublishRun(t.Context(), authentication.PublishRunID, authentication.PublishRunToken, now); err != nil {
-		t.Fatalf("close replay: %v", err)
+	if err := database.CloseServiceRun(t.Context(), authentication.ServiceID, authentication.RunID, authentication.Token, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatalf("closed run regained publication authority: %v", err)
 	}
 	if _, found, err := database.ClaimACMEOrderWork(t.Context(), "completed", now.Add(time.Second), time.Minute); err != nil || found {
 		t.Fatalf("completed cleanup still claimable = %t, %v", found, err)
 	}
 }
 
-func newTestIssuanceRequest(t *testing.T, f publishRunFixture) CreateCertificateIssuanceRequest {
+func newTestIssuanceCSR(t *testing.T, f servicePublicationFixture) []byte {
 	t.Helper()
 	account, err := f.database.EnsureACMEAccount(t.Context(), "https://acme.example.test/directory", "operator@example.test", f.now)
 	if err != nil {
@@ -277,12 +285,9 @@ func newTestIssuanceRequest(t *testing.T, f publishRunFixture) CreateCertificate
 	if err != nil {
 		t.Fatal(err)
 	}
-	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{DNSNames: f.request.CertificateIdentifiers}, key)
+	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{DNSNames: f.prepared.CertificatePlan.Identifiers}, key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return CreateCertificateIssuanceRequest{
-		Authentication: f.authentication(), DirectoryURL: account.DirectoryURL,
-		IdempotencyKey: "issuance", RequestDigest: sha256.Sum256(csr), CSRDER: csr,
-	}
+	return csr
 }

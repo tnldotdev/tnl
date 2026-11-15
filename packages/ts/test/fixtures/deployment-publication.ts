@@ -35,6 +35,7 @@ if (variant === "lost-reply") {
       ? await deployment.publish("web", server)
       : await deployment.publish(server, {
           access: "anonymous",
+          limits: { requests: 10, concurrency: 2, rate: { requests: 100, per: "1s" } },
         });
   console.log(JSON.stringify({ url: publication.url }));
   await new Promise((resolve) => process.stdin.once("data", resolve));

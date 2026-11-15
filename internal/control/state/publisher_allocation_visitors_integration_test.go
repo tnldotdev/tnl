@@ -71,7 +71,7 @@ func TestIntegrationPublisherNamespaceAllocationVisitorOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := CreatePublicURLRequest{TeamID: team.ID, ActingIdentityID: member.Identity.Identity.ID, DomainID: domain.ID}
+	r := serviceTestAuthority{TeamID: team.ID, ActingIdentityID: member.Identity.Identity.ID, DomainID: domain.ID}
 	enrollment := publisherEnrollment(t, d, r, PublisherScope{TeamID: team.ID, Kind: "namespace", DomainID: domain.ID}, now)
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

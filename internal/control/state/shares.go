@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
@@ -23,6 +24,69 @@ var (
 )
 
 const maximumShareLifetime = 30 * 24 * time.Hour
+
+func signedShareCompanyContext(ctx context.Context, q *controlstatedb.Queries, team, identity string, now time.Time) ([]byte, error) {
+	actor, signed := serviceActor(ctx)
+	if !signed {
+		return nil, nil
+	}
+	var selected *oidc.TeamContext
+	for _, source := range actor.identity.TeamContexts {
+		if source.TeamID != team {
+			continue
+		}
+		valid, err := verifiedCompanyProof(ctx, q, identity, actor.identity.Issuer, source, now)
+		if err != nil {
+			return nil, err
+		}
+		if valid && (selected == nil || source.AuthenticatedAt < selected.AuthenticatedAt) {
+			selected = new(source)
+		}
+	}
+	if selected == nil {
+		return nil, nil
+	}
+	return json.Marshal(selected)
+}
+
+func currentCompanyShareIssuer(ctx context.Context, tx pgx.Tx, share controlstatedb.ControlShare, source oidc.TeamContext, ids []string, now time.Time) (time.Time, error) {
+	if source.TeamID != share.TeamID.String || share.ControlSessionID.Valid || share.GuestID.Valid {
+		return time.Time{}, ErrShareNotFound
+	}
+	var issuer string
+	var active bool
+	member := serviceMembership{teamID: share.TeamID.String}
+	err := tx.QueryRow(ctx, `SELECT person.issuer,member.id,member.role,control.active_membership(member.id,$3)
+		FROM control.team_memberships member
+		JOIN control.identities person ON person.id=member.identity_id AND person.disabled_at IS NULL
+		WHERE member.team_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL`,
+		share.TeamID.String, share.CreatedByIdentityID.String, now).Scan(&issuer, &member.id, &member.role, &active)
+	if err != nil {
+		return time.Time{}, publisherLookupError(err, ErrShareNotFound)
+	}
+	if !active {
+		return time.Time{}, ErrShareNotFound
+	}
+	q := controlstatedb.New(tx)
+	valid, err := verifiedCompanyProof(ctx, q, share.CreatedByIdentityID.String, issuer, source, now)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !valid {
+		return time.Time{}, ErrShareNotFound
+	}
+	if err := shareServicesForManagement(ctx, tx, ids, member, false); err != nil {
+		return time.Time{}, err
+	}
+	eligibility, err := q.GetCompanyEligibility(ctx, controlstatedb.GetCompanyEligibilityParams{
+		IdentityConnectionID: source.IdentityConnectionID, IdentityID: share.CreatedByIdentityID.String,
+	})
+	if err != nil {
+		return time.Time{}, publisherLookupError(err, ErrShareNotFound)
+	}
+	until := minTime(share.ExpiresAt.Time, time.Unix(source.AuthenticatedAt, 0).Add(CompanyAuthenticationLifetime))
+	return minTime(until, eligibility.ValidUntil.Time), nil
+}
 
 type Share struct {
 	SchemaVersion                                int
@@ -49,6 +113,7 @@ type CreateShareRequest struct {
 
 func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, now time.Time) (result Share, retErr error) {
 	now = now.UTC().Truncate(time.Microsecond)
+	clock := newAuthorizationClock(now)
 	request.ExpiresAt = request.ExpiresAt.UTC().Truncate(time.Microsecond)
 	ids := slices.Clone(request.ServiceIDs)
 	slices.Sort(ids)
@@ -89,7 +154,7 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 	if _, err = q.LockLocalTeamForMutation(ctx, request.TeamID); err != nil {
 		return result, publisherLookupError(err, ErrPreviewAccess)
 	}
-	member, err := serviceMembershipForActor(ctx, tx, request.TeamID, request.ActingIdentityID, now)
+	member, err := serviceMembershipForActor(ctx, tx, request.TeamID, request.ActingIdentityID, clock.current())
 	if err != nil {
 		return result, err
 	}
@@ -119,6 +184,9 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 		if subtle.ConstantTimeCompare(existing.RequestDigest, digest[:]) != 1 {
 			return result, ErrShareIdempotency
 		}
+		if err = shareActorCurrent(ctx, clock.current()); err != nil {
+			return result, err
+		}
 		if err = tx.Commit(ctx); err != nil {
 			return result, err
 		}
@@ -147,10 +215,15 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 	if request.PreviewID != "" {
 		scope = "preview"
 	}
+	companyContext, err := signedShareCompanyContext(ctx, q, request.TeamID, request.ActingIdentityID, clock.current())
+	if err != nil {
+		return result, err
+	}
 	row, err := q.CreateShare(ctx, controlstatedb.CreateShareParams{ID: id, PreviewID: nullableText(request.PreviewID),
 		TeamID: text(request.TeamID), Scope: scope, Label: request.Label, EntryServiceID: request.EntryServiceID,
 		ControlSessionID: nullableText(companySessionID(ctx, request.ActingIdentityID)), CreatedByIdentityID: text(request.ActingIdentityID),
-		IdempotencyKey: request.IdempotencyKey, RequestDigest: digest[:], SecretDigest: request.SecretFingerprint[:],
+		IssuerCompanyContext: nullableText(string(companyContext)),
+		IdempotencyKey:       request.IdempotencyKey, RequestDigest: digest[:], SecretDigest: request.SecretFingerprint[:],
 		CreatedAt: timestamptz(now), ExpiresAt: timestamptz(request.ExpiresAt)})
 	if err != nil {
 		return result, err
@@ -172,6 +245,15 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 		return result, err
 	}
 	result.EntryHostname = entry.CertificateHostname
+	if _, err = tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
+		return Share{}, err
+	}
+	if err = shareActorCurrent(ctx, clock.current()); err != nil {
+		return Share{}, err
+	}
+	if !request.ExpiresAt.After(clock.current()) {
+		return Share{}, ErrShareInvalid
+	}
 	return result, tx.Commit(ctx)
 }
 
@@ -243,6 +325,13 @@ func (d *Database) currentShareIssuer(ctx context.Context, tx pgx.Tx, share cont
 			until = minTime(until, deadline.Time)
 		}
 		return until, nil
+	}
+	if len(share.IssuerCompanyContext) != 0 {
+		var source oidc.TeamContext
+		if err := json.Unmarshal(share.IssuerCompanyContext, &source); err != nil {
+			return time.Time{}, ErrShareNotFound
+		}
+		return currentCompanyShareIssuer(ctx, tx, share, source, ids, now)
 	}
 	principal := ControlPrincipal{IdentityID: share.CreatedByIdentityID.String, SessionID: share.ControlSessionID.String}
 	if share.ControlSessionID.Valid {
@@ -358,6 +447,41 @@ func (d *Database) GetShare(ctx context.Context, id string) (Share, error) {
 	return shareWithServices(ctx, q, row)
 }
 
+func (d *Database) GetShareForManagement(ctx context.Context, id, identity string, now time.Time) (result Share, retErr error) {
+	clock := newAuthorizationClock(now)
+	if !opaqueid.Valid(id, opaqueid.SharePrefix) || identity == "" {
+		return result, ErrShareNotFound
+	}
+	tx, err := d.beginServiceAccess(ctx, serviceReadOptions(ctx))
+	if err != nil {
+		return result, err
+	}
+	defer rollback(ctx, tx, "read managed share", &retErr)()
+	q := controlstatedb.New(tx)
+	row, err := q.GetShare(ctx, id)
+	if err != nil {
+		return result, publisherLookupError(err, ErrShareNotFound)
+	}
+	if row.GuestID.Valid || row.CreatedByIdentityID.String != identity {
+		return result, ErrShareNotFound
+	}
+	member, err := serviceMembershipForActor(ctx, tx, row.TeamID.String, identity, clock.current())
+	if err != nil {
+		return result, err
+	}
+	ids, err := q.ListShareServices(ctx, id)
+	if err != nil {
+		return result, err
+	}
+	if err = shareServicesForManagement(ctx, tx, ids, member, false); err != nil {
+		return result, err
+	}
+	if err = shareActorCurrent(ctx, clock.current()); err != nil {
+		return result, err
+	}
+	return shareFromModel(row, ids), tx.Commit(ctx)
+}
+
 func (d *Database) ListShares(ctx context.Context, preview, cursor string) (SharePage, error) {
 	if !opaqueid.Valid(preview, opaqueid.PreviewPrefix) || cursor != "" && !opaqueid.Valid(cursor, opaqueid.SharePrefix) {
 		return SharePage{}, ErrShareInvalid
@@ -370,16 +494,65 @@ func (d *Database) ListShares(ctx context.Context, preview, cursor string) (Shar
 	return sharePageFromRows(ctx, q, rows)
 }
 
-func (d *Database) ListTeamShares(ctx context.Context, team, identity, cursor string) (SharePage, error) {
+func (d *Database) ListTeamShares(ctx context.Context, team, identity, cursor string) (result SharePage, retErr error) {
 	if team == "" || identity == "" || cursor != "" && !opaqueid.Valid(cursor, opaqueid.SharePrefix) {
 		return SharePage{}, ErrShareInvalid
 	}
-	q := controlstatedb.New(d.pool)
-	rows, err := q.ListTeamShares(ctx, controlstatedb.ListTeamSharesParams{TeamID: text(team), IdentityID: text(identity), AfterID: cursor})
+	tx, err := d.beginServiceAccess(ctx, serviceReadOptions(ctx))
 	if err != nil {
 		return SharePage{}, err
 	}
-	return sharePageFromRows(ctx, q, rows)
+	defer rollback(ctx, tx, "list managed shares", &retErr)()
+	now := time.Now()
+	member, err := serviceMembershipForActor(ctx, tx, team, identity, now)
+	if err != nil {
+		return SharePage{}, err
+	}
+	q := controlstatedb.New(tx)
+	page := SharePage{Shares: []Share{}}
+	for {
+		rows, err := q.ListTeamShares(ctx, controlstatedb.ListTeamSharesParams{TeamID: text(team), IdentityID: text(identity), AfterID: cursor})
+		if err != nil {
+			return SharePage{}, err
+		}
+		for index, row := range rows {
+			share, err := shareWithServices(ctx, q, row)
+			if err != nil {
+				return SharePage{}, err
+			}
+			err = shareServicesForManagement(ctx, tx, share.ServiceIDs, member, false)
+			if err != nil && !errors.Is(err, ErrServiceAccess) && !errors.Is(err, ErrServiceManagerRequired) && !errors.Is(err, ErrShareStale) {
+				return SharePage{}, err
+			}
+			if err == nil {
+				page.Shares = append(page.Shares, share)
+			}
+			cursor = row.ID
+			if len(page.Shares) == 100 {
+				if index+1 < len(rows) || len(rows) == 101 {
+					page.NextCursor = cursor
+				}
+				if err := shareActorCurrent(ctx, time.Now()); err != nil {
+					return SharePage{}, err
+				}
+				return page, tx.Commit(ctx)
+			}
+		}
+		if len(rows) < 101 {
+			break
+		}
+	}
+	if err := shareActorCurrent(ctx, time.Now()); err != nil {
+		return SharePage{}, err
+	}
+	return page, tx.Commit(ctx)
+}
+
+func shareActorCurrent(ctx context.Context, now time.Time) error {
+	if proof, signed := serviceActor(ctx); signed && !proof.identity.AssertionExpiry.After(now) {
+		return ErrControlAuthentication
+	}
+	return nil
 }
 
 func sharePageFromRows(ctx context.Context, q *controlstatedb.Queries, rows []controlstatedb.ControlShare) (SharePage, error) {
@@ -399,6 +572,7 @@ func sharePageFromRows(ctx context.Context, q *controlstatedb.Queries, rows []co
 }
 
 func (d *Database) RevokeShare(ctx context.Context, id, identity string, now time.Time) (result Share, retErr error) {
+	clock := newAuthorizationClock(now)
 	if !opaqueid.Valid(id, opaqueid.SharePrefix) || identity == "" {
 		return result, ErrShareInvalid
 	}
@@ -418,7 +592,7 @@ func (d *Database) RevokeShare(ctx context.Context, id, identity string, now tim
 	if _, err = q.LockLocalTeamForMutation(ctx, row.TeamID.String); err != nil {
 		return result, err
 	}
-	member, err := serviceMembershipForActor(ctx, tx, row.TeamID.String, identity, now)
+	member, err := serviceMembershipForActor(ctx, tx, row.TeamID.String, identity, clock.current())
 	if err != nil {
 		return result, err
 	}
@@ -437,6 +611,9 @@ func (d *Database) RevokeShare(ctx context.Context, id, identity string, now tim
 		if err = auditPrivateMutation(ctx, tx, service, identity, "grant.revoke", id, now); err != nil {
 			return result, err
 		}
+	}
+	if err = shareActorCurrent(ctx, clock.current()); err != nil {
+		return result, err
 	}
 	return shareFromModel(row, ids), tx.Commit(ctx)
 }

@@ -2,18 +2,16 @@ package state
 
 import (
 	"bytes"
-	"crypto/ed25519"
-	"crypto/rand"
-	"crypto/sha256"
 	"crypto/x509"
+	"errors"
 	"fmt"
+	"net/netip"
 	"path/filepath"
 	"testing"
-	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/zalando/go-keyring"
 )
@@ -21,14 +19,13 @@ import (
 // the controlled CA fixture exercises real publisher CSRs, persistent private
 // cache keys, issuance/install acknowledgments, relay readiness and routing.
 func TestIntegrationPublicPublisherScopedCertificateCachePool(t *testing.T) {
-	d, now, base, leases := newPublishRunPrerequisites(t)
-	creation := oidcRouteRequest(t, d, now)
-	creation.PublisherPool = true
-	url, err := d.CreatePublicURL(t.Context(), creation, now)
+	d, now, actor, leases := newPublishRunPrerequisites(t)
+	service, err := d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, "pool", "pool",
+		ServicePlacement{}, now, ServiceMetadata{PublisherPool: true},
+		&ProjectServiceConfiguration{Target: "localhost:3000", Public: new(true)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	base.PublicURLID, base.TeamID, base.ActingIdentityID, base.MembershipID, base.PolicyRevision = url.ID, url.TeamID, creation.ActingIdentityID, url.MembershipID, uint64(url.PolicyRevision)
 	keyring.MockInit()
 	root := filepath.Join(t.TempDir(), "client-state")
 	local, err := clientstate.Open(t.Context(), root)
@@ -40,45 +37,64 @@ func TestIntegrationPublicPublisherScopedCertificateCachePool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var runs []publishRunFixture
-	var publishers []PublisherIdentity
-	var signingKeys []ed25519.PrivateKey
+	var runs []servicePublicationFixture
 	var materials []clientstate.Material
 	var csrs [][]byte
+	health := ServiceRunHealth{Healthy: true, StreamCapacity: 64}
+	ingress := registerTestIngress(t, d, now)
+	checkPool := func(expected ...servicePublicationFixture) {
+		t.Helper()
+		var excluded []ServiceRunReference
+		for range expected {
+			visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
+			admission, err := d.AdmitPublicServiceVisitor(t.Context(), ingress.IngressLeaseIdentity, PrimaryIngressPoolID,
+				visitor, service.Endpoint.Hostname, 443, netip.MustParseAddr("192.0.2.10"), now, excluded...)
+			if err != nil || admission.ServiceID != service.ID || len(admission.Relays) != 2 {
+				t.Fatalf("pool lost a certified publisher or its two connection slots: %+v, %v", admission, err)
+			}
+			var selected *servicePublicationFixture
+			for i := range expected {
+				if expected[i].run.RunID == admission.RunID && expected[i].run.RunNumber == admission.RunNumber {
+					selected = &expected[i]
+					break
+				}
+			}
+			if selected == nil || selected.prepared.Hostname != service.Endpoint.Hostname {
+				t.Fatal("pool selected a foreign run or hostname", admission)
+			}
+			for i, relay := range admission.Relays {
+				slot := selected.run.Connections[i]
+				if relay.PublisherConnectionID != slot.PublisherConnectionID || relay.ConnectionSlot != slot.ConnectionSlot {
+					t.Fatal("pool admission mixed publisher connection slots")
+				}
+			}
+			excluded = append(excluded, ServiceRunReference{ServiceID: service.ID, RunID: admission.RunID, RunNumber: admission.RunNumber})
+			if err := d.ClosePublicServiceVisitor(t.Context(), ingress.IngressLeaseIdentity, visitor, now); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := d.AdmitPublicServiceVisitor(t.Context(), ingress.IngressLeaseIdentity, PrimaryIngressPoolID,
+			mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), service.Endpoint.Hostname, 443,
+			netip.MustParseAddr("192.0.2.10"), now, excluded...); !errors.Is(err, ErrServiceAccess) {
+			t.Fatalf("pool admitted a starting, closed, or unexpected publisher: %v", err)
+		}
+	}
 	for index := range 2 {
-		enrollment := publisherEnrollment(t, d, creation, PublisherScope{TeamID: url.TeamID, Kind: "saved_public_url", PublicURLID: url.ID}, now)
-		public, key, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			t.Fatal(err)
+		publisher, _ := reviewPublisher(t, d, service, actor.ActingIdentityID, actor.MembershipID, 1, now)
+		run := servicePublicationFixture{database: d, now: now, service: service, publisher: publisher, leases: leases}
+		run.start(t, fmt.Sprintf("publisher-cache-%d", index), now)
+		plan := run.prepared.CertificatePlan
+		if index == 1 {
+			pending, err := d.HeartbeatServiceRun(t.Context(), service.ID, run.run.RunID, run.run.Token, now, health)
+			if err != nil || pending.State != "starting" {
+				t.Fatal("uncertified publisher became ready", pending, err)
+			}
+			if ready, err := d.HeartbeatServiceRun(t.Context(), service.ID, runs[0].run.RunID, runs[0].run.Token, now, health); err != nil || ready.State != "ready" {
+				t.Fatal("starting pooled publisher blocked its ready sibling", ready, err)
+			}
+			checkPool(runs[0])
 		}
-		publisher, err := d.RedeemPublisherEnrollment(t.Context(), enrollment.Key, public, now)
-		if err != nil {
-			t.Fatal(err)
-		}
-		current, err := d.GetPublicURLForAuthorization(t.Context(), url.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		plan, err := d.PublisherRunPlan(t.Context(), publisher, current, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		request := base
-		request.ExpectedMutationRevision = current.MutationRevision
-		request.IdempotencyKey = fmt.Sprintf("publisher-cache-%d", index)
-		request.RequestDigest = sha256.Sum256([]byte(request.IdempotencyKey))
-		request.CertificateCacheKey, request.CertificateScope, request.CertificateIdentifiers, request.CertificateChallenge = plan.CacheKey, plan.Scope, plan.Identifiers, plan.ChallengeMethod
-		request.PublisherIdentityID, request.PublisherGrantID, request.PublisherKeyID = publisher.ID, publisher.GrantID, publisher.KeyID
-		request.PublisherRunProof, err = publisherproof.SignRun(key, url.ID, request.IdempotencyKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		setup, err := d.CreatePublishRun(t.Context(), request, now, time.Minute, time.Minute)
-		if err != nil {
-			t.Fatal(err)
-		}
-		run := publishRunFixture{database: d, now: now, request: request, setup: setup, leases: leases}
-		cache, err := profile.CertificatesForPublisher(url.TeamID, publisher.ID, controlv1.CertificatePlan{CacheKey: plan.CacheKey, Scope: plan.Scope, Identifiers: plan.Identifiers, ChallengeMethod: controlv1.CertificateChallengeMethod(plan.ChallengeMethod)})
+		cache, err := profile.CertificatesForPublisher(service.TeamID, publisher.ID, controlv1.CertificatePlan{CacheKey: plan.CacheKey, Scope: plan.Scope, Identifiers: plan.Identifiers, ChallengeMethod: controlv1.CertificateChallengeMethod(plan.ChallengeMethod)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -87,31 +103,25 @@ func TestIntegrationPublicPublisherScopedCertificateCachePool(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = lock.Close() })
-		pending, err := cache.Pending(t.Context(), url.CanonicalHostname)
+		pending, err := cache.Pending(t.Context(), service.Endpoint.Hostname)
 		if err != nil {
 			_ = lock.Close()
 			t.Fatal(err)
 		}
-		material := deliverLifecycleCertificate(t, d, cache, run.authentication(), url.CanonicalHostname, run.certificatePlan(), now)
-		if _, err = d.MarkPublicURLCertificateInstalled(t.Context(), run.authentication(), material.IssuanceID, material.Certificate.Leaf.NotAfter, now); err != nil {
+		material := deliverLifecycleCertificate(t, d, cache, run.run, service.Endpoint.Hostname, plan, now)
+		if err = d.MarkServiceCertificateInstalled(t.Context(), service.ID, run.run.RunID, run.run.Token, material.IssuanceID, run.run.RunNumber, material.Certificate.Leaf.NotAfter, now); err != nil {
 			_ = lock.Close()
 			t.Fatal(err)
 		}
-		if err = cache.Promote(t.Context(), url.CanonicalHostname, material.IssuanceID); err != nil {
+		if err = cache.Promote(t.Context(), service.Endpoint.Hostname, material.IssuanceID); err != nil {
 			_ = lock.Close()
 			t.Fatal(err)
 		}
 		_ = lock.Close()
-		for slot := range 2 {
-			claimTestConnection(t, run, slot, now)
+		run.readyConnections(t, now)
+		if ready, err := d.HeartbeatServiceRun(t.Context(), service.ID, run.run.RunID, run.run.Token, now, health); err != nil || ready.State != "ready" {
+			t.Fatal("certified publisher with both connections did not become ready", ready, err)
 		}
-		if index == 1 {
-			servingPreparationPending(t, run, now)
-			if ready, err := d.MarkPublishRunReady(t.Context(), runs[0].authentication(), now); err != nil || !ready.Routable {
-				t.Fatal("starting pooled publisher blocked its ready sibling", ready, err)
-			}
-		}
-		readyTestServingRun(t, run, now)
 		order, err := controlstatedb.New(d.pool).GetACMEOrder(t.Context(), material.IssuanceID)
 		if err != nil || !bytes.Equal(order.CsrDer, pending.CSRDER) {
 			t.Fatal("issued certificate did not use this publisher's persistent CSR", err)
@@ -121,24 +131,13 @@ func TestIntegrationPublicPublisherScopedCertificateCachePool(t *testing.T) {
 			t.Fatal("issued public certificate does not match its publisher key", err)
 		}
 		runs = append(runs, run)
-		publishers = append(publishers, publisher)
-		signingKeys = append(signingKeys, key)
 		materials = append(materials, material)
 		csrs = append(csrs, bytes.Clone(pending.CSRDER))
 	}
 	if bytes.Equal(csrs[0], csrs[1]) || bytes.Equal(materials[0].Certificate.Leaf.RawSubjectPublicKeyInfo, materials[1].Certificate.Leaf.RawSubjectPublicKeyInfo) {
 		t.Fatal("pooled publishers shared a CSR/private TLS key")
 	}
-	ingress := registerTestIngress(t, d, now)
-	snapshot, err := d.ReadIngressRoutingTableSnapshot(t.Context(), ingress.IngressLeaseIdentity, now)
-	if err != nil || len(snapshot.Entries) != 2 {
-		t.Fatalf("both independently certified publishers are not routable: %+v %v", snapshot, err)
-	}
-	for _, entry := range snapshot.Entries {
-		if entry.CanonicalHostname != url.CanonicalHostname || len(entry.Projection.PublisherConnections) != 2 {
-			t.Fatal("pool routing did not retain the common hostname and each run's two slots")
-		}
-	}
+	checkPool(runs...)
 	if err = local.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -150,47 +149,31 @@ func TestIntegrationPublicPublisherScopedCertificateCachePool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = d.ClosePublishRun(t.Context(), runs[0].setup.PublishRunID, runs[0].setup.PublishRunToken, now); err != nil {
+	if err = d.CloseServiceRun(t.Context(), service.ID, runs[0].run.RunID, runs[0].run.Token, now); err != nil {
 		t.Fatal(err)
 	}
-	current, err := d.GetPublicURLForAuthorization(t.Context(), url.ID)
+	checkPool(runs[1])
+	restarted := runs[0]
+	restarted.start(t, "publisher-cache-restart", now)
+	plan := restarted.prepared.CertificatePlan
+	cache, err := profile.CertificatesForPublisher(service.TeamID, restarted.publisher.ID, controlv1.CertificatePlan{CacheKey: plan.CacheKey, Scope: plan.Scope, Identifiers: plan.Identifiers, ChallengeMethod: controlv1.CertificateChallengeMethod(plan.ChallengeMethod)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := runs[0].request
-	request.IdempotencyKey = "publisher-cache-restart"
-	request.ExpectedMutationRevision = current.MutationRevision
-	request.PublisherRunProof, err = publisherproof.SignRun(signingKeys[0], url.ID, request.IdempotencyKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	setup, err := d.CreatePublishRun(t.Context(), request, now, time.Minute, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	restarted := publishRunFixture{database: d, now: now, request: request, setup: setup, leases: leases}
-	plan := runs[0].certificatePlan()
-	cache, err := profile.CertificatesForPublisher(url.TeamID, publishers[0].ID, controlv1.CertificatePlan{CacheKey: plan.CacheKey, Scope: plan.Scope, Identifiers: plan.Identifiers, ChallengeMethod: controlv1.CertificateChallengeMethod(plan.ChallengeMethod)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	reused, found, err := cache.Current(t.Context(), url.CanonicalHostname)
+	reused, found, err := cache.Current(t.Context(), service.Endpoint.Hostname)
 	if err != nil || !found || reused.IssuanceID != materials[0].IssuanceID {
 		t.Fatal("publisher restart lost its own acknowledged cache", err)
 	}
-	if _, err = d.MarkPublicURLCertificateInstalled(t.Context(), restarted.authentication(), reused.IssuanceID, reused.Certificate.Leaf.NotAfter, now); err != nil {
+	if err = d.MarkServiceCertificateInstalled(t.Context(), service.ID, restarted.run.RunID, restarted.run.Token, reused.IssuanceID, restarted.run.RunNumber, reused.Certificate.Leaf.NotAfter, now); err != nil {
 		t.Fatal(err)
 	}
-	for slot := range 2 {
-		claimTestConnection(t, restarted, slot, now)
+	restarted.readyConnections(t, now)
+	if ready, err := d.HeartbeatServiceRun(t.Context(), service.ID, restarted.run.RunID, restarted.run.Token, now, health); err != nil || ready.State != "ready" {
+		t.Fatal("cached certificate did not restore the restarted publisher", ready, err)
 	}
-	readyTestServingRun(t, restarted, now)
 	var issued int
 	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.acme_orders`).Scan(&issued); err != nil || issued != 2 {
 		t.Fatalf("restart requested another CA issuance instead of own reuse: %d %v", issued, err)
 	}
-	snapshot, err = d.ReadIngressRoutingTableSnapshot(t.Context(), ingress.IngressLeaseIdentity, now)
-	if err != nil || len(snapshot.Entries) != 2 {
-		t.Fatal("restart removed a healthy pool sibling", err)
-	}
+	checkPool(restarted, runs[1])
 }

@@ -20,29 +20,11 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-type selectiveShareAuthorizer struct {
-	principal publicURLReadPrincipal
-	requests  []authorization.Request
-}
-
-func (a *selectiveShareAuthorizer) AuthorizePublicURLReads(_ context.Context, _ string) (publicURLReadPrincipal, error) {
-	return a.principal, nil
-}
-
-func (a *selectiveShareAuthorizer) Authorize(_ context.Context, request authorization.Request) (authorization.Decision, error) {
-	a.requests = append(a.requests, request)
-	if request.PublicURLID == "url_2" {
-		return authorization.Decision{}, authorization.ErrForbidden
-	}
-	return authorization.Decision{IdentityID: "identity_1", TeamID: "team_1", PolicyRevision: 7}, nil
-}
-
 type shareStoreStub struct {
 	created                            controlstate.CreateShareRequest
 	share                              controlstate.Share
 	guestID                            string
 	guestURL                           string
-	deniedService                      string
 	guestFailure                       error
 	guestOwner, guestService, guestKey string
 	guestCredential                    controlstate.GuestCredential
@@ -51,9 +33,6 @@ type shareStoreStub struct {
 }
 
 func (s *shareStoreStub) CreateShare(_ context.Context, request controlstate.CreateShareRequest, now time.Time) (controlstate.Share, error) {
-	if slices.Contains(request.ServiceIDs, s.deniedService) {
-		return controlstate.Share{}, controlstate.ErrServiceAccess
-	}
 	s.created = request
 	scope := "service"
 	if request.PreviewID != "" {
@@ -94,6 +73,17 @@ func (s *shareStoreStub) GetShare(_ context.Context, _ string) (controlstate.Sha
 	return s.share, nil
 }
 
+func (s *shareStoreStub) GetShareForManagement(_ context.Context, _, actor string, _ time.Time) (controlstate.Share, error) {
+	if actor != s.share.CreatedByIdentityID {
+		return controlstate.Share{}, controlstate.ErrShareNotFound
+	}
+	return s.share, nil
+}
+
+func (*shareStoreStub) ResolveCompanyAccount(context.Context, string, string) (string, error) {
+	return "identity_1", nil
+}
+
 func (s *shareStoreStub) ListShares(_ context.Context, _, _ string) (controlstate.SharePage, error) {
 	return controlstate.SharePage{Shares: []controlstate.Share{s.share}}, nil
 }
@@ -105,7 +95,10 @@ func (s *shareStoreStub) ListTeamShares(_ context.Context, teamID, identityID, _
 	return controlstate.SharePage{Shares: []controlstate.Share{s.share}}, nil
 }
 
-func (s *shareStoreStub) RevokeShare(_ context.Context, _, _ string, now time.Time) (controlstate.Share, error) {
+func (s *shareStoreStub) RevokeShare(_ context.Context, _, actor string, now time.Time) (controlstate.Share, error) {
+	if actor != s.share.CreatedByIdentityID {
+		return controlstate.Share{}, controlstate.ErrShareNotFound
+	}
 	s.share.RevokedAt = &now
 	return s.share, nil
 }
@@ -114,11 +107,7 @@ func TestShareCreateChecksIncludedServiceAndDeliversCredentialOnce(t *testing.T)
 	preview := &previewStoreStub{preview: controlstate.Preview{
 		ID: "pv_preview", TeamID: "team_1", CreatedByIdentityID: "identity_1", ServiceIDs: []string{"svc_1"},
 	}}
-	authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{
-		IdentityID: "identity_1", TeamID: "team_1", PolicyRevision: 7,
-		PublicURLMembershipID: "membership_1", DomainID: "domain_1",
-		CanonicalHostname: "web.example.test", PublicURLScope: authorization.PublicURLScopeMember,
-	}}
+	authorizer := &recordingAuthorizer{principal: testControlReadPrincipal()}
 	shares := &shareStoreStub{}
 	h := &handler{previews: preview, shares: shares, authorizer: authorizer}
 	create := func(ids string) *httptest.ResponseRecorder {
@@ -129,15 +118,14 @@ func TestShareCreateChecksIncludedServiceAndDeliversCredentialOnce(t *testing.T)
 		h.CreateShare(response, request, "pv_preview", controlv1.CreateShareParams{})
 		return response
 	}
-	if response := create(`["svc_other"]`); response.Code != http.StatusBadRequest || len(authorizer.requests) != 0 {
-		t.Fatalf("URL outside group = %d %s, authorized=%v", response.Code, response.Body.String(), authorizer.requests)
+	if response := create(`["svc_other"]`); response.Code != http.StatusBadRequest || shares.created.PreviewID != "" {
+		t.Fatalf("service outside preview = %d %s, stored=%+v", response.Code, response.Body.String(), shares.created)
 	}
 	response := create(`["svc_1"]`)
 	if response.Code != http.StatusCreated || shares.created.PreviewID != "pv_preview" ||
 		shares.created.ActingIdentityID != "identity_1" || !slices.Equal(shares.created.ServiceIDs, []string{"svc_1"}) || shares.created.EntryServiceID != "svc_1" ||
-		len(authorizer.requests) != 0 ||
 		strings.Contains(response.Body.String(), "fingerprint") || response.Header().Get("Cache-Control") != "no-store" {
-		t.Fatalf("share creation = %d %s, request=%+v, authorization=%v", response.Code, response.Body.String(), shares.created, authorizer.requests)
+		t.Fatalf("share creation = %d %s, request=%+v", response.Code, response.Body.String(), shares.created)
 	}
 	var creation controlv1.ShareCreation
 	if err := json.Unmarshal(response.Body.Bytes(), &creation); err != nil {
@@ -168,13 +156,13 @@ func TestShareCreateChecksIncludedServiceAndDeliversCredentialOnce(t *testing.T)
 	if otherList.Code != http.StatusNotFound {
 		t.Fatalf("other team shares were listed: %d %s", otherList.Code, otherList.Body.String())
 	}
-	preview.preview.CreatedByIdentityID = "different-identity"
+	authorizer.principal.identityID = "different-identity"
 	denied := httptest.NewRecorder()
 	h.RevokeShare(denied, read, "shr_example")
 	if denied.Code != http.StatusNotFound || shares.share.RevokedAt != nil {
 		t.Fatalf("other identity revoked a share: %d %s", denied.Code, denied.Body.String())
 	}
-	preview.preview.CreatedByIdentityID = "identity_1"
+	authorizer.principal.identityID = "identity_1"
 	revoked := httptest.NewRecorder()
 	h.RevokeShare(revoked, read, "shr_example")
 	if revoked.Code != http.StatusOK || shares.share.RevokedAt == nil ||
@@ -183,27 +171,9 @@ func TestShareCreateChecksIncludedServiceAndDeliversCredentialOnce(t *testing.T)
 	}
 }
 
-func TestShareCreationDoesNotStorePartiallyAuthorizedSnapshot(t *testing.T) {
-	preview := &previewStoreStub{preview: controlstate.Preview{
-		ID: "pv_preview", TeamID: "team_1", CreatedByIdentityID: "identity_1", ServiceIDs: []string{"svc_1", "svc_2"},
-	}}
-	authorizer := &selectiveShareAuthorizer{principal: testPublicURLReadPrincipal()}
-	shares := &shareStoreStub{deniedService: "svc_2"}
-	h := &handler{previews: preview, shares: shares, authorizer: authorizer}
-	body := fmt.Sprintf(`{"service_ids":["svc_1","svc_2"],"entry_service_id":"svc_1","expires_at":"%s"}`, time.Now().UTC().Add(24*time.Hour).Format(time.RFC3339))
-	request := httptest.NewRequest(http.MethodPost, "/v1/previews/pv_preview/shares", strings.NewReader(body))
-	request.Header.Set("Authorization", "Bearer access-token")
-	request.Header.Set("Idempotency-Key", "two-services")
-	response := httptest.NewRecorder()
-	h.CreateShare(response, request, "pv_preview", controlv1.CreateShareParams{})
-	if response.Code != http.StatusForbidden || len(authorizer.requests) != 0 || shares.created.PreviewID != "" {
-		t.Fatalf("partial authorization = %d %s, requests=%+v, stored=%+v", response.Code, response.Body.String(), authorizer.requests, shares.created)
-	}
-}
-
 func TestDirectShareCreationAuthorizesOneServiceWithoutPreview(t *testing.T) {
 	shares := &shareStoreStub{}
-	authorizer := &selectiveShareAuthorizer{principal: testPublicURLReadPrincipal()}
+	authorizer := &recordingAuthorizer{principal: testControlReadPrincipal()}
 	h := &handler{shares: shares, authorizer: authorizer}
 	body := fmt.Sprintf(`{"service_ids":["svc_1"],"entry_service_id":"svc_1","expires_at":"%s","label":"ci"}`,
 		time.Now().UTC().Add(time.Hour).Format(time.RFC3339))

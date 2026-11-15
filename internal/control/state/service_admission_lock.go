@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
 
 func lockEnabledService(ctx context.Context, tx pgx.Tx, id string) error {
@@ -33,7 +34,9 @@ func lockServiceOwner(ctx context.Context, tx pgx.Tx, id string) error {
 	if guestID.Valid && !teamID.Valid {
 		err = tx.QueryRow(ctx, `SELECT id FROM control.guest_trials WHERE id=$1 FOR UPDATE`, guestID.String).Scan(&locked)
 	} else if teamID.Valid && !guestID.Valid {
-		err = tx.QueryRow(ctx, `SELECT id FROM control.teams WHERE id=$1 AND deleted_at IS NULL FOR SHARE`, teamID.String).Scan(&locked)
+		// queue with authority writers before taking the team row, so repeated
+		// service admissions cannot keep bypassing a waiting mutation.
+		locked, err = controlstatedb.New(tx).LockLocalTeamForSession(ctx, teamID.String)
 	} else {
 		return ErrServiceAccess
 	}

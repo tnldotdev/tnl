@@ -587,5 +587,3 @@ func unixNanoTime(value int64) time.Time {
 	}
 	return time.Unix(0, value).UTC()
 }
-
-func validPublicURLID(value string) bool { return opaqueid.Valid(value, opaqueid.PublicURLPrefix) }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -14,7 +15,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
@@ -31,7 +32,7 @@ const (
 // RunCadenceLoad is bridged from the external test package so it can use the
 // production ingress API adapter without a controlstate import cycle. this is
 // still a database workload: publisher transports and visitor sockets are absent.
-func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-chan struct{}, bool) (ingress.ControlClient, error)) {
+func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time) (ingress.ControlClient, error)) {
 	t.Helper()
 	duration := *loadDuration
 	if duration == 0 {
@@ -68,18 +69,16 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 	}
 	sort.Slice(leases, func(i, j int) bool { return leases[i].RelayID < leases[j].RelayID })
 	sessions := readyLoadSessions(t, f, cadencePublisherLease, cadenceCredentialLife)
-	seedLoadRoutingHistory(t, f, 2, f.history)
-	failed := sessions[0].leases[sessions[0].setup.PublisherConnections[0].RelayServiceID]
+	failed := sessions[0].leases[sessions[0].run.Connections[0].RelayServiceID]
 	var leaseMu sync.RWMutex
-	current := make([]PublishRunSetup, f.routes)
+	current := make([]ServiceRunState, f.routes)
+	bindings := make([]map[string]RelayLease, f.routes)
 	for index, session := range sessions {
-		current[index] = session.setup
-		for slot := range current[index].PublisherConnections {
-			current[index].PublisherConnections[slot].State = PublisherConnectionReady
-		}
+		current[index] = session.run
+		bindings[index] = cloneLoadLeases(session.leases)
 	}
 	// setup uses one fixed logical instant. from here the clock runs at wall
-	// speed; every caller, publish run, process lease, and routing entry shares it.
+	// speed; every caller, service run, and process lease shares it.
 	clockStarted := time.Now()
 	now := func() time.Time { return f.now.Add(time.Since(clockStarted)) }
 	ctx, cancel := context.WithTimeout(t.Context(), duration+time.Minute)
@@ -101,26 +100,24 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 			cancel()
 		})
 	}
-	resnapshot := make(chan struct{})
 	var controllers [2]*ingress.Controller
 	var ingressMetrics [2]*observability.Metrics
 	for index := range controllers {
-		client, err := newClient(f.controls[index], now, resnapshot, retention != 0)
+		client, err := newClient(f.controls[index], now)
 		if err != nil {
 			t.Fatal(err)
 		}
 		metrics := observability.New("ingress")
 		controller, err := ingress.NewController(ingress.ControllerConfig{
-			Client: client, RoutingTable: new(ingress.RoutingTable),
-			Registration:    ingressv1.IngressRegistration{Region: "local", IngressId: fmt.Sprintf("cadence-ingress-%d", index), IngressRunId: "cadence-run", ProtocolVersion: 1, ConnectionCapacity: int64(f.routes), IngressPoolId: PrimaryIngressPoolID, ServicePorts: []int{}},
-			RenewalInterval: cadenceRenewalInterval, RetryInterval: time.Second, RoutingWait: 25 * time.Second,
+			Client:          client,
+			Registration:    ingressv1.IngressRegistration{Region: "local", IngressId: fmt.Sprintf("cadence-ingress-%d", index), IngressRunId: "cadence-run", ProtocolVersion: 1, ConnectionCapacity: int64(max(64, f.routes)), IngressPoolId: PrimaryIngressPoolID, Https: true, ServicePorts: []int{}},
+			RenewalInterval: cadenceRenewalInterval, RetryInterval: time.Second,
 			Now: now, Observer: metrics, Report: func(err error) { fail(fmt.Errorf("ingress control: %w", err)) },
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		controllers[index], ingressMetrics[index] = controller, metrics
-		metrics.RegisterIngressRouting(controller.RoutingStatus)
 		actors.Go(func() {
 			if err := controller.Run(ctx); err != nil && ctx.Err() == nil {
 				fail(err)
@@ -152,10 +149,9 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 	var scheduled, completed, renewed, late, repaired atomic.Int64
 	var maximumQueueDelay atomic.Int64
 	var pruned, scanned atomic.Int64
-	var retentionFloor atomic.Uint64
 	var expiredAt atomic.Int64
 	pending := make([]atomic.Bool, f.routes)
-	wasRepaired := make([]bool, f.routes) // one pending heartbeat per public URL.
+	wasRepaired := make([]bool, f.routes) // one pending heartbeat per service.
 	affected := int64(0)
 	for _, session := range sessions {
 		if session.leases[failed.RelayServiceID].RelayID == failed.RelayID {
@@ -164,7 +160,7 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 	}
 	defer func() {
 		if retention > 0 {
-			t.Logf("retention=%s floor=%d scanned=%d deleted=%d", retention, retentionFloor.Load(), scanned.Load(), pruned.Load())
+			t.Logf("service_audit_cleanup_window=%s eligible_observations=%d deleted=%d", retention, scanned.Load(), pruned.Load())
 		}
 		t.Logf("cadence_elapsed=%s scheduled=%d completed=%d expected=%d pending=%d late=%d max_scheduler_queue_delay=%s lease_renewals=%d recovered=%d/%d", time.Since(started), scheduled.Load(), completed.Load(), int64(f.routes)*int64(duration/cadenceHeartbeatInterval), scheduled.Load()-completed.Load(), late.Load(), time.Duration(maximumQueueDelay.Load()), renewed.Load(), repaired.Load(), affected)
 		f.logStats(t)
@@ -204,35 +200,36 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 	}
 	jobs := make(chan job, f.routes)
 	var work sync.WaitGroup
-	work.Add(64 + 1 + len(leases))
+	work.Add(64 + 1 + len(leases) + len(controllers))
+	for index, controller := range controllers {
+		actors.Go(func() {
+			defer work.Done()
+			if err := observeCadenceAdmissions(t, ctx, f.controls[index], controller, sessions, failed, now, started.Add(duration)); err != nil {
+				fail(err)
+			}
+		})
+	}
+	var auditRowsBefore int64
+	if err := f.database.pool.QueryRow(ctx, `SELECT count(*) FROM control.service_audit_events`).Scan(&auditRowsBefore); err != nil {
+		t.Fatal(err)
+	}
 	if retention > 0 {
 		work.Add(len(f.controls))
 		for _, control := range f.controls {
 			actors.Go(func() {
 				defer work.Done()
-				var cursor uint64
-				var nextFloorCheck time.Time
 				for time.Since(started) < duration && ctx.Err() == nil {
-					at := now()
-					if !at.Before(nextFloorCheck) {
-						callCtx, stop := context.WithTimeout(ctx, 2*time.Second)
-						floor, err := control.AdvanceIngressRoutingRetention(callCtx, at.Add(-retention))
-						stop()
-						if err != nil {
-							if ctx.Err() == nil {
-								fail(err)
-							}
-							return
-						}
-						for previous := retentionFloor.Load(); floor > previous; previous = retentionFloor.Load() {
-							if retentionFloor.CompareAndSwap(previous, floor) {
-								break
-							}
-						}
-						nextFloorCheck = at.Add(30 * time.Second)
-					}
+					at := time.Now()
 					callCtx, stop := context.WithTimeout(ctx, 2*time.Second)
-					batch, err := control.PruneIngressRoutingHistory(callCtx, cursor)
+					var eligible int64
+					err := control.pool.QueryRow(callCtx, `SELECT count(*) FROM
+						(SELECT cursor FROM control.service_audit_events WHERE received_at<$1 ORDER BY received_at,cursor LIMIT 1000) candidates`, at.Add(-retention)).Scan(&eligible)
+					var deleted int64
+					if err == nil {
+						// audit received_at uses PostgreSQL's wall clock, not the
+						// serving clock. shorten only its cleanup retention window.
+						deleted, err = control.CleanupServiceAudit(callCtx, at.Add(serviceaudit.Retention-retention), 1000)
+					}
 					stop()
 					if err != nil {
 						if ctx.Err() == nil {
@@ -240,16 +237,11 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 						}
 						return
 					}
-					scanned.Add(batch.Scanned)
-					pruned.Add(batch.Deleted)
+					scanned.Add(eligible)
+					pruned.Add(deleted)
 					delay := 30 * time.Second
-					if !batch.Busy {
-						cursor = batch.NextRevision
-						if batch.More {
-							delay = 100 * time.Millisecond
-						} else {
-							cursor = 0
-						}
+					if deleted == 1000 {
+						delay = 100 * time.Millisecond
 					}
 					if waitCadence(ctx, minTime(started.Add(duration), time.Now().Add(delay))) != nil {
 						return
@@ -279,24 +271,24 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 				}
 				callCtx, stop := context.WithDeadline(ctx, deadline)
 				session := sessions[item.index]
-				setup, err := f.controls[worker%2].HeartbeatPublishRun(callCtx, session.authentication(), now(), cadencePublisherLease, cadenceCredentialLife)
+				setup, err := f.controls[worker%2].HeartbeatServiceRun(callCtx, session.service.ID, session.run.RunID, session.run.Token, now(), ServiceRunHealth{Healthy: true, StreamCapacity: 64})
 				stop()
-				if err == nil && (setup.PublishRunID != session.setup.PublishRunID || setup.PublishRunNumber != session.setup.PublishRunNumber || setup.State != PublishRunReady || !setup.ExpiresAt.After(now())) {
+				if err == nil && (setup.ServiceID != session.service.ID || setup.RunID != session.run.RunID || setup.RunNumber != session.run.RunNumber || setup.State != "ready" || !setup.Healthy || !setup.ExpiresAt.After(now()) || len(setup.Connections) != 2) {
 					err = errors.New("heartbeat lost a live session")
 				}
 				changed := false
-				for slot, connection := range setup.PublisherConnections {
+				for slot, connection := range setup.Connections {
 					if err != nil {
 						break
 					}
-					previous := current[item.index].PublisherConnections[slot]
-					if connection.State == PublisherConnectionReady {
-						if connection.ConnectionAssignmentIdentity != previous.ConnectionAssignmentIdentity {
+					previous := current[item.index].Connections[slot]
+					if connection.State == "ready" {
+						if connection != previous {
 							err = errors.New("ready assignment changed without publisher claim")
 						}
 						continue
 					}
-					if connection.State != PublisherConnectionAssigned || session.leases[connection.RelayServiceID].RelayID != failed.RelayID || connection.ConnectionAssignmentRevision <= previous.ConnectionAssignmentRevision || connection.PublisherConnectionID == previous.PublisherConnectionID {
+					if connection.State != "assigned" || session.leases[connection.RelayServiceID].RelayID != failed.RelayID || connection.ConnectionSlot != previous.ConnectionSlot || connection.RelayServiceID != previous.RelayServiceID || connection.Revision <= previous.Revision || connection.PublisherConnectionID == previous.PublisherConnectionID || connection.Credential == previous.Credential || !connection.CredentialExpiresAt.After(now()) {
 						err = errors.New("unexpected replacement assignment")
 						break
 					}
@@ -313,25 +305,21 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 						err = errors.New("no live relay for replacement")
 						break
 					}
-					digest, parseErr := credentials.ParsePublisherConnectionCredential(connection.PublisherConnectionCredential)
-					if parseErr != nil {
-						err = parseErr
-						break
-					}
-					claim := PublisherConnectionClaimRequest{ConnectionAssignmentIdentity: connection.ConnectionAssignmentIdentity, RelayLeaseIdentity: selected.RelayLeaseIdentity, ClaimID: "cadence", CredentialDigest: [32]byte(digest)}
 					callCtx, stop = context.WithTimeout(ctx, cadenceControlTimeout)
-					_, err = f.controls[worker%2].ClaimPublisherConnection(callCtx, claim, now())
+					_, err = f.controls[worker%2].ClaimServicePublisherConnection(callCtx, connection.PublisherConnectionID, session.service.ID, setup.RunID, setup.RunNumber,
+						connection.Revision, connection.Credential, netip.MustParseAddr("127.0.0.1"), selected.RelayLeaseIdentity, now())
 					stop()
 					if err != nil {
 						break
 					}
 					callCtx, stop = context.WithTimeout(ctx, cadenceControlTimeout)
-					_, err = f.controls[worker%2].MarkPublisherConnectionReady(callCtx, claim, now())
+					_, err = f.controls[worker%2].ReadyServicePublisherConnection(callCtx, connection.PublisherConnectionID, setup.RunID, setup.RunNumber, connection.Revision, selected.RelayLeaseIdentity, now())
 					stop()
 					if err != nil {
 						break
 					}
-					setup.PublisherConnections[slot].State = PublisherConnectionReady
+					setup.Connections[slot].State = "ready"
+					bindings[item.index][connection.RelayServiceID] = selected
 					changed = true
 				}
 				if err != nil {
@@ -341,6 +329,7 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 					fail(fmt.Errorf("heartbeat/replacement route=%d scheduled_elapsed=%s: %w", item.index, item.due.Sub(started), err))
 					return
 				}
+				setup.Token = session.run.Token
 				current[item.index] = setup
 				if changed && !wasRepaired[item.index] {
 					wasRepaired[item.index] = true
@@ -415,7 +404,6 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 					leases[index] = replacement
 					leaseMu.Unlock()
 					restarted = true
-					close(resnapshot)
 					t.Logf("relay_restarted_elapsed=%s", time.Since(started))
 					for started.Add(tick + cadenceRenewalInterval).Before(time.Now()) {
 						tick += cadenceRenewalInterval
@@ -454,15 +442,16 @@ waiting:
 		case <-progress.C:
 			t.Logf("cadence_progress elapsed=%s scheduled=%d completed=%d pending=%d recovered=%d/%d", time.Since(started), scheduled.Load(), completed.Load(), scheduled.Load()-completed.Load(), repaired.Load(), affected)
 			for index, controller := range controllers {
-				status := controller.RoutingStatus()
-				t.Logf("ingress=%d applied=%d known_backlog=%d last_check_age=%s", index, status.AppliedRevision, status.LatestRevision-status.AppliedRevision, now().Sub(status.LastSuccessfulCheck))
+				lease := controller.Lease()
+				t.Logf("ingress=%d ready=%t lease_revision=%d last_renewal_age=%s", index, controller.Ready(now()), lease.IngressLeaseRevision, now().Sub(lease.RenewedAt))
 			}
 			if retention > 0 {
-				var relationBytes, deadTuples, vacuums int64
-				if err := f.database.pool.QueryRow(ctx, `SELECT pg_total_relation_size('control.ingress_routing_table_events'), n_dead_tup, autovacuum_count FROM pg_stat_user_tables WHERE schemaname = 'control' AND relname = 'ingress_routing_table_events'`).Scan(&relationBytes, &deadTuples, &vacuums); err != nil {
+				var relationBytes, deadTuples, vacuums, rows int64
+				if err := f.database.pool.QueryRow(ctx, `SELECT pg_total_relation_size('control.service_audit_events'), n_dead_tup, autovacuum_count,
+					(SELECT count(*) FROM control.service_audit_events) FROM pg_stat_user_tables WHERE schemaname='control' AND relname='service_audit_events'`).Scan(&relationBytes, &deadTuples, &vacuums, &rows); err != nil {
 					fail(err)
 				} else {
-					t.Logf("retention_progress floor=%d deleted=%d approximate_rows=%d relation_bytes=%d estimated_dead_tuples=%d autovacuums=%d", retentionFloor.Load(), pruned.Load(), int64(f.routes)*int64(f.history)+completed.Load()+repaired.Load()-pruned.Load(), relationBytes, deadTuples, vacuums)
+					t.Logf("service_audit_cleanup_progress deleted=%d rows=%d relation_bytes=%d estimated_dead_tuples=%d autovacuums=%d", pruned.Load(), rows, relationBytes, deadTuples, vacuums)
 				}
 			}
 		}
@@ -474,97 +463,130 @@ waiting:
 	if completed.Load() != int64(f.routes)*int64(duration/cadenceHeartbeatInterval) || repaired.Load() != affected || late.Load() != 0 {
 		t.Fatal("incomplete cadence workload")
 	}
-	verifyCtx, stopVerification := context.WithTimeout(ctx, 10*time.Second)
+	verifyCtx, stopVerification := context.WithTimeout(ctx, cadenceControlTimeout)
 	defer stopVerification()
-	// all publisher heartbeats have stopped. drain routing consumers to a
-	// final production snapshot while their normal lease renewals continue.
-	identity := controllers[0].Lease()
-	final, err := f.database.ReadIngressRoutingTableSnapshot(verifyCtx, IngressLeaseIdentity{IngressID: identity.IngressId, IngressRunID: identity.IngressRunId, IngressLeaseRevision: uint64(identity.IngressLeaseRevision)}, now())
-	if err != nil || len(final.Entries) != f.routes {
-		t.Fatalf("final snapshot routes=%d want=%d: %v", len(final.Entries), f.routes, err)
-	}
-	wantRevision := uint64(f.routes)*uint64(f.history) + uint64(completed.Load()) + uint64(repaired.Load())
-	if final.RoutingTableRevision != wantRevision {
-		t.Fatalf("final revision=%d want=%d", final.RoutingTableRevision, wantRevision)
-	}
+	// publisher workers have joined. lease controllers remain live while each
+	// ingress verifies the exact current service and connected relay tuples.
 	if retention > 0 {
 		var rows int64
-		if err := f.database.pool.QueryRow(verifyCtx, `SELECT count(*) FROM control.ingress_routing_table_events`).Scan(&rows); err != nil || rows != int64(wantRevision)-pruned.Load() || pruned.Load() == 0 || final.RetainedAfterRevision == 0 {
-			t.Fatalf("retention rows=%d deleted=%d floor=%d: %v", rows, pruned.Load(), final.RetainedAfterRevision, err)
+		if err := f.database.pool.QueryRow(verifyCtx, `SELECT count(*) FROM control.service_audit_events`).Scan(&rows); err != nil || rows != auditRowsBefore-pruned.Load() || pruned.Load() == 0 {
+			t.Fatalf("service audit cleanup rows=%d before=%d deleted=%d: %v", rows, auditRowsBefore, pruned.Load(), err)
 		}
-		t.Logf("retention_verified_rows=%d deleted=%d floor=%d", rows, pruned.Load(), final.RetainedAfterRevision)
+		t.Logf("service_audit_cleanup_verified_rows=%d deleted=%d", rows, pruned.Load())
 	}
 	for ingressIndex, controller := range controllers {
-		for controller.RoutingStatus().AppliedRevision != int64(final.RoutingTableRevision) {
-			if err := waitCadence(verifyCtx, time.Now().Add(10*time.Millisecond)); err != nil {
-				t.Fatal(err)
-			}
+		lease := controller.Lease()
+		if !controller.Ready(now()) || lease.IngressLeaseRevision < 1 || !lease.RenewedAt.After(lease.RegisteredAt) {
+			t.Fatalf("ingress=%d lost current renewed lease", ingressIndex)
 		}
+		identity := IngressLeaseIdentity{IngressID: lease.IngressId, IngressRunID: lease.IngressRunId, IngressLeaseRevision: uint64(lease.IngressLeaseRevision)}
 		for index, session := range sessions {
-			entries, reason := controller.Lookup(session.request.CertificateIdentifiers[0], now())
-			if reason != ingress.LookupCurrent || len(entries) != 1 {
-				t.Fatalf("final routing lost live route=%d: entries=%+v reason=%s", index, entries, reason)
-			}
-			entry := entries[0]
-			if entry.PublishRunId != session.setup.PublishRunID || entry.PublishRunNumber != int64(session.setup.PublishRunNumber) || len(entry.PublisherConnections) != 2 {
-				t.Fatalf("final routing lost live route=%d", index)
-			}
-			for _, connection := range entry.PublisherConnections {
-				if connection.PublisherConnectionId != current[index].PublisherConnections[connection.ConnectionSlot].PublisherConnectionID {
-					t.Fatalf("final routing has stale assignment route=%d", index)
-				}
-				if connection.RelayId == failed.RelayID && connection.RelayRunId == failed.RelayRunID {
-					t.Fatalf("final routing has old relay run route=%d", index)
-				}
+			session.run, session.leases = current[index], bindings[index]
+			if err := observeLoadService(verifyCtx, f.database, identity, session, now()); err != nil {
+				t.Fatalf("final admission ingress=%d service=%s: %v", ingressIndex, session.service.ID, err)
 			}
 		}
-		status := controller.RoutingStatus()
-		if !status.CaughtUp || status.UpdateFailures != 0 || status.Resnapshots != 1 {
-			t.Fatalf("ingress=%d did not recover cleanly: %+v", ingressIndex, status)
-		}
-		t.Logf("ingress=%d final_applied=%d known_backlog=%d last_check_age=%s resnapshots=%d failures=%d", ingressIndex, status.AppliedRevision, status.LatestRevision-status.AppliedRevision, now().Sub(status.LastSuccessfulCheck), status.Resnapshots, status.UpdateFailures)
+		t.Logf("ingress=%d verified_admissions=%d lease_revision=%d last_renewal_age=%s", ingressIndex, f.routes, lease.IngressLeaseRevision, now().Sub(lease.RenewedAt))
 	}
-	expectedRuns := make(map[string]PublishRunSetup, f.routes)
+	expectedRuns := make(map[string]ServiceRunState, f.routes)
 	for _, session := range sessions {
-		expectedRuns[session.setup.PublicURLID] = session.setup
+		expectedRuns[session.service.ID] = session.run
 	}
 	rows, err := f.database.pool.Query(verifyCtx, `
-		SELECT public_url_id, publish_run_number, id,
-		    (closed_at IS NULL AND publisher_expires_at > $1) IS TRUE
-		FROM control.publish_runs`, now())
+		SELECT service_id, run_number, id,
+		    (state='ready' AND healthy AND closed_at IS NULL AND publisher_expires_at > $1) IS TRUE
+		FROM control.service_runs`, now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var publicURLID, sessionID string
-		var version uint64
+		var serviceID, sessionID string
+		var version int64
 		var matches bool
-		if err := rows.Scan(&publicURLID, &version, &sessionID, &matches); err != nil {
+		if err := rows.Scan(&serviceID, &version, &sessionID, &matches); err != nil {
 			t.Fatal(err)
 		}
-		expected, ok := expectedRuns[publicURLID]
-		if !ok || !matches || version != expected.PublishRunNumber || sessionID != expected.PublishRunID {
-			t.Fatalf("unexpected run public_url_id=%s number=%d values_match=%t", publicURLID, version, matches)
+		expected, ok := expectedRuns[serviceID]
+		if !ok || !matches || version != expected.RunNumber || sessionID != expected.RunID {
+			t.Fatalf("unexpected run service_id=%s number=%d values_match=%t", serviceID, version, matches)
 		}
-		delete(expectedRuns, publicURLID)
+		delete(expectedRuns, serviceID)
 	}
 	if err := rows.Err(); err != nil || len(expectedRuns) != 0 {
 		t.Fatalf("missing runs=%d: %v", len(expectedRuns), err)
 	}
 	assertAssignmentTotals(t, f.database.pool, int64(f.routes)*2)
-	var databaseBytesAfter, historyBytesAfter, walBytes int64
-	if err := f.database.pool.QueryRow(verifyCtx, `SELECT pg_database_size(current_database()), pg_total_relation_size('control.ingress_routing_table_events'), pg_wal_lsn_diff(pg_current_wal_lsn(), $1::pg_lsn)::bigint`, walStart).Scan(&databaseBytesAfter, &historyBytesAfter, &walBytes); err != nil {
+	var databaseBytesAfter, serviceBytesAfter, walBytes int64
+	if err := f.database.pool.QueryRow(verifyCtx, `SELECT pg_database_size(current_database()),
+		pg_total_relation_size('control.service_runs')+pg_total_relation_size('control.service_connection_slots')+pg_total_relation_size('control.public_service_visitors'),
+		pg_wal_lsn_diff(pg_current_wal_lsn(), $1::pg_lsn)::bigint`, walStart).Scan(&databaseBytesAfter, &serviceBytesAfter, &walBytes); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("database_bytes_before=%d database_bytes_after=%d routing_history_bytes_after=%d", databaseBytesBefore, databaseBytesAfter, historyBytesAfter)
+	t.Logf("database_bytes_before=%d database_bytes_after=%d service_admission_bytes_after=%d", databaseBytesBefore, databaseBytesAfter, serviceBytesAfter)
 	t.Logf("postgres_cluster_wal_bytes=%d (includes all concurrent database activity and vacuum)", walBytes)
-	t.Logf("cadence_verified_routes=%d final_revision=%d", f.routes, final.RoutingTableRevision)
+	t.Logf("cadence_verified_services=%d", f.routes)
 	cancel()
 	actors.Wait()
 	if firstErr != nil {
 		t.Fatal(firstErr)
 	}
+}
+
+func observeCadenceAdmissions(t *testing.T, ctx context.Context, control *Database, controller *ingress.Controller, sessions []servicePublicationFixture, failed RelayLease, now func() time.Time, until time.Time) error {
+	previous := make([][2]int64, len(sessions))
+	var admissions, degraded int
+	defer func() {
+		t.Logf("cadence_ingress=%s admissions=%d degraded_observations=%d", controller.Lease().IngressId, admissions, degraded)
+	}()
+	for time.Now().Before(until) && ctx.Err() == nil {
+		lease := controller.Lease()
+		if !controller.Ready(now()) {
+			return errors.New("cadence ingress lost its current lease")
+		}
+		identity := IngressLeaseIdentity{IngressID: lease.IngressId, IngressRunID: lease.IngressRunId, IngressLeaseRevision: uint64(lease.IngressLeaseRevision)}
+		for index, session := range sessions {
+			callCtx, stop := context.WithTimeout(ctx, cadenceControlTimeout)
+			admission, err := readLoadAdmission(callCtx, control, identity, session, now())
+			stop()
+			if err != nil {
+				return fmt.Errorf("cadence admission service=%s: %w", session.service.ID, err)
+			}
+			var seen [2]bool
+			for _, relay := range admission.Relays {
+				slot := relay.ConnectionSlot
+				if slot < 0 || slot > 1 || seen[slot] || relay.ConnectionAssignmentRevision < previous[index][slot] {
+					return fmt.Errorf("cadence admission duplicated or regressed a slot for %s", session.service.ID)
+				}
+				seen[slot] = true
+				before := session.run.Connections[slot]
+				initial := session.leases[before.RelayServiceID]
+				if initial.RelayID != failed.RelayID && (relay.PublisherConnectionID != before.PublisherConnectionID ||
+					relay.ConnectionAssignmentRevision != before.Revision || relay.RelayID != initial.RelayID ||
+					relay.RelayRunID != initial.RelayRunID || relay.RelayLeaseRevision != int64(initial.RelayLeaseRevision)) {
+					return fmt.Errorf("cadence admission changed a surviving relay for %s", session.service.ID)
+				}
+				if relay.RelayServiceID != before.RelayServiceID || relay.ConnectionAssignmentRevision < before.Revision ||
+					relay.ConnectionAssignmentRevision == before.Revision && relay.PublisherConnectionID != before.PublisherConnectionID {
+					return fmt.Errorf("cadence admission changed an assignment without advancing its revision for %s", session.service.ID)
+				}
+				previous[index][slot] = relay.ConnectionAssignmentRevision
+			}
+			for _, slot := range session.run.Connections {
+				if session.leases[slot.RelayServiceID].RelayID != failed.RelayID && !seen[slot.ConnectionSlot] {
+					return fmt.Errorf("cadence admission lost a surviving relay for %s", session.service.ID)
+				}
+			}
+			if len(admission.Relays) == 1 {
+				degraded++
+			}
+			admissions++
+		}
+		if waitCadence(ctx, minTime(until, time.Now().Add(time.Second))) != nil {
+			return ctx.Err()
+		}
+	}
+	return ctx.Err()
 }
 
 func cadenceMetricValue(families []*dto.MetricFamily, name string) (float64, bool) {

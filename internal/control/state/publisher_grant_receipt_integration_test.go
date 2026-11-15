@@ -12,19 +12,19 @@ import (
 
 func TestIntegrationPublisherIdentityReturnsStoredGrantExpiry(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "publisher_grant_receipt")
-	r := oidcRouteRequest(t, d, now)
-	service := createTestPublicURL(t, d, r, now)
-	member, err := controlstatedb.New(d.pool).GetActivePublishRunMembership(t.Context(), controlstatedb.GetActivePublishRunMembershipParams{
-		TeamID: r.TeamID, IdentityID: r.ActingIdentityID,
-	})
+	session := newOIDCSession(t, d, now)
+	member := session.Identity.Memberships[0]
+	actor := session.Identity.Identity.ID
+	service, err := d.CreateServiceAt(t.Context(), member.TeamID, actor, "receipt", "receipt",
+		ServicePlacement{}, now, ServiceMetadata{}, &ProjectServiceConfiguration{Target: "http://127.0.0.1:3000"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, kind := range []string{"installed", "automation", "run"} {
 		t.Run(kind, func(t *testing.T) {
 			enrollment, err := d.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{
-				Scope: PublisherScope{TeamID: r.TeamID, Kind: "saved_public_url", PublicURLID: service.ID},
-				Name:  "receipt", Kind: kind, EditorID: r.ActingIdentityID, EditorMembershipID: member.ID,
+				Scope: PublisherScope{TeamID: member.TeamID, Kind: "service", ServiceID: service.ID},
+				Name:  "receipt", Kind: kind, EditorID: actor, EditorMembershipID: member.ID,
 				PolicyRevision: uint64(member.PolicyRevision), Now: now,
 			})
 			if err != nil {

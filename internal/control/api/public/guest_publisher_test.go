@@ -73,7 +73,7 @@ func TestGuestEnrollmentUsesExactServiceGrantActualTrialOwnerAndStoredExpiry(t *
 		store.credential.Token != "guest-token" || store.credential.SourceIP != netip.MustParseAddr("192.0.2.7") || store.now.IsZero() ||
 		identity.GuestId != guest || identity.TeamId != "" || identity.Kind != "service" ||
 		identity.ServiceId == nil || *identity.ServiceId != service || identity.ExpiresAt == nil || !identity.ExpiresAt.Equal(until) ||
-		identity.PublicUrlId != nil || identity.Namespace != nil || identity.DomainId != nil ||
+		identity.Namespace != nil || identity.DomainId != nil || strings.Contains(w.Body.String(), `"public_url_id"`) ||
 		strings.Contains(w.Body.String(), `"team_id"`) || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("guest enrollment changed credential source, exact grant, owner, or fixed expiration", w.Code, store.calls)
 	}

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +30,7 @@ type serviceSetupTransport func(*http.Request) (*http.Response, error)
 func (f serviceSetupTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 type serviceSetupFixture struct {
+	mu                                              sync.Mutex
 	t                                               *testing.T
 	state                                           *clientstate.Database
 	services                                        publisherServices
@@ -40,7 +42,10 @@ type serviceSetupFixture struct {
 	requests, creates, updates, changes, gets, runs int
 	enrollments, redemptions                        int
 	created                                         bool
+	createKeys                                      []string
+	creations                                       map[string]struct{ request, service string }
 	before                                          func(*http.Request) (*http.Response, bool)
+	afterCreate                                     func() error
 	afterUpdate                                     func() error
 }
 
@@ -75,7 +80,7 @@ func newServiceSetupFixture(t *testing.T, hostname string) *serviceSetupFixture 
 		t.Fatal(err)
 	}
 	domain := serviceTestID(t, opaqueid.DomainPrefix)
-	f := &serviceSetupFixture{t: t, state: state, saved: controlv1.Service{Id: serviceTestID(t, opaqueid.ServicePrefix),
+	f := &serviceSetupFixture{t: t, state: state, creations: make(map[string]struct{ request, service string }), saved: controlv1.Service{Id: serviceTestID(t, opaqueid.ServicePrefix),
 		TeamId: serviceTestID(t, opaqueid.TeamPrefix), DomainId: &domain, Protocol: controlv1.ServiceProtocolHTTP,
 		Enabled: true, TrustRevision: 1, CreatedAt: time.Now().UTC(),
 		Endpoint: &controlv1.ServiceEndpoint{Hostname: hostname, Port: 443, Public: true}}}
@@ -98,6 +103,8 @@ func newServiceSetupFixture(t *testing.T, hostname string) *serviceSetupFixture 
 }
 
 func (f *serviceSetupFixture) serve(r *http.Request) (*http.Response, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.requests++
 	if f.before != nil {
 		if response, handled := f.before(r); handled {
@@ -126,21 +133,57 @@ func (f *serviceSetupFixture) serve(r *http.Request) (*http.Response, error) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			return nil, err
 		}
-		if f.created || body.Placement == nil || body.Placement.Hostname == nil || *body.Placement.Hostname != f.saved.Endpoint.Hostname ||
+		key := r.Header.Get("Idempotency-Key")
+		f.createKeys = append(f.createKeys, key)
+		if !opaqueid.Valid(key, opaqueid.IdempotencyPrefix) {
+			f.t.Error("creation omitted its operation-scoped idempotency key")
+		}
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		if previous, found := f.creations[key]; found {
+			if !f.created || previous.service != f.saved.Id || previous.request != string(encoded) {
+				return serviceTestResponse(r, 409, controlv1.Problem{Code: controlv1.Conflict, Status: 409}), nil
+			}
+			return serviceTestResponse(r, 200, f.saved), nil
+		}
+		if f.created {
+			return serviceTestResponse(r, 409, controlv1.Problem{Code: controlv1.Conflict, Status: 409}), nil
+		}
+		if body.Placement == nil || body.Placement.Hostname == nil || *body.Placement.Hostname != f.saved.Endpoint.Hostname ||
 			body.Placement.DomainId == nil || *body.Placement.DomainId != *f.saved.DomainId || body.Configuration == nil ||
-			body.Configuration.Target != "app" || body.TeamId != f.saved.TeamId {
+			body.Configuration.Target == "" || body.TeamId != f.saved.TeamId {
 			f.t.Error("creation changed an existing service or its exact placement/declaration", body)
+		}
+		if f.creates != 0 {
+			f.saved.Id = serviceTestID(f.t, opaqueid.ServicePrefix)
 		}
 		f.created, f.saved.Name = true, body.Name
 		f.declaration = *body.Configuration
 		f.saved.TargetTls = body.TargetTls
 		f.applyDeclaration()
 		f.creates++
+		f.creations[key] = struct{ request, service string }{string(encoded), f.saved.Id}
+		if f.afterCreate != nil {
+			if err := f.afterCreate(); err != nil {
+				return nil, err
+			}
+		}
 		return serviceTestResponse(r, 201, f.saved), nil
+	case "GET /v1/services/" + f.saved.Id + "/configuration":
+		management()
+		response := serviceTestResponse(r, 200, f.declaration)
+		response.Header.Set("ETag", `"`+foregroundDigest(f.declaration)+`"`)
+		return response, nil
 	case "GET /v1/services/" + f.saved.Id:
 		management()
 		f.gets++
 		return serviceTestResponse(r, 200, f.saved), nil
+	case "DELETE /v1/services/" + f.saved.Id:
+		management()
+		f.created = false
+		return serviceTestResponse(r, http.StatusOK, struct{}{}), nil
 	case "PUT /v1/services/" + f.saved.Id:
 		management()
 		var body controlv1.UpdateServiceRequest
@@ -303,5 +346,90 @@ func TestReserveConfiguredServiceRereadsConflictAndLostUpdateReply(t *testing.T)
 				t.Fatal("uncertain update did not reread and confirm the same service", saved, err, f.creates, f.gets, f.changes)
 			}
 		})
+	}
+}
+
+func TestReserveConfiguredServiceCreatesANewLifetimeAfterDeletion(t *testing.T) {
+	f := newServiceSetupFixture(t, "again.member.example")
+	declaration := controlv1.ProjectServiceConfiguration{Target: "app"}
+	first, err := reserveConfiguredService(t.Context(), f.services, declaration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.services.routes.DeleteService(t.Context(), first.Id); err != nil {
+		t.Fatal(err)
+	}
+	second, err := reserveConfiguredService(t.Context(), f.services, declaration)
+	if err != nil || second.Id == first.Id || second.Name != first.Name || second.Endpoint.Hostname != first.Endpoint.Hostname ||
+		f.creates != 2 || len(f.createKeys) != 2 || f.createKeys[0] == f.createKeys[1] {
+		t.Fatal("deleted service reused its creation operation or prevented a new lifetime", first, second, f.creates, f.createKeys, err)
+	}
+}
+
+func TestReserveConfiguredServiceRecoversUncertainCreation(t *testing.T) {
+	for _, committed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "retry before commit", true: "lost committed reply"}[committed], func(t *testing.T) {
+			f := newServiceSetupFixture(t, "uncertain.member.example")
+			var keys []string
+			fail := true
+			f.before = func(r *http.Request) (*http.Response, bool) {
+				if r.Method != http.MethodPost || r.URL.Path != "/v1/services" {
+					return nil, false
+				}
+				keys = append(keys, r.Header.Get("Idempotency-Key"))
+				if fail && !committed {
+					fail = false
+					return serviceTestResponse(r, 503, controlv1.Problem{Code: controlv1.Unavailable, Status: 503}), true
+				}
+				return nil, false
+			}
+			if committed {
+				f.afterCreate = func() error {
+					f.afterCreate = nil
+					return io.ErrUnexpectedEOF
+				}
+			}
+			saved, err := reserveConfiguredService(t.Context(), f.services, controlv1.ProjectServiceConfiguration{Target: "app"})
+			wantAttempts := 2
+			if committed {
+				wantAttempts = 1
+			}
+			if err != nil || saved.Id != f.saved.Id || f.creates != 1 || len(keys) != wantAttempts {
+				t.Fatal("uncertain creation lost or duplicated the allocation", saved, f.creates, keys, err)
+			}
+			for _, key := range keys {
+				if key != keys[0] {
+					t.Fatal("creation retry changed its original operation key", keys)
+				}
+			}
+		})
+	}
+}
+
+func TestReserveConfiguredServiceConcurrentCreationSelectsOneService(t *testing.T) {
+	f := newServiceSetupFixture(t, "concurrent.member.example")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	type result struct {
+		saved controlv1.Service
+		err   error
+	}
+	start, done := make(chan struct{}), make(chan result, 2)
+	for range 2 {
+		go func() {
+			<-start
+			saved, err := reserveConfiguredService(ctx, f.services, controlv1.ProjectServiceConfiguration{Target: "app"})
+			done <- result{saved, err}
+		}()
+	}
+	close(start)
+	for range 2 {
+		result := <-done
+		if result.err != nil || result.saved.Id != f.saved.Id {
+			t.Fatal("concurrent creation selected another allocation", result.saved, result.err)
+		}
+	}
+	if f.creates != 1 || len(f.createKeys) != 1 {
+		t.Fatal("concurrent creation sent another allocation instead of rereading under the hostname lock", f.creates, f.createKeys)
 	}
 }

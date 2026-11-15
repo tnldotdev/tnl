@@ -35,7 +35,7 @@ func TestDrainingControlRejectsNewRunsBeforeStateWork(t *testing.T) {
 	}
 	// renewal still reaches its ordinary credential boundary during drain.
 	w := httptest.NewRecorder()
-	h.RenewServiceRun(w, httptest.NewRequest("POST", "/", strings.NewReader(`{"run_number":"1"}`)), "service", "run")
+	h.RenewServiceRun(w, httptest.NewRequest("POST", "/", strings.NewReader(`{"healthy":true,"stream_capacity":64,"active_streams":0}`)), "service", "run")
 	if w.Code != http.StatusUnauthorized || strings.Contains(w.Body.String(), "control is draining") {
 		t.Fatal("drain blocked an existing run at the new-work gate", w.Code, w.Body.String())
 	}

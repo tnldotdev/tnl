@@ -96,9 +96,15 @@ func TestIntegrationServiceConfigurationManagementBoundary(t *testing.T) {
 		t.Fatal("visitor grant exposed the protected declaration", err)
 	}
 	q := controlstatedb.New(f.sql)
-	member, err := q.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{TeamID: team.ID, IdentityID: session.Identity.Identity.Id})
+	identity, err := f.d.IdentityContext(ctx, session.Identity.Identity.Id)
 	if err != nil {
 		t.Fatal(err)
+	}
+	var member controlstate.Membership
+	for _, membership := range identity.Memberships {
+		if membership.TeamID == team.ID {
+			member = membership
+		}
 	}
 	enrollment, err := f.d.IssuePublisherEnrollment(ctx, controlstate.CreatePublisherEnrollmentRequest{
 		Scope: controlstate.PublisherScope{TeamID: team.ID, Kind: "service", ServiceID: service.ID},

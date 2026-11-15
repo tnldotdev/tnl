@@ -13,7 +13,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func (h *handler) ownerFeedbackDecision(ctx context.Context, principal publicURLReadPrincipal, thread controlstate.FeedbackThread) error {
+func (h *handler) ownerFeedbackDecision(ctx context.Context, principal controlReadPrincipal, thread controlstate.FeedbackThread) error {
 	if _, member := principal.teamIDs[thread.TeamID]; !member {
 		return authorization.ErrForbidden
 	}

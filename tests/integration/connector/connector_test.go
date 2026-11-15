@@ -38,6 +38,7 @@ import (
 	connectorworkload "github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/connectorfixture"
@@ -266,13 +267,17 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 	trustRevision := int64(1)
 	sessionID, _ := opaqueid.New("wls_")
 	serviceRun, _ := opaqueid.New(opaqueid.ServiceRunPrefix)
-	publicReservation, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	publicPort := 443
+	if protocol != "http" {
+		publicReservation, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// non-HTTP ingress ports stay reserved, independently of local listeners.
+		publicPort = publicReservation.Addr().(*net.TCPAddr).Port
+		defer publicReservation.Close()
 	}
-	// keep the public port occupied so local listeners cannot reuse it.
-	publicPort := publicReservation.Addr().(*net.TCPAddr).Port
-	defer publicReservation.Close()
+	permissionPort := int(serviceendpoint.PermissionPort(protocol))
 	native := connectorfixture.NewConnector(t, ca, caKey, service, serviceRun, sessionID, managedHostname, providerAddress)
 	var revoked atomic.Bool
 	renewed := make(chan struct{})
@@ -617,7 +622,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 					Protocol: controlv1.ServiceProtocol(protocol), TrustRevision: trustRevision,
 					Endpoint: controlv1.ServiceEndpoint{Hostname: managedHostname, Port: publicPort, Public: true},
 					VisitorPermission: controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: service},
-						Hostname: managedHostname, Port: publicPort, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: pair.ExpiresAt}})
+						Hostname: managedHostname, Port: permissionPort, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: pair.ExpiresAt}})
 				renewedOnce.Do(func() { close(renewed) })
 				return
 			}
@@ -634,7 +639,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: requested.Resource, Hostname: managedHostname, Port: publicPort, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: minTimeForFixture(time.Now().Add(time.Minute), current.LeaseExpiresAt)})
+			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: requested.Resource, Hostname: managedHostname, Port: permissionPort, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: minTimeForFixture(time.Now().Add(time.Minute), current.LeaseExpiresAt)})
 		case strings.HasSuffix(r.URL.Path, "/client-certificate"):
 			certificateRequests.Add(1)
 			w.WriteHeader(403)

@@ -58,11 +58,16 @@ func TestIntegrationDeploymentPublicationRealControlAndVisitor(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			native, selected, err = publisheridentity.PrepareDeploymentAllocation(t.Context(), f.identity.routes, f.identity.authority, approval, private, "production",
-				controlv1.AllocateServiceRequest{InvocationId: invocation, Configuration: controlv1.ProjectServiceConfiguration{
-					Protocol: &protocol, Target: target.URL, Public: new(true),
-					Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}},
-				}})
+			native, err = publisheridentity.NewDeploymentAllocator(f.identity.routes, f.identity.authority, approval, private, "production")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var service controlv1.Service
+			service, err = native.AllocateService(t.Context(), controlv1.AllocateServiceRequest{InvocationId: invocation, Configuration: controlv1.ProjectServiceConfiguration{
+				Protocol: &protocol, Target: target.URL, Public: new(true),
+				Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}},
+			}})
+			selected = &service
 		} else {
 			native, selected, err = publisheridentity.PrepareDeployment(t.Context(), f.identity.routes, f.identity.authority, approval, private, "production", "web")
 		}

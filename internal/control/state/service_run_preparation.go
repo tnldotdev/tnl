@@ -76,6 +76,8 @@ func serviceRunPreparation(r controlstatedb.ControlServiceRun) (ServiceRunPrepar
 }
 
 func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p PublisherIdentity, key string, now time.Time, request ServiceRunRequest) (result ServiceRunPreparation, retErr error) {
+	ctx, finish := d.observeOperation(ctx, observability.OpCreateServiceRun)
+	defer func() { finish(retErr) }()
 	clock := newAuthorizationClock(now)
 	preferred, retErr := region.Preferences(request.PreferredRegions)
 	if retErr != nil {
@@ -412,7 +414,7 @@ func privateConnectedRelays(ctx context.Context, tx pgx.Tx, runID string, now ti
 	return relays, lastRelayExpiry, nil
 }
 
-func replenishServiceConnections(ctx context.Context, q *controlstatedb.Queries, seed credentials.AssignmentSeed, run controlstatedb.ControlServiceRun, now time.Time) error {
+func replenishServiceConnections(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, seed credentials.AssignmentSeed, run controlstatedb.ControlServiceRun, now time.Time) error {
 	stale, err := q.ListServiceConnectionSlotsNeedingReplacement(ctx, controlstatedb.ListServiceConnectionSlotsNeedingReplacementParams{
 		ServiceRunID: run.ID, Now: timestamptz(now),
 	})
@@ -427,6 +429,12 @@ func replenishServiceConnections(ctx context.Context, q *controlstatedb.Queries,
 				return err
 			}
 		}
+	}
+	reused, err := reuseServiceConnectionReservations(ctx, tx, seed, run, stale, now)
+	if err != nil || reused {
+		return err
+	}
+	for _, slot := range stale {
 		if PublisherConnectionState(slot.State) == PublisherConnectionReady || PublisherConnectionState(slot.State) == PublisherConnectionConnected {
 			if _, err = q.ExpireServiceConnectionSlot(ctx, controlstatedb.ExpireServiceConnectionSlotParams{
 				PublisherConnectionID: slot.PublisherConnectionID, ServiceRunID: run.ID, Now: timestamptz(now),
@@ -484,15 +492,9 @@ func replenishServiceConnections(ctx context.Context, q *controlstatedb.Queries,
 		reserved[choice.relayServiceID]++
 		choices = append(choices, *choice)
 	}
-	for index, old := range replaced {
-		binding, err := checkedPrivateAssignmentBinding(old.ServiceID, old.ServiceRunID, old.PublisherConnectionID, old.RunNumber, old.ConnectionAssignmentRevision)
-		if err != nil || !binding.ServiceRunReference.matches(run) {
-			return ErrServiceAccess
-		}
-		revision, err := nextPrivateRevision(binding.revision)
-		if err != nil {
-			return err
-		}
+	// remove all old slots before inserting any replacements: a selected relay
+	// service may still belong to another old slot in this same batch.
+	for _, old := range replaced {
 		count, err := q.DeleteServiceConnectionSlot(ctx, controlstatedb.DeleteServiceConnectionSlotParams{
 			PublisherConnectionID: old.PublisherConnectionID, ServiceRunID: run.ID, Now: timestamptz(now),
 		})
@@ -502,25 +504,17 @@ func replenishServiceConnections(ctx context.Context, q *controlstatedb.Queries,
 		if count != 1 {
 			return ErrServiceAccess
 		}
-		choice := choices[index]
-		id, err := opaqueid.New(opaqueid.PublisherConnectionPrefix)
+	}
+	for index, old := range replaced {
+		binding, err := checkedPrivateAssignmentBinding(old.ServiceID, old.ServiceRunID, old.PublisherConnectionID, old.RunNumber, old.ConnectionAssignmentRevision)
 		if err != nil {
 			return err
 		}
-		_, digest, err := credentials.DeriveAssignmentCredential(seed,
-			publisherConnectionCredentialContext(id, revision))
+		replacement, err := serviceConnectionReplacement(seed, run, binding, old.ConnectionSlot, choices[index], now)
 		if err != nil {
 			return err
 		}
-		_, err = q.InsertServiceConnectionSlot(ctx, controlstatedb.InsertServiceConnectionSlotParams{
-			PublisherConnectionID: id, ServiceRunID: run.ID, ServiceID: run.ServiceID,
-			RunNumber: run.RunNumber, ConnectionSlot: old.ConnectionSlot,
-			ConnectionAssignmentRevision: revision,
-			RelayServiceID:               choice.relayServiceID, RelayAddress: choice.relayAddress,
-			TlsServerName: choice.tlsServerName, CredentialDigest: digest[:],
-			CredentialExpiresAt: timestamptz(now.Add(2 * time.Minute)),
-			AssignedAt:          timestamptz(now),
-		})
+		_, err = q.InsertServiceConnectionSlot(ctx, replacement)
 		if err != nil {
 			return err
 		}
@@ -528,14 +522,111 @@ func replenishServiceConnections(ctx context.Context, q *controlstatedb.Queries,
 	return nil
 }
 
+func serviceConnectionReplacement(seed credentials.AssignmentSeed, run controlstatedb.ControlServiceRun, binding privateAssignmentBinding, slot int16, placement relayServicePlacement, now time.Time) (controlstatedb.InsertServiceConnectionSlotParams, error) {
+	var replacement controlstatedb.InsertServiceConnectionSlotParams
+	if !binding.ServiceRunReference.matches(run) {
+		return replacement, ErrServiceAccess
+	}
+	revision, err := nextPrivateRevision(binding.revision)
+	if err != nil {
+		return replacement, err
+	}
+	id, err := opaqueid.New(opaqueid.PublisherConnectionPrefix)
+	if err != nil {
+		return replacement, err
+	}
+	_, digest, err := credentials.DeriveAssignmentCredential(seed, publisherConnectionCredentialContext(id, revision))
+	if err != nil {
+		return replacement, err
+	}
+	return controlstatedb.InsertServiceConnectionSlotParams{
+		PublisherConnectionID: id, ServiceRunID: run.ID, ServiceID: run.ServiceID,
+		RunNumber: run.RunNumber, ConnectionSlot: slot,
+		ConnectionAssignmentRevision: revision, RelayServiceID: placement.relayServiceID,
+		RelayAddress: placement.relayAddress, TlsServerName: placement.tlsServerName,
+		CredentialDigest: digest[:], CredentialExpiresAt: timestamptz(now.Add(2 * time.Minute)),
+		AssignedAt: timestamptz(now),
+	}, nil
+}
+
+func reuseServiceConnectionReservations(ctx context.Context, tx pgx.Tx, seed credentials.AssignmentSeed, run controlstatedb.ControlServiceRun, stale []controlstatedb.ListServiceConnectionSlotsNeedingReplacementRow, now time.Time) (bool, error) {
+	for _, old := range stale {
+		// never-ready claims still need a fresh placement decision and its guards.
+		if !old.SessionOpen || old.State != string(PublisherConnectionReady) {
+			return false, nil
+		}
+	}
+	// ready reservations already consume capacity. replace the complete set in
+	// place only after checking every service; never partially renew assignments.
+	// the eventual claims still check current relay leases and process capacity.
+	replacements := make([]controlstatedb.InsertServiceConnectionSlotParams, len(stale))
+	for index, old := range stale {
+		placement := relayServicePlacement{relayServiceID: old.RelayServiceID}
+		err := tx.QueryRow(ctx, `SELECT service.relay_address,service.tls_server_name
+			FROM control.relay_services service
+			JOIN control.relay_service_reservations reservation USING(relay_service_id)
+			WHERE service.relay_service_id=$1 AND service.enabled
+				AND reservation.reserved_slot_count>0
+				AND reservation.reserved_slot_count<=(SELECT COALESCE(sum(lease.connection_capacity),0)
+					FROM control.relay_leases lease WHERE lease.relay_service_id=service.relay_service_id
+						AND lease.lease_expires_at>$2 AND NOT lease.draining AND lease.protocol_version=1
+						AND lease.connection_capacity>0 AND lease.stream_capacity>0)`,
+			old.RelayServiceID, now).Scan(&placement.relayAddress, &placement.tlsServerName)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		binding, err := checkedPrivateAssignmentBinding(old.ServiceID, old.ServiceRunID, old.PublisherConnectionID, old.RunNumber, old.ConnectionAssignmentRevision)
+		if err != nil {
+			return false, err
+		}
+		replacements[index], err = serviceConnectionReplacement(seed, run, binding, old.ConnectionSlot, placement, now)
+		if err != nil {
+			return false, err
+		}
+	}
+	for index, replacement := range replacements {
+		old := stale[index]
+		updated, err := tx.Exec(ctx, `UPDATE control.service_connection_slots
+			SET publisher_connection_id=$3,connection_assignment_revision=$4,
+				relay_address=$5,tls_server_name=$6,credential_digest=$7,credential_expires_at=$8,
+				assigned_at=$9,state='assigned',relay_id=NULL,relay_run_id=NULL,relay_lease_revision=NULL
+			WHERE service_run_id=$1 AND publisher_connection_id=$2 AND session_open AND state='ready'`,
+			run.ID, old.PublisherConnectionID, replacement.PublisherConnectionID, replacement.ConnectionAssignmentRevision,
+			replacement.RelayAddress, replacement.TlsServerName, replacement.CredentialDigest, replacement.CredentialExpiresAt,
+			replacement.AssignedAt)
+		if err != nil {
+			return false, err
+		}
+		if updated.RowsAffected() != 1 {
+			return false, ErrServiceAccess
+		}
+	}
+	return true, nil
+}
+
 func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, token string, now time.Time, report ServiceRunHealth) (result ServiceRunState, retErr error) {
+	ctx, finish := d.observeOperation(ctx, observability.OpHeartbeatServiceRun)
+	defer func() { finish(retErr) }()
 	clock := newAuthorizationClock(now)
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
 	}
 	defer rollback(ctx, tx, "heartbeat service run", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, serviceID); err != nil {
+	if err = lockServiceOwner(ctx, tx, serviceID); err != nil {
+		return result, err
+	}
+	// renewal changes the run, not the saved service's identity. serialize
+	// authority changes without blocking transactions retaining an identity FK.
+	var enabledService string
+	err = tx.QueryRow(ctx, `SELECT id FROM control.services WHERE id=$1 AND enabled AND deleted_at IS NULL FOR NO KEY UPDATE`, serviceID).Scan(&enabledService)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return result, ErrServiceAccess
+	}
+	if err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
@@ -553,7 +644,7 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	}
 	run.Healthy, run.StreamCapacity, run.ReportedStreams = report.Healthy, report.StreamCapacity, report.ActiveStreams
 	until := now.Add(45 * time.Second)
-	if run.GuestID.Valid && run.PublisherExpiresAt.Time.After(until) {
+	if run.PublisherExpiresAt.Time.After(until) {
 		until = run.PublisherExpiresAt.Time
 	}
 	run, err = q.RenewServiceRun(ctx, controlstatedb.RenewServiceRunParams{
@@ -590,7 +681,7 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 		if err != nil {
 			return result, err
 		}
-		if err = replenishServiceConnections(ctx, q, seed, run, clock.current()); err != nil {
+		if err = replenishServiceConnections(ctx, tx, q, seed, run, clock.current()); err != nil {
 			return result, err
 		}
 	}
@@ -658,6 +749,8 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 }
 
 func (d *Database) CloseServiceRun(ctx context.Context, serviceID, runID, token string, now time.Time) (retErr error) {
+	ctx, finish := d.observeOperation(ctx, observability.OpCloseServiceRun)
+	defer func() { finish(retErr) }()
 	digest, err := credentials.ParseServiceRunToken(credentials.ServiceRunToken(token))
 	if err != nil || !opaqueid.Valid(runID, opaqueid.ServiceRunPrefix) {
 		return ErrServiceAccess

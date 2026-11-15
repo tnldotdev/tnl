@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
@@ -34,7 +35,7 @@ func policyObservation(t *testing.T, d *Database, scope visitorscope.Scope, afte
 
 func policyRevision(t *testing.T, d *Database, scope visitorscope.Scope) int64 {
 	t.Helper()
-	revision, err := controlstatedb.New(d.pool).ReadVisitorPolicyRevision(t.Context(), controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: string(scope.Kind), ResourceID: scope.ID})
+	revision, err := controlstatedb.New(d.pool).ReadVisitorPolicyRevision(t.Context(), scope.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,13 +44,19 @@ func policyRevision(t *testing.T, d *Database, scope visitorscope.Scope) int64 {
 
 func TestIntegrationVisitorPolicyPreservesSavedIPAllowlist(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "visitor_policy_saved_ip")
-	request := oidcRouteRequest(t, d, now)
-	request.AllowedIPPrefixes = []string{"192.0.2.0/24"}
-	url := createTestPublicURL(t, d, request, now)
+	session := newOIDCSession(t, d, now)
+	team := session.Identity.Memberships[0].TeamID
+	actor := session.Identity.Identity.ID
+	ctx := WithControlPrincipal(t.Context(), ControlPrincipal{IdentityID: actor, SessionID: session.SessionID})
+	service, err := d.CreateServiceAt(ctx, team, actor, "web", "web", ServicePlacement{}, now, ServiceMetadata{Protocol: "http"},
+		&ProjectServiceConfiguration{Target: "localhost:3000", HTTP: &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.0/24"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := d.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, now); err != nil {
 		t.Fatal(err)
 	}
-	update, err := visitorlease.Decode(policyObservation(t, d, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: url.ID}, 0))
+	update, err := visitorlease.Decode(policyObservation(t, d, visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}, 0))
 	if err != nil || update.IP == nil || !update.IP.Allows(netip.MustParseAddr("192.0.2.7")) || update.IP.Allows(netip.MustParseAddr("198.51.100.7")) {
 		t.Fatal("saved IP allowlist was not retained in the policy snapshot", err)
 	}
@@ -57,18 +64,25 @@ func TestIntegrationVisitorPolicyPreservesSavedIPAllowlist(t *testing.T) {
 
 func TestIntegrationVisitorPolicyMutationsCommitWithTheirScopeHistory(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "visitor_policy_mutations")
-	request := oidcRouteRequest(t, d, now)
-	url := createTestPublicURL(t, d, request, now)
-	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: url.ID}
+	session := newOIDCSession(t, d, now)
+	team := session.Identity.Memberships[0].TeamID
+	actor := session.Identity.Identity.ID
+	ctx := WithControlPrincipal(t.Context(), ControlPrincipal{IdentityID: actor, SessionID: session.SessionID})
+	service, err := d.CreateServiceAt(ctx, team, actor, "web", "web", ServicePlacement{}, now, ServiceMetadata{Protocol: "http"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}
 	before := policyRevision(t, d, scope)
 	tx, err := d.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(t.Context(), `UPDATE control.public_urls SET access_mode='anonymous' WHERE id=$1`, url.ID); err != nil {
+	defer rollbackTestTransaction(t, tx)
+	if _, err := tx.Exec(t.Context(), `SELECT control.touch_visitor_policy($1)`, service.ID); err != nil {
 		t.Fatal(err)
 	}
-	inside, err := controlstatedb.New(tx).ReadVisitorPolicyRevision(t.Context(), controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "public_url", ResourceID: url.ID})
+	inside, err := controlstatedb.New(tx).ReadVisitorPolicyRevision(t.Context(), service.ID)
 	if err != nil || inside <= before {
 		t.Fatal("permission mutation did not record invalidation in its transaction", err)
 	}
@@ -78,14 +92,14 @@ func TestIntegrationVisitorPolicyMutationsCommitWithTheirScopeHistory(t *testing
 	if policyRevision(t, d, scope) != before {
 		t.Fatal("rolled-back permission change leaked an invalidation")
 	}
-	if _, err := d.pool.Exec(t.Context(), `UPDATE control.public_urls SET access_mode='anonymous' WHERE id=$1`, url.ID); err != nil {
+	if _, err := d.pool.Exec(t.Context(), `SELECT control.touch_visitor_policy($1)`, service.ID); err != nil {
 		t.Fatal(err)
 	}
 	after := policyRevision(t, d, scope)
 	if after <= before {
 		t.Fatal("committed permission change did not advance visitor policy")
 	}
-	events, err := controlstatedb.New(d.pool).ReadVisitorPolicyEvents(t.Context(), controlstatedb.ReadVisitorPolicyEventsParams{ResourceKind: "public_url", ResourceID: url.ID, AfterRevision: before})
+	events, err := controlstatedb.New(d.pool).ReadVisitorPolicyEvents(t.Context(), controlstatedb.ReadVisitorPolicyEventsParams{ResourceID: service.ID, AfterRevision: before})
 	if err != nil || len(events) != int(after-before) {
 		t.Fatal("policy revision did not cover its committed events", err)
 	}
@@ -98,11 +112,14 @@ func TestIntegrationVisitorPolicyMutationsCommitWithTheirScopeHistory(t *testing
 
 func TestIntegrationVisitorPolicyIdentityRevocationCancelsPreparedTraffic(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "visitor_policy_revoke")
-	request := oidcRouteRequest(t, d, now)
-	url := createTestPublicURL(t, d, request, now)
 	session := newOIDCSession(t, d, now)
-	ctx := WithControlPrincipal(t.Context(), ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID})
-	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: url.ID}
+	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
+	ctx := WithControlPrincipal(t.Context(), principal)
+	service, err := d.CreateServiceAt(ctx, session.Identity.Memberships[0].TeamID, principal.IdentityID, "web", "web", ServicePlacement{}, now, ServiceMetadata{Protocol: "http"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}
 	issued, err := d.IssueVisitorToken(ctx, testVisitorIssuer, scope, BrowserTokenSource{}, now)
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +151,7 @@ func TestIntegrationVisitorPolicyIdentityRevocationCancelsPreparedTraffic(t *tes
 		t.Fatal(err)
 	}
 	defer guard.Close()
-	if _, err := d.pool.Exec(t.Context(), `UPDATE control.identities SET disabled_at=$2 WHERE id=$1`, request.ActingIdentityID, time.Now()); err != nil {
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.identities SET disabled_at=$2 WHERE id=$1`, principal.IdentityID, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	next := lease.Begin()
@@ -156,9 +173,14 @@ func TestIntegrationVisitorPolicyIdentityRevocationCancelsPreparedTraffic(t *tes
 
 func TestIntegrationVisitorPolicyCompactionAndKeyRotationHaveIndependentVersions(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "visitor_policy_history")
-	request := oidcRouteRequest(t, d, now)
-	url := createTestPublicURL(t, d, request, now)
-	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: url.ID}
+	session := newOIDCSession(t, d, now)
+	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
+	ctx := WithControlPrincipal(t.Context(), principal)
+	service, err := d.CreateServiceAt(ctx, session.Identity.Memberships[0].TeamID, principal.IdentityID, "web", "web", ServicePlacement{}, now, ServiceMetadata{Protocol: "http"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}
 	if err := d.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, now); err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +195,7 @@ func TestIntegrationVisitorPolicyCompactionAndKeyRotationHaveIndependentVersions
 	if rotated.Policy.VisitorPolicyRevision != first.Policy.VisitorPolicyRevision || rotated.Policy.KeyRevision <= first.Policy.KeyRevision {
 		t.Fatal("signing-key rotation reused a resource permission revision")
 	}
-	if _, err := d.pool.Exec(t.Context(), `SELECT control.touch_visitor_policy('public_url',$1) FROM generate_series(1,300)`, url.ID); err != nil {
+	if _, err := d.pool.Exec(t.Context(), `SELECT control.touch_visitor_policy($1) FROM generate_series(1,300)`, service.ID); err != nil {
 		t.Fatal(err)
 	}
 	compacted := policyObservation(t, d, scope, first.Policy.VisitorPolicyRevision)
@@ -181,7 +203,7 @@ func TestIntegrationVisitorPolicyCompactionAndKeyRotationHaveIndependentVersions
 		t.Fatal("compacted history extended authority without a snapshot")
 	}
 	var count int
-	if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.visitor_policy_events WHERE resource_kind='public_url' AND resource_id=$1`, url.ID).Scan(&count); err != nil || count != 256 {
+	if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.visitor_policy_events WHERE resource_id=$1`, service.ID).Scan(&count); err != nil || count != 256 {
 		t.Fatal("policy event retention escaped its per-scope bound", err)
 	}
 }

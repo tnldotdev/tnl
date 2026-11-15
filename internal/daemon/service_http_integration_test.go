@@ -70,7 +70,9 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		targetConnection.Store(r.RemoteAddr)
-		if r.Header.Get("Tnl-Access-Token") != "" || r.Header.Get("Tnl-Share-Token") != "" || strings.Contains(r.Header.Get("Cookie"), "__Host-tnl-") || r.Header.Get("X-Forwarded-Host") != "" || r.Header.Get("X-Real-IP") != "" || r.Header.Get("Forwarded") != "" {
+		if r.Header.Get("Tnl-Visitor-Token") != "" || r.Header.Get("Tnl-Access-Token") != "" || r.Header.Get("Tnl-Share-Token") != "" || strings.Contains(r.Header.Get("Cookie"), "__Host-tnl-") ||
+			r.Header.Get("X-Forwarded-Host") != r.Host || r.Header.Get("X-Forwarded-Proto") != "https" ||
+			strings.Contains(r.Header.Get("X-Forwarded-For"), "203.0.113.99") || r.Header.Get("X-Real-IP") != "" || r.Header.Get("Forwarded") != "" {
 			t.Error("target received visitor credentials or spoofed forwarding identity")
 		}
 		if r.URL.Path == "/cookie-whitespace" && r.Header.Get("Cookie") != "app_session=kept" {
@@ -469,9 +471,9 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkServiceHTTPCompany(t, f, issuer, client, base, service, person.Identity.Id)
-	var publicURLs int
-	if err = f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.public_urls`).Scan(&publicURLs); err != nil || publicURLs != 0 {
-		t.Fatal("managed authentication fabricated public URL state", publicURLs, err)
+	var retired bool
+	if err = f.inspect.QueryRowContext(t.Context(), `SELECT to_regclass('control.public_urls') IS NULL`).Scan(&retired); err != nil || !retired {
+		t.Fatal("HTTP authentication retained a second publication family", retired, err)
 	}
 }
 

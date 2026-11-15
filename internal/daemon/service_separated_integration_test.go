@@ -236,9 +236,9 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 			if _, err := f.identity.routes.SelectServiceRun(t.Context(), service.Id, device.Subject.DeviceID); !defaultConnectorRevocationDenied(err) {
 				t.Fatalf("control did not deny the exact revoked device: %v", err)
 			}
-			var publicURLs int
-			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.public_urls`).Scan(&publicURLs); err != nil || publicURLs != 0 {
-				t.Fatal("connector created public URL state", publicURLs, err)
+			var publicServices int
+			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.services WHERE public`).Scan(&publicServices); err != nil || publicServices != 0 {
+				t.Fatal("connector enabled a public endpoint", publicServices, err)
 			}
 		})
 	}

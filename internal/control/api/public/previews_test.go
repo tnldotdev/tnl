@@ -38,7 +38,7 @@ func (s *previewStoreStub) AddPreviewService(_ context.Context, request controls
 
 func TestPreviewDoesNotCrossIdentityOrTeamBoundary(t *testing.T) {
 	store := &previewStoreStub{}
-	principal := testPublicURLReadPrincipal()
+	principal := testControlReadPrincipal()
 	h := &handler{previews: store, authorizer: &recordingAuthorizer{principal: principal}}
 	for _, test := range []struct {
 		team   string
@@ -66,18 +66,18 @@ func TestPreviewDoesNotCrossIdentityOrTeamBoundary(t *testing.T) {
 	}
 }
 
-func TestPreviewAttachmentAuthorizesTheExistingPublicURL(t *testing.T) {
+func TestPreviewAttachmentPassesAuthenticatedServiceScopeToState(t *testing.T) {
 	preview := &previewStoreStub{preview: controlstate.Preview{
 		ID: "pv_preview", TeamID: "team_1", CreatedByIdentityID: "identity_1",
 	}}
-	authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal()}
+	authorizer := &recordingAuthorizer{principal: testControlReadPrincipal()}
 	h := &handler{previews: preview, authorizer: authorizer}
 	request := httptest.NewRequest(http.MethodPost, "/v1/previews/pv_preview/services", strings.NewReader(`{"service_id":"svc_`+strings.Repeat("A", 22)+`"}`))
 	request.Header.Set("Authorization", "Bearer access-token")
 	response := httptest.NewRecorder()
 	h.AddPreviewService(response, request, "pv_preview")
 	if response.Code != http.StatusOK || preview.attach.PreviewID != "pv_preview" || preview.attach.ServiceID != "svc_"+strings.Repeat("A", 22) ||
-		preview.attach.IdentityID != "identity_1" || preview.attach.TeamID != "team_1" || len(authorizer.requests) != 0 {
-		t.Fatalf("attachment = %+v, authorization = %+v, response = %d %s", preview.attach, authorizer.requests, response.Code, response.Body.String())
+		preview.attach.IdentityID != "identity_1" || preview.attach.TeamID != "team_1" {
+		t.Fatalf("attachment = %+v, response = %d %s", preview.attach, response.Code, response.Body.String())
 	}
 }

@@ -275,7 +275,7 @@ func (d *daemon) startIngressRuntime(
 			"source_connection_rate":      int64(ingressConfig.Traffic.SourceRate),
 			"process_connection_rate":     int64(ingressConfig.Traffic.ProcessRate),
 			"denied_connections":          int64(ingressConfig.Pending.Connections),
-			"pending_service_connections": int64(ingressConfig.Pending.PublicURLConnections),
+			"pending_service_connections": int64(ingressConfig.Pending.ServiceConnections),
 			"pending_source_connections":  int64(ingressConfig.Pending.SourceConnections),
 		} {
 			metrics.SetCapacityLimit(resource, limit)

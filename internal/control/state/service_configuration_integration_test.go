@@ -98,7 +98,7 @@ func TestIntegrationLocalServiceHTTPPolicySurvivesRealizationAndApply(t *testing
 	if err != nil || declaration == nil || declaration.Target != "app" || declaration.HTTP == nil || declaration.HTTP.Readiness == nil || declaration.HTTP.Readiness.Path != "/health" || declaration.Traffic == nil || *declaration.Traffic.Connections != 7 {
 		t.Fatal("saved declaration lost target, readiness, or traffic settings", declaration, err)
 	}
-	revision, err := q.ReadVisitorPolicyRevision(ctx, controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "service", ResourceID: first.ServiceID})
+	revision, err := q.ReadVisitorPolicyRevision(ctx, first.ServiceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestIntegrationLocalServiceHTTPPolicySurvivesRealizationAndApply(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	retriedRevision, err := q.ReadVisitorPolicyRevision(ctx, controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "service", ResourceID: first.ServiceID})
+	retriedRevision, err := q.ReadVisitorPolicyRevision(ctx, first.ServiceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestIntegrationLocalServiceHTTPPolicySurvivesRealizationAndApply(t *testing
 	for _, id := range []string{first.ServiceID, second.ServiceID} {
 		check(id, "203.0.113.10", "192.0.2.10", 250)
 	}
-	changedRevision, err := q.ReadVisitorPolicyRevision(ctx, controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "service", ResourceID: first.ServiceID})
+	changedRevision, err := q.ReadVisitorPolicyRevision(ctx, first.ServiceID)
 	if err != nil || changedRevision <= revision {
 		t.Fatal("policy change did not invalidate previous visitor authority", changedRevision, err)
 	}
@@ -238,11 +238,11 @@ func TestIntegrationLocalServiceHTTPPolicyStorageRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := controlstatedb.New(d.pool)
-	revision, err := q.ReadVisitorPolicyRevision(ctx, controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "service", ResourceID: local.ServiceID})
+	revision, err := q.ReadVisitorPolicyRevision(ctx, local.ServiceID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	standaloneRevision, err := q.ReadVisitorPolicyRevision(ctx, controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "service", ResourceID: standalone.ID})
+	standaloneRevision, err := q.ReadVisitorPolicyRevision(ctx, standalone.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,11 +261,11 @@ func TestIntegrationLocalServiceHTTPPolicyStorageRotation(t *testing.T) {
 			t.Fatal("rotation omitted a service-owned declaration", id, err)
 		}
 	}
-	currentRevision, err := controlstatedb.New(rotating.pool).ReadVisitorPolicyRevision(ctx, controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "service", ResourceID: local.ServiceID})
+	currentRevision, err := controlstatedb.New(rotating.pool).ReadVisitorPolicyRevision(ctx, local.ServiceID)
 	if err != nil || currentRevision != revision {
 		t.Fatal("storage rotation changed visitor authority", currentRevision, err)
 	}
-	currentRevision, err = controlstatedb.New(rotating.pool).ReadVisitorPolicyRevision(ctx, controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "service", ResourceID: standalone.ID})
+	currentRevision, err = controlstatedb.New(rotating.pool).ReadVisitorPolicyRevision(ctx, standalone.ID)
 	if err != nil || currentRevision != standaloneRevision {
 		t.Fatal("storage rotation changed standalone service visitor authority", currentRevision, err)
 	}
@@ -348,7 +348,7 @@ func TestIntegrationServiceConfigurationWithoutProject(t *testing.T) {
 			t.Fatal("service declaration was stored without encryption")
 		}
 	}
-	policyKey := controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "service", ResourceID: service.ID}
+	policyKey := service.ID
 	revision, err := q.ReadVisitorPolicyRevision(ctx, policyKey)
 	if err != nil {
 		t.Fatal(err)
@@ -408,7 +408,7 @@ func TestIntegrationConfigureServiceDeclarationIsAtomic(t *testing.T) {
 	f.run = f.publish(t, f.service)
 	auth := f.auth()
 	q := controlstatedb.New(d.pool)
-	policyKey := controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "service", ResourceID: f.service.ID}
+	policyKey := f.service.ID
 	revision, err := q.ReadVisitorPolicyRevision(ctx, policyKey)
 	if err != nil {
 		t.Fatal(err)
@@ -419,7 +419,7 @@ func TestIntegrationConfigureServiceDeclarationIsAtomic(t *testing.T) {
 		if err := d.pool.QueryRow(ctx, `SELECT jsonb_build_object(
 		    'service',(SELECT to_jsonb(s) FROM control.services s WHERE id=$1),
 		    'run',(SELECT to_jsonb(r) FROM control.service_runs r WHERE id=$2),
-		    'policy',(SELECT revision FROM control.visitor_policies WHERE resource_kind='service' AND resource_id=$1),
+		    'policy',(SELECT revision FROM control.visitor_policies WHERE resource_id=$1),
 		    'endpoints',(SELECT jsonb_agg(to_jsonb(e) ORDER BY hostname) FROM control.service_endpoints e WHERE service_id=$1),
 		    'audit',(SELECT jsonb_agg(to_jsonb(a) ORDER BY cursor) FROM control.service_audit_events a WHERE service_id=$1))::text`,
 			f.service.ID, f.run.RunID).Scan(&value); err != nil {
@@ -616,7 +616,7 @@ func TestIntegrationAllocatedServiceConfigurationIsImmutable(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			policyKey := controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "service", ResourceID: service.ID}
+			policyKey := service.ID
 			revision, err := q.ReadVisitorPolicyRevision(ctx, policyKey)
 			if err != nil {
 				t.Fatal(err)
@@ -819,7 +819,7 @@ func TestIntegrationLocalServiceConfigurationEditsKeepHTTPPolicyRevision(t *test
 		t.Fatal(err)
 	}
 	q := controlstatedb.New(d.pool)
-	policyKey := controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "service", ResourceID: first.ServiceID}
+	policyKey := first.ServiceID
 	revision, err := q.ReadVisitorPolicyRevision(ctx, policyKey)
 	if err != nil {
 		t.Fatal(err)

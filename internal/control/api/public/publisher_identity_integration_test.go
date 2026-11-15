@@ -3,7 +3,6 @@ package public
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -58,11 +57,8 @@ func testPublisherIdentityHTTPContract(t *testing.T, selection *trafficlimits.Se
 		t.Fatal(err)
 	}
 	m := session.Identity.Memberships[0]
-	domains, err := d.ListTeamDomains(t.Context(), session.Identity.Identity.ID, m.TeamID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	u, err := d.CreatePublicURL(t.Context(), controlstate.CreatePublicURLRequest{TeamID: m.TeamID, DomainID: domains[0].ID, MembershipID: m.ID, ActingIdentityID: session.Identity.Identity.ID, IdempotencyKey: "url", RequestDigest: sha256.Sum256([]byte("url")), CanonicalHostname: "app." + m.ManagedLabel + ".example.test", Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp, DNSState: controlstate.PublicURLDNSUnmanaged}, now)
+	service, err := d.CreateServiceAt(t.Context(), m.TeamID, session.Identity.Identity.ID, "app", "app", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "http"},
+		&controlstate.ProjectServiceConfiguration{Target: "http://127.0.0.1:3000", Public: new(true)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +83,7 @@ func testPublisherIdentityHTTPContract(t *testing.T, selection *trafficlimits.Se
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := owner.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: m.TeamID, Name: "http-client", Kind: "installed", PublicUrlId: &u.ID})
+	e, err := owner.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: m.TeamID, Name: "http-client", Kind: "installed", ServiceId: &service.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,9 +96,9 @@ func testPublisherIdentityHTTPContract(t *testing.T, selection *trafficlimits.Se
 	if err != nil {
 		t.Fatal(err)
 	}
-	read, err := client.PublisherPublicURL(t.Context(), access)
-	if err != nil || read.Id != u.ID {
-		t.Fatalf("scoped URL read = %+v, %v", read, err)
+	read, err := client.GetPublisherService(t.Context(), service.ID, access)
+	if err != nil || read.Id != service.ID {
+		t.Fatalf("scoped service read = %+v, %v", read, err)
 	}
 	for _, service := range []string{"http-a", "http-b"} {
 		_, err := d.RegisterRelay(t.Context(), controlstate.RelayRegistration{RelayServiceID: service, RelayID: service, RelayRunID: "run-" + service, ProtocolVersion: 1, RelayAddress: service + ".example.test:443", TLSServerName: service + ".example.test", InternalRelayAddress: service + ".internal:9443", InternalNetworks: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/24")}, ConnectionCapacity: 10, StreamCapacity: 100}, now, time.Hour)
@@ -110,11 +106,11 @@ func testPublisherIdentityHTTPContract(t *testing.T, selection *trafficlimits.Se
 			t.Fatal(err)
 		}
 	}
-	proof, err := publisherproof.SignRun(private, u.ID, "http-run")
-	if err != nil {
-		t.Fatal(err)
+	declaration := controlv1.ServiceRunDeclaration{Protocol: controlv1.ServiceProtocolHTTP, TrustRevision: service.TrustRevision}
+	if selection != nil {
+		declaration.Traffic = &controlv1.TrafficSelection{Connections: selection.Connections}
 	}
-	setup, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, proof, selection)
+	prepared, err := client.PrepareServiceRun(t.Context(), service.ID, "http-run", access, declaration)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,30 +118,44 @@ func testPublisherIdentityHTTPContract(t *testing.T, selection *trafficlimits.Se
 	if selection != nil {
 		wantConnections = *selection.Connections
 	}
-	if setup.Traffic == nil || setup.Traffic.Connections != wantConnections {
-		t.Fatalf("HTTP run traffic = %+v, want %d connections", setup.Traffic, wantConnections)
+	if prepared.Traffic.Connections != wantConnections {
+		t.Fatalf("HTTP run traffic = %+v, want %d connections", prepared.Traffic, wantConnections)
 	}
-	retry, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, proof, selection)
-	if err != nil || retry.PublishRun.Id != setup.PublishRun.Id || retry.PublishRunToken != setup.PublishRunToken || !reflect.DeepEqual(retry.Traffic, setup.Traffic) {
+	retry, err := client.PrepareServiceRun(t.Context(), service.ID, "http-run", access, declaration)
+	if err != nil || retry.ServiceRunId != prepared.ServiceRunId || !reflect.DeepEqual(retry.Traffic, prepared.Traffic) {
 		t.Fatalf("HTTP run retry changed credentials: %v", err)
 	}
-	changed := &trafficlimits.Selection{Connections: new(24)}
-	if _, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, proof, changed); !errors.Is(err, clientcontrol.ErrStatusConflict) {
+	changed := declaration
+	changed.Traffic = &controlv1.TrafficSelection{Connections: new(24)}
+	if _, err := client.PrepareServiceRun(t.Context(), service.ID, "http-run", access, changed); !errors.Is(err, clientcontrol.ErrStatusConflict) {
 		t.Fatalf("HTTP run retry changed traffic selection: %v", err)
 	}
-	wrongProof, _ := publisherproof.SignRun(private, u.ID, "other-attempt")
-	if _, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, wrongProof, selection); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
-		t.Fatalf("HTTP run proof crossed attempts: %v", err)
+	setup, err := client.StartServiceRun(t.Context(), service.ID, prepared.ServiceRunId, access, prepared.RunNumber)
+	if err != nil {
+		t.Fatal(err)
 	}
-	wrongURLProof, _ := publisherproof.SignRun(private, "other-url", "http-run")
-	if _, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, wrongURLProof, selection); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
-		t.Fatalf("HTTP run proof crossed public URLs: %v", err)
+	startRetry, err := client.StartServiceRun(t.Context(), service.ID, prepared.ServiceRunId, access, prepared.RunNumber)
+	if err != nil || startRetry.RunToken != setup.RunToken || !reflect.DeepEqual(startRetry.PublisherConnections, setup.PublisherConnections) {
+		t.Fatal("start retry changed credentials", err)
 	}
-	if _, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", session.AccessToken.String(), proof, selection); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if _, err := client.StartServiceRun(t.Context(), service.ID, prepared.ServiceRunId, access, prepared.RunNumber+1); !errors.Is(err, clientcontrol.ErrNotFound) {
+		t.Fatalf("HTTP run start crossed run numbers: %v", err)
+	}
+	other, err := d.CreateServiceAt(t.Context(), m.TeamID, session.Identity.Identity.ID, "other", "other", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "http"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.PrepareServiceRun(t.Context(), other.ID, "http-run", access, declaration); !errors.Is(err, clientcontrol.ErrNotFound) {
+		t.Fatalf("HTTP publisher grant crossed services: %v", err)
+	}
+	if _, err := client.StartServiceRun(t.Context(), other.ID, prepared.ServiceRunId, access, prepared.RunNumber); !errors.Is(err, clientcontrol.ErrNotFound) {
+		t.Fatalf("HTTP prepared run crossed services: %v", err)
+	}
+	if _, err := client.PrepareServiceRun(t.Context(), service.ID, "http-run", session.AccessToken.String(), declaration); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatalf("control session bypassed identity authentication: %v", err)
 	}
 	// a publisher token cannot become a control session or change saved policy.
-	request, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/v1/public-urls?team_id="+m.TeamID, nil)
+	request, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/v1/services?team_id="+m.TeamID, nil)
 	request.Header.Set("Authorization", "Bearer "+access)
 	response, err := server.Client().Do(request)
 	if err != nil {
@@ -166,7 +176,7 @@ func testPublisherIdentityHTTPContract(t *testing.T, selection *trafficlimits.Se
 	if _, err := authority.ExchangePublisherAssertion(t.Context(), p.ClientId, p.GrantId, replacement, newPrivate); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, proof, selection); err != nil {
+	if _, err := client.StartServiceRun(t.Context(), service.ID, prepared.ServiceRunId, access, prepared.RunNumber); err != nil {
 		t.Fatalf("rotation broke a retry with the still-valid issued token: %v", err)
 	}
 	// signatures include the selected grant; exchanging one for another fails.
@@ -177,10 +187,10 @@ func testPublisherIdentityHTTPContract(t *testing.T, selection *trafficlimits.Se
 	if err := owner.RevokePublisherGrant(t.Context(), m.TeamID, p.ClientId, p.GrantId); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.PublisherPublicURL(t.Context(), access); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if _, err := client.GetPublisherService(t.Context(), service.ID, access); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatalf("revoked token accepted over HTTP: %v", err)
 	}
-	if _, err := client.HeartbeatPublishRun(t.Context(), setup.PublishRun.Id, uint64(setup.PublishRun.PublishRunNumber), credentials.PublishRunToken(setup.PublishRunToken)); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if _, err := client.HeartbeatServiceRun(t.Context(), service.ID, setup.ServiceRunId, credentials.ServiceRunToken(setup.RunToken), controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 64}); !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatalf("revoked grant kept a live HTTP run: %v", err)
 	}
 }

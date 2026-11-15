@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -14,41 +15,9 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
-
-func finalVisitorRun(t *testing.T, protocol string) (*publishRunFixture, PublishRunAuthentication) {
-	t.Helper()
-	database, now := newControlStateIntegrationDatabase(t, "final-visitor")
-	creation := oidcRouteRequest(t, database, now)
-	url := createTestPublicURL(t, database, creation, now)
-	leases := make(map[string]RelayLease)
-	for _, id := range []string{"final-visitor-a", "final-visitor-b"} {
-		registration := relayLifecycleRegistration(id)
-		registration.ConnectionCapacity = 10
-		lease, err := database.RegisterRelay(t.Context(), registration, now, 24*time.Hour)
-		if err != nil {
-			t.Fatal(err)
-		}
-		leases[lease.RelayServiceID] = lease
-	}
-	request := PublishRunRequest{PublicURLID: url.ID, TeamID: url.TeamID, ActingIdentityID: creation.ActingIdentityID, MembershipID: url.MembershipID,
-		RetrySecret: bytes.Repeat([]byte{7}, 32), IdempotencyKey: "final-visitor", RequestDigest: sha256.Sum256([]byte("final-visitor")), PolicyRevision: uint64(url.PolicyRevision),
-		CertificateCacheKey: "final-visitor", CertificateScope: "public-url", CertificateIdentifiers: []string{url.CanonicalHostname}, CertificateChallenge: "dns-01", ExpectedMutationRevision: url.MutationRevision}
-	setup, err := database.CreatePublishRun(t.Context(), request, now, time.Hour, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f := publishRunFixture{database: database, now: now, request: request, setup: setup, leases: leases}
-	if protocol != "http" {
-		t.Fatal("public URLs are HTTP-only")
-	}
-	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state='ready',ready_at=$2,publisher_expires_at=$3 WHERE id=$1`, f.setup.PublishRunID, f.now, f.now.Add(24*time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	return &f, f.authentication()
-}
 
 func finalVisitorIdentity(t *testing.T, d *Database, now time.Time, email string) string {
 	t.Helper()
@@ -60,39 +29,60 @@ func finalVisitorIdentity(t *testing.T, d *Database, now time.Time, email string
 	return id
 }
 
+func finalServiceHTTPPermission(ctx context.Context, d *Database, serviceID, identityID string, now time.Time) (VisitorPermission, error) {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return VisitorPermission{}, err
+	}
+	defer tx.Rollback(ctx)
+	permission, err := d.serviceHTTPIdentityPermission(ctx, tx, serviceID, identityID, now)
+	if err != nil {
+		return permission, err
+	}
+	return permission, tx.Commit(ctx)
+}
+
 func TestIntegrationFinalVisitorGrantsInventoryInvitationAndRevocation(t *testing.T) {
-	f, auth := finalVisitorRun(t, "http")
+	f := newServiceHTTPFixture(t)
 	d := f.database
-	owner := f.request.ActingIdentityID
+	owner := f.project.ActorID
 	visitor := finalVisitorIdentity(t, d, f.now, "visitor@example.test")
+
 	check := func(person string, allowed bool, at time.Time) {
 		t.Helper()
-		permission, err := identityPermission(t.Context(), controlstatedb.New(d.pool), auth.PublicURLID, person, "", at)
-		if err != nil || permission.VisitAllowed != allowed {
-			t.Fatalf("allowed=%t want=%t: %v", permission.VisitAllowed, allowed, err)
+		permission, err := finalServiceHTTPPermission(t.Context(), d, f.service.ID, person, at)
+		if !allowed {
+			if err == nil && permission.VisitAllowed {
+				t.Fatal("visitor allowed")
+			}
+			return
+		}
+		if err != nil || !permission.VisitAllowed {
+			t.Fatalf("allowed=%t want=%t: %+v %v", permission.VisitAllowed, allowed, permission, err)
 		}
 	}
 	check(owner, true, f.now)
 	check(visitor, false, f.now)
-	inventory, err := d.ListAvailablePublicURLs(t.Context(), visitor, "", "", f.now)
-	if err != nil || len(inventory.PublicURLs) != 0 {
+	inventory, _, err := d.ListAvailableServices(t.Context(), visitor, "", controlv1.ServiceAccessPathConnector, f.now)
+	if err != nil || len(inventory) != 0 {
 		t.Fatalf("outsider inventory: %+v %v", inventory, err)
 	}
-	secret := bytes.Repeat([]byte{9}, 32)
-	digest := sha256.Sum256(secret)
-	invitation, err := d.CreateVisitorInvitation(t.Context(), auth.PublicURLID, owner, "named", "visitor@example.test", digest, f.now.Add(time.Hour), f.now)
-	if err != nil {
-		t.Fatal(err)
+	ownerCtx := WithControlPrincipal(t.Context(), ControlPrincipal{IdentityID: owner})
+	invitation, err := d.InviteServiceVisitor(ownerCtx, f.service.ID, owner, "named", "visitor@example.test", f.now.Add(time.Hour), f.now)
+	if err != nil || invitation.Secret == "" {
+		t.Fatal(invitation, err)
 	}
-	token := invitation.ID + "." + base64.RawURLEncoding.EncodeToString(secret)
 	wrong := finalVisitorIdentity(t, d, f.now, "another@example.test")
-	if _, err = d.AcceptVisitorInvitation(t.Context(), wrong, token, f.now); !errors.Is(err, ErrPreviewAccess) {
+	if _, err = d.AcceptServiceInvitation(t.Context(), wrong, invitation.Secret, f.now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("wrong verified email accepted: %v", err)
 	}
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
 	for range 2 {
-		wg.Go(func() { _, err := d.AcceptVisitorInvitation(t.Context(), visitor, token, f.now); results <- err })
+		wg.Go(func() {
+			_, err := d.AcceptServiceInvitation(t.Context(), visitor, invitation.Secret, f.now)
+			results <- err
+		})
 	}
 	wg.Wait()
 	close(results)
@@ -100,7 +90,7 @@ func TestIntegrationFinalVisitorGrantsInventoryInvitationAndRevocation(t *testin
 	for err := range results {
 		if err == nil {
 			successes++
-		} else if !errors.Is(err, ErrShareNotFound) {
+		} else if !errors.Is(err, ErrServiceAccess) {
 			t.Fatal(err)
 		}
 	}
@@ -110,11 +100,11 @@ func TestIntegrationFinalVisitorGrantsInventoryInvitationAndRevocation(t *testin
 	check(visitor, true, f.now)
 	check(visitor, false, f.now.Add(time.Hour))
 	var memberships int
-	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.team_memberships WHERE team_id=$1 AND identity_id=$2`, f.request.TeamID, visitor).Scan(&memberships); err != nil || memberships != 0 {
+	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.team_memberships WHERE team_id=$1 AND identity_id=$2`, f.project.TeamID, visitor).Scan(&memberships); err != nil || memberships != 0 {
 		t.Fatalf("visitor gained membership: %d %v", memberships, err)
 	}
-	inventory, err = d.ListAvailablePublicURLs(t.Context(), visitor, "", "", f.now)
-	if err != nil || len(inventory.PublicURLs) != 1 || inventory.PublicURLs[0].VisitorAccess != "identity_grant" {
+	inventory, _, err = d.ListAvailableServices(t.Context(), visitor, "", controlv1.ServiceAccessPathConnector, f.now)
+	if err != nil || len(inventory) != 1 || inventory[0].ID != f.service.ID || inventory[0].VisitorAccess != "identity_grant" {
 		t.Fatalf("invited inventory: %+v %v", inventory, err)
 	}
 	encoded, _ := json.Marshal(inventory)
@@ -123,114 +113,71 @@ func TestIntegrationFinalVisitorGrantsInventoryInvitationAndRevocation(t *testin
 			t.Fatalf("visitor inventory exposed %s", forbidden)
 		}
 	}
-	if err = d.RevokeVisitorInvitation(t.Context(), auth.PublicURLID, owner, invitation.ID, f.now); err != nil {
+	if err = d.RevokeServiceInvitation(ownerCtx, f.service.ID, owner, invitation.ID, f.now); err != nil {
 		t.Fatal(err)
 	}
 	check(visitor, false, f.now)
-	if _, err = d.CreateTeamVisitorGrant(t.Context(), auth.PublicURLID, visitor, "outsider", nil, f.now); !errors.Is(err, ErrPreviewAccess) {
+	visitorCtx := WithControlPrincipal(t.Context(), ControlPrincipal{IdentityID: visitor})
+	if _, err = d.CreateServiceGrant(visitorCtx, f.service.ID, visitor, "outsider", "team", "", nil, f.now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("visitor managed grants: %v", err)
 	}
-	if _, err = d.pool.Exec(t.Context(), `UPDATE control.teams SET kind='organization' WHERE id=$1`, f.request.TeamID); err != nil {
+	if _, err = d.pool.Exec(t.Context(), `UPDATE control.teams SET kind='organization' WHERE id=$1`, f.project.TeamID); err != nil {
 		t.Fatal(err)
 	}
-	member := addAuthorityMember(t, d, f.now, owner, f.request.TeamID, "colleague", TeamRoleMember)
-	grant, err := d.CreateTeamVisitorGrant(t.Context(), auth.PublicURLID, owner, "perpetual", nil, f.now)
+	member := addAuthorityMember(t, d, f.now, owner, f.project.TeamID, "colleague", TeamRoleMember)
+	grant, err := d.CreateServiceGrant(ownerCtx, f.service.ID, owner, "perpetual", "team", "", nil, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	check(member.IdentityID, true, f.now.Add(2*time.Hour))
-	if err = d.RemoveMembership(t.Context(), owner, f.request.TeamID, member.ID, f.now); err != nil {
+	if err = d.RemoveMembership(t.Context(), owner, f.project.TeamID, member.ID, f.now); err != nil {
 		t.Fatal(err)
 	}
 	check(member.IdentityID, false, f.now)
-	if err = d.RevokeVisitorGrant(t.Context(), auth.PublicURLID, owner, grant.ID, f.now); err != nil {
+	if err = d.RevokeServiceGrant(ownerCtx, f.service.ID, owner, grant.ID, f.now); err != nil {
 		t.Fatal(err)
+	}
+	inventory, _, err = d.ListAvailableServices(t.Context(), visitor, "", controlv1.ServiceAccessPathConnector, f.now)
+	if err != nil || len(inventory) != 0 {
+		t.Fatal("revocation left the service in visitor inventory", inventory, err)
 	}
 }
 
-func TestIntegrationFinalVisitorLiveIPExpiryAndRunBoundary(t *testing.T) {
-	f, auth := finalVisitorRun(t, "http")
-	d := f.database
-	if _, err := d.pool.Exec(t.Context(), `UPDATE control.public_urls SET access_mode='anonymous' WHERE id=$1`, auth.PublicURLID); err != nil {
-		t.Fatal(err)
-	}
-	expiry := f.now.Add(time.Second)
-	for slot := range publishRunConnectionCount {
-		claimTestConnection(t, *f, slot, f.now)
-	}
-	url, err := d.GetPublicURL(t.Context(), f.request.ActingIdentityID, auth.PublicURLID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.ReplaceVisitorAccess(t.Context(), url.ID, f.request.ActingIdentityID, VisitorAccessAnonymous, []string{"192.0.2.0/24"}, url.MutationRevision, f.now); err != nil {
-		t.Fatal(err)
-	}
-	q := controlstatedb.New(d.pool)
-	grants, err := d.readVisitorIPs(t.Context(), q, url.ID, f.now)
-	if err != nil || len(grants) != 1 {
-		t.Fatalf("set IP grants: %+v %v", grants, err)
-	}
-	// expiration is a persisted-state boundary, not another public mutation API.
-	if _, err := d.pool.Exec(t.Context(), `UPDATE control.visitor_ip_grants SET expires_at=$2 WHERE id=$1`, grants[0].ID, expiry); err != nil {
-		t.Fatal(err)
-	}
-	check := func(at time.Time, want bool) {
+func TestIntegrationFinalVisitorLiveIPPolicyAndRunBoundary(t *testing.T) {
+	f := newServiceHTTPFixture(t)
+	f.service = f.local(t, "web", &config.HTTPService{Access: &config.Access{Mode: "anonymous"}})
+	f.run = f.publish(t, f.service)
+	auth := f.auth()
+	input := preparedVisitorInput{SourceIP: "192.0.2.9"}
+	check := func(a ServiceHTTPRun, allowed bool, at time.Time) {
 		t.Helper()
-		p, err := preparedPublicURLPermission(t.Context(), d, auth, preparedVisitorInput{SourceIP: "192.0.2.9"}, at)
-		if err != nil || p.VisitAllowed != want {
-			t.Fatalf("IP allowed=%t want=%t: %v", p.VisitAllowed, want, err)
+		p, err := preparedServiceHTTPPermission(t.Context(), f.database, a, input, at)
+		if err != nil || p.VisitAllowed != allowed {
+			t.Fatalf("IP allowed=%t want=%t: %+v %v", p.VisitAllowed, allowed, p, err)
 		}
 	}
-	check(f.now, true)
-	if permission, err := preparedPublicURLPermission(t.Context(), d, auth, preparedVisitorInput{SourceIP: "192.0.2.9"}, f.now); err != nil || permission.ExpiresAt == nil || !permission.ExpiresAt.Equal(expiry) {
-		t.Fatalf("cached database decision outlived IP grant: %+v %v", permission, err)
-	}
-	check(expiry, false)
-	var ciphertext []byte
-	if err = d.pool.QueryRow(t.Context(), `SELECT prefix_ciphertext FROM control.visitor_ip_grants WHERE id=$1`, grants[0].ID).Scan(&ciphertext); err != nil || bytes.Contains(ciphertext, []byte("192.0.2.")) {
-		t.Fatal("IP grant was not encrypted", err)
-	}
-	if count, err := d.ExpireVisitorIPs(t.Context(), expiry); err != nil || count != 1 {
-		t.Fatalf("expiry worker: %d %v", count, err)
-	}
-	var projectionJSON []byte
-	if err = d.pool.QueryRow(t.Context(), `SELECT projection FROM control.ingress_routing_table_events WHERE public_url_id=$1 AND event_kind='public_url_upsert' ORDER BY id DESC LIMIT 1`, auth.PublicURLID).Scan(&projectionJSON); err != nil {
-		t.Fatal(err)
-	}
-	var projection IngressRoutingTableProjection
-	if err = json.Unmarshal(projectionJSON, &projection); err != nil || projection.IPPolicy != IPPolicyAllowAll || len(projection.AllowedIPHashes) != 0 || len(projection.PublisherConnections) != 2 {
-		t.Fatal("expired IP filter lost connected relay or unrestricted network policy", err)
-	}
-	if count, err := d.ExpireVisitorIPs(t.Context(), expiry); err != nil || count != 0 {
-		t.Fatalf("expiry worker retry: %d %v", count, err)
-	}
-	url, err = d.GetPublicURL(t.Context(), f.request.ActingIdentityID, auth.PublicURLID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	url, err = d.ReplaceVisitorAccess(t.Context(), url.ID, f.request.ActingIdentityID, VisitorAccessAnonymous, []string{"198.51.100.9/32"}, url.MutationRevision, expiry)
-	if err != nil {
-		t.Fatal(err)
-	}
-	current, err := d.readVisitorIPs(t.Context(), q, url.ID, expiry)
-	if err != nil || len(current) != 1 || current[0].Prefix != "198.51.100.9/32" {
-		t.Fatal(current, err)
-	}
-	if _, err = d.ReplaceVisitorAccess(t.Context(), url.ID, f.request.ActingIdentityID, VisitorAccessAnonymous, nil, url.MutationRevision, expiry); err != nil {
-		t.Fatal(err)
-	}
-	if current, err := d.readVisitorIPs(t.Context(), q, url.ID, expiry); err != nil || len(current) != 0 {
-		t.Fatal("replaced IP set retained a grant", current, err)
-	}
+	check(auth, true, f.now)
+	f.local(t, "web", &config.HTTPService{Access: &config.Access{Mode: "anonymous", IP: []string{"192.0.2.0/24"}}})
+	check(auth, true, f.now)
+	input.SourceIP = "198.51.100.9"
+	check(auth, false, f.now)
+	input.SourceIP = "192.0.2.9"
+	f.local(t, "web", &config.HTTPService{Access: &config.Access{Mode: "anonymous", IP: []string{"198.51.100.9/32"}}})
+	check(auth, false, f.now)
+	input.SourceIP = "198.51.100.9"
+	check(auth, true, f.now)
+	f.local(t, "web", &config.HTTPService{Access: &config.Access{Mode: "anonymous"}})
+	input.SourceIP = "192.0.2.9"
+	check(auth, true, f.now)
 	wrong := auth
-	wrong.PublishRunNumber++
-	if _, err = preparedPublicURLPermission(t.Context(), d, wrong, preparedVisitorInput{SourceIP: "192.0.2.9"}, f.now); !errors.Is(err, ErrPublishRunCredential) {
+	wrong.Number++
+	if _, err := preparedServiceHTTPPermission(t.Context(), f.database, wrong, input, f.now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("wrong run number admitted: %v", err)
 	}
-	if err = d.ClosePublishRun(t.Context(), auth.PublishRunID, auth.PublishRunToken, f.now); err != nil {
+	if err := f.database.CloseServiceRun(t.Context(), auth.Subject.ID, auth.RunID, auth.Token.String(), f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = preparedPublicURLPermission(t.Context(), d, auth, preparedVisitorInput{SourceIP: "192.0.2.9"}, f.now); !errors.Is(err, ErrPublishRunCredential) {
+	if _, err := preparedServiceHTTPPermission(t.Context(), f.database, auth, input, f.now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("closed run admitted: %v", err)
 	}
 }
@@ -325,13 +272,13 @@ func TestIntegrationFinalVisitorBrowserIdentityFeedbackAuthorPolicyAndSessionRev
 }
 
 func TestIntegrationFinalVisitorDeviceEnrollmentRevocationAndIdentityBoundary(t *testing.T) {
-	f, _ := finalVisitorRun(t, "http")
+	f := newServiceHTTPFixture(t)
 	d := f.database
 	key, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := f.request.ActingIdentityID
+	identity := f.project.ActorID
 	device, err := d.EnrollVisitorDevice(t.Context(), identity, key, f.now)
 	if err != nil {
 		t.Fatal(err)
@@ -430,49 +377,24 @@ func TestIntegrationFinalVisitorHTTPDecisionUsesShareWithoutIPGrant(t *testing.T
 }
 
 func TestIntegrationReplaceVisitorAccessChangesLiveRunWithoutIPBypass(t *testing.T) {
-	f, auth := finalVisitorRun(t, "http")
-	d, owner := f.database, f.request.ActingIdentityID
-	for slot := range publishRunConnectionCount {
-		claimTestConnection(t, *f, slot, f.now)
-	}
-	var revision int64
-	if err := d.pool.QueryRow(t.Context(), `SELECT mutation_revision FROM control.public_urls WHERE id=$1`, auth.PublicURLID).Scan(&revision); err != nil {
-		t.Fatal(err)
-	}
+	f := newServiceHTTPFixture(t)
+	f.run = f.publish(t, f.service)
+	auth := f.auth()
 	input := preparedVisitorInput{SourceIP: "192.0.2.9"}
 	check := func(allowed bool) {
 		t.Helper()
-		permission, err := preparedPublicURLPermission(t.Context(), d, auth, input, f.now)
+		permission, err := preparedServiceHTTPPermission(t.Context(), f.database, auth, input, f.now)
 		if err != nil || permission.VisitAllowed != allowed {
-			t.Fatalf("visitor allowed=%t, want %t: %v", permission.VisitAllowed, allowed, err)
+			t.Fatalf("visitor allowed=%t, want %t: %+v %v", permission.VisitAllowed, allowed, permission, err)
 		}
 	}
 	check(false)
-	mode := VisitorAccessAnonymous
-	publicURL, err := d.ReplaceVisitorAccess(t.Context(), auth.PublicURLID, owner, mode, []string{"192.0.2.0/24"}, uint64(revision), f.now)
-	if err != nil || publicURL.AccessMode != mode || publicURL.MutationRevision != uint64(revision+1) {
-		t.Fatalf("replace policy: %+v %v", publicURL, err)
-	}
+	f.local(t, "web", &config.HTTPService{Access: &config.Access{Mode: "anonymous", IP: []string{"192.0.2.0/24"}}})
 	check(true)
 	input.SourceIP = "198.51.100.9"
 	check(false)
-	if _, err := d.ReplaceVisitorAccess(t.Context(), auth.PublicURLID, owner, VisitorAccessRestricted, nil, uint64(revision), f.now); !errors.Is(err, ErrPublicURLMutationStale) {
-		t.Fatalf("stale policy replaced: %v", err)
-	}
-	publicURL, err = d.ReplaceVisitorAccess(t.Context(), auth.PublicURLID, owner, VisitorAccessRestricted, nil, uint64(revision+1), f.now)
-	if err != nil || publicURL.AccessMode != VisitorAccessRestricted || publicURL.MutationRevision != uint64(revision+2) {
-		t.Fatalf("remove filter: %+v %v", publicURL, err)
-	}
+	f.local(t, "web", &config.HTTPService{Access: &config.Access{Mode: "restricted"}})
 	check(false)
-	var projection IngressRoutingTableProjection
-	var raw []byte
-	if err := d.pool.QueryRow(t.Context(), `SELECT projection FROM control.ingress_routing_table_events
-		WHERE public_url_id=$1 AND event_kind='public_url_upsert' ORDER BY id DESC LIMIT 1`, auth.PublicURLID).Scan(&raw); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(raw, &projection); err != nil || projection.AccessMode != VisitorAccessRestricted || projection.IPPolicy != IPPolicyAllowAll {
-		t.Fatalf("latest ingress projection: %+v %v", projection, err)
-	}
 }
 
 func TestIntegrationExactURLShareSecretAndCookieAreInterchangeable(t *testing.T) {

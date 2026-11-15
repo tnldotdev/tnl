@@ -137,8 +137,8 @@ func (f *guestServiceFixture) prepareAndStart(t *testing.T, key string, at time.
 
 func (f *guestServiceFixture) ready(t *testing.T, at time.Time) {
 	t.Helper()
-	work := createPlanIssuanceWork(t, f.database, at, PublishRunAuthentication{}, f.prep.CertificatePlan, true, nil,
-		planIssuanceOptions{privateRun: &f.run, publisherSource: f.guest.SourceIP, lifetime: time.Hour})
+	work := createPlanIssuanceWork(t, f.database, at, f.run, f.prep.CertificatePlan, true, nil,
+		planIssuanceOptions{publisherSource: f.guest.SourceIP, lifetime: time.Hour})
 	if err := f.database.MarkServiceCertificateInstalled(f.ctx, f.service.ID, f.run.RunID, f.run.Token,
 		work.ID, f.run.RunNumber, *work.NotAfter, at); err != nil {
 		t.Fatal(err)
