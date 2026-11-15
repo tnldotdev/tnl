@@ -5,6 +5,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/publisher/httpprotection"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -15,6 +16,7 @@ type serviceHTTPControl interface {
 	httpaccess.TokenClient
 	httpaccess.ShareClient
 	httpaccess.BrowserClient
+	httpprotection.ReportClient
 	serviceFeedbackControl
 }
 
@@ -23,6 +25,17 @@ func (n *Native) Discovery(ctx context.Context) (controlv1.ControlDiscovery, err
 		return controlv1.ControlDiscovery{}, ErrScope
 	}
 	return n.Services.Discovery(ctx)
+}
+
+func (n *Native) ReportHTTPProtectionRejections(ctx context.Context, request controlv1.ReportHTTPProtectionRejectionsRequest, token string) error {
+	if request.Resource.Kind != "service" || !opaqueid.Valid(request.RunId, opaqueid.ServiceRunPrefix) || request.RunNumber < 1 || token == "" {
+		return ErrScope
+	}
+	control, err := n.serviceHTTP(request.Resource.Id)
+	if err != nil {
+		return err
+	}
+	return control.ReportHTTPProtectionRejections(ctx, request, token)
 }
 
 func (n *Native) ReadPublisherVisitorPolicy(ctx context.Context, request controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {

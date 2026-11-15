@@ -267,12 +267,7 @@ func (d *Database) guestIPDigest(keyID, purpose string, ip netip.Addr) (string, 
 	if err != nil {
 		return "", err
 	}
-	ip = ip.Unmap()
-	entry, err := ippolicy.Hash(key, netip.PrefixFrom(ip, ip.BitLen()))
-	if err != nil {
-		return "", err
-	}
-	return entry.Digest, nil
+	return ippolicy.HashAddress(key, ip)
 }
 
 // callers hold the trial, service and run locks through commit. no authority is

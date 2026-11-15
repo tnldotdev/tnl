@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 )
 
 const ephemeralServiceGracePeriod = 2 * time.Minute
@@ -196,6 +197,9 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 		return count, err
 	}
 	if _, err = d.ReleaseServicePorts(ctx, now); err != nil {
+		return count, err
+	}
+	if err = controlstatedb.New(d.pool).PruneHTTPTemporaryBlocks(ctx, timestamptz(now.Add(-httpprotection.BlockRetention))); err != nil {
 		return count, err
 	}
 	expiredServices, err := d.expireServices(ctx, clock.current())

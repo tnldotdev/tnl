@@ -84,6 +84,7 @@ type Querier interface {
 	CountActiveSharesForService(ctx context.Context, arg CountActiveSharesForServiceParams) (int64, error)
 	CountConnectorPeerPairOwners(ctx context.Context, arg CountConnectorPeerPairOwnersParams) (int64, error)
 	CountGuestCurrentServices(ctx context.Context, guestID pgtype.Text) (int64, error)
+	CountHTTPTemporaryBlocks(ctx context.Context, serviceID string) (int64, error)
 	// diagnostic/test oracle only; placement reads trigger-maintained totals.
 	CountOpenServiceRunAssignmentsByRelayService(ctx context.Context) ([]CountOpenServiceRunAssignmentsByRelayServiceRow, error)
 	CountRecentGuestTrialsByIP(ctx context.Context, arg CountRecentGuestTrialsByIPParams) (int64, error)
@@ -105,6 +106,7 @@ type Querier interface {
 	CreatePersonalTeam(ctx context.Context, arg CreatePersonalTeamParams) error
 	CreatePreview(ctx context.Context, arg CreatePreviewParams) (CreatePreviewRow, error)
 	CreateSeedMember(ctx context.Context, arg CreateSeedMemberParams) error
+	CreateServiceIPKey(ctx context.Context, arg CreateServiceIPKeyParams) error
 	CreateServiceRunPreview(ctx context.Context, arg CreateServiceRunPreviewParams) (ControlPreview, error)
 	CreateShare(ctx context.Context, arg CreateShareParams) (ControlShare, error)
 	CreateTeamInvitation(ctx context.Context, arg CreateTeamInvitationParams) (ControlTeamInvitation, error)
@@ -306,6 +308,7 @@ type Querier interface {
 	ListFeedbackEventsForThread(ctx context.Context, arg ListFeedbackEventsForThreadParams) ([]ControlFeedbackEvent, error)
 	ListFeedbackThreadsForPage(ctx context.Context, arg ListFeedbackThreadsForPageParams) ([]ControlFeedbackThread, error)
 	ListFeedbackThreadsForTeam(ctx context.Context, arg ListFeedbackThreadsForTeamParams) ([]ControlFeedbackThread, error)
+	ListHTTPTemporaryBlocks(ctx context.Context, arg ListHTTPTemporaryBlocksParams) ([]ListHTTPTemporaryBlocksRow, error)
 	ListIdentityMembershipContexts(ctx context.Context, identityID string) ([]ListIdentityMembershipContextsRow, error)
 	ListIdentityTeamDomains(ctx context.Context, arg ListIdentityTeamDomainsParams) ([]ListIdentityTeamDomainsRow, error)
 	ListIdentityTeams(ctx context.Context, identityID string) ([]ListIdentityTeamsRow, error)
@@ -446,6 +449,8 @@ type Querier interface {
 	// retained provenance only for this exact service, hostname and domain.
 	PrepareServiceRun(ctx context.Context, arg PrepareServiceRunParams) (ControlServiceRun, error)
 	PreviewInvitation(ctx context.Context, arg PreviewInvitationParams) (PreviewInvitationRow, error)
+	PruneHTTPResourceBlocks(ctx context.Context, arg PruneHTTPResourceBlocksParams) error
+	PruneHTTPTemporaryBlocks(ctx context.Context, before pgtype.Timestamptz) error
 	PrunePublisherAccess(ctx context.Context, arg PrunePublisherAccessParams) error
 	PrunePublisherAssertions(ctx context.Context, arg PrunePublisherAssertionsParams) error
 	PublisherRuntimeActive(ctx context.Context, arg PublisherRuntimeActiveParams) (bool, error)
@@ -458,8 +463,10 @@ type Querier interface {
 	ReadConnectorPeerClaimBounds(ctx context.Context, pairID string) ([]ReadConnectorPeerClaimBoundsRow, error)
 	// relay leases are current-state recheck deadlines, not pair renewals.
 	ReadConnectorPeerObservationRelayBounds(ctx context.Context, arg ReadConnectorPeerObservationRelayBoundsParams) ([]ReadConnectorPeerObservationRelayBoundsRow, error)
+	ReadHTTPTemporaryBlock(ctx context.Context, arg ReadHTTPTemporaryBlockParams) (ControlHttpTemporaryBlock, error)
 	ReadPublisherGrant(ctx context.Context, arg ReadPublisherGrantParams) (ControlPublisherGrant, error)
 	ReadPublisherIdentity(ctx context.Context, id string) (ControlPublisherIdentity, error)
+	ReadServiceIPKey(ctx context.Context, arg ReadServiceIPKeyParams) (ReadServiceIPKeyRow, error)
 	ReadVisitorPolicyEvents(ctx context.Context, arg ReadVisitorPolicyEventsParams) ([]ReadVisitorPolicyEventsRow, error)
 	ReadVisitorPolicyRevision(ctx context.Context, resourceID string) (int64, error)
 	ReadVisitorPolicyService(ctx context.Context, id string) (ControlService, error)
@@ -560,6 +567,7 @@ type Querier interface {
 	SetVisitorFeedbackPolicy(ctx context.Context, arg SetVisitorFeedbackPolicyParams) error
 	StartPublisherRuntime(ctx context.Context, arg StartPublisherRuntimeParams) (ControlPublisherRuntime, error)
 	StopPublisherRuntime(ctx context.Context, arg StopPublisherRuntimeParams) (ControlPublisherRuntime, error)
+	StoreHTTPTemporaryBlock(ctx context.Context, arg StoreHTTPTemporaryBlockParams) error
 	StoreRelayTransportCertificate(ctx context.Context, arg StoreRelayTransportCertificateParams) (ControlRelayService, error)
 	TeamMemberSlugReserved(ctx context.Context, arg TeamMemberSlugReservedParams) (bool, error)
 	TeamMembershipIdentityExists(ctx context.Context, arg TeamMembershipIdentityExistsParams) (bool, error)

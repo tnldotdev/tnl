@@ -25,7 +25,20 @@ schemas:
     additionalProperties: false
     required: [policy, after_revision, revisions, snapshot_required]
     properties:
+      temporary_blocks:
+        type: array
+        maxItems: 256
+        x-go-type-skip-optional-pointer: true
+        items: { $ref: "../openapi.yaml#/components/schemas/HTTPTemporaryBlock" }
       policy: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicySnapshot" }
+      temporary_block_key:
+        {
+          type: string,
+          format: byte,
+          minLength: 44,
+          maxLength: 44,
+          x-go-type-skip-optional-pointer: true,
+        }
       after_revision:
         {
           type: string,

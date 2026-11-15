@@ -557,6 +557,13 @@ type ControlGuestTrial struct {
 	UpdatedAt             pgtype.Timestamptz
 }
 
+type ControlHttpTemporaryBlock struct {
+	ServiceID       string
+	SourceDigest    string
+	ExpiresAt       pgtype.Timestamptz
+	EvidenceEndedAt pgtype.Timestamptz
+}
+
 type ControlIdentity struct {
 	ID              string
 	Kind            string
@@ -1132,6 +1139,13 @@ type ControlServiceInvitation struct {
 	AcceptedAt          pgtype.Timestamptz
 	AcceptedIdentityID  pgtype.Text
 	RevokedAt           pgtype.Timestamptz
+}
+
+type ControlServiceIpKey struct {
+	ServiceID     string
+	Purpose       string
+	KeyCiphertext []byte
+	StorageKeyID  string
 }
 
 type ControlServiceNamespaceClaim struct {

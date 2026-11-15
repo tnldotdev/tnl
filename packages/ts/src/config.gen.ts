@@ -104,6 +104,7 @@ export interface TnlConfig {
                         ruleId: number;
                       }[];
                       maxBodyBytes?: number;
+                      temporaryBlocks?: boolean;
                     };
                     access?:
                       | ("restricted" | "anonymous")
@@ -224,6 +225,7 @@ export interface TnlConfig {
                         ruleId: number;
                       }[];
                       maxBodyBytes?: number;
+                      temporaryBlocks?: boolean;
                     };
                     access?:
                       | ("restricted" | "anonymous")
@@ -344,6 +346,7 @@ export interface TnlConfig {
                         ruleId: number;
                       }[];
                       maxBodyBytes?: number;
+                      temporaryBlocks?: boolean;
                     };
                     access?:
                       | ("restricted" | "anonymous")
@@ -464,6 +467,7 @@ export interface TnlConfig {
                         ruleId: number;
                       }[];
                       maxBodyBytes?: number;
+                      temporaryBlocks?: boolean;
                     };
                     access?:
                       | ("restricted" | "anonymous")
@@ -572,6 +576,7 @@ export interface TnlConfig {
                         ruleId: number;
                       }[];
                       maxBodyBytes?: number;
+                      temporaryBlocks?: boolean;
                     };
                     access?:
                       | ("restricted" | "anonymous")
@@ -680,6 +685,7 @@ export interface TnlConfig {
                         ruleId: number;
                       }[];
                       maxBodyBytes?: number;
+                      temporaryBlocks?: boolean;
                     };
                     access?:
                       | ("restricted" | "anonymous")
@@ -788,6 +794,7 @@ export interface TnlConfig {
                         ruleId: number;
                       }[];
                       maxBodyBytes?: number;
+                      temporaryBlocks?: boolean;
                     };
                     access?:
                       | ("restricted" | "anonymous")

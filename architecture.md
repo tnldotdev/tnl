@@ -340,6 +340,9 @@ invocation + deployment --> publisher/service
 - `httpprotection` inspects authorized public HTTP requests before target access.
   The service run owns its inspector; connector traffic bypasses WAF inspection.
   All runs share two process-wide inspection slots without a waiting queue.
+  Optional temporary source blocks are service-scoped. Ingress checks them from
+  its existing service snapshot; publishers refresh them through visitor policy and
+  reject requests on existing connections. Connector access is unchanged.
 - `httpaccess.ReadinessProof` accepts one body-free GET at an exact path for one
   run. Service HTTP strips its secret before forwarding and uses a separate,
   bounded probe budget. The app owner still checks its current registration and

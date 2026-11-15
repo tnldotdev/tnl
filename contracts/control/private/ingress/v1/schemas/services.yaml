@@ -42,7 +42,21 @@ schemas:
       recovery_episode_id: { type: integer, format: int64, minimum: 1 }
       ip:
         $ref: "../../../../public/v1/schemas/visitor-policy.yaml#/schemas/VisitorPolicyIP"
+      temporary_blocks:
+        type: array
+        maxItems: 256
+        x-go-type-skip-optional-pointer: true
+        items:
+          $ref: "../../../../public/v1/schemas/http-protection.yaml#/schemas/HTTPTemporaryBlock"
       traffic: { $ref: "../openapi.yaml#/components/schemas/IngressTrafficLimits" }
+      temporary_block_key:
+        {
+          type: string,
+          format: byte,
+          minLength: 44,
+          maxLength: 44,
+          x-go-type-skip-optional-pointer: true,
+        }
       connected_relays:
         type: array
         minItems: 1

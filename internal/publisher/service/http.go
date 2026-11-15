@@ -41,6 +41,7 @@ type HTTPControl interface {
 	httpaccess.TokenClient
 	httpaccess.BrowserClient
 	httpaccess.ShareClient
+	httpprotection.ReportClient
 	FeedbackClient
 	ControlURL() string
 	CreateServiceRunPreview(context.Context, string, string, int64, credentials.ServiceRunToken) (controlv1.Preview, error)
@@ -133,7 +134,7 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
 	if err != nil {
 		return HTTP{}, nil, err
 	}
-	protection, err := httpprotection.New(f.Protection)
+	protection, err := httpprotection.Prepare(ctx, f.Protection, httpprotection.RunReporter(f.Control, f.Subject, f.RunID, f.Number, f.Token.String()), policy.SourceBlocked, policy.TemporaryBlockKey())
 	if err != nil {
 		policy.Close()
 		return HTTP{}, nil, err

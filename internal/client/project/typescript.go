@@ -258,6 +258,7 @@ type ProjectContext struct {
 }
 
 var typeScriptKeyMappings = map[string]string{
+	"temporary_blocks":          "temporaryBlocks",
 	"max_body_bytes":            "maxBodyBytes",
 	"rule_id":                   "ruleId",
 	"request_body_idle_timeout": "requestBodyIdleTimeout",

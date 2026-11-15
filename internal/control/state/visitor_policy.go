@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
@@ -254,6 +255,21 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 	result.Policy.ValidUntil = minTime(result.Policy.ValidUntil, row.ServingUntil.Time)
 	if row.CertificateExpiresAt.Valid {
 		result.Policy.ValidUntil = minTime(result.Policy.ValidUntil, row.CertificateExpiresAt.Time)
+	}
+	settings, err := d.serviceHTTPSettings(ctx, q, scope.ID)
+	if err != nil {
+		return result, err
+	}
+	result.TemporaryBlocks = []httpprotection.TemporaryBlock{}
+	if settings != nil && settings.Protection != nil && settings.Protection.BlocksSources() {
+		result.TemporaryBlockKey, err = d.ensureServiceIPKey(ctx, q, scope.ID, temporaryBlockIPKeyPurpose)
+		if err != nil {
+			return result, err
+		}
+		result.TemporaryBlocks, err = readHTTPTemporaryBlocks(ctx, q, scope, now)
+		if err != nil {
+			return result, err
+		}
 	}
 	return result, tx.Commit(ctx)
 }

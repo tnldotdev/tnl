@@ -98,6 +98,10 @@ func (s *Server) selectPublicRun(ctx context.Context, lease ingressv1.IngressLea
 				selected.denialReason = controlv1.ObservationIPPolicy
 				return selected, ErrServiceAdmission
 			}
+			if run.blocks.Blocked(source.Addr().Unmap(), run.authorityTime(time.Now())) {
+				selected.denialReason = controlv1.ObservationIPPolicy
+				return selected, ErrServiceAdmission
+			}
 			selected.relays = nil
 			for _, relay := range run.run.ConnectedRelays {
 				if relay.ServingUntil.After(time.Now()) {

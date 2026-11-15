@@ -10,8 +10,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -26,6 +28,8 @@ type IngressServiceRun struct {
 	ValidUntil                           time.Time
 	Anonymous                            bool
 	IP                                   *controlv1.VisitorPolicyIP
+	TemporaryBlocks                      []httpprotection.TemporaryBlock
+	TemporaryBlockKey                    []byte
 	Traffic                              trafficlimits.Limits
 	Relays                               []ServiceRelay
 	SourceAuthority                      []byte
@@ -98,6 +102,7 @@ func (d *Database) ReadIngressServices(ctx context.Context, identity IngressLeas
 			LeaseExpiresAt: slot.LeaseExpiresAt.Time, ServingUntil: slot.ServingUntil.Time,
 		})
 	}
+	blocks := make(map[string][]httpprotection.TemporaryBlock)
 	for _, row := range rows {
 		service, run := row.ControlService, row.ControlServiceRun
 		if service.Protocol == "http" && !lease.Https ||
@@ -134,6 +139,21 @@ func (d *Database) ReadIngressServices(ctx context.Context, identity IngressLeas
 		}
 		if declaration != nil {
 			settings = declaration.HTTP
+		}
+		if service.Protocol == "http" && settings != nil && settings.Protection != nil && settings.Protection.BlocksSources() {
+			current, found := blocks[service.ID]
+			if !found {
+				current, err = readHTTPTemporaryBlocks(ctx, q, visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}, now)
+				if err != nil {
+					return result, err
+				}
+				blocks[service.ID] = current
+			}
+			entry.TemporaryBlocks = current
+			entry.TemporaryBlockKey, err = d.readServiceIPKey(ctx, q, service.ID, temporaryBlockIPKeyPurpose)
+			if err != nil {
+				return result, err
+			}
 		}
 		if settings != nil && settings.Access != nil {
 			entry.Anonymous = service.Protocol == "http" && settings.Access.VisitorMode() == "anonymous"

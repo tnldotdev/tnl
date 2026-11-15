@@ -1532,6 +1532,24 @@ ALTER TABLE control.visitor_grants ADD CONSTRAINT visitor_grants_invitation_fkey
     FOREIGN KEY (invitation_id, service_id, team_id)
         REFERENCES control.service_invitations(id, service_id, team_id) ON DELETE RESTRICT;
 
+CREATE TABLE control.service_ip_keys (
+    service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
+    purpose text NOT NULL CHECK (purpose <> ''),
+    key_ciphertext bytea NOT NULL,
+    storage_key_id text NOT NULL CHECK (storage_key_id <> ''),
+    PRIMARY KEY (service_id, purpose)
+);
+
+CREATE TABLE control.http_temporary_blocks (
+    service_id text NOT NULL REFERENCES control.services(id) ON DELETE CASCADE,
+    source_digest text NOT NULL CHECK (source_digest ~ '^[A-Za-z0-9_-]{43}$'),
+    expires_at timestamptz NOT NULL,
+    evidence_ended_at timestamptz NOT NULL,
+    PRIMARY KEY (service_id, source_digest)
+);
+CREATE INDEX http_temporary_blocks_expiration
+    ON control.http_temporary_blocks (expires_at);
+
 -- authenticated publishers prepare and start runs against a captured managed
 -- endpoint and certificate plan. visitor TLS keys never enter control storage.
 CREATE TABLE control.service_runs (

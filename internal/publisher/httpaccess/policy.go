@@ -3,8 +3,11 @@ package httpaccess
 import (
 	"context"
 	"errors"
+	"net/netip"
+	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -22,6 +25,8 @@ type Policy struct {
 	cancel  context.CancelFunc
 	done    chan struct{}
 	gate    chan struct{}
+	mu      sync.RWMutex
+	blocks  httpprotection.Blocks
 }
 
 // PreparePolicy starts one run-bound policy owner. close joins refresh before
@@ -61,6 +66,18 @@ func PreparePolicy(ctx context.Context, client PolicyClient, scope visitorscope.
 
 func (p *Policy) Lease() *visitorlease.Lease { return p.lease }
 
+func (p *Policy) SourceBlocked(source netip.Addr, now time.Time) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.blocks.Blocked(source, now)
+}
+
+func (p *Policy) TemporaryBlockKey() [32]byte {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.blocks.Key()
+}
+
 // Refresh shares the same bounded fetch-through-apply operation between explicit
 // credential preparation and the background owner; ordinary requests never call it.
 func (p *Policy) Refresh(ctx context.Context) error {
@@ -95,7 +112,17 @@ func (p *Policy) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return p.lease.Apply(request, update)
+	blocks, err := httpprotection.DecodeBlocks(response.TemporaryBlockKey, response.TemporaryBlocks)
+	if err != nil {
+		return err
+	}
+	if err := p.lease.Apply(request, update); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	p.blocks = blocks
+	p.mu.Unlock()
+	return nil
 }
 
 // timer callbacks can lag their absolute deadline. neither a queued fetch nor

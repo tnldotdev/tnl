@@ -10,10 +10,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	coreruleset "github.com/corazawaf/coraza-coreruleset/v4"
 	"github.com/corazawaf/coraza/v3"
@@ -36,6 +38,7 @@ type Inspector struct {
 	settings policy.Settings
 	waf      coraza.WAF
 	gate     chan struct{}
+	blocks   *temporaryBlocks
 }
 
 // Result contains only allowlisted facts, never matched data or request headers.
@@ -114,6 +117,7 @@ func (p *Inspector) Close() error {
 	if p == nil {
 		return nil
 	}
+	p.blocks.close()
 	if p.waf != nil {
 		// the pinned engine owns process-wide compiled-pattern cache entries.
 		return p.waf.(experimental.WAFCloser).Close()
@@ -127,6 +131,9 @@ func (p *Inspector) Inspect(r *http.Request) (*http.Request, func(), Result) {
 	nothing := func() {}
 	if p == nil || p.waf == nil {
 		return r, nothing, Result{}
+	}
+	if p.settings.BlocksSources() && p.blocks == nil {
+		return r, nothing, Result{Status: http.StatusServiceUnavailable}
 	}
 	if r.Context().Err() != nil {
 		return r, nothing, Result{Status: http.StatusServiceUnavailable}
@@ -302,7 +309,16 @@ func interruptionStatus(i *types.Interruption) int {
 // preparation endpoints must be handled by the caller before entering it.
 func (p *Inspector) Handler(next http.Handler, observe func(Result)) http.Handler {
 	return httpstream.Requests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		request, cleanup, result := p.Inspect(r)
+		request, cleanup, result := r, func() {}, Result{}
+		source, err := netip.ParseAddrPort(r.RemoteAddr)
+		if p != nil && p.blocks != nil && (err != nil || p.blocks.blocked(source.Addr(), time.Now())) {
+			result.Status = http.StatusForbidden
+		} else {
+			request, cleanup, result = p.Inspect(r)
+			if p != nil && p.blocks != nil {
+				p.blocks.reject(source.Addr(), result, time.Now())
+			}
+		}
 		defer cleanup()
 		if p != nil {
 			observability.HTTPProtection(r.Context(), p.settings.WAF, result.Status, result.RuleIDs)

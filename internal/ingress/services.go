@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/policy/controloutage"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
@@ -31,6 +32,7 @@ type serviceRoute struct {
 	run                   ingressv1.IngressServiceRun
 	until                 time.Time
 	ip                    *ippolicy.Policy
+	blocks                httpprotection.Blocks
 	source                tunnelv1.VisitorSourceAuthority
 	sourceKey             [32]byte
 	traffic               TrafficLimits
@@ -169,7 +171,7 @@ func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, 
 			run.EndpointRevision < 1 || run.RunNumber < 1 || runs[run.ServiceRunId] != nil ||
 			run.ValidUntil.After(snapshot.ValidUntil) || !run.ValidUntil.After(snapshot.ObservedAt) ||
 			len(run.SourceKey) != 32 || len(run.ConnectedRelays) == 0 || len(run.ConnectedRelays) > 2 ||
-			run.Anonymous && run.Protocol != "http" {
+			(run.Anonymous || len(run.TemporaryBlocks) != 0 || len(run.TemporaryBlockKey) != 0) && run.Protocol != "http" {
 			return ErrServiceAdmission
 		}
 		traffic, err := routingTraffic(run.Traffic)
@@ -195,8 +197,14 @@ func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, 
 		until := started.Add(time.Unix(source.ValidUntil, 0).Sub(snapshot.ObservedAt))
 		route := cloneServiceRoute(&serviceRoute{run: run, source: source, traffic: traffic, until: privateMinTime(until, lease.ServingUntil),
 			observedAt: snapshot.ObservedAt, startedAt: started})
+		route.blocks, err = httpprotection.DecodeBlocks(run.TemporaryBlockKey, run.TemporaryBlocks)
+		if err != nil {
+			return err
+		}
 		copy(route.sourceKey[:], run.SourceKey)
 		route.run.SourceKey, route.run.SourceAuthority, route.run.Ip = nil, nil, nil
+		route.run.TemporaryBlocks = nil
+		route.run.TemporaryBlockKey = nil
 		if route.sourceKey == [32]byte{} {
 			return ErrServiceAdmission
 		}
@@ -280,7 +288,8 @@ func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, 
 }
 
 // cloneServiceRoute owns mutable snapshot fields at both routing boundaries.
-// validated ip policy maps are immutable; only the atomic source sequence is shared.
+// validated ip policy and block maps are immutable; only the atomic source
+// sequence is shared.
 func cloneServiceRoute(route *serviceRoute) *serviceRoute {
 	result := *route
 	result.run.ConnectedRelays = slices.Clone(route.run.ConnectedRelays)
@@ -417,7 +426,8 @@ func (r *ServiceRouting) reserveHTTP(route *serviceRoute, relay ingressv1.Servic
 	if r.closed || !samePrivateLease(r.lease, lease) || lease.Draining || !lease.ServingUntil.After(now) ||
 		current == nil || current.run.ServiceId != route.run.ServiceId || current.run.RunNumber != route.run.RunNumber ||
 		current.run.EndpointRevision != route.run.EndpointRevision || !route.until.After(now) || !current.until.After(now) ||
-		current.ip != nil && !current.ip.Allows(source) || !relay.ServingUntil.After(now) {
+		current.ip != nil && !current.ip.Allows(source) || !relay.ServingUntil.After(now) ||
+		current.blocks.Blocked(source, current.authorityTime(now)) {
 		return ErrServiceAdmission
 	}
 	for _, candidate := range current.run.ConnectedRelays {
@@ -480,7 +490,8 @@ func (r *ServiceRouting) waitForRelayReplacement(ctx context.Context, previous *
 		valid := !r.closed && samePrivateLease(r.lease, lease) && !lease.Draining && lease.ServingUntil.After(now) &&
 			previous.until.After(now) && current != nil && current.until.After(now) &&
 			current.run.ServiceId == previous.run.ServiceId && current.run.RunNumber == previous.run.RunNumber &&
-			current.run.EndpointRevision == previous.run.EndpointRevision && (current.ip == nil || current.ip.Allows(source))
+			current.run.EndpointRevision == previous.run.EndpointRevision && (current.ip == nil || current.ip.Allows(source)) &&
+			!current.blocks.Blocked(source, current.authorityTime(now))
 		replaced := valid && len(replacementRelays(previous.run.ConnectedRelays, current.run.ConnectedRelays)) != 0
 		fresh := !r.startedAt.Before(entered)
 		updated := r.updated
@@ -532,7 +543,8 @@ func (r *ServiceRouting) bind(route *serviceRoute, source netip.Addr, stop func(
 	current := r.runs[route.run.ServiceRunId]
 	if r.closed || current == nil || current.run.ServiceId != route.run.ServiceId || current.run.RunNumber != route.run.RunNumber ||
 		current.run.EndpointRevision != route.run.EndpointRevision || stop == nil ||
-		!route.until.After(now) || !current.until.After(now) || current.ip != nil && !current.ip.Allows(source) {
+		!route.until.After(now) || !current.until.After(now) || current.ip != nil && !current.ip.Allows(source) ||
+		current.blocks.Blocked(source, current.authorityTime(now)) {
 		r.mu.Unlock()
 		return nil, ErrServiceAdmission
 	}

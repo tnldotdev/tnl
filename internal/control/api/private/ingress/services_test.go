@@ -10,7 +10,9 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/testutil/ipdigest"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -25,7 +27,9 @@ func TestReadIngressServicesHTTPAndDirectReturnTheSameSnapshot(t *testing.T) {
 			ServiceID: "svc_" + strings.Repeat("a", 22), RunID: "srun_" + strings.Repeat("a", 22), RunNumber: 4,
 			Protocol: "http", Hostname: "app.example", Port: 443, EndpointRevision: 2, ValidUntil: now.Add(8 * time.Second),
 			Anonymous: true, IP: &controlv1.VisitorPolicyIP{Key: []byte{1, 2}, Prefixes: []controlv1.HashedIPPrefix{}},
-			Traffic: trafficlimits.Limits{Connections: 12, TotalConnections: 23, UploadBytes: 1024, DownloadBytes: 2048, TotalUploadBytes: 4096, TotalDownloadBytes: 8192},
+			TemporaryBlocks:   []httpprotection.TemporaryBlock{{SourceDigest: ipdigest.Hash("192.0.2.4"), ExpiresAt: now.Add(time.Minute)}},
+			TemporaryBlockKey: ipdigest.Key(),
+			Traffic:           trafficlimits.Limits{Connections: 12, TotalConnections: 23, UploadBytes: 1024, DownloadBytes: 2048, TotalUploadBytes: 4096, TotalDownloadBytes: 8192},
 			Relays: []controlstate.ServiceRelay{{
 				PublisherConnectionID: "pc_" + strings.Repeat("a", 22), ConnectionSlot: 1, ConnectionAssignmentRevision: 5,
 				RelayServiceID: "relay-service", RelayID: "relay-process", RelayRunID: "rr_" + strings.Repeat("a", 22),
@@ -71,6 +75,8 @@ func TestReadIngressServicesHTTPAndDirectReturnTheSameSnapshot(t *testing.T) {
 		run.EndpointRevision != 2 || run.Traffic.Connections != 12 || *run.Traffic.TotalConnections != 23 ||
 		*run.Traffic.TotalUploadBytes != 4096 || *run.Traffic.TotalDownloadBytes != 8192 ||
 		!reflect.DeepEqual(run.ConnectedRelays, privateRelayResponses(current.Runs[0].Relays)) ||
+		!reflect.DeepEqual(run.TemporaryBlocks, current.Runs[0].TemporaryBlocks) ||
+		!reflect.DeepEqual(run.TemporaryBlockKey, current.Runs[0].TemporaryBlockKey) ||
 		!reflect.DeepEqual(run.SourceKey, current.Runs[0].SourceKey) || !reflect.DeepEqual(run.SourceAuthority, current.Runs[0].SourceAuthority) {
 		t.Fatal("routing response omitted endpoint, capacity, relay, or source facts")
 	}

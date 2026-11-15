@@ -63,16 +63,14 @@ func New(key [32]byte, entries []Entry) (Policy, error) {
 		if entry.Bits < 0 || entry.Bits > maximum {
 			return Policy{}, ErrInvalidPolicy
 		}
-		bytes, err := base64.RawURLEncoding.DecodeString(entry.Digest)
-		if err != nil || len(bytes) != sha256.Size || base64.RawURLEncoding.EncodeToString(bytes) != entry.Digest {
+		digest, err := ParseDigest(entry.Digest)
+		if err != nil {
 			return Policy{}, ErrInvalidPolicy
 		}
 		group := length{family: family, bits: uint8(entry.Bits)}
 		if policy.allowed[group] == nil {
 			policy.allowed[group] = make(map[[32]byte]struct{})
 		}
-		var digest [32]byte
-		copy(digest[:], bytes)
 		policy.allowed[group][digest] = struct{}{}
 	}
 	return policy, nil

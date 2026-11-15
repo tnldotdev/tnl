@@ -153,19 +153,21 @@ type IngressRenewal struct {
 
 // IngressServiceRun defines model for IngressServiceRun.
 type IngressServiceRun struct {
-	Anonymous         bool                          `json:"anonymous"`
-	ConnectedRelays   []ServiceRelay                `json:"connected_relays"`
-	EndpointRevision  int64                         `json:"endpoint_revision"`
-	Hostname          string                        `json:"hostname"`
-	Ip                *externalRef0.VisitorPolicyIP `json:"ip,omitempty"`
-	Port              int                           `json:"port"`
-	Protocol          externalRef0.ServiceProtocol  `json:"protocol"`
-	RecoveryEpisodeId *int64                        `json:"recovery_episode_id,omitempty"`
-	RunNumber         int64                         `json:"run_number"`
-	ServiceId         ServiceID                     `json:"service_id"`
-	ServiceRunId      ServiceRunID                  `json:"service_run_id"`
-	SourceAuthority   []byte                        `json:"source_authority"`
-	SourceKey         []byte                        `json:"source_key"`
+	Anonymous         bool                              `json:"anonymous"`
+	ConnectedRelays   []ServiceRelay                    `json:"connected_relays"`
+	EndpointRevision  int64                             `json:"endpoint_revision"`
+	Hostname          string                            `json:"hostname"`
+	Ip                *externalRef0.VisitorPolicyIP     `json:"ip,omitempty"`
+	Port              int                               `json:"port"`
+	Protocol          externalRef0.ServiceProtocol      `json:"protocol"`
+	RecoveryEpisodeId *int64                            `json:"recovery_episode_id,omitempty"`
+	RunNumber         int64                             `json:"run_number"`
+	ServiceId         ServiceID                         `json:"service_id"`
+	ServiceRunId      ServiceRunID                      `json:"service_run_id"`
+	SourceAuthority   []byte                            `json:"source_authority"`
+	SourceKey         []byte                            `json:"source_key"`
+	TemporaryBlockKey []byte                            `json:"temporary_block_key,omitempty"`
+	TemporaryBlocks   []externalRef0.HTTPTemporaryBlock `json:"temporary_blocks,omitempty"`
 
 	// Traffic Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
 	Traffic    IngressTrafficLimits `json:"traffic"`

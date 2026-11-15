@@ -1,17 +1,65 @@
 package service
 
 import (
+	"context"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	protectionpolicy "github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/publisher/httpprotection"
 )
+
+func TestServiceHTTPProtectionTemporaryBlockUsesForwardedSource(t *testing.T) {
+	var blocked atomic.Bool
+	var forwarded atomic.Int32
+	inspector, err := httpprotection.Prepare(t.Context(), protectionpolicy.Settings{TemporaryBlocks: true},
+		func(context.Context, protectionpolicy.Rejections) error {
+			t.Error("ordinary requests produced attack evidence")
+			return nil
+		}, func(source netip.Addr, _ time.Time) bool {
+			if source.String() != "192.0.2.1" {
+				t.Error("block did not use the admitted visitor source", source)
+			}
+			return blocked.Load()
+		}, [32]byte{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := inspector.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	client, _, _, token := serviceHTTPConfiguredFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		forwarded.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}), true, true, func(f *HTTP) { f.protection = inspector })
+	for _, deny := range []bool{false, true, false} {
+		blocked.Store(deny)
+		request, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://preview.example.test/", nil)
+		request.Header.Set(httpaccess.VisitorTokenHeader, token.Reveal())
+		request.Header.Set("X-Forwarded-For", "198.51.100.1")
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.ProtoMajor != 2 || deny && response.StatusCode != 403 || !deny && response.StatusCode != 204 {
+			t.Fatal("refreshed source block did not gate the existing HTTP/2 connection", response.Status)
+		}
+	}
+	if forwarded.Load() != 2 {
+		t.Fatal("blocked source reached target", forwarded.Load())
+	}
+}
 
 func TestServiceHTTPProtectionAuditUsesValidDecisionReason(t *testing.T) {
 	events := make(chan serviceaudit.Observation, 1)
