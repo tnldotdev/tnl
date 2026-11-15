@@ -129,12 +129,12 @@ func (d *deploymentConnection) selectRun(ctx context.Context, name string) (cont
 	return run, nil
 }
 
-func (d *deploymentConnection) selectService(ctx context.Context, name string) (controlv1.Service, error) {
+func (d *deploymentConnection) selectService(ctx context.Context, name string) (controlv1.ServiceSummary, error) {
 	run, err := d.selectRun(ctx, name)
 	if err != nil {
-		return controlv1.Service{}, err
+		return controlv1.ServiceSummary{}, err
 	}
-	return controlv1.Service{Id: run.ServiceId, Name: name, TeamId: d.source.Credential.Approval.TeamId, Protocol: run.Protocol, Enabled: true, Endpoint: run.Endpoint, KubernetesAuth: run.KubernetesAuth}, nil
+	return controlv1.ServiceSummary{Id: run.ServiceId, Name: name, TeamId: d.source.Credential.Approval.TeamId, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Enabled: true, Endpoint: run.Endpoint, KubernetesAuth: run.KubernetesAuth}, nil
 }
 
 func (d *deploymentConnection) controlFor(name, service string) (connectorstream.Control, error) {

@@ -25,15 +25,15 @@ var serviceName = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$`)
 
 type ServiceRecord struct {
 	ServiceMetadata
-	ID, TeamID, DomainID, Name    string
-	EndpointRevision              int64
-	Placement                     *ServicePlacement   `json:"placement,omitempty"`
-	Source                        *LocalServiceSource `json:"source,omitempty"`
-	HTTPLimits                    *ProjectHTTPApplicationLimits
-	Enabled                       bool
-	Ephemeral, RequirePostQuantum bool
-	ExpiresAt                     *time.Time
-	CreatedAt                     time.Time
+	ID, TeamID, GuestID, DomainID, Name string
+	EndpointRevision                    int64
+	Placement                           *ServicePlacement   `json:"placement,omitempty"`
+	Source                              *LocalServiceSource `json:"source,omitempty"`
+	HTTPLimits                          *ProjectHTTPApplicationLimits
+	Enabled                             bool
+	Ephemeral, RequirePostQuantum       bool
+	ExpiresAt                           *time.Time
+	CreatedAt                           time.Time
 }
 
 type ServiceGrant struct {
@@ -49,8 +49,18 @@ func privateGrantRecord(row controlstatedb.ControlVisitorGrant) ServiceGrant {
 }
 
 func lockService(ctx context.Context, tx pgx.Tx, serviceID, actorID string) (controlstatedb.ControlService, error) {
+	service, err := lockManagedService(ctx, tx, serviceID, actorID)
+	if err == nil && !service.Enabled {
+		err = ErrServiceAccess
+	}
+	return service, err
+}
+
+// operational suspension retains management authority without treating a
+// disabled service as available for publication or declaration changes.
+func lockManagedService(ctx context.Context, tx pgx.Tx, serviceID, actorID string) (controlstatedb.ControlService, error) {
 	var teamID string
-	err := tx.QueryRow(ctx, `SELECT team_id FROM control.services WHERE id=$1 AND deleted_at IS NULL`, serviceID).Scan(&teamID)
+	err := tx.QueryRow(ctx, `SELECT team_id FROM control.services WHERE id=$1 AND guest_id IS NULL AND deleted_at IS NULL`, serviceID).Scan(&teamID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return controlstatedb.ControlService{}, ErrServiceAccess
 	}
@@ -75,7 +85,7 @@ func lockService(ctx context.Context, tx pgx.Tx, serviceID, actorID string) (con
 	if err != nil {
 		return service, err
 	}
-	if service.TeamID != teamID || !service.Enabled || service.DeletedAt.Valid {
+	if service.TeamID.String != teamID || service.GuestID.Valid || service.DeletedAt.Valid {
 		return service, ErrServiceAccess
 	}
 	if err = requireServiceManagement(ctx, tx, service, member); err != nil {
@@ -89,7 +99,7 @@ func checkedServiceRecord(row controlstatedb.ControlService) (ServiceRecord, err
 	if err != nil {
 		return ServiceRecord{}, err
 	}
-	return ServiceRecord{ServiceMetadata: metadata, ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID.String, Name: row.Name, EndpointRevision: row.EndpointRevision, Enabled: row.Enabled, Ephemeral: row.Ephemeral, RequirePostQuantum: row.RequirePostQuantum, ExpiresAt: optionalTime(row.ExpiresAt), CreatedAt: row.CreatedAt.Time, Placement: &ServicePlacement{DomainID: row.DomainID.String, Hostname: row.CertificateHostname, WorktreeKey: row.PlacementWorktreeKey, WorktreeLabel: row.PlacementWorktreeLabel}}, nil
+	return ServiceRecord{ServiceMetadata: metadata, ID: row.ID, TeamID: row.TeamID.String, GuestID: row.GuestID.String, DomainID: row.DomainID.String, Name: row.Name, EndpointRevision: row.EndpointRevision, Enabled: row.Enabled, Ephemeral: row.Ephemeral, RequirePostQuantum: row.RequirePostQuantum, ExpiresAt: optionalTime(row.ExpiresAt), CreatedAt: row.CreatedAt.Time, Placement: &ServicePlacement{DomainID: row.DomainID.String, Hostname: row.CertificateHostname, WorktreeKey: row.PlacementWorktreeKey, WorktreeLabel: row.PlacementWorktreeLabel}}, nil
 }
 
 func serviceManager(ctx context.Context, tx pgx.Tx, teamID, actorID string) error {
@@ -117,11 +127,17 @@ func (m serviceMembership) administrator() bool {
 }
 
 func requireServiceManagement(ctx context.Context, tx pgx.Tx, service controlstatedb.ControlService, member serviceMembership) error {
+	return requireStoredServiceManagement(ctx, tx, service, member, false)
+}
+
+// retained feedback may read a service tombstone and its original endpoint
+// receipt. ordinary management still requires the live saved service.
+func requireStoredServiceManagement(ctx context.Context, tx pgx.Tx, service controlstatedb.ControlService, member serviceMembership, retained bool) error {
 	denied := ErrServiceAccess
 	if _, signed := serviceActor(ctx); signed {
 		denied = ErrServiceManagerRequired
 	}
-	if member.id == "" || member.teamID != service.TeamID || service.DeletedAt.Valid {
+	if member.id == "" || service.GuestID.Valid || member.teamID != service.TeamID.String || service.DeletedAt.Valid && !retained {
 		return denied
 	}
 	if member.administrator() {
@@ -144,18 +160,18 @@ func requireServiceManagement(ctx context.Context, tx pgx.Tx, service controlsta
 	            JOIN control.publisher_identities publisher ON publisher.id=allocation.publisher_identity_id
 	            WHERE allocation.service_id=$1 AND allocation.deployment_id IS NULL
 	              AND publisher.team_id=$2 AND grant_record.kind='namespace'
-	              AND grant_record.public_url_scope='member' AND grant_record.membership_id=$3)
+	              AND grant_record.namespace_scope='member' AND grant_record.membership_id=$3)
 	    ELSE
 	        (SELECT count(*)=1 AND COALESCE(bool_and(
 	            endpoint.hostname=$4 AND endpoint.local_source_key<>''
 	            AND endpoint.deployment_id IS NULL AND claim.deployment_id IS NULL
-	            AND claim.membership_id=$3 AND claim.retired_at IS NULL),false)
+	            AND claim.membership_id=$3 AND (claim.retired_at IS NULL OR $5)),false)
 	        FROM control.service_endpoints endpoint
 	        LEFT JOIN control.service_namespace_claims claim
 	          ON claim.namespace=endpoint.namespace
 	          AND claim.local_source_key=endpoint.local_source_key AND claim.domain_id=endpoint.domain_id
-	        WHERE endpoint.service_id=$1 AND endpoint.retired_at IS NULL)
-	    END`, service.ID, service.TeamID, member.id, service.CertificateHostname).Scan(&owned)
+	        WHERE endpoint.service_id=$1 AND (endpoint.retired_at IS NULL OR $5 AND endpoint.hostname=$4))
+	    END`, service.ID, service.TeamID, member.id, service.CertificateHostname, retained).Scan(&owned)
 	if err != nil {
 		return err
 	}
@@ -170,19 +186,9 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 	if configuration != nil {
 		// normalize a private copy of the canonical declaration. metadata and
 		// placement may select the same facts, never replace declaration policy.
-		data, err := json.Marshal(configuration)
-		if err != nil || len(data) > 512<<10 {
-			return result, ErrProjectConfigurationInvalid
-		}
-		var normalized ProjectServiceConfiguration
-		if err := json.Unmarshal(data, &normalized); err != nil {
+		normalized, err := normalizeServiceConfiguration(name, configuration)
+		if err != nil {
 			return result, err
-		}
-		if err := normalizeAppliedProjectService(name, &normalized, true); err != nil {
-			return result, err
-		}
-		if normalized.Name != name {
-			return result, ErrProjectConfigurationInvalid
 		}
 		trust, err := appliedServiceTargetTrust(normalized.TargetTLS)
 		if err != nil {
@@ -201,9 +207,9 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 		if normalized.DomainID != "" {
 			placement.DomainID = normalized.DomainID
 		}
-		public, ephemeral = projectServicePublic(normalized), normalized.Ephemeral
+		public, ephemeral = projectServicePublic(*normalized), normalized.Ephemeral
 		postQuantum = normalized.RequirePostQuantum != nil && *normalized.RequirePostQuantum
-		configuration = &normalized
+		configuration = normalized
 	}
 	if err := placement.Validate(); err != nil {
 		return result, err
@@ -256,7 +262,7 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 		if err != nil {
 			return result, err
 		}
-		if row.DeletedAt.Valid || !row.Enabled || row.TeamID != teamID || row.CreatedByIdentityID != actorID ||
+		if row.DeletedAt.Valid || !row.Enabled || row.TeamID.String != teamID || row.CreatedByIdentityID.String != actorID ||
 			row.Name != name || row.NameScope != "member/"+actorID+"/"+placement.WorktreeKey ||
 			!bytes.Equal(row.RequestDigest, digest[:]) || !serviceMetadataMatches(saved, metadata) ||
 			row.PublisherPool != metadata.PublisherPool || row.Public != public || row.Ephemeral != ephemeral || row.RequirePostQuantum != postQuantum {
@@ -288,8 +294,11 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 		}
 		return result, nil
 	}
+	if err = requireNewServiceWork(ctx, controlstatedb.New(tx), MaintenanceControlServiceCreation); err != nil {
+		return result, err
+	}
 	_, err = controlstatedb.New(tx).InsertService(ctx, controlstatedb.InsertServiceParams{
-		ID: id, TeamID: teamID, Name: name, NameScope: "member/" + actorID + "/" + placement.WorktreeKey, CreatedByIdentityID: actorID,
+		ID: id, TeamID: text(teamID), Name: name, NameScope: "member/" + actorID + "/" + placement.WorktreeKey, CreatedByIdentityID: text(actorID),
 		IdempotencyKey: key, RequestDigest: digest[:], Now: timestamptz(now),
 	})
 	var pgErr *pgconn.PgError

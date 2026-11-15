@@ -79,7 +79,7 @@ func (d *Database) ReleaseServiceEndpoint(ctx context.Context, service, actor st
 		if !proof.identity.AssertionExpiry.After(time.Now()) {
 			return result, ErrControlAuthentication
 		}
-	} else if err = requireTeamSession(ctx, controlstatedb.New(tx), row.TeamID, actor, time.Now()); err != nil {
+	} else if err = requireTeamSession(ctx, controlstatedb.New(tx), row.TeamID.String, actor, time.Now()); err != nil {
 		return result, errors.Join(ErrServiceAccess, err)
 	}
 	claim, err := tx.Exec(ctx, `UPDATE control.service_port_claims SET state='quarantined',retired_at=$4,dns_cleared_at=$4,

@@ -148,7 +148,7 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 		t.Fatal("ingress did not observe revocation", status, err)
 	}
 	setPublic(false)
-	if err := d.ValidateServiceEndpointDNSWork(ctx, publicDNS, now); !errors.Is(err, ErrDNSPublicURLWorkStale) {
+	if err := d.ValidateServiceEndpointDNSWork(ctx, publicDNS, now); !errors.Is(err, ErrServiceEndpointDNSWorkStale) {
 		t.Fatalf("public DNS worker survived private transition: %v", err)
 	}
 	if _, err = admit(); !errors.Is(err, ErrServiceAccess) {
@@ -183,7 +183,7 @@ func TestIntegrationPublicServiceAdmissionRunExclusions(t *testing.T) {
 	for range 2 {
 		replica := enrollAppliedDeployment(t, d, request, enrollment, now)
 		access := deploymentAssignmentAccess(t, d, replica, replica.assignments.Services[0], now)
-		runs = append(runs, readyAppliedServiceRun(t, d, access, replica.private, service, leases, now))
+		runs = append(runs, readyAppliedServiceRun(t, d, access, replica.private, service, netip.MustParseAddr("127.0.0.1"), leases, now))
 	}
 	ingress, err := d.RegisterIngress(ctx, IngressRegistration{
 		IngressID: "service-run-exclusions", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix),

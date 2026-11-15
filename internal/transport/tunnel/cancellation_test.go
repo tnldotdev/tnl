@@ -137,10 +137,10 @@ func TestSetupCancellationInterruptsRead(t *testing.T) {
 				} else {
 					client, server := newAuthenticatedPair(t)
 					result = tunnelWorker(t, func() { _ = client.Close() }, func() error {
-						_, err := client.OpenVisitorStream(ctx, visitorStreamHeader(), nil, ReturnEvents{})
+						_, err := client.OpenServiceForwardingStream(ctx, serviceStreamHeader())
 						return err
 					})
-					if _, err := server.AcceptVisitorStream(ctx); err != nil {
+					if _, err := server.AcceptServiceForwardingStream(ctx); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -191,10 +191,10 @@ func TestCanceledStreamKeepsSessionUsable(t *testing.T) {
 	client, server := newAuthenticatedPair(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	result := tunnelWorker(t, cancel, func() error {
-		_, err := client.OpenVisitorStream(ctx, visitorStreamHeader(), nil, ReturnEvents{})
+		_, err := client.OpenServiceForwardingStream(ctx, serviceStreamHeader())
 		return err
 	})
-	if _, err := server.AcceptVisitorStream(tunnelContext(t)); err != nil {
+	if _, err := server.AcceptServiceForwardingStream(tunnelContext(t)); err != nil {
 		t.Fatal(err)
 	}
 	cancel()
@@ -202,13 +202,13 @@ func TestCanceledStreamKeepsSessionUsable(t *testing.T) {
 		t.Fatal(err)
 	}
 	result = tunnelWorker(t, func() { _ = server.Close() }, func() error {
-		incoming, err := server.AcceptVisitorStream(tunnelContext(t))
+		incoming, err := server.AcceptServiceForwardingStream(tunnelContext(t))
 		if err != nil {
 			return err
 		}
 		return incoming.Accept()
 	})
-	stream, err := client.OpenVisitorStream(tunnelContext(t), visitorStreamHeader(), nil, ReturnEvents{})
+	stream, err := client.OpenServiceForwardingStream(tunnelContext(t), serviceStreamHeader())
 	if err != nil {
 		t.Fatal(err)
 	}

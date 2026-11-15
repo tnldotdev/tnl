@@ -13,12 +13,11 @@ import (
 
 const readVisitorPolicyEvents = `-- name: ReadVisitorPolicyEvents :many
 SELECT revision,changed_at FROM control.visitor_policy_events
-WHERE resource_kind=$1 AND resource_id=$2 AND revision>$3
+WHERE resource_id=$1 AND revision>$2
 ORDER BY revision LIMIT 256
 `
 
 type ReadVisitorPolicyEventsParams struct {
-	ResourceKind  string
 	ResourceID    string
 	AfterRevision int64
 }
@@ -29,7 +28,7 @@ type ReadVisitorPolicyEventsRow struct {
 }
 
 func (q *Queries) ReadVisitorPolicyEvents(ctx context.Context, arg ReadVisitorPolicyEventsParams) ([]ReadVisitorPolicyEventsRow, error) {
-	rows, err := q.db.Query(ctx, readVisitorPolicyEvents, arg.ResourceKind, arg.ResourceID, arg.AfterRevision)
+	rows, err := q.db.Query(ctx, readVisitorPolicyEvents, arg.ResourceID, arg.AfterRevision)
 	if err != nil {
 		return nil, err
 	}
@@ -49,23 +48,18 @@ func (q *Queries) ReadVisitorPolicyEvents(ctx context.Context, arg ReadVisitorPo
 }
 
 const readVisitorPolicyRevision = `-- name: ReadVisitorPolicyRevision :one
-SELECT revision FROM control.visitor_policies WHERE resource_kind=$1 AND resource_id=$2
+SELECT revision FROM control.visitor_policies WHERE resource_id=$1
 `
 
-type ReadVisitorPolicyRevisionParams struct {
-	ResourceKind string
-	ResourceID   string
-}
-
-func (q *Queries) ReadVisitorPolicyRevision(ctx context.Context, arg ReadVisitorPolicyRevisionParams) (int64, error) {
-	row := q.db.QueryRow(ctx, readVisitorPolicyRevision, arg.ResourceKind, arg.ResourceID)
+func (q *Queries) ReadVisitorPolicyRevision(ctx context.Context, resourceID string) (int64, error) {
+	row := q.db.QueryRow(ctx, readVisitorPolicyRevision, resourceID)
 	var revision int64
 	err := row.Scan(&revision)
 	return revision, err
 }
 
 const readVisitorPolicyService = `-- name: ReadVisitorPolicyService :one
-SELECT id, team_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services WHERE id=$1
+SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services WHERE id=$1
 `
 
 func (q *Queries) ReadVisitorPolicyService(ctx context.Context, id string) (ControlService, error) {
@@ -74,6 +68,7 @@ func (q *Queries) ReadVisitorPolicyService(ctx context.Context, id string) (Cont
 	err := row.Scan(
 		&i.ID,
 		&i.TeamID,
+		&i.GuestID,
 		&i.Name,
 		&i.NameScope,
 		&i.PlacementWorktreeKey,

@@ -46,12 +46,6 @@ ON CONFLICT (ingress_id) DO UPDATE SET
             THEN control.ingress_leases.reported_connections
         ELSE 0
     END,
-    routing_table_revision = CASE
-        WHEN control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
-         AND control.ingress_leases.lease_expires_at > EXCLUDED.registered_at
-            THEN control.ingress_leases.routing_table_revision
-        ELSE 0
-    END,
     draining = CASE
         WHEN control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
          AND control.ingress_leases.lease_expires_at > EXCLUDED.registered_at
@@ -97,7 +91,6 @@ RETURNING ingress_lease_revision;
 -- name: RenewIngress :one
 UPDATE control.ingress_leases
 SET reported_connections = sqlc.arg(reported_connections),
-    routing_table_revision = GREATEST(routing_table_revision, sqlc.arg(routing_table_revision)),
     renewed_at = sqlc.arg(renewed_at),
     lease_expires_at = CASE
         WHEN draining THEN lease_expires_at

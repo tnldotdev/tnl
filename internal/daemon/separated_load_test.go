@@ -31,7 +31,7 @@ var (
 	runtimeLoadPublicURLs         = flag.Int("tnl-runtime-load-public-urls", 4, "runtime load public URL count")
 	runtimeLoadStartParallel      = flag.Int("tnl-runtime-load-start-parallel", 4, "maximum concurrently activating publishers (1-1000)")
 	runtimeLoadReadyTimeout       = flag.Duration("tnl-runtime-load-ready-timeout", 30*time.Second, "publisher readiness timeout (30s-5m)")
-	runtimeLoadCertificateWorkers = flag.Int("tnl-runtime-load-public-url-certificate-workers", 8, "public URL certificate workers per control process (1-8)")
+	runtimeLoadCertificateWorkers = flag.Int("tnl-runtime-load-service-certificate-workers", 8, "service certificate workers per control process (1-8)")
 	runtimeLoadRPS                = flag.Int("tnl-runtime-load-rps", 16, "runtime load offered requests/second")
 	runtimeLoadDuration           = flag.Duration("tnl-runtime-load-duration", 10*time.Second, "runtime measurement window")
 	runtimeLoadWorkers            = flag.Int("tnl-runtime-load-workers", 128, "total visitor concurrency across four containers")
@@ -213,7 +213,7 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 		t.Fatal("publisher readiness timeout must be between 30s and 5m")
 	}
 	if *runtimeLoadCertificateWorkers < 1 || *runtimeLoadCertificateWorkers > 8 {
-		t.Fatal("public URL certificate workers must be between 1 and 8")
+		t.Fatal("service certificate workers must be between 1 and 8")
 	}
 	if rate < 4 || rate > 2000 {
 		t.Fatal("separated runtime load requests per second must be between 4 and 2000")

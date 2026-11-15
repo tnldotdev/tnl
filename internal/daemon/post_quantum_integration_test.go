@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationPostQuantumPublicURLVisitorPolicy(t *testing.T) {
@@ -23,8 +25,9 @@ func TestIntegrationPostQuantumPublicURLVisitorPolicy(t *testing.T) {
 			}))
 			cleanupIntegrationHTTPServer(t, target, fixture.owner)
 			quic, tcp := fixture.connectors()
-			cfg := fixture.identity.publisherConfig(target.URL, quic, tcp)
-			cfg.RequirePostQuantum = &require
+			_, cfg := fixture.identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{
+				RequirePostQuantum: &require,
+			})
 			handle := startOwnedIntegrationPublisher(t, fixture.owner, cfg, fixture.diagnostics)
 			ready := fixture.waitReady(t, handle)
 			for _, test := range []struct {
@@ -43,7 +46,7 @@ func TestIntegrationPostQuantumPublicURLVisitorPolicy(t *testing.T) {
 					visitor.transport.TLSClientConfig.MinVersion = test.version
 					visitor.transport.TLSClientConfig.MaxVersion = test.version
 					before := requests.Load()
-					response, _, err := visitor.requestURL(http.MethodGet, ready.PublicURL, nil)
+					response, _, err := visitor.requestURL(http.MethodGet, serviceHTTPAddress(ready), nil)
 					if !test.accepted {
 						if err == nil || requests.Load() != before {
 							t.Fatalf("unsupported visitor reached HTTP: response=%v err=%v", response, err)

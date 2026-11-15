@@ -14,7 +14,7 @@ import (
 )
 
 func observation() Observation {
-	return Observation{EventID: NewID(), ServiceID: "url_0123456789ABCDEFGHIJKL", ServiceKind: "public_url", RunID: "pr_0123456789ABCDEFGHIJKL", RunNumber: 1, VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", SourceIP: "192.0.2.1", EventType: "http.decision", OccurredAt: time.Now().UTC(), Outcome: "allowed"}
+	return Observation{EventID: NewID(), ServiceID: "svc_0123456789ABCDEFGHIJKL", ServiceKind: "service", RunID: "srun_0123456789ABCDEFGHIJKL", RunNumber: 1, VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", SourceIP: "192.0.2.1", EventType: "http.decision", OccurredAt: time.Now().UTC(), Outcome: "allowed"}
 }
 
 func TestQueueBoundsIncludeInFlightAndJoinedShutdown(t *testing.T) {

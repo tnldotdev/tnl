@@ -12,10 +12,10 @@ import (
 type serviceHTTPControl interface {
 	httpaccess.PolicyClient
 	httpaccess.TokenClient
+	httpaccess.ShareClient
+	httpaccess.BrowserClient
+	serviceFeedbackControl
 	AuthorizeServiceHTTPVisitor(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error)
-	RedeemServiceBrowserHandoff(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) (controlv1.BrowserHandoffResponse, error)
-	CheckServiceBrowserSession(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) (controlv1.BrowserAccessResponse, error)
-	RevokeServiceBrowserSession(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) error
 }
 
 func (n *Native) ReadPublisherVisitorPolicy(ctx context.Context, request controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
@@ -60,6 +60,13 @@ func (n *Native) RedeemServiceBrowserHandoff(ctx context.Context, service, run s
 		return controlv1.BrowserHandoffResponse{}, err
 	}
 	return c.RedeemServiceBrowserHandoff(ctx, service, run, token, body)
+}
+func (n *Native) RedeemServiceShare(ctx context.Context, service, run string, body controlv1.RedeemServiceShareRequest, token credentials.ServiceRunToken) (controlv1.ShareRedemption, error) {
+	c, err := n.serviceHTTP(service)
+	if err != nil {
+		return controlv1.ShareRedemption{}, err
+	}
+	return c.RedeemServiceShare(ctx, service, run, body, token)
 }
 func (n *Native) CheckServiceBrowserSession(ctx context.Context, service, run string, token credentials.ServiceRunToken, body controlv1.ServiceBrowserRequest) (controlv1.BrowserAccessResponse, error) {
 	c, err := n.serviceHTTP(service)

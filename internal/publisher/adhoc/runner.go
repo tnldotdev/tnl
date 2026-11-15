@@ -3,7 +3,6 @@ package adhoc
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,11 +10,9 @@ import (
 	"net/http"
 	"time"
 
-	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
@@ -47,73 +44,23 @@ type Options struct {
 // Run allocates one ordinary ephemeral service, publishes it, and deletes that
 // exact allocation. ambiguous retries keep the original invocation and declaration.
 func Run(ctx context.Context, options Options) (result error) {
-	if options.State == nil || !opaqueid.Valid(options.InvocationID, opaqueid.InvocationPrefix) {
-		return errors.New("ad-hoc publisher requires client state and an invocation ID")
-	}
-	body, target, trust, err := allocationRequest(options)
-	if err != nil {
-		return err
-	}
-	client, err := clientcontrol.New(options.ControlURL, options.HTTPClient, "")
-	if err != nil {
-		return err
-	}
-	authority, err := clientauthority.New(options.ControlURL, options.HTTPClient, "")
-	if err != nil {
-		return err
-	}
-	native, err := publisheridentity.Resolve(ctx, options.State, publisheridentity.NativeControl{Services: client, Allocations: client}, authority, options.EnrollmentKey, options.PublisherIdentityID, options.Publisher)
-	if err != nil {
-		return err
-	}
-	if err := native.NamespaceScope(); err != nil {
-		return err
-	}
-	if native.ControlURL() != options.ControlURL {
-		return publisheridentity.ErrScope
-	}
-	saved, err := allocateService(ctx, native, body)
-	// only Native can return a nonzero observed allocation. retain cleanup even
-	// when selection failed, using this exact native rather than a human session.
-	if saved.Id != "" {
+	prepared, err := Prepare(ctx, options)
+	if prepared != nil {
 		defer func() {
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			defer cancel()
-			result = errors.Join(result, deleteAllocation(cleanup, native, saved.Id))
+			result = errors.Join(result, prepared.Cleanup(cleanup))
 		}()
 	}
 	if err != nil {
 		return err
 	}
-	if saved.RequirePostQuantum != options.RequirePostQuantum {
-		return publisheridentity.ErrScope
-	}
-	if err := publisheridentity.MatchServiceDeclaration(saved, "http", trust); err != nil {
-		return err
-	}
-	if body.ExpiresAt != nil && (saved.ExpiresAt == nil || saved.ExpiresAt.After(*body.ExpiresAt)) {
-		return errors.New("allocated service did not retain its fixed expiration")
-	}
 	if options.OnAllocated != nil {
-		// callbacks receive an independent wire snapshot, never pointers used by
-		// the publication's trust declaration or exact allocation cleanup.
-		encoded, err := json.Marshal(saved)
-		if err != nil {
-			return err
-		}
-		var snapshot controlv1.Service
-		if err := json.Unmarshal(encoded, &snapshot); err != nil {
-			return err
-		}
-		if err := options.OnAllocated(snapshot); err != nil {
+		if err := options.OnAllocated(prepared.Service); err != nil {
 			return err
 		}
 	}
-	return publisherservice.Publish(ctx, publisherservice.RunConfig{
-		Control: native, State: options.State, Access: native.Access,
-		PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
-		ServiceID: saved.Id, Target: target, Metadata: publisheridentity.ServiceMetadata(saved), Ready: options.Ready,
-	})
+	return publisherservice.Publish(ctx, prepared.Config)
 }
 
 func allocationRequest(options Options) (controlv1.AllocateServiceRequest, string, *targettrust.Snapshot, error) {
@@ -206,14 +153,16 @@ func allocateService(ctx context.Context, native *publisheridentity.Native, body
 		defer cancel()
 	}
 	delay := 100 * time.Millisecond
+	var last error
 	for {
 		if err := context.Cause(ctx); err != nil {
-			return controlv1.Service{}, err
+			return controlv1.Service{}, errors.Join(last, err)
 		}
 		saved, err := native.AllocateService(ctx, body)
 		if err == nil || saved.Id != "" || !retryAllocation(err) {
 			return saved, err
 		}
+		last = err
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -225,21 +174,21 @@ func allocateService(ctx context.Context, native *publisheridentity.Native, body
 	}
 }
 
-func deleteAllocation(ctx context.Context, native *publisheridentity.Native, id string) error {
+func cleanupAllocation(ctx context.Context, native *publisheridentity.Native, body controlv1.AllocateServiceRequest) error {
 	delay := 100 * time.Millisecond
 	for {
-		err := native.DeleteAllocatedService(ctx, id)
-		if err == nil || failure.Only(err, clientcontrol.ErrNotFound) {
+		err := native.CleanupServiceAllocation(ctx, body)
+		if err == nil {
 			return nil
 		}
 		if !retryAllocation(err) || ctx.Err() != nil {
-			return fmt.Errorf("remove ad-hoc service allocation %s: %w", id, err)
+			return fmt.Errorf("clean up ad-hoc service invocation %s: %w", body.InvocationId, err)
 		}
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return errors.Join(fmt.Errorf("remove ad-hoc service allocation %s: %w", id, err), context.Cause(ctx))
+			return errors.Join(fmt.Errorf("clean up ad-hoc service invocation %s: %w", body.InvocationId, err), context.Cause(ctx))
 		case <-timer.C:
 		}
 		delay = min(2*delay, 2*time.Second)
@@ -247,6 +196,9 @@ func deleteAllocation(ctx context.Context, native *publisheridentity.Native, id 
 }
 
 func retryAllocation(err error) bool {
+	if err == context.Canceled || err == context.DeadlineExceeded {
+		return false
+	}
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {
 		for _, cause := range joined.Unwrap() {
 			if !retryAllocation(cause) {

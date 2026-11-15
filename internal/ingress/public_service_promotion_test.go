@@ -142,7 +142,7 @@ func (f *servicePromotionFixture) assertDeniedAndJoined(t *testing.T, deadline t
 	n, err := io.ReadFull(f.visitor, response[:])
 	var timeout net.Error
 	if n != 0 || err == nil || errors.As(err, &timeout) && timeout.Timeout() || time.Now().After(deadline) {
-		t.Fatal("late promotion extended authorization or delivered target bytes", n, err, time.Now().Sub(deadline))
+		t.Fatal("late promotion extended authorization or delivered target bytes", n, err, time.Since(deadline))
 	}
 	if err := ingressAwait(t, f.done); !errors.Is(err, ErrServiceAdmission) {
 		t.Fatal("expired promotion did not reject the visitor", err)

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -17,31 +16,79 @@ import (
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 )
 
 type trip func(*http.Request) (*http.Response, error)
 
+func (f trip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func testWorkers(t *testing.T) (*Workers, <-chan func(uint64, bool) error) {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	ready := make(chan func(uint64, bool) error, 8)
+	var number atomic.Uint64
+	w := &Workers{Database: database}
+	w.Configure = func(_ context.Context, service Service) (Configuration, error) {
+		return Configuration{Service: &ServicePublication{
+			Options: servicePublicationOptions(w, service), URL: "https://public.example",
+			Run: func(ctx context.Context, _ *clientstate.Tunnel, observe func(uint64, bool) error, _ inspection.Observer) error {
+				run := number.Add(1)
+				if err := observe(run, false); err != nil {
+					return err
+				}
+				if err := observe(run, true); err != nil {
+					return err
+				}
+				ready <- observe
+				<-ctx.Done()
+				return ctx.Err()
+			},
+			Check: func(_ context.Context, current Service) Observation {
+				return Observation{Target: current.Target, RegistrationID: current.RegistrationID, RunNumber: current.RunNumber,
+					Readiness: current.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.probe_failed"}
+			},
+		}, Inspection: inspection.Policy{Mode: inspection.None}}, nil
+	}
+	w.Manager, err = New(t.Context(), root, database, []Service{{Name: "web", ServiceProtocol: "http", Readiness: Readiness{Path: "/health"}}}, w.Run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(w.Manager.Close)
+	return w, ready
+}
+
 func TestPublicationTelemetryOptOutDoesNotDisableSiblingWorker(t *testing.T) {
 	w, _ := testWorkers(t)
 	configure := w.Configure
-	w.Configure = func(ctx context.Context, service Service) (Configuration, error) {
-		configuration, err := configure(ctx, service)
-		if service.Name != "web" {
-			configuration.Publisher.Telemetry = &clienttelemetry.Collector{}
-		}
-		return configuration, err
-	}
 	type observation struct {
 		service  string
 		disabled bool
 	}
 	observed := make(chan observation, 2)
-	w.RunPublisher = func(ctx context.Context, cfg publisher.Config) error {
-		observed <- observation{cfg.Service, cfg.Telemetry == nil}
-		<-ctx.Done()
-		return nil
+	w.Configure = func(ctx context.Context, service Service) (Configuration, error) {
+		configuration, err := configure(ctx, service)
+		if err != nil {
+			return configuration, err
+		}
+		var telemetry *clienttelemetry.Collector
+		if service.Name != "web" {
+			telemetry = &clienttelemetry.Collector{}
+		}
+		run := configuration.Service.Run
+		configuration.Service.Run = func(ctx context.Context, tunnel *clientstate.Tunnel, observe func(uint64, bool) error, summary inspection.Observer) error {
+			observed <- observation{service.Name, telemetry == nil}
+			return run(ctx, tunnel, observe, summary)
+		}
+		return configuration, nil
 	}
 	services := append(w.Manager.Snapshot().Services, Service{Name: "api", ServiceProtocol: "http"})
 	if err := w.Manager.Configure(services); err != nil {
@@ -57,91 +104,24 @@ func TestPublicationTelemetryOptOutDoesNotDisableSiblingWorker(t *testing.T) {
 		}
 	}
 	for range 2 {
-		select {
-		case value := <-observed:
-			if value.disabled != (value.service == "web") {
-				t.Fatalf("mixed sibling choice: %+v", value)
-			}
-		case <-time.After(3 * time.Second):
-			t.Fatal("worker did not start")
+		value := receiveServicePublication(t, observed)
+		if value.disabled != (value.service == "web") {
+			t.Fatalf("mixed sibling choice: %+v", value)
 		}
-	}
-}
-
-func (f trip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
-func testWorkers(t *testing.T) (*Workers, <-chan publisher.Config) {
-	t.Helper()
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	database, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = database.Close() })
-	ready := make(chan publisher.Config, 8)
-	var number atomic.Uint64
-	w := &Workers{Database: database}
-	w.Configure = func(_ context.Context, s Service) (Configuration, error) {
-		return Configuration{Publisher: publisher.Config{Hostname: "public.example", ControlURL: "https://control.example", ProjectRoot: root, Target: s.Target, Service: s.Name, ServiceProtocol: "http"}, Inspection: inspection.Policy{Mode: inspection.None}}, nil
-	}
-	w.RunPublisher = func(ctx context.Context, cfg publisher.Config) error {
-		run := number.Add(1)
-		id := "url_0123456789abcdefghijkl"
-		if err := cfg.Observe(publisher.Event{Type: publisher.EventPublicURLAssigned, PublicURLID: id, Hostname: "public.example"}); err != nil {
-			return err
-		}
-		if err := cfg.Observe(publisher.Event{Type: publisher.EventProvisioning, PublishRunNumber: run}); err != nil {
-			return err
-		}
-		if cfg.ReadinessProof(publisher.PublishRunIdentity{Hostname: "public.example", PublicURLID: id, Number: run}) == nil {
-			return errors.New("missing readiness proof")
-		}
-		if err := cfg.Observe(publisher.Event{Type: publisher.EventReady, PublicURL: "https://public.example", PublishRunNumber: run}); err != nil {
-			return err
-		}
-		ready <- cfg
-		<-ctx.Done()
-		return ctx.Err()
-	}
-	w.Manager, err = New(t.Context(), root, database, []Service{{Name: "web", ServiceProtocol: "http", Readiness: Readiness{Path: "/health"}}}, w.Run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(w.Manager.Close)
-	return w, ready
-}
-
-func receiveConfig(t *testing.T, ready <-chan publisher.Config) publisher.Config {
-	t.Helper()
-	select {
-	case cfg := <-ready:
-		return cfg
-	case <-time.After(5 * time.Second):
-		t.Fatal("worker did not become routable")
-		return publisher.Config{}
 	}
 }
 
 func TestOwnerProofIsFreshExactAndStaleReadinessCannotCrossReplacement(t *testing.T) {
-	w, ready := testWorkers(t)
-	id, err := w.Manager.Reserve("web", "owner", 1, "https://public.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := w.Manager.Register(id, "owner", "http://127.0.0.1:3000", "node"); err != nil {
-		t.Fatal(err)
-	}
-	firstCfg := receiveConfig(t, ready)
+	w, ready, _, probe := automaticWorkers(t, time.Second)
+	w.AutomaticReadiness = false
+	firstObserve, id := registerAutomaticService(t, w, ready)
 	var proofs []string
-	w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
+	probe.transport = trip(func(r *http.Request) (*http.Response, error) {
 		if r.URL.String() != "https://public.example/health" || r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" {
-			t.Errorf("invalid probe request")
+			t.Error("invalid probe request")
 		}
 		proofs = append(proofs, r.Header.Get(ProbeHeader))
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		return automaticResponse(http.StatusOK), nil
 	})
 	for range 2 {
 		snapshot, err := w.Check(t.Context(), []string{"web"})
@@ -150,27 +130,24 @@ func TestOwnerProofIsFreshExactAndStaleReadinessCannotCrossReplacement(t *testin
 		}
 	}
 	if len(proofs) != 2 || len(proofs[0]) != 64 || proofs[0] == proofs[1] {
-		t.Fatal("owner reused a readiness proof")
+		t.Fatal("operation checks reused a readiness proof")
 	}
 	var calls atomic.Int32
-	w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
+	probe.transport = trip(func(r *http.Request) (*http.Response, error) {
 		if calls.Add(1) == 1 {
 			if err := w.Manager.Register(id, "owner", "http://127.0.0.1:3001", "node"); err != nil {
 				t.Error(err)
 			}
-			receiveConfig(t, ready)
+			receiveServicePublication(t, ready)
 		}
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		return automaticResponse(http.StatusOK), nil
 	})
 	snapshot, err := w.Check(t.Context(), []string{"web"})
 	if err != nil || snapshot.Services[0].Ready {
-		t.Fatal("old run readiness crossed endpoint replacement")
+		t.Fatal("old readiness crossed endpoint replacement")
 	}
-	if firstCfg.PromoteVisitor != nil {
-		t.Fatal("worker replaced the authenticated promotion default")
-	}
-	if err := firstCfg.AdmitVisitor(t.Context(), publisher.Visitor{Run: publisher.PublishRunIdentity{Number: 1}}); err == nil {
-		t.Fatal("old worker admitted a visitor")
+	if err := firstObserve(2, true); !errors.Is(err, ErrRegistrationStale) {
+		t.Fatal("old operation changed the replacement's publication", err)
 	}
 	if !snapshot.Services[0].Routable {
 		t.Fatal("readiness failure stopped publication")
@@ -178,21 +155,15 @@ func TestOwnerProofIsFreshExactAndStaleReadinessCannotCrossReplacement(t *testin
 }
 
 func TestReadinessProbeRejectsSameAddressTargetReplacementBeforeAcceptance(t *testing.T) {
-	w, ready := testWorkers(t)
-	var identity atomic.Value
-	identity.Store("container-a")
-	configure := w.Configure
-	w.Configure = func(ctx context.Context, service Service) (Configuration, error) {
-		cfg, err := configure(ctx, service)
-		cfg.TargetBinding = &target.TargetBinding{Resolve: func(context.Context) (target.TargetSnapshot, error) {
-			return target.TargetSnapshot{Address: service.Target, Identity: identity.Load().(string)}, nil
-		}}
-		return cfg, err
-	}
-	registerAutomaticWorker(t, w, ready)
-	w.HTTPTransport = trip(func(*http.Request) (*http.Response, error) {
-		identity.Store("container-b")
-		return automaticResponse(200), nil
+	w, ready, _, probe := automaticWorkers(t, time.Second)
+	w.AutomaticReadiness = false
+	_, id := registerAutomaticService(t, w, ready)
+	var replaced atomic.Bool
+	probe.transport = trip(func(*http.Request) (*http.Response, error) {
+		if replaced.CompareAndSwap(false, true) {
+			w.Manager.TargetChanged("web", id, "http://127.0.0.1:3000")
+		}
+		return automaticResponse(http.StatusOK), nil
 	})
 	service := w.Manager.Snapshot().Services[0]
 	if w.checkService(t.Context(), service) {
@@ -203,7 +174,7 @@ func TestReadinessProbeRejectsSameAddressTargetReplacementBeforeAcceptance(t *te
 		t.Fatal("target replacement lost its readiness invalidation", current)
 	}
 	if !w.checkService(t.Context(), current) {
-		t.Fatal("a fresh explicit probe could not accept the replacement identity")
+		t.Fatal("a fresh explicit check could not accept the replacement identity")
 	}
 }
 
@@ -222,7 +193,7 @@ func TestOneJournalContainsDirectNamedAndReadinessTransitions(t *testing.T) {
 	if err := w.Manager.Register(id, "owner", "http://127.0.0.1:3000", ""); err != nil {
 		t.Fatal(err)
 	}
-	receiveConfig(t, ready)
+	receiveServicePublication(t, ready)
 	snapshot := w.Manager.Snapshot()
 	if len(snapshot.Publications) != 2 {
 		t.Fatalf("publications=%+v", snapshot.Publications)
@@ -277,30 +248,43 @@ func TestTargetResolutionDelegatesDiscoveryAndRejectsApps(t *testing.T) {
 func TestLifecycleAttachmentIsFencedAndJoined(t *testing.T) {
 	w, ready := testWorkers(t)
 	configure := w.Configure
-	var admissions atomic.Int32
+	attached := make(chan *clientstate.Tunnel, 1)
 	stopped := make(chan struct{})
+	project := w.Manager.Snapshot().Project
+	group := clientstate.IntegrationScope{PrimaryProjectRoot: project, Namespace: "member.example"}
 	w.Configure = func(ctx context.Context, service Service) (Configuration, error) {
 		configuration, err := configure(ctx, service)
-		configuration.Attach = func(_ context.Context, _ *clientstate.Tunnel, cfg *publisher.Config) (func(), error) {
-			cfg.AdmitVisitor = func(context.Context, publisher.Visitor) error { admissions.Add(1); return nil }
-			return func() { close(stopped) }, nil
+		if err != nil {
+			return configuration, err
 		}
-		return configuration, err
+		configuration.Service.Options.IntegrationScope = group
+		run := configuration.Service.Run
+		configuration.Service.Run = func(ctx context.Context, tunnel *clientstate.Tunnel, observe func(uint64, bool) error, summary inspection.Observer) error {
+			if tunnel == nil || tunnel.Context() != ctx {
+				return errors.New("operation did not receive the journal's tunnel and context")
+			}
+			current := w.Manager.Snapshot()
+			if len(current.Publications) != 1 || current.Services[0].TunnelID != tunnel.ID() ||
+				current.Publications[0].ID != tunnel.ID() || current.Publications[0].IntegrationScope != group {
+				return errors.New("operation started before journal binding or lost its integration scope")
+			}
+			attached <- tunnel
+			defer func() {
+				snapshot, err := w.Database.SnapshotProject(context.WithoutCancel(ctx), project)
+				if err != nil || len(snapshot.Tunnels) != 1 || snapshot.Tunnels[0].ID != tunnel.ID() {
+					t.Error("journal finished before the operation's integration cleanup", err)
+				}
+				close(stopped)
+			}()
+			return run(ctx, tunnel, observe, summary)
+		}
+		return configuration, nil
 	}
-	id, err := w.Manager.Reserve("web", "owner", 1, "https://public.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := w.Manager.Register(id, "owner", "http://127.0.0.1:3000", ""); err != nil {
-		t.Fatal(err)
-	}
-	cfg := receiveConfig(t, ready)
-	visitor := publisher.Visitor{Run: publisher.PublishRunIdentity{Number: 1}}
-	if cfg.PromoteVisitor != nil {
-		t.Fatal("worker disabled the authenticated promotion default")
-	}
-	if err := cfg.AdmitVisitor(t.Context(), visitor); err != nil || admissions.Load() != 1 {
-		t.Fatal("lifecycle admission hook was not composed")
+	id := registerServicePublication(t, w, "http://127.0.0.1:3000", "https://public.example")
+	observe := receiveServicePublication(t, ready)
+	tunnel := receiveServicePublication(t, attached)
+	if tunnel.ID() != w.Manager.Snapshot().Services[0].TunnelID {
+		t.Fatal("operation attached to a different local publication")
 	}
 	if err := w.Manager.UnregisterTarget(id, "owner", "http://127.0.0.1:3000"); err != nil {
 		t.Fatal(err)
@@ -311,117 +295,60 @@ func TestLifecycleAttachmentIsFencedAndJoined(t *testing.T) {
 	select {
 	case <-stopped:
 	default:
-		t.Fatal("lifecycle cleanup was not joined")
+		t.Fatal("operation integration cleanup was not joined")
 	}
-	if err := cfg.AdmitVisitor(t.Context(), visitor); err == nil || admissions.Load() != 1 {
-		t.Fatal("lifecycle hook bypassed owner fencing")
+	if err := observe(2, true); !errors.Is(err, ErrRegistrationStale) {
+		t.Fatal("stopped operation bypassed owner fencing", err)
 	}
 }
 
 func TestWorkerFollowsReplacedTargetWithoutChangingItsRun(t *testing.T) {
-	w, ready := testWorkers(t)
-	original := w.Configure
-	var identity atomic.Value
-	identity.Store("container-a")
-	var aliasAdmit func(*http.Request, publisher.PublishRunIdentity) error
-	w.Configure = func(ctx context.Context, service Service) (Configuration, error) {
-		cfg, err := original(ctx, service)
-		cfg.TargetBinding = &target.TargetBinding{Resolve: func(context.Context) (target.TargetSnapshot, error) {
-			return target.TargetSnapshot{Address: service.Target, Identity: identity.Load().(string)}, nil
-		}}
-		cfg.Attach = func(_ context.Context, _ *clientstate.Tunnel, entry *publisher.Config) (func(), error) {
-			aliasAdmit = entry.AdmitRequest
-			return nil, nil
-		}
-		return cfg, err
-	}
-	id, err := w.Manager.Reserve("web", "owner", 1, "https://public.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := w.Manager.Register(id, "owner", "http://127.0.0.1:3000", "node"); err != nil {
-		t.Fatal(err)
-	}
-	cfg := receiveConfig(t, ready)
-	run := publisher.PublishRunIdentity{Number: 1}
-	if err := cfg.AdmitRequest(httptest.NewRequest("GET", "http://public.example/", nil), run); err != nil {
-		t.Fatal(err)
-	}
-	w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
-	})
+	w, ready, _, probe := automaticWorkers(t, time.Second)
+	w.AutomaticReadiness = false
+	observe, id := registerAutomaticService(t, w, ready)
+	probe.transport = trip(func(*http.Request) (*http.Response, error) { return automaticResponse(http.StatusOK), nil })
 	if snapshot, err := w.Check(t.Context(), []string{"web"}); err != nil || !snapshot.Services[0].Ready {
 		t.Fatalf("original target was not ready: %+v, %v", snapshot.Services, err)
 	}
-	identity.Store("container-b")
-	if err := cfg.AdmitRequest(httptest.NewRequest("GET", "http://public.example/", nil), run); err != nil {
-		t.Fatalf("replacement container blocked new HTTP request: %v", err)
-	}
-	if snapshot := w.Manager.Snapshot(); snapshot.Services[0].Ready {
-		t.Fatal("target replacement kept readiness from the previous target")
-	}
-	if aliasAdmit == nil || aliasAdmit(httptest.NewRequest("GET", "http://public.example/", nil), run) != nil {
-		t.Fatal("alias attachment did not follow the selected target")
-	}
-	if err := cfg.AdmitVisitor(t.Context(), publisher.Visitor{Run: run}); err != nil {
-		t.Fatalf("replacement container blocked new TCP connection: %v", err)
-	}
-	var probes atomic.Int32
-	w.HTTPTransport = trip(func(*http.Request) (*http.Response, error) {
-		probes.Add(1)
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}, nil
-	})
-	snapshot, err := w.Check(t.Context(), []string{"web"})
-	if err != nil || !snapshot.Services[0].Ready || probes.Load() != 1 {
-		t.Fatalf("replacement target readiness=%+v, probes=%d, err=%v", snapshot.Services, probes.Load(), err)
-	}
-	w.HTTPTransport = trip(func(*http.Request) (*http.Response, error) {
-		identity.Store("container-c")
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}, nil
-	})
-	if snapshot, err := w.Check(t.Context(), []string{"web"}); err != nil || snapshot.Services[0].Ready {
-		t.Fatalf("target replacement during public probe was accepted: %+v, %v", snapshot.Services, err)
-	}
-	if err := w.Manager.UnregisterTarget(id, "owner", "http://127.0.0.1:3000"); err != nil {
+	before := w.Manager.Snapshot().Services[0]
+	w.Manager.TargetChanged("web", id, before.Target)
+	if err := observe(before.RunNumber, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := cfg.AdmitVisitor(t.Context(), publisher.Visitor{Run: run}); err == nil {
-		t.Fatal("stopped service still admitted a visitor")
+	if current := w.Manager.Snapshot().Services[0]; current.Ready || !current.Routable || current.RunNumber != before.RunNumber || current.TunnelID != before.TunnelID {
+		t.Fatal("target replacement kept old readiness or changed publication ownership", current)
+	}
+	var probes atomic.Int32
+	probe.transport = trip(func(*http.Request) (*http.Response, error) {
+		probes.Add(1)
+		return automaticResponse(http.StatusOK), nil
+	})
+	if snapshot, err := w.Check(t.Context(), []string{"web"}); err != nil || !snapshot.Services[0].Ready || probes.Load() != 1 {
+		t.Fatalf("replacement target readiness=%+v, probes=%d, err=%v", snapshot.Services, probes.Load(), err)
+	}
+	probe.transport = trip(func(*http.Request) (*http.Response, error) {
+		w.Manager.TargetChanged("web", id, before.Target)
+		return automaticResponse(http.StatusOK), nil
+	})
+	if snapshot, err := w.Check(t.Context(), []string{"web"}); err != nil || snapshot.Services[0].Ready {
+		t.Fatalf("target replacement during a probe was accepted: %+v, %v", snapshot.Services, err)
+	}
+	if err := w.Manager.UnregisterTarget(id, "owner", before.Target); err != nil {
+		t.Fatal(err)
+	}
+	if err := observe(before.RunNumber, true); !errors.Is(err, ErrRegistrationStale) {
+		t.Fatal("stopped service still accepted operation observations", err)
 	}
 }
 
 func TestPublicWorkerStartsAutomaticReadiness(t *testing.T) {
-	w, ready := testWorkers(t)
-	w.AutomaticReadiness = true
-	probed := make(chan struct{}, 1)
-	w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
-		if len(r.Header.Get(ProbeHeader)) != 64 {
-			t.Error("automatic readiness omitted proof")
-		}
-		select {
-		case probed <- struct{}{}:
-		default:
-		}
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}, nil
+	w, ready, _, probe := automaticWorkers(t, time.Second)
+	gets := make(chan string, 1)
+	probe.transport = trip(func(r *http.Request) (*http.Response, error) {
+		gets <- r.Header.Get(ProbeHeader)
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}, nil
 	})
-	id, err := w.Manager.Reserve("web", "owner", 1, "https://public.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := w.Manager.Register(id, "owner", "http://127.0.0.1:3000", "node"); err != nil {
-		t.Fatal(err)
-	}
-	receiveConfig(t, ready)
-	select {
-	case <-probed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("public readiness was never started")
-	}
-	deadline := time.Now().Add(time.Second)
-	for !w.Manager.Snapshot().Services[0].Ready {
-		if time.Now().After(deadline) {
-			t.Fatal("automatic readiness was not recorded")
-		}
-		time.Sleep(time.Millisecond)
-	}
+	registerAutomaticService(t, w, ready)
+	expectAutomaticGET(t, gets)
+	waitAutomaticReady(t, w, 1)
 }

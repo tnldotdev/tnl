@@ -12,7 +12,7 @@ import (
 // ControlOperation starts before database work so driver spans inherit the
 // operation, rather than constructing a disconnected span after completion.
 func ControlOperation(ctx context.Context, operation ServerOperation) (context.Context, func(error)) {
-	if operation < OpCreatePublishRun || operation > OpPublisherRuntimeInvalid {
+	if operation < OpCreateServiceRun || operation > OpPublisherRuntimeInvalid {
 		return ctx, func(error) {}
 	}
 	name := operation.operation()
@@ -59,7 +59,7 @@ func AuthenticatedServerScope(ctx context.Context, identity Identity, fields Fie
 type certificateKindKey struct{}
 
 func WithCertificateKind(ctx context.Context, kind string) context.Context {
-	if kind != "public_url" && kind != "service" && kind != "relay" {
+	if kind != "service" && kind != "relay" {
 		return ctx
 	}
 	trace.SpanFromContext(ctx).SetAttributes(CertificateKind.String(kind))
@@ -70,7 +70,7 @@ func CertificateDNSKind(ctx context.Context) string {
 	if kind, _ := ctx.Value(certificateKindKey{}).(string); kind == "service" {
 		return "service_challenge"
 	}
-	return "public_url_challenge"
+	return ""
 }
 
 func ObservePublisherRuntime(ctx context.Context, action string, outcome Outcome, reason DomainReason, elapsed time.Duration) {

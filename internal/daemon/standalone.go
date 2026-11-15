@@ -141,19 +141,12 @@ func (d *daemon) startStandalone(
 			}
 			return runtime.connector, true
 		},
-		Private: &relay.ServicePublisherAcceptor{Select: func(id string) (relay.ServicePublisherTarget, bool) {
+		Select: func(id string) (relay.ServicePublisherTarget, bool) {
 			runtime, ok := targets[id]
 			if !ok {
 				return relay.ServicePublisherTarget{}, false
 			}
 			return relay.ServicePublisherTarget{Control: runtime.controller, Registry: runtime.serviceRegistry}, true
-		}},
-		Select: func(relayServiceID string) (relay.PublisherConnectionController, *relay.Registry, bool) {
-			runtime, ok := targets[relayServiceID]
-			if !ok {
-				return nil, nil, false
-			}
-			return runtime.controller, runtime.registry, true
 		},
 		ReadyConnectionsDelta: func(delta int) { metrics.AddReadyPublisherConnections(delta) },
 		ConnectionExited:      func(unexpected bool) { metrics.ObservePublisherExit(unexpected) },

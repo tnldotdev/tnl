@@ -32,43 +32,40 @@ func (q *Queries) AdvanceGuestDemoNumber(ctx context.Context, arg AdvanceGuestDe
 	return last_demo_number, err
 }
 
-const beginGuestPublishRun = `-- name: BeginGuestPublishRun :execrows
+const beginGuestServiceRun = `-- name: BeginGuestServiceRun :execrows
 UPDATE control.guest_trials AS guest
-SET active_publish_run_id = $1, updated_at = $2
-WHERE guest.id = (
-    SELECT guest_id FROM control.guest_public_urls
-    WHERE public_url_id = $3
-)
-  AND guest.active_publish_run_id IS NULL
-  AND (guest.serving_until IS NULL OR guest.serving_until <= $2)
+SET active_service_run_id = run.id, updated_at = $1
+FROM control.service_runs run
+WHERE run.id = $2 AND run.service_id = $3
+  AND run.guest_id=guest.id AND run.closed_at IS NULL
+  AND guest.active_service_run_id IS NULL
+  AND (guest.serving_until IS NULL OR guest.serving_until <= $1)
   AND guest.ended_at IS NULL
-  AND guest.expires_at > $2
+  AND guest.expires_at > $1
   AND guest.used_ready_ns < 1200000000000
 `
 
-type BeginGuestPublishRunParams struct {
-	PublishRunID pgtype.Text
+type BeginGuestServiceRunParams struct {
 	StartedAt    pgtype.Timestamptz
-	PublicURLID  string
+	ServiceRunID string
+	ServiceID    string
 }
 
-func (q *Queries) BeginGuestPublishRun(ctx context.Context, arg BeginGuestPublishRunParams) (int64, error) {
-	result, err := q.db.Exec(ctx, beginGuestPublishRun, arg.PublishRunID, arg.StartedAt, arg.PublicURLID)
+func (q *Queries) BeginGuestServiceRun(ctx context.Context, arg BeginGuestServiceRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, beginGuestServiceRun, arg.StartedAt, arg.ServiceRunID, arg.ServiceID)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
 }
 
-const countGuestCurrentPublicURLs = `-- name: CountGuestCurrentPublicURLs :one
-SELECT count(*) FROM control.guest_public_urls AS guest_route
-JOIN control.public_urls AS route ON route.id = guest_route.public_url_id
-WHERE guest_route.guest_id = $1
-  AND route.lifecycle_state <> 'deleted'
+const countGuestCurrentServices = `-- name: CountGuestCurrentServices :one
+SELECT count(*) FROM control.services
+WHERE guest_id = $1 AND deleted_at IS NULL
 `
 
-func (q *Queries) CountGuestCurrentPublicURLs(ctx context.Context, guestID string) (int64, error) {
-	row := q.db.QueryRow(ctx, countGuestCurrentPublicURLs, guestID)
+func (q *Queries) CountGuestCurrentServices(ctx context.Context, guestID pgtype.Text) (int64, error) {
+	row := q.db.QueryRow(ctx, countGuestCurrentServices, guestID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -94,7 +91,58 @@ func (q *Queries) CountRecentGuestTrialsByIP(ctx context.Context, arg CountRecen
 	return count, err
 }
 
-const finishGuestPublishRun = `-- name: FinishGuestPublishRun :execrows
+const findGuestServiceAllocation = `-- name: FindGuestServiceAllocation :one
+SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services
+WHERE guest_id = $1 AND idempotency_key = $2
+`
+
+type FindGuestServiceAllocationParams struct {
+	GuestID        pgtype.Text
+	IdempotencyKey string
+}
+
+// terminal allocations remain discoverable so a retry cannot recreate them.
+func (q *Queries) FindGuestServiceAllocation(ctx context.Context, arg FindGuestServiceAllocationParams) (ControlService, error) {
+	row := q.db.QueryRow(ctx, findGuestServiceAllocation, arg.GuestID, arg.IdempotencyKey)
+	var i ControlService
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.GuestID,
+		&i.Name,
+		&i.NameScope,
+		&i.PlacementWorktreeKey,
+		&i.PlacementWorktreeLabel,
+		&i.Protocol,
+		&i.TlsMetadata,
+		&i.ConfigurationCiphertext,
+		&i.StorageKeyID,
+		&i.TrustRevision,
+		&i.EndpointRevision,
+		&i.VisitorRevision,
+		&i.PublisherPool,
+		&i.Ephemeral,
+		&i.ExpiresAt,
+		&i.RequirePostQuantum,
+		&i.DomainID,
+		&i.CertificateHostname,
+		&i.CertificateScope,
+		&i.ServicePort,
+		&i.IngressPoolID,
+		&i.Public,
+		&i.CreatedByIdentityID,
+		&i.IdempotencyKey,
+		&i.RequestDigest,
+		&i.Enabled,
+		&i.NextRunNumber,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const finishGuestServiceRun = `-- name: FinishGuestServiceRun :execrows
 UPDATE control.guest_trials
 SET used_ready_ns = LEAST(1200000000000, used_ready_ns + CASE
         WHEN active_ready_at IS NULL OR serving_until IS NULL THEN 0
@@ -110,19 +158,19 @@ SET used_ready_ns = LEAST(1200000000000, used_ready_ns + CASE
     END),
     active_ready_at = NULL,
     ready_deadline = NULL,
-    active_publish_run_id = NULL,
+    active_service_run_id = NULL,
     updated_at = $2
-WHERE active_publish_run_id = $3
+WHERE active_service_run_id = $3
 `
 
-type FinishGuestPublishRunParams struct {
+type FinishGuestServiceRunParams struct {
 	CloseReason  string
 	ClosedAt     pgtype.Timestamptz
-	PublishRunID pgtype.Text
+	ServiceRunID pgtype.Text
 }
 
-func (q *Queries) FinishGuestPublishRun(ctx context.Context, arg FinishGuestPublishRunParams) (int64, error) {
-	result, err := q.db.Exec(ctx, finishGuestPublishRun, arg.CloseReason, arg.ClosedAt, arg.PublishRunID)
+func (q *Queries) FinishGuestServiceRun(ctx context.Context, arg FinishGuestServiceRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, finishGuestServiceRun, arg.CloseReason, arg.ClosedAt, arg.ServiceRunID)
 	if err != nil {
 		return 0, err
 	}
@@ -138,11 +186,11 @@ WHERE id IN (
     SELECT guest.id FROM control.guest_trials AS guest
     WHERE guest.expires_at <= $1
       AND guest.source_ip_digest IS NOT NULL
-      AND guest.active_publish_run_id IS NULL
+      AND guest.active_service_run_id IS NULL
+      AND (guest.serving_until IS NULL OR guest.serving_until <= $1)
       AND NOT EXISTS (
-          SELECT 1 FROM control.guest_public_urls AS owned
-          JOIN control.public_urls AS route ON route.id = owned.public_url_id
-          WHERE owned.guest_id = guest.id AND route.lifecycle_state <> 'deleted'
+          SELECT 1 FROM control.services service
+          WHERE service.guest_id = guest.id AND service.deleted_at IS NULL
       )
     ORDER BY guest.expires_at, guest.id LIMIT $2
     FOR UPDATE OF guest SKIP LOCKED
@@ -162,65 +210,29 @@ func (q *Queries) ForgetExpiredGuestCredentials(ctx context.Context, arg ForgetE
 	return result.RowsAffected(), nil
 }
 
-const forgetExpiredGuestRoutingHashes = `-- name: ForgetExpiredGuestRoutingHashes :execrows
-UPDATE control.ingress_routing_table_events AS event
-SET projection = convert_to(
-    jsonb_set(
-        convert_from(event.projection, 'UTF8')::jsonb - 'allowed_ip_hashes' - 'ip_policy_key_id',
-        '{ip_policy}', '"allow_all"'::jsonb
-    )::text, 'UTF8'
-)
-WHERE event.id IN (
-    SELECT candidate.id FROM control.ingress_routing_table_events AS candidate
-    JOIN control.guest_public_urls AS owned ON owned.public_url_id = candidate.public_url_id
-    JOIN control.guest_trials AS guest ON guest.id = owned.guest_id
-    JOIN control.public_urls AS route ON route.id = owned.public_url_id
-    WHERE guest.expires_at <= $1
-      AND route.lifecycle_state = 'deleted'
-      AND candidate.public_url_expires_at <= $1
-      AND convert_from(candidate.projection, 'UTF8')::jsonb ->> 'ip_policy' = 'hashed_allowlist'
+const forgetExpiredGuestServiceConfigurations = `-- name: ForgetExpiredGuestServiceConfigurations :execrows
+UPDATE control.services AS service SET configuration_ciphertext=NULL,storage_key_id=NULL
+WHERE service.id IN (
+    SELECT candidate.id FROM control.services candidate
+    JOIN control.guest_trials guest ON guest.id=candidate.guest_id
+    WHERE guest.expires_at<=$1 AND candidate.deleted_at IS NOT NULL
+        AND candidate.configuration_ciphertext IS NOT NULL
+        AND (guest.serving_until IS NULL OR guest.serving_until<=$1)
+        AND NOT EXISTS(SELECT 1 FROM control.service_runs run
+            WHERE run.service_id=candidate.id AND run.closed_at IS NULL)
     ORDER BY candidate.id LIMIT $2
     FOR UPDATE OF candidate SKIP LOCKED
 )
 `
 
-type ForgetExpiredGuestRoutingHashesParams struct {
+type ForgetExpiredGuestServiceConfigurationsParams struct {
 	Now       pgtype.Timestamptz
 	BatchSize int32
 }
 
-func (q *Queries) ForgetExpiredGuestRoutingHashes(ctx context.Context, arg ForgetExpiredGuestRoutingHashesParams) (int64, error) {
-	result, err := q.db.Exec(ctx, forgetExpiredGuestRoutingHashes, arg.Now, arg.BatchSize)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const forgetExpiredGuestRunDigests = `-- name: ForgetExpiredGuestRunDigests :execrows
-UPDATE control.publish_runs AS run
-SET request_digest_ciphertext = NULL, request_digest_storage_key_id = NULL
-WHERE run.id IN (
-    SELECT candidate.id FROM control.publish_runs AS candidate
-    JOIN control.guest_public_urls AS owned ON owned.public_url_id = candidate.public_url_id
-    JOIN control.guest_trials AS guest ON guest.id = owned.guest_id
-    JOIN control.public_urls AS route ON route.id = owned.public_url_id
-    WHERE guest.expires_at <= $1
-      AND route.lifecycle_state = 'deleted'
-      AND candidate.closed_at IS NOT NULL
-      AND candidate.request_digest_ciphertext IS NOT NULL
-    ORDER BY candidate.id LIMIT $2
-    FOR UPDATE OF candidate SKIP LOCKED
-)
-`
-
-type ForgetExpiredGuestRunDigestsParams struct {
-	Now       pgtype.Timestamptz
-	BatchSize int32
-}
-
-func (q *Queries) ForgetExpiredGuestRunDigests(ctx context.Context, arg ForgetExpiredGuestRunDigestsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, forgetExpiredGuestRunDigests, arg.Now, arg.BatchSize)
+// terminal allocation keys/digests remain; targets and declarations do not.
+func (q *Queries) ForgetExpiredGuestServiceConfigurations(ctx context.Context, arg ForgetExpiredGuestServiceConfigurationsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetExpiredGuestServiceConfigurations, arg.Now, arg.BatchSize)
 	if err != nil {
 		return 0, err
 	}
@@ -251,7 +263,7 @@ func (q *Queries) ForgetOldGuestIssuanceDigests(ctx context.Context, arg ForgetO
 }
 
 const getGuestTrialByCredentialID = `-- name: GetGuestTrialByCredentialID :one
-SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_publish_run_id, active_ready_at, ready_deadline, serving_until, created_at, updated_at FROM control.guest_trials
+SELECT id, credential_id, credential_hash, namespace_label, domain_id, ingress_pool_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_service_run_id, active_ready_at, ready_deadline, serving_until, created_at, updated_at FROM control.guest_trials
 WHERE credential_id = $1
 `
 
@@ -263,9 +275,8 @@ func (q *Queries) GetGuestTrialByCredentialID(ctx context.Context, credentialID 
 		&i.CredentialID,
 		&i.CredentialHash,
 		&i.NamespaceLabel,
-		&i.TeamID,
-		&i.MembershipID,
 		&i.DomainID,
+		&i.IngressPoolID,
 		&i.DnsAuthorityReference,
 		&i.SourceIpDigest,
 		&i.SourceIpKeyID,
@@ -277,7 +288,7 @@ func (q *Queries) GetGuestTrialByCredentialID(ctx context.Context, credentialID 
 		&i.EndReason,
 		&i.EndedAt,
 		&i.LastDemoNumber,
-		&i.ActivePublishRunID,
+		&i.ActiveServiceRunID,
 		&i.ActiveReadyAt,
 		&i.ReadyDeadline,
 		&i.ServingUntil,
@@ -288,7 +299,7 @@ func (q *Queries) GetGuestTrialByCredentialID(ctx context.Context, credentialID 
 }
 
 const getGuestTrialByID = `-- name: GetGuestTrialByID :one
-SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_publish_run_id, active_ready_at, ready_deadline, serving_until, created_at, updated_at FROM control.guest_trials
+SELECT id, credential_id, credential_hash, namespace_label, domain_id, ingress_pool_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_service_run_id, active_ready_at, ready_deadline, serving_until, created_at, updated_at FROM control.guest_trials
 WHERE id = $1
 `
 
@@ -300,9 +311,8 @@ func (q *Queries) GetGuestTrialByID(ctx context.Context, id string) (ControlGues
 		&i.CredentialID,
 		&i.CredentialHash,
 		&i.NamespaceLabel,
-		&i.TeamID,
-		&i.MembershipID,
 		&i.DomainID,
+		&i.IngressPoolID,
 		&i.DnsAuthorityReference,
 		&i.SourceIpDigest,
 		&i.SourceIpKeyID,
@@ -314,7 +324,7 @@ func (q *Queries) GetGuestTrialByID(ctx context.Context, id string) (ControlGues
 		&i.EndReason,
 		&i.EndedAt,
 		&i.LastDemoNumber,
-		&i.ActivePublishRunID,
+		&i.ActiveServiceRunID,
 		&i.ActiveReadyAt,
 		&i.ReadyDeadline,
 		&i.ServingUntil,
@@ -324,14 +334,14 @@ func (q *Queries) GetGuestTrialByID(ctx context.Context, id string) (ControlGues
 	return i, err
 }
 
-const guestForPublicURL = `-- name: GuestForPublicURL :one
-SELECT guest_id FROM control.guest_public_urls
-WHERE public_url_id = $1
+const guestForService = `-- name: GuestForService :one
+SELECT guest_id FROM control.services
+WHERE id = $1 AND guest_id IS NOT NULL
 `
 
-func (q *Queries) GuestForPublicURL(ctx context.Context, publicUrlID string) (string, error) {
-	row := q.db.QueryRow(ctx, guestForPublicURL, publicUrlID)
-	var guest_id string
+func (q *Queries) GuestForService(ctx context.Context, serviceID string) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, guestForService, serviceID)
+	var guest_id pgtype.Text
 	err := row.Scan(&guest_id)
 	return guest_id, err
 }
@@ -347,44 +357,23 @@ func (q *Queries) GuestNamespaceReserved(ctx context.Context, label string) (boo
 	return exists, err
 }
 
-const guestOwnsPublicURL = `-- name: GuestOwnsPublicURL :one
+const guestOwnsService = `-- name: GuestOwnsService :one
 SELECT EXISTS(
-    SELECT 1 FROM control.guest_public_urls
-    WHERE public_url_id = $1
-      AND guest_id = $2
+    SELECT 1 FROM control.services
+    WHERE id = $1 AND guest_id = $2
 )
 `
 
-type GuestOwnsPublicURLParams struct {
-	PublicURLID string
-	GuestID     string
+type GuestOwnsServiceParams struct {
+	ServiceID string
+	GuestID   pgtype.Text
 }
 
-func (q *Queries) GuestOwnsPublicURL(ctx context.Context, arg GuestOwnsPublicURLParams) (bool, error) {
-	row := q.db.QueryRow(ctx, guestOwnsPublicURL, arg.PublicURLID, arg.GuestID)
+func (q *Queries) GuestOwnsService(ctx context.Context, arg GuestOwnsServiceParams) (bool, error) {
+	row := q.db.QueryRow(ctx, guestOwnsService, arg.ServiceID, arg.GuestID)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
-}
-
-const guestPublicURLServingDeadline = `-- name: GuestPublicURLServingDeadline :one
-SELECT CASE WHEN guest.active_ready_at IS NULL THEN $1::timestamptz
-    ELSE control.guest_serving_deadline(guest.id, $1::timestamptz) END::timestamptz AS deadline
-FROM control.guest_public_urls AS owned JOIN control.guest_trials AS guest ON guest.id = owned.guest_id
-WHERE owned.public_url_id = $2
-`
-
-type GuestPublicURLServingDeadlineParams struct {
-	Now         pgtype.Timestamptz
-	PublicURLID string
-}
-
-// preparation observations do not grant visitor permission or spend ready time.
-func (q *Queries) GuestPublicURLServingDeadline(ctx context.Context, arg GuestPublicURLServingDeadlineParams) (pgtype.Timestamptz, error) {
-	row := q.db.QueryRow(ctx, guestPublicURLServingDeadline, arg.Now, arg.PublicURLID)
-	var deadline pgtype.Timestamptz
-	err := row.Scan(&deadline)
-	return deadline, err
 }
 
 const guestRunAllowanceSpent = `-- name: GuestRunAllowanceSpent :one
@@ -394,49 +383,54 @@ SELECT CASE
     ELSE ''
 END::text AS reason
 FROM control.guest_trials
-WHERE active_publish_run_id = $2
+WHERE active_service_run_id = $2
 `
 
 type GuestRunAllowanceSpentParams struct {
 	Now          pgtype.Timestamptz
-	PublishRunID pgtype.Text
+	ServiceRunID pgtype.Text
 }
 
 func (q *Queries) GuestRunAllowanceSpent(ctx context.Context, arg GuestRunAllowanceSpentParams) (string, error) {
-	row := q.db.QueryRow(ctx, guestRunAllowanceSpent, arg.Now, arg.PublishRunID)
+	row := q.db.QueryRow(ctx, guestRunAllowanceSpent, arg.Now, arg.ServiceRunID)
 	var reason string
 	err := row.Scan(&reason)
 	return reason, err
 }
 
-const insertGuestPublicURL = `-- name: InsertGuestPublicURL :exec
-INSERT INTO control.guest_public_urls (public_url_id, guest_id, created_at)
-VALUES ($1, $2, $3)
+const guestServiceServingDeadline = `-- name: GuestServiceServingDeadline :one
+SELECT CASE WHEN guest.active_ready_at IS NULL THEN $1::timestamptz
+    ELSE control.guest_serving_deadline(guest.id, $1::timestamptz) END::timestamptz AS deadline
+FROM control.services service JOIN control.guest_trials guest ON guest.id = service.guest_id
+JOIN control.service_runs run ON run.id=guest.active_service_run_id AND run.service_id=service.id AND run.guest_id=guest.id
+WHERE service.id = $2 AND service.enabled AND service.deleted_at IS NULL
 `
 
-type InsertGuestPublicURLParams struct {
-	PublicURLID string
-	GuestID     string
-	CreatedAt   pgtype.Timestamptz
+type GuestServiceServingDeadlineParams struct {
+	Now       pgtype.Timestamptz
+	ServiceID string
 }
 
-func (q *Queries) InsertGuestPublicURL(ctx context.Context, arg InsertGuestPublicURLParams) error {
-	_, err := q.db.Exec(ctx, insertGuestPublicURL, arg.PublicURLID, arg.GuestID, arg.CreatedAt)
-	return err
+// preparation observations do not grant visitor permission or spend ready time.
+func (q *Queries) GuestServiceServingDeadline(ctx context.Context, arg GuestServiceServingDeadlineParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, guestServiceServingDeadline, arg.Now, arg.ServiceID)
+	var deadline pgtype.Timestamptz
+	err := row.Scan(&deadline)
+	return deadline, err
 }
 
 const insertGuestTrial = `-- name: InsertGuestTrial :one
 INSERT INTO control.guest_trials (
-    id, credential_id, credential_hash, namespace_label, team_id,
-    membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id,
+    id, credential_id, credential_hash, namespace_label,
+    domain_id, ingress_pool_id, dns_authority_reference, source_ip_digest, source_ip_key_id,
     issuance_ip_digest, expires_at, created_at, updated_at
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6,
-    $7, $8, $9, $10,
-    $11, $12, $13, $13
+    $7, $8, $9,
+    $10, $11, $12, $12
 )
-RETURNING id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_publish_run_id, active_ready_at, ready_deadline, serving_until, created_at, updated_at
+RETURNING id, credential_id, credential_hash, namespace_label, domain_id, ingress_pool_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_service_run_id, active_ready_at, ready_deadline, serving_until, created_at, updated_at
 `
 
 type InsertGuestTrialParams struct {
@@ -444,9 +438,8 @@ type InsertGuestTrialParams struct {
 	CredentialID          pgtype.Text
 	CredentialHash        []byte
 	NamespaceLabel        string
-	TeamID                string
-	MembershipID          string
 	DomainID              string
+	IngressPoolID         string
 	DnsAuthorityReference string
 	SourceIpDigest        pgtype.Text
 	SourceIpKeyID         pgtype.Text
@@ -461,9 +454,8 @@ func (q *Queries) InsertGuestTrial(ctx context.Context, arg InsertGuestTrialPara
 		arg.CredentialID,
 		arg.CredentialHash,
 		arg.NamespaceLabel,
-		arg.TeamID,
-		arg.MembershipID,
 		arg.DomainID,
+		arg.IngressPoolID,
 		arg.DnsAuthorityReference,
 		arg.SourceIpDigest,
 		arg.SourceIpKeyID,
@@ -477,9 +469,8 @@ func (q *Queries) InsertGuestTrial(ctx context.Context, arg InsertGuestTrialPara
 		&i.CredentialID,
 		&i.CredentialHash,
 		&i.NamespaceLabel,
-		&i.TeamID,
-		&i.MembershipID,
 		&i.DomainID,
+		&i.IngressPoolID,
 		&i.DnsAuthorityReference,
 		&i.SourceIpDigest,
 		&i.SourceIpKeyID,
@@ -491,7 +482,7 @@ func (q *Queries) InsertGuestTrial(ctx context.Context, arg InsertGuestTrialPara
 		&i.EndReason,
 		&i.EndedAt,
 		&i.LastDemoNumber,
-		&i.ActivePublishRunID,
+		&i.ActiveServiceRunID,
 		&i.ActiveReadyAt,
 		&i.ReadyDeadline,
 		&i.ServingUntil,
@@ -501,59 +492,63 @@ func (q *Queries) InsertGuestTrial(ctx context.Context, arg InsertGuestTrialPara
 	return i, err
 }
 
-const limitGuestPublishRunExpiry = `-- name: LimitGuestPublishRunExpiry :one
-UPDATE control.publish_runs
+const limitGuestServiceRunExpiry = `-- name: LimitGuestServiceRunExpiry :one
+UPDATE control.service_runs
 SET publisher_expires_at = LEAST(publisher_expires_at, $1::timestamptz)
 WHERE id = $2
-RETURNING preferred_regions, id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+RETURNING preferred_regions, traffic_limits, id, service_id, team_id, guest_id, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, require_post_quantum, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, ready_at, closed_at, assignments_open
 `
 
-type LimitGuestPublishRunExpiryParams struct {
+type LimitGuestServiceRunExpiryParams struct {
 	Deadline     pgtype.Timestamptz
-	PublishRunID string
+	ServiceRunID string
 }
 
-func (q *Queries) LimitGuestPublishRunExpiry(ctx context.Context, arg LimitGuestPublishRunExpiryParams) (ControlPublishRun, error) {
-	row := q.db.QueryRow(ctx, limitGuestPublishRunExpiry, arg.Deadline, arg.PublishRunID)
-	var i ControlPublishRun
+func (q *Queries) LimitGuestServiceRunExpiry(ctx context.Context, arg LimitGuestServiceRunExpiryParams) (ControlServiceRun, error) {
+	row := q.db.QueryRow(ctx, limitGuestServiceRunExpiry, arg.Deadline, arg.ServiceRunID)
+	var i ControlServiceRun
 	err := row.Scan(
 		&i.PreferredRegions,
+		&i.TrafficLimits,
 		&i.ID,
-		&i.PublicURLID,
+		&i.ServiceID,
 		&i.TeamID,
-		&i.MembershipID,
-		&i.ActingIdentityID,
+		&i.GuestID,
+		&i.RunNumber,
 		&i.PublisherIdentityID,
 		&i.PublisherGrantID,
-		&i.PublishRunNumber,
+		&i.PublisherKeyID,
 		&i.IdempotencyKey,
-		&i.RequestDigestCiphertext,
-		&i.RequestDigestStorageKeyID,
-		&i.PublishRunTokenID,
-		&i.PublishRunTokenDigest,
-		&i.PolicyRevision,
+		&i.RequestDigest,
+		&i.PreparationExpiresAt,
+		&i.AssignmentSeedCiphertext,
+		&i.AssignmentSeedStorageKeyID,
+		&i.RunTokenDigest,
+		&i.StartedAt,
+		&i.State,
+		&i.Healthy,
+		&i.StreamCapacity,
+		&i.ReportedStreams,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
-		&i.CertificateChallengeMethod,
-		&i.TrafficLimits,
-		&i.State,
-		&i.CreatedAt,
-		&i.LastHeartbeatAt,
-		&i.PublisherExpiresAt,
-		&i.CertificateInstalledAt,
+		&i.CertificateDomainID,
+		&i.CertificateHostname,
+		&i.CertificateNamespace,
+		&i.RequirePostQuantum,
 		&i.CertificateIssuanceID,
-		&i.CertificateNotAfter,
+		&i.CertificateExpiresAt,
+		&i.CreatedAt,
+		&i.PublisherExpiresAt,
 		&i.ReadyAt,
 		&i.ClosedAt,
-		&i.CloseReason,
 		&i.AssignmentsOpen,
 	)
 	return i, err
 }
 
 const lockGuestTrialByID = `-- name: LockGuestTrialByID :one
-SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_publish_run_id, active_ready_at, ready_deadline, serving_until, created_at, updated_at FROM control.guest_trials WHERE id = $1 FOR UPDATE
+SELECT id, credential_id, credential_hash, namespace_label, domain_id, ingress_pool_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_service_run_id, active_ready_at, ready_deadline, serving_until, created_at, updated_at FROM control.guest_trials WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockGuestTrialByID(ctx context.Context, id string) (ControlGuestTrial, error) {
@@ -564,9 +559,8 @@ func (q *Queries) LockGuestTrialByID(ctx context.Context, id string) (ControlGue
 		&i.CredentialID,
 		&i.CredentialHash,
 		&i.NamespaceLabel,
-		&i.TeamID,
-		&i.MembershipID,
 		&i.DomainID,
+		&i.IngressPoolID,
 		&i.DnsAuthorityReference,
 		&i.SourceIpDigest,
 		&i.SourceIpKeyID,
@@ -578,7 +572,7 @@ func (q *Queries) LockGuestTrialByID(ctx context.Context, id string) (ControlGue
 		&i.EndReason,
 		&i.EndedAt,
 		&i.LastDemoNumber,
-		&i.ActivePublishRunID,
+		&i.ActiveServiceRunID,
 		&i.ActiveReadyAt,
 		&i.ReadyDeadline,
 		&i.ServingUntil,
@@ -594,7 +588,7 @@ SET active_ready_at = $1, updated_at = $1,
     ready_deadline = LEAST(expires_at, $1::timestamptz +
         ((1200000000000 - used_ready_ns)::double precision / 1000000000) * interval '1 second'),
     first_ready_at = COALESCE(first_ready_at, $1)
-WHERE active_publish_run_id = $2
+WHERE active_service_run_id = $2
   AND active_ready_at IS NULL
   AND expires_at > $1
   AND ended_at IS NULL
@@ -603,11 +597,11 @@ WHERE active_publish_run_id = $2
 
 type MarkGuestRunReadyParams struct {
 	ReadyAt      pgtype.Timestamptz
-	PublishRunID pgtype.Text
+	ServiceRunID pgtype.Text
 }
 
 func (q *Queries) MarkGuestRunReady(ctx context.Context, arg MarkGuestRunReadyParams) (int64, error) {
-	result, err := q.db.Exec(ctx, markGuestRunReady, arg.ReadyAt, arg.PublishRunID)
+	result, err := q.db.Exec(ctx, markGuestRunReady, arg.ReadyAt, arg.ServiceRunID)
 	if err != nil {
 		return 0, err
 	}
@@ -649,20 +643,20 @@ const updateGuestServingAuthority = `-- name: UpdateGuestServingAuthority :one
 UPDATE control.guest_trials AS guest
 SET serving_until = CASE WHEN guest.active_ready_at IS NULL THEN guest.serving_until
         ELSE GREATEST(guest.serving_until, LEAST(guest.expires_at, guest.ready_deadline, run.publisher_expires_at)) END
-FROM control.publish_runs AS run
-WHERE run.id = $1 AND guest.active_publish_run_id = run.id
+FROM control.service_runs AS run
+WHERE run.id = $1 AND guest.active_service_run_id = run.id AND run.guest_id=guest.id
 RETURNING control.guest_serving_deadline(guest.id, $2::timestamptz)::timestamptz AS deadline
 `
 
 type UpdateGuestServingAuthorityParams struct {
-	PublishRunID string
+	ServiceRunID string
 	Now          pgtype.Timestamptz
 }
 
 // retain issued ready authority after closure so an offline owner cannot overlap
 // its replacement. the run lock serializes readiness, heartbeat and settlement.
 func (q *Queries) UpdateGuestServingAuthority(ctx context.Context, arg UpdateGuestServingAuthorityParams) (pgtype.Timestamptz, error) {
-	row := q.db.QueryRow(ctx, updateGuestServingAuthority, arg.PublishRunID, arg.Now)
+	row := q.db.QueryRow(ctx, updateGuestServingAuthority, arg.ServiceRunID, arg.Now)
 	var deadline pgtype.Timestamptz
 	err := row.Scan(&deadline)
 	return deadline, err

@@ -11,20 +11,13 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-type ReturnEvents struct {
-	Promoted func(tunnelv1.AdmissionHeader) error
-	Rejected func(tunnelv1.ErrorCode) error
-}
-
 // returnStream strips outer framing before visitor TLS sees any response byte.
 type returnStream struct {
 	muxsession.Stream
 	readMu    sync.Mutex
 	accepted  bool
-	promoted  bool
 	remaining []byte
 	terminal  error
-	events    ReturnEvents
 }
 
 func (s *returnStream) accept() error {
@@ -70,21 +63,6 @@ func (s *returnStream) Read(p []byte) (int, error) {
 			}
 		case tunnelv1.ReturnRejected:
 			s.terminal = &ProtocolError{Code: frame.Code}
-			if s.events.Rejected != nil {
-				s.terminal = errors.Join(s.terminal, s.events.Rejected(frame.Code))
-			}
-		case tunnelv1.ReturnPromoted:
-			if !s.accepted || s.promoted || s.events.Promoted == nil {
-				s.terminal = tunnelv1.ErrReturnFrame
-			} else if err := s.events.Promoted(frame.Promotion); err != nil {
-				s.terminal = err
-				var rejected *ProtocolError
-				if s.events.Rejected != nil && errors.As(err, &rejected) {
-					s.terminal = errors.Join(err, s.events.Rejected(rejected.Code))
-				}
-			} else {
-				s.promoted = true
-			}
 		case tunnelv1.ReturnData:
 			if !s.accepted {
 				s.terminal = tunnelv1.ErrReturnFrame
@@ -114,48 +92,18 @@ func (s *returnStream) Read(p []byte) (int, error) {
 // half-closes remain independent. each responder is owned by one visitor stream.
 type replyStream struct {
 	muxsession.Stream
-	readMu     sync.Mutex
-	initial    []byte
 	writeInit  sync.Once
 	writeGate  chan struct{}
 	responded  bool
 	respondErr error
 	accepted   bool
-	confirmed  bool
 	sent       bool
-	promoted   bool
 	ended      bool
 	writeErr   error
-	promotion  tunnelv1.AdmissionHeader
 }
 
-func newReplyStream(stream muxsession.Stream, initial []byte, confirmed bool) *replyStream {
-	return &replyStream{Stream: stream, initial: initial, confirmed: confirmed}
-}
-
-func (s *replyStream) takeInitial() []byte {
-	s.readMu.Lock()
-	defer s.readMu.Unlock()
-	initial := s.initial
-	s.initial = nil
-	return initial
-}
-
-func (s *replyStream) Read(p []byte) (int, error) {
-	if len(p) == 0 {
-		return 0, nil
-	}
-	s.readMu.Lock()
-	defer s.readMu.Unlock()
-	if len(s.initial) != 0 {
-		n := copy(p, s.initial)
-		s.initial = s.initial[n:]
-		if len(s.initial) == 0 {
-			s.initial = nil
-		}
-		return n, nil
-	}
-	return s.Stream.Read(p)
+func newReplyStream(stream muxsession.Stream) *replyStream {
+	return &replyStream{Stream: stream}
 }
 
 // writers serializes return frames, including the one accept/reject decision.
@@ -223,9 +171,7 @@ func (s *replyStream) respondLocked(response tunnelv1.StreamResponse) error {
 		return errors.Join(tunnelv1.WriteReturnFrame(s.Stream, tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnRejected, Code: response.Code}), s.Stream.Close())
 	}
 	s.accepted = true
-	if s.confirmed {
-		s.writeErr = s.writable()
-	}
+	s.writeErr = s.writable()
 	if s.writeErr == nil {
 		s.writeErr = s.Stream.SetDeadline(time.Time{})
 	}
@@ -276,23 +222,6 @@ func (s *replyStream) Write(p []byte) (int, error) {
 		p = p[length:]
 	}
 	return written, nil
-}
-
-func (s *replyStream) promote(ctx context.Context, h tunnelv1.AdmissionHeader) error {
-	if err := h.Validate(); err != nil {
-		return err
-	}
-	return s.decide(ctx, func() error {
-		if s.promoted {
-			return tunnelv1.ErrReturnFrame
-		}
-		if err := s.writable(); err != nil {
-			return err
-		}
-		s.writeErr = tunnelv1.WriteReturnFrame(s.Stream, tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnPromoted, Promotion: h})
-		s.promoted = s.writeErr == nil
-		return s.writeErr
-	})
 }
 
 func (s *replyStream) CloseWrite() error {

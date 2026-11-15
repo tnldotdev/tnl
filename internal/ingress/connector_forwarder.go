@@ -12,8 +12,8 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-// OpenPrivate uses the same exact-process relay pool as HTTP, with a separate
-// ID-keyed private stream header. it sends no PROXY or visitor bytes itself.
+// OpenPrivate uses the exact-process relay pool for public service streams.
+// it sends no PROXY or visitor bytes itself.
 func (f *Forwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (result net.Conn, retErr error) {
 	ctx, finish := observability.Start(ctx, "ingress.private_relay_attempt")
 	defer func() { finish(retErr) }()

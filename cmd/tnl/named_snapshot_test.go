@@ -12,7 +12,7 @@ import (
 func TestNamedAndAppSelectionShareTheSameSnapshot(t *testing.T) {
 	root := t.TempDir()
 	configuration := filepath.Join(root, "tnl.json")
-	if err := os.WriteFile(configuration, []byte(`{"version":1,"tnl":{"server":"https://unselected.example.test","team":"unselected","services":{"api":{},"web":{},"sdk":{}},"deployments":{"local":{"targets":{"api":{"address":"http://127.0.0.1:3000","access":{"team":true}},"web":{"address":"http://127.0.0.1:3000","public_url":{},"access":{"team":true}},"sdk":{"access":{"team":true}}}}}}}`), 0600); err != nil {
+	if err := os.WriteFile(configuration, []byte(`{"version":1,"tnl":{"server":"https://unselected.example.test","team":"unselected","services":{"api":{},"web":{},"sdk":{}},"deployments":{"local":{"targets":{"api":{"address":"http://127.0.0.1:3000","access":{"team":true}},"web":{"address":"http://127.0.0.1:3000","public":true,"access":{"team":true}},"sdk":{"access":{"team":true}}}}}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	load := func(deployment string) projectConfiguration {

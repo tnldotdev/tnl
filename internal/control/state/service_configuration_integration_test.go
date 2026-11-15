@@ -301,6 +301,10 @@ func TestIntegrationServiceConfigurationWithoutProject(t *testing.T) {
 	if err != nil || declaration != nil {
 		t.Fatal("plain saved service required a project declaration", declaration, err)
 	}
+	empty, emptyDigest, err := d.GetServiceConfiguration(ctx, service.ID, r.ActingIdentityID)
+	if err != nil || empty != nil || !ValidServiceConfigurationDigest(emptyDigest) {
+		t.Fatal("declaration-free management read lost its deterministic digest", err)
+	}
 	mode, err := d.serviceHTTPSourcePolicy(ctx, q, service.ID, netip.MustParseAddr("192.0.2.10"))
 	if err != nil || mode != VisitorAccessRestricted {
 		t.Fatal("plain saved service lost restricted defaults", mode, err)
@@ -314,14 +318,21 @@ func TestIntegrationServiceConfigurationWithoutProject(t *testing.T) {
 			Limits: &config.WorkLimits{Total: new(100)}, Readiness: &config.Readiness{Path: "/health"},
 		},
 	}
-	if err := saveServiceConfigurationForTest(t, d, service.ID, configuration); err != nil {
+	trust, err := appliedServiceTargetTrust(configuration.TargetTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := service.ServiceMetadata
+	metadata.TLS = trust
+	service, err = d.ConfigureService(ctx, service.ID, r.ActingIdentityID, metadata, &configuration, ServiceUpdateConditions{ConfigurationDigest: emptyDigest}, now)
+	if err != nil || !service.Ephemeral || !service.RequirePostQuantum || !service.Endpoint.Public {
 		t.Fatal(err)
 	}
 	if err := normalizeAppliedProjectService(service.Name, &configuration, true); err != nil {
 		t.Fatal(err)
 	}
-	declaration, err = d.serviceConfiguration(ctx, q, service.ID)
-	if err != nil || !reflect.DeepEqual(declaration, &configuration) {
+	declaration, digest, err := d.GetServiceConfiguration(ctx, service.ID, r.ActingIdentityID)
+	if err != nil || !reflect.DeepEqual(declaration, &configuration) || !ValidServiceConfigurationDigest(digest) || digest == emptyDigest {
 		t.Fatal("service-owned storage lost the full normalized declaration", declaration, err)
 	}
 	before, err := q.GetServiceConfiguration(ctx, service.ID)
@@ -344,12 +355,16 @@ func TestIntegrationServiceConfigurationWithoutProject(t *testing.T) {
 	}
 	equivalent := configuration
 	equivalent.Traffic = &trafficlimits.Selection{Connections: new(7), Rate: new(2), RatePer: new("2s")}
-	if err := saveServiceConfigurationForTest(t, d, service.ID, equivalent); err != nil {
+	if retry, err := d.ConfigureService(ctx, service.ID, r.ActingIdentityID, service.ServiceMetadata, &equivalent, ServiceUpdateConditions{ConfigurationDigest: digest}, now); err != nil ||
+		retry.ID != service.ID || retry.TrustRevision != service.TrustRevision || retry.EndpointRevision != service.EndpointRevision {
 		t.Fatal(err)
 	}
 	after, err := q.GetServiceConfiguration(ctx, service.ID)
 	if err != nil || !reflect.DeepEqual(before, after) {
 		t.Fatal("equivalent declaration rewrote service-owned ciphertext", err)
+	}
+	if _, repeatedDigest, err := d.GetServiceConfiguration(ctx, service.ID, r.ActingIdentityID); err != nil || repeatedDigest != digest {
+		t.Fatal("normalized-equivalent declaration changed its digest", err)
 	}
 	currentRevision, err := q.ReadVisitorPolicyRevision(ctx, policyKey)
 	if err != nil || currentRevision != revision {
@@ -369,6 +384,125 @@ func TestIntegrationServiceConfigurationWithoutProject(t *testing.T) {
 	if declaration, err := d.serviceConfiguration(ctx, q, service.ID); !errors.Is(err, ErrServiceAccess) || declaration != nil {
 		t.Fatal("corrupt standalone declaration fell back to restricted defaults", declaration, err)
 	}
+	if declaration, digest, err := d.GetServiceConfiguration(ctx, service.ID, r.ActingIdentityID); !errors.Is(err, ErrServiceAccess) || declaration != nil || digest != "" {
+		t.Fatal("protected read returned corrupt declaration data or a usable digest", err)
+	}
+	if _, err := d.ConfigureService(ctx, service.ID, r.ActingIdentityID, service.ServiceMetadata, &equivalent, ServiceUpdateConditions{}, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("configure silently replaced corrupt declaration storage", err)
+	}
+}
+
+func TestIntegrationConfigureServiceDeclarationIsAtomic(t *testing.T) {
+	f := newServiceHTTPFixture(t)
+	d, now, ctx := f.database, f.now, t.Context()
+	configuration := ProjectServiceConfiguration{Target: "localhost:3000", HTTP: &config.HTTPService{
+		Access: &config.Access{Mode: "anonymous", IP: []string{"192.0.2.10"}},
+		Limits: &config.WorkLimits{Total: new(100)},
+	}}
+	var err error
+	f.service, err = d.CreateServiceAt(ctx, f.project.TeamID, f.project.ActorID, "standalone", "standalone",
+		ServicePlacement{}, now, ServiceMetadata{}, &configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.run = f.publish(t, f.service)
+	auth := f.auth()
+	q := controlstatedb.New(d.pool)
+	policyKey := controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: "service", ResourceID: f.service.ID}
+	revision, err := q.ReadVisitorPolicyRevision(ctx, policyKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := func() string {
+		t.Helper()
+		var value string
+		if err := d.pool.QueryRow(ctx, `SELECT jsonb_build_object(
+		    'service',(SELECT to_jsonb(s) FROM control.services s WHERE id=$1),
+		    'run',(SELECT to_jsonb(r) FROM control.service_runs r WHERE id=$2),
+		    'policy',(SELECT revision FROM control.visitor_policies WHERE resource_kind='service' AND resource_id=$1),
+		    'endpoints',(SELECT jsonb_agg(to_jsonb(e) ORDER BY hostname) FROM control.service_endpoints e WHERE service_id=$1),
+		    'audit',(SELECT jsonb_agg(to_jsonb(a) ORDER BY cursor) FROM control.service_audit_events a WHERE service_id=$1))::text`,
+			f.service.ID, f.run.RunID).Scan(&value); err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	changed := ProjectServiceConfiguration{Target: "localhost:4000", HTTP: &config.HTTPService{
+		Access: &config.Access{Mode: "restricted", IP: []string{"203.0.113.10"}},
+		Limits: &config.WorkLimits{Total: new(101)},
+	}}
+	before := snapshot()
+	denied := changed
+	denied.Hostname = "outside.invalid"
+	if _, err := d.ConfigureService(ctx, f.service.ID, f.project.ActorID, f.service.ServiceMetadata, &denied, ServiceUpdateConditions{}, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("configure accepted a hostname outside domain authority", err)
+	}
+	if snapshot() != before {
+		t.Fatal("failed endpoint authorization committed declaration, policy, metadata, or audit changes")
+	}
+	input, _ := json.Marshal(changed)
+	updated, err := d.ConfigureService(ctx, f.service.ID, f.project.ActorID, f.service.ServiceMetadata, &changed, ServiceUpdateConditions{}, now)
+	afterInput, _ := json.Marshal(changed)
+	if err != nil || updated.ID != f.service.ID || updated.TrustRevision != f.service.TrustRevision ||
+		updated.EndpointRevision != f.service.EndpointRevision || !bytes.Equal(input, afterInput) {
+		t.Fatal("declaration edit replaced identity, changed trust/placement, or mutated caller input", err)
+	}
+	nextRevision, err := q.ReadVisitorPolicyRevision(ctx, policyKey)
+	if err != nil || nextRevision <= revision {
+		t.Fatal("HTTP policy and limits did not invalidate current visitor permissions", err)
+	}
+	if _, err := d.serviceHTTPSourcePolicy(ctx, q, updated.ID, netip.MustParseAddr("192.0.2.10")); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("old visitor source policy remained authorized", err)
+	}
+	if mode, err := d.serviceHTTPSourcePolicy(ctx, q, updated.ID, netip.MustParseAddr("203.0.113.10")); err != nil || mode != VisitorAccessRestricted {
+		t.Fatal("new visitor policy did not take effect", err)
+	}
+	if _, err := d.ReadPublisherVisitorPolicy(ctx, auth.Subject, auth.RunID, auth.Number, auth.Token.String(), revision, now); err != nil {
+		t.Fatal("policy edit ended the existing run instead of refreshing its permission snapshot", err)
+	}
+	settings, err := d.serviceHTTPSettings(ctx, q, updated.ID)
+	if err != nil || settings == nil || settings.Limits == nil || *settings.Limits.Total != 101 {
+		t.Fatal("updated per-run request limits were not projected", err)
+	}
+	var active bool
+	if err := d.pool.QueryRow(ctx, `SELECT closed_at IS NULL AND id=$2 AND run_number=$3 FROM control.service_runs WHERE service_id=$1`,
+		updated.ID, f.run.RunID, f.run.RunNumber).Scan(&active); err != nil || !active {
+		t.Fatal("request-limit edit replaced the run and reset its budget lifetime", err)
+	}
+	stored, err := q.GetServiceConfiguration(ctx, updated.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.ConfigureService(ctx, updated.ID, f.project.ActorID, updated.ServiceMetadata, &changed, ServiceUpdateConditions{}, now); err != nil {
+		t.Fatal("lost-response retry failed", err)
+	}
+	retried, err := q.GetServiceConfiguration(ctx, updated.ID)
+	if err != nil || !reflect.DeepEqual(stored, retried) {
+		t.Fatal("exact retry rewrote encrypted declaration", err)
+	}
+	if current, err := q.ReadVisitorPolicyRevision(ctx, policyKey); err != nil || current != nextRevision {
+		t.Fatal("exact retry invalidated permissions again", err)
+	}
+	changed.TargetTLS = appliedTargetTrust(t, "replacement.internal")
+	trust, err := appliedServiceTargetTrust(changed.TargetTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.ConfigureService(ctx, updated.ID, f.project.ActorID, updated.ServiceMetadata, &changed, ServiceUpdateConditions{}, now); !errors.Is(err, ErrServiceConflict) {
+		t.Fatal("explicit declaration silently replaced contradictory target trust", err)
+	}
+	metadata := updated.ServiceMetadata
+	metadata.TLS = trust
+	trusted, err := d.ConfigureService(ctx, updated.ID, f.project.ActorID, metadata, &changed, ServiceUpdateConditions{}, now)
+	if err != nil || trusted.TrustRevision != updated.TrustRevision+1 || trusted.EndpointRevision != updated.EndpointRevision {
+		t.Fatal("target trust did not advance independently of endpoint placement", err)
+	}
+	if _, err := d.ReadPublisherVisitorPolicy(ctx, auth.Subject, auth.RunID, auth.Number, auth.Token.String(), 0, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("old run retained visitor permission after target-trust replacement", err)
+	}
+	if _, err := d.ConfigureService(ctx, updated.ID, f.project.ActorID, metadata, &changed, ServiceUpdateConditions{}, now); !errors.Is(err, ErrServiceConflict) {
+		t.Fatal("stale expected trust revision was accepted", err)
+	}
 }
 
 func TestIntegrationServiceConfigurationRejectsConflictingSources(t *testing.T) {
@@ -382,6 +516,9 @@ func TestIntegrationServiceConfigurationRejectsConflictingSources(t *testing.T) 
 	stored, err := q.GetServiceConfiguration(ctx, service.ID)
 	if err != nil || stored.LocalOwned || !stored.DeploymentOwned || stored.ConfigurationCiphertext != nil || stored.StorageKeyID.Valid {
 		t.Fatal("remote deployment declaration was copied onto the service", stored, err)
+	}
+	if _, err := d.ConfigureService(ctx, service.ID, project.ActorID, service.ServiceMetadata, configuration, ServiceUpdateConditions{}, now); !errors.Is(err, ErrProjectManaged) {
+		t.Fatal("explicit configuration replaced the remote deployment's declaration source", err)
 	}
 	remote, err := q.GetDeploymentServiceConfiguration(ctx, text(service.ID))
 	if err != nil {
@@ -650,7 +787,10 @@ func saveServiceConfigurationForTest(t *testing.T, d *Database, service string, 
 	if err != nil {
 		return err
 	}
-	if _, err := q.LockLocalTeamForMutation(ctx, saved.TeamID); err != nil {
+	if !saved.TeamID.Valid || saved.GuestID.Valid {
+		return ErrServiceAccess
+	}
+	if _, err := q.LockLocalTeamForMutation(ctx, saved.TeamID.String); err != nil {
 		return err
 	}
 	if _, err := q.LockService(ctx, service); err != nil {

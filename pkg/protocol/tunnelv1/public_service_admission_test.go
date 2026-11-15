@@ -85,8 +85,8 @@ func TestRetiredConnectorSessionNeverBecomesApplicationAdmission(t *testing.T) {
 	if err := message.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	message.PublisherConnection = &PublisherConnectionRef{PublicURLID: "url", PublishRunID: "run", PublishRunNumber: 1, PublisherConnectionID: "connection", ConnectionAssignmentRevision: 1, RelayServiceID: "relay"}
-	if message.Validate() == nil {
-		t.Fatal("mixed public/private selectors accepted")
+	if _, err := ReadControl(frame(`{"type":"hello","protocol_version":1,"role":"publisher","credential":"credential","service_connection":` +
+		string(wireJSON(t, ref)) + `,"publisher_connection":null}`)); err == nil {
+		t.Fatal("legacy publisher selector accepted alongside service identity")
 	}
 }

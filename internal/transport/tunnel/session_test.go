@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"reflect"
 	"testing"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func TestSessionHandshakeAndVisitorStream(t *testing.T) {
+func TestSessionHandshakeAndServiceStream(t *testing.T) {
 	clientTransport, serverTransport := newMemoryPair(t)
 	ctx := tunnelContext(t)
 	type accepted struct {
@@ -38,29 +39,29 @@ func TestSessionHandshakeAndVisitorStream(t *testing.T) {
 		t.Fatal(server.err)
 	}
 	t.Cleanup(func() { _ = server.session.Close() })
-	if server.hello.Credential != "credential" || server.hello.PublisherConnection == nil || *server.hello.PublisherConnection != *publisherHello().PublisherConnection {
+	if server.hello.Credential != "credential" || server.hello.ServiceConnection == nil || *server.hello.ServiceConnection != *publisherHello().ServiceConnection {
 		t.Fatalf("hello=%+v", server.hello)
 	}
-	header := visitorStreamHeader()
+	header := serviceStreamHeader()
 	route := tunnelWorker(t, func() { _ = server.session.Close() }, func() error {
-		incoming, err := server.session.AcceptVisitorStream(ctx)
+		incoming, err := server.session.AcceptServiceForwardingStream(ctx)
 		if err != nil {
 			return err
 		}
-		defer incoming.Stream.Close()
-		if incoming.Header != header {
+		defer incoming.Stream().Close()
+		if !reflect.DeepEqual(incoming.Header, header) {
 			return errors.New("unexpected publisher header")
 		}
 		if err := incoming.Accept(); err != nil {
 			return err
 		}
-		payload, err := io.ReadAll(io.LimitReader(incoming.Stream, 7))
+		payload, err := io.ReadAll(io.LimitReader(incoming.Stream(), 7))
 		if err == nil && string(payload) != "payload" {
 			err = errors.New("unexpected payload")
 		}
 		return err
 	})
-	stream, err := client.OpenVisitorStream(ctx, header, nil, ReturnEvents{})
+	stream, err := client.OpenServiceForwardingStream(ctx, header)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +146,7 @@ func TestConnectorHelloReceiptRequiredAndBoundToPreparedDelivery(t *testing.T) {
 				})
 				close(handshakeDone)
 				if s != nil {
-					if incoming, streamErr := s.AcceptVisitorStream(ctx); streamErr == nil || incoming != nil {
+					if incoming, streamErr := s.AcceptServiceForwardingStream(ctx); streamErr == nil || incoming != nil {
 						return errors.New("connector receipt admitted a visitor stream without a peer owner")
 					}
 					<-s.Done()
@@ -198,18 +199,18 @@ func TestPublisherAndIngressRejectConnectorHelloReceipt(t *testing.T) {
 	}
 }
 
-func TestVisitorStreamRejection(t *testing.T) {
+func TestServiceStreamRejection(t *testing.T) {
 	client, server := newAuthenticatedPair(t)
 	ctx := tunnelContext(t)
 	done := tunnelWorker(t, func() { _ = server.Close() }, func() error {
-		incoming, err := server.AcceptVisitorStream(ctx)
+		incoming, err := server.AcceptServiceForwardingStream(ctx)
 		if err != nil {
 			return err
 		}
-		defer incoming.Stream.Close()
+		defer incoming.Stream().Close()
 		return incoming.Reject(tunnelv1.StalePublishRunNumber)
 	})
-	_, err := client.OpenVisitorStream(ctx, visitorStreamHeader(), nil, ReturnEvents{})
+	_, err := client.OpenServiceForwardingStream(ctx, serviceStreamHeader())
 	var p *ProtocolError
 	if !errors.As(err, &p) || p.Code != tunnelv1.StalePublishRunNumber {
 		t.Fatalf("open=%v", err)
@@ -219,18 +220,17 @@ func TestVisitorStreamRejection(t *testing.T) {
 	}
 }
 
-func TestInternalForwardingStream(t *testing.T) {
+func TestServiceForwardingStream(t *testing.T) {
 	client, server := newAuthenticatedPair(t)
 	ctx := tunnelContext(t)
-	header := internalForwardingHeader()
+	header := serviceStreamHeader()
 	done := tunnelWorker(t, func() { _ = server.Close() }, func() error {
-		incoming, err := server.AcceptInternalForwardingStream(ctx)
+		incoming, err := server.AcceptServiceForwardingStream(ctx)
 		if err != nil {
 			return err
 		}
 		defer incoming.Stream().Close()
-		request, ok := incoming.(*IncomingPublicForwardingStream)
-		if !ok || request.Header != header {
+		if !reflect.DeepEqual(incoming.Header, header) {
 			return errors.New("unexpected internal forwarding header")
 		}
 		if err := incoming.Accept(); err != nil {
@@ -242,7 +242,7 @@ func TestInternalForwardingStream(t *testing.T) {
 		}
 		return err
 	})
-	stream, err := client.OpenInternalForwardingStream(ctx, header, nil, nil, ReturnEvents{})
+	stream, err := client.OpenServiceForwardingStream(ctx, header)
 	if err != nil {
 		t.Fatal(err)
 	}

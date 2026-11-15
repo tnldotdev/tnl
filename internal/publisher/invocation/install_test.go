@@ -26,7 +26,7 @@ func TestInstalledHTTPDeclarationKeepsRequestLimitsCapacityAndTrafficSeparate(t 
 	flags := InstallationOptions{PublicOptions: PublicOptions{
 		Limits:             applicationlimits.Limits{Requests: 20, Concurrency: 3, RateRequests: 7, RatePer: time.Second, RateBurst: 9},
 		RequirePostQuantum: new(true)},
-		StreamCapacity: 64, Traffic: &trafficlimits.Selection{Connections: new(11), UploadBytes: new(int64(1024))}, ReadinessPath: "/health"}
+		StreamCapacity: 64, Traffic: &trafficlimits.Selection{Connections: new(11), UploadBytes: new(int64(64 << 10))}, ReadinessPath: "/health"}
 	prefixes := []string{"192.0.2.0/24", "10.0.0.0/8"}
 	policy := resolvedVisitorAccess{explicit: true, access: controlv1.Anonymous, prefixes: prefixes}
 	plan := target.TargetPlan{Protocol: config.ProtocolHTTP, Target: "https://127.0.0.1:3000", Trust: trust}
@@ -45,7 +45,7 @@ func TestInstalledHTTPDeclarationKeepsRequestLimitsCapacityAndTrafficSeparate(t 
 		t.Fatal("retained HTTP request policy was dropped", http)
 	}
 	if flags.StreamCapacity != 64 || declaration.Traffic == nil || declaration.Traffic.Connections == nil || *declaration.Traffic.Connections != 11 ||
-		declaration.Traffic.UploadBytes == nil || *declaration.Traffic.UploadBytes != 1024 {
+		declaration.Traffic.UploadBytes == nil || *declaration.Traffic.UploadBytes != 64<<10 {
 		t.Fatal("physical streams and ingress traffic were mixed with HTTP request limits")
 	}
 	if declaration.TargetTls == nil || declaration.TargetTls.Digest != captured.Digest || declaration.TargetTls.Digest == trust.Digest {

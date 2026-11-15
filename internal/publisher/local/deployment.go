@@ -4,15 +4,13 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
-	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -21,8 +19,8 @@ import (
 type deploymentInvocation struct {
 	native                *publisheridentity.Native
 	profile               *clientstate.Store
-	publicURL             controlv1.PublicURL
-	limits                applicationlimits.Limits
+	service               controlv1.Service
+	cleanup               func() error
 	expiresAt             time.Time
 	browserLoginAvailable bool
 }
@@ -63,39 +61,43 @@ func (a *appRuntime) prepareDeploymentInvocation(ctx context.Context, r publishe
 	if err != nil {
 		return result, auth.ErrDeploymentCredential
 	}
-	var allocation *controlv1.AllocateEphemeralPublicURLRequest
-	if selection.Service == "" {
-		allocation = &controlv1.AllocateEphemeralPublicURLRequest{InvocationId: r.InvocationId, Target: r.Target, RequirePostQuantum: r.RequirePostQuantum, Ip: r.Ip, Limits: r.Limits}
-		if r.AccessMode != nil {
-			allocation.AccessMode = new(controlv1.VisitorAccessMode(*r.AccessMode))
+	key := ed25519.PrivateKey(private)
+	if selection.Service != "" {
+		native, service, err := publisheridentity.PrepareDeployment(ctx, control, authority, credential.Approval, key, selection.Name, selection.Service)
+		if err != nil {
+			return result, err
 		}
+		result.native, result.service = native, *service
+		// named publication borrows a retained service; it never owns deletion.
+		result.cleanup = invocationCleanup(nil, result.expiresAt)
+		return result, nil
 	}
-	native, publication, err := publisheridentity.PrepareDeployment(ctx, control, authority, credential.Approval, ed25519.PrivateKey(private), selection.Name, selection.Service, allocation)
+	allocation, err := invocationAllocation(r)
 	if err != nil {
 		return result, err
 	}
-	result.native, result.publicURL = native, publication.PublicUrl
-	if allocation != nil {
-		result.limits, err = invocationLimits(r.Limits)
-	} else {
-		var settings *config.Limits
-		if publication.Limits != nil {
-			data, marshalErr := json.Marshal(publication.Limits)
-			if marshalErr != nil {
-				return result, marshalErr
-			}
-			if err = json.Unmarshal(data, &settings); err != nil {
-				return result, err
-			}
+	// every recovery uses the captured approval and fixed original deadline.
+	// no fresh identity, grant, invocation, or extended expiration is invented.
+	allocation.ExpiresAt = new(result.expiresAt)
+	native, service, err := publisheridentity.PrepareDeploymentAllocation(ctx, control, authority, credential.Approval, key, selection.Name, allocation)
+	if native == nil {
+		// only the native owner can distinguish an attempted uncertain reply
+		// from pre-attempt failure or already confirmed allocation cleanup.
+		return result, err
+	}
+	result.cleanup = invocationCleanup(func(ctx context.Context) error {
+		if service != nil {
+			return native.DeleteAllocatedService(ctx, service.Id)
 		}
-		result.limits, err = config.ResolveWorkLimits(settings, "http")
-		if err == nil {
-			traffic, trafficErr := config.ResolveTrafficSelection(settings)
-			err = trafficErr
-			if err == nil {
-				result.native, err = native.WithTraffic(traffic)
-			}
+		recovered, observed, recoveryErr := publisheridentity.PrepareDeploymentAllocation(ctx, control, authority, credential.Approval, key, selection.Name, allocation)
+		if recovered == nil || observed == nil {
+			return recoveryErr
 		}
+		native, service = recovered, observed
+		return errors.Join(recoveryErr, native.DeleteAllocatedService(ctx, service.Id))
+	}, result.expiresAt)
+	if err == nil {
+		result.native, result.service = native, *service
 	}
 	return result, err
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -227,7 +228,7 @@ func TestIntegrationWorkloadRetentionReferencesAndBatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := readyAppliedServiceRun(t, d, access, replica.private, service, leases, now)
+	run := readyAppliedServiceRun(t, d, access, replica.private, service, netip.MustParseAddr("127.0.0.1"), leases, now)
 	var sessions []WorkloadSession
 	var visitors []string
 	var certificates [][]byte

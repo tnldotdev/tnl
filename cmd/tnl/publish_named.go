@@ -6,7 +6,6 @@ import (
 	"os"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/local"
@@ -52,8 +51,11 @@ func namedInvocation(flags publishCommand) (resolvedNamedInvocation, error) {
 
 func resolveNamedPublic(flags publishCommand) (resolvedPublicInvocation, error) {
 	selected, err := namedInvocation(flags)
-	if err == nil && !config.IsPublicService(selected.project.Config.Services[selected.service]) {
-		err = failure.Wrap("select public service", failure.PublisherGrantMismatch, errors.New("configured service is private"))
+	if err == nil {
+		binding := selected.project.Config.Services[selected.service]
+		if binding.Public == nil || !*binding.Public {
+			err = failure.Wrap("select public service", failure.PublisherGrantMismatch, errors.New("configured service is private"))
+		}
 	}
 	return resolvedPublicInvocation{selected}, err
 }
@@ -61,8 +63,11 @@ func resolveNamedPublic(flags publishCommand) (resolvedPublicInvocation, error) 
 func resolveNamedPrivate(flags publishCommand) (resolvedPrivateInvocation, error) {
 	selected, err := namedInvocation(flags)
 	protocol := controlv1.ServiceProtocol(flags.Protocol)
-	if err == nil && (!protocol.Valid() || config.IsPublicService(selected.project.Config.Services[selected.service])) {
-		err = failure.Wrap("select service", failure.PublisherGrantMismatch, errors.New("configured service is not private"))
+	if err == nil {
+		binding := selected.project.Config.Services[selected.service]
+		if !protocol.Valid() || binding.Public != nil && *binding.Public {
+			err = failure.Wrap("select service", failure.PublisherGrantMismatch, errors.New("configured service is not private"))
+		}
 	}
 	return resolvedPrivateInvocation{selected, protocol}, err
 }

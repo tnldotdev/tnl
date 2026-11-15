@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 func TestWebhookRegistrationDoesNotReplaceOtherWorktreePolicies(t *testing.T) {
@@ -74,5 +75,53 @@ func TestWebhookRegistrationDoesNotReplaceOtherWorktreePolicies(t *testing.T) {
 	definitions, err = state.ActiveWebhookDefinitions(t.Context(), server, group)
 	if err != nil || len(definitions) != 1 {
 		t.Fatalf("stopped tunnel still supplies declarations: %v", err)
+	}
+}
+
+func TestAliasAndWebhookRejectURLOnlyJournal(t *testing.T) {
+	state, _ := aliasTestDatabase(t)
+	scope := aliasTestScope(t)
+	group := IntegrationScope{PrimaryProjectRoot: scope.ProjectKey, Namespace: scope.Namespace}
+	tunnel, err := state.BeginTunnel(t.Context(), BeginTunnelOptions{
+		Command: TunnelCommandPublish, Server: scope.Server, Project: scope.ProjectKey,
+		Service: "api", Target: "3000", IntegrationScope: group,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tunnel.Finish(t.Context(), nil) })
+	id, err := opaqueid.New(opaqueid.PublicURLPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tunnel.SetPublicURL(t.Context(), id, "api."+scope.Namespace); err != nil {
+		t.Fatal(err)
+	}
+	if err := tunnel.SetReady(t.Context(), "https://api."+scope.Namespace, 1); err != nil {
+		t.Fatal(err)
+	}
+	definition, digest, err := (config.Webhook{Service: "api", Path: "/hook", Provider: "custom", Delivery: "selected"}).DefinitionBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tunnel.RegisterWebhookEndpoint(t.Context(), "event", definition); err != nil {
+		t.Fatal(err)
+	}
+	selection, err := state.RegisterAlias(t.Context(), AliasRegistration{
+		Scope: scope, Hostname: "review." + scope.Namespace, Service: "api", TunnelID: tunnel.ID(),
+		IntegrationScope: group, Fingerprint: digest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := state.AliasCandidate(t.Context(), selection.ID); !errors.Is(err, ErrAliasReceiverUnavailable) {
+		t.Fatalf("URL-only journal became an alias receiver: %v", err)
+	}
+	receivers, err := state.WebhookReceivers(t.Context(), scope.Server, group, "event", digest)
+	if err != nil || len(receivers) != 0 {
+		t.Fatalf("URL-only journal became a webhook receiver: %+v, %v", receivers, err)
+	}
+	if err := state.ClaimWebhookReceiver(t.Context(), scope.Server, group, "event", tunnel.ID(), digest, true); !errors.Is(err, ErrWebhookReceiverUnavailable) {
+		t.Fatalf("forced webhook selection admitted URL-only journal: %v", err)
 	}
 }

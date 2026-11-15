@@ -14,7 +14,6 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
@@ -288,11 +287,149 @@ func TestAllocationRetryDoesNotRenewFixedExpiration(t *testing.T) {
 func TestAllocationRetryDoesNotDiscardIndependentFailure(t *testing.T) {
 	independent := errors.New("independent cleanup failure")
 	for _, transient := range []error{clientcontrol.ErrUnavailable, clientcontrol.ErrRateLimited, io.ErrUnexpectedEOF} {
-		if !retryAllocation(transient) || retryAllocation(errors.Join(transient, independent)) || retryAllocation(errors.Join(context.Canceled, transient)) {
+		if !retryAllocation(transient) || retryAllocation(errors.Join(transient, independent)) ||
+			retryAllocation(errors.Join(context.Canceled, transient)) || retryAllocation(errors.Join(context.DeadlineExceeded, transient)) {
 			t.Fatal("retry classification discarded an independent failure", transient)
 		}
 	}
-	if !failure.Only(clientcontrol.ErrNotFound, clientcontrol.ErrNotFound) || failure.Only(errors.Join(clientcontrol.ErrNotFound, independent), clientcontrol.ErrNotFound) {
-		t.Fatal("idempotent deletion discarded an independent failure")
+	if retryAllocation(context.Canceled) || retryAllocation(context.DeadlineExceeded) {
+		t.Fatal("terminal cancellation or original expiry was retried")
+	}
+}
+
+func TestAllocationCancellationDuringLostReplyRecoversExactCleanup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		control := &allocationControl{}
+		native := allocationNative(t, control)
+		options := allocationOptions(native)
+		fixedExpiry := time.Now().Add(time.Hour)
+		options.ExpiresAt = &fixedExpiry
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		committed := make(chan struct{})
+		var saved controlv1.Service
+		var bodies [][]byte
+		control.allocate = func(body controlv1.AllocateServiceRequest) (controlv1.Service, error) {
+			encoded, _ := json.Marshal(body)
+			bodies = append(bodies, encoded)
+			if len(bodies) == 1 {
+				saved = allocatedService(body)
+				close(committed)
+				return controlv1.Service{}, io.ErrUnexpectedEOF
+			}
+			return saved, nil
+		}
+		control.read = func() (controlv1.Service, error) {
+			t.Error("cleanup recovered publication selection instead of allocation ownership")
+			return controlv1.Service{}, errors.New("cleanup must not select a service")
+		}
+		var deleted []string
+		control.remove = func(id string) error { deleted = append(deleted, id); return nil }
+		options.OnAllocated = func(controlv1.Service) error {
+			t.Error("canceled recovery reached publication")
+			return nil
+		}
+		done := make(chan error, 1)
+		go func() { done <- Run(ctx, options) }()
+		<-committed
+		// cancel while the lost-response retry is waiting, not inside the
+		// allocation call. cleanup must still recover the original invocation.
+		synctest.Wait()
+		cancel()
+		err := <-done
+		if !errors.Is(err, context.Canceled) ||
+			len(bodies) != 2 || string(bodies[0]) != string(bodies[1]) ||
+			!reflect.DeepEqual(deleted, []string{saved.Id}) || !saved.ExpiresAt.Equal(fixedExpiry) {
+			t.Fatal("canceled lost reply abandoned or replaced the original allocation", err, len(bodies), deleted)
+		}
+	})
+}
+
+func TestAllocationCleanupRetriesNativeOperationWithoutReselection(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		control := &allocationControl{}
+		native := allocationNative(t, control)
+		options := allocationOptions(native)
+		var saved controlv1.Service
+		var allocations, selections int
+		control.allocate = func(body controlv1.AllocateServiceRequest) (controlv1.Service, error) {
+			allocations++
+			saved = allocatedService(body)
+			return saved, nil
+		}
+		control.read = func() (controlv1.Service, error) {
+			selections++
+			return saved, nil
+		}
+		var deleted []string
+		control.remove = func(id string) error {
+			deleted = append(deleted, id)
+			if len(deleted) == 1 {
+				return io.ErrUnexpectedEOF
+			}
+			return nil
+		}
+		stopped := errors.New("registration stopped")
+		options.OnAllocated = func(controlv1.Service) error { return stopped }
+		err := Run(t.Context(), options)
+		if !errors.Is(err, stopped) || allocations != 1 || selections != 1 ||
+			!reflect.DeepEqual(deleted, []string{saved.Id, saved.Id}) {
+			t.Fatal("cleanup retry reallocated, reselected, or lost exact ownership", err, allocations, selections, deleted)
+		}
+	})
+}
+
+func TestAllocationRejectsSubstitutedSavedPublicationFacts(t *testing.T) {
+	for _, fact := range []string{"protocol", "endpoint", "target_trust", "post_quantum", "expiration", "http_limits"} {
+		t.Run(fact, func(t *testing.T) {
+			control := &allocationControl{}
+			native := allocationNative(t, control)
+			options := allocationOptions(native)
+			options.Target = "https://target.example.test:443"
+			options.RequirePostQuantum = true
+			options.ExpiresAt = new(time.Now().Add(time.Hour))
+			options.Limits.Requests = 3
+			var saved controlv1.Service
+			control.allocate = func(body controlv1.AllocateServiceRequest) (controlv1.Service, error) {
+				saved = allocatedService(body)
+				return saved, nil
+			}
+			control.read = func() (controlv1.Service, error) {
+				selected := saved
+				selected.Endpoint = new(*saved.Endpoint)
+				switch fact {
+				case "protocol":
+					selected.Protocol = controlv1.ServiceProtocol("tcp")
+				case "endpoint":
+					selected.Endpoint.Port = 8443
+				case "target_trust":
+					declaration, err := targettrust.NewDeclaration("substituted.example.test", nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					trust, err := declaration.Snapshot()
+					if err != nil {
+						t.Fatal(err)
+					}
+					selected.TargetTls = publisheridentity.ServiceTargetTLS(trust)
+				case "post_quantum":
+					selected.RequirePostQuantum = false
+				case "expiration":
+					selected.ExpiresAt = new(saved.ExpiresAt.Add(time.Hour))
+				case "http_limits":
+					selected.HttpLimits = &controlv1.ProjectHTTPApplicationLimits{Total: new(7)}
+				}
+				return selected, nil
+			}
+			var deleted []string
+			control.remove = func(id string) error { deleted = append(deleted, id); return nil }
+			options.OnAllocated = func(controlv1.Service) error {
+				t.Error("substituted publication facts reached the application")
+				return nil
+			}
+			if err := Run(t.Context(), options); err == nil || !reflect.DeepEqual(deleted, []string{saved.Id}) {
+				t.Fatal("substituted saved facts were published or lost exact cleanup", err, deleted)
+			}
+		})
 	}
 }

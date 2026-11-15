@@ -328,7 +328,7 @@ func (d *Database) ProvisionCompanyEligibility(ctx context.Context, token string
 }
 
 func (d *Database) createManagedCompanyMember(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, c controlstatedb.ControlIdentityConnection, r ProvisionCompanyEligibilityRequest, now time.Time) error {
-	occupied, err := q.TeamSharedNameInUse(ctx, controlstatedb.TeamSharedNameInUseParams{TeamID: r.TeamID, Label: r.MemberSlug})
+	occupied, err := q.TeamSharedNameInUse(ctx, controlstatedb.TeamSharedNameInUseParams{TeamID: text(r.TeamID), Label: r.MemberSlug})
 	if err != nil {
 		return err
 	}
@@ -498,9 +498,8 @@ func closeInactiveCompanySubjects(ctx context.Context, tx pgx.Tx, q *controlstat
 	if err != nil {
 		return err
 	}
-	pending := pendingIngressRoutingTableEvents{}
 	for _, member := range members {
-		if err = closeMembershipPublishRuns(ctx, q, &pending, team, member, false, now, "company_eligibility_changed"); err != nil {
+		if err = closeMembershipServiceRuns(ctx, tx, q, team, member, now); err != nil {
 			return err
 		}
 	}
@@ -526,15 +525,6 @@ func closeInactiveCompanySubjects(ctx context.Context, tx pgx.Tx, q *controlstat
 		if err = closePublisherServiceRuns(ctx, tx, q, p, "", now); err != nil {
 			return err
 		}
-	}
-	// public routing changes commit with the authorization mutation.
-	for _, p := range publishers {
-		if err = closeRevokedPublicPublications(ctx, tx, q, p, "", now); err != nil {
-			return err
-		}
-	}
-	if err = pending.publish(ctx, q); err != nil {
-		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE control.public_service_visitors visitor SET closed_at=COALESCE(visitor.closed_at,$2) FROM control.services service WHERE service.id=visitor.service_id AND service.team_id=$1 AND visitor.identity_id IS NOT NULL AND NOT control.active_team_subject($1,visitor.identity_id,$2)`, team, now)
 	return err

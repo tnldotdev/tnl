@@ -14,10 +14,40 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
-// livePublisher locks identity before grant. callers creating runs hold the URL
-// lock first; exchange does not lock URLs, avoiding a reversed lock order.
+// guest ownership is read before locking children. its immutable parent keys let
+// exchange, rotation, and publication share trial -> service -> run -> publisher
+// -> grant ordering. team callers retain their existing authority guard.
 func (d *Database) livePublisher(ctx context.Context, q *controlstatedb.Queries, id, grant, sourceIP string, now time.Time) (PublisherIdentity, controlstatedb.ControlPublisherGrant, error) {
 	clock := newAuthorizationClock(now)
+	snapshot, err := q.ReadPublisherIdentity(ctx, id)
+	if err != nil {
+		return PublisherIdentity{}, controlstatedb.ControlPublisherGrant{}, publisherLookupError(err, ErrPublisherIdentity)
+	}
+	if snapshot.GuestID.Valid {
+		trial, err := q.LockGuestTrialByID(ctx, snapshot.GuestID.String)
+		if err != nil {
+			return PublisherIdentity{}, controlstatedb.ControlPublisherGrant{}, publisherLookupError(err, ErrPublisherIdentity)
+		}
+		selected, err := q.ReadPublisherGrant(ctx, controlstatedb.ReadPublisherGrantParams{ID: grant, PublisherIdentityID: id})
+		if err != nil || selected.Kind != "service" || selected.GuestID != snapshot.GuestID || selected.TeamID.Valid {
+			if err != nil {
+				return PublisherIdentity{}, selected, publisherLookupError(err, ErrPublisherIdentity)
+			}
+			return PublisherIdentity{}, selected, ErrPublisherIdentity
+		}
+		service, err := q.LockService(ctx, selected.ServiceID.String)
+		if err != nil || service.GuestID != snapshot.GuestID {
+			if err != nil {
+				return PublisherIdentity{}, selected, publisherLookupError(err, ErrPublisherIdentity)
+			}
+			return PublisherIdentity{}, selected, ErrPublisherIdentity
+		}
+		if trial.ActiveServiceRunID.Valid {
+			if _, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: trial.ActiveServiceRunID.String, ServiceID: service.ID}); err != nil {
+				return PublisherIdentity{}, selected, publisherLookupError(err, ErrPublisherIdentity)
+			}
+		}
+	}
 	i, err := q.LockPublisherIdentity(ctx, id)
 	if err != nil {
 		return PublisherIdentity{}, controlstatedb.ControlPublisherGrant{}, err
@@ -34,7 +64,8 @@ func (d *Database) livePublisher(ctx context.Context, q *controlstatedb.Queries,
 // of publication parents. management callers hold the team guard, then repeat
 // the locked check after their resource work and before committing.
 func (d *Database) currentPublisher(ctx context.Context, q *controlstatedb.Queries, i controlstatedb.ControlPublisherIdentity, g controlstatedb.ControlPublisherGrant, sourceIP string, now time.Time) (PublisherIdentity, error) {
-	if i.RevokedAt.Valid || g.RevokedAt.Valid || g.ExpiresAt.Valid && !g.ExpiresAt.Time.After(now) {
+	if i.RevokedAt.Valid || g.RevokedAt.Valid || g.PublisherIdentityID != i.ID ||
+		g.TeamID != i.TeamID || g.GuestID != i.GuestID || g.ExpiresAt.Valid && !g.ExpiresAt.Time.After(now) {
 		return PublisherIdentity{}, ErrPublisherIdentity
 	}
 	if i.Ownership == "member" {
@@ -46,8 +77,8 @@ func (d *Database) currentPublisher(ctx context.Context, q *controlstatedb.Queri
 			return PublisherIdentity{}, ErrPublisherIdentity
 		}
 	}
-	result := PublisherIdentity{ID: i.ID, GrantID: g.ID, CreatorID: i.CreatedByIdentityID, Kind: i.Kind, GuestID: i.GuestID.String, Scope: scopeFromGrant(i.TeamID, g), Ownership: i.Ownership, OwnerMembershipID: i.OwnerMembershipID.String}
-	available, err := q.PublisherScopeAvailable(ctx, controlstatedb.PublisherScopeAvailableParams{PublisherIdentityID: i.ID, GrantID: g.ID})
+	result := PublisherIdentity{ID: i.ID, GrantID: g.ID, CreatorID: i.CreatedByIdentityID.String, Kind: i.Kind, GuestID: i.GuestID.String, Scope: scopeFromGrant(i.TeamID.String, g), Ownership: i.Ownership, OwnerMembershipID: i.OwnerMembershipID.String, ExpiresAt: optionalTime(g.ExpiresAt)}
+	available, err := q.PublisherScopeAvailable(ctx, controlstatedb.PublisherScopeAvailableParams{PublisherIdentityID: i.ID, GrantID: g.ID, Now: timestamptz(now)})
 	if err != nil {
 		return PublisherIdentity{}, err
 	}
@@ -55,11 +86,13 @@ func (d *Database) currentPublisher(ctx context.Context, q *controlstatedb.Queri
 		return PublisherIdentity{}, ErrPublisherIdentity
 	}
 	if i.Kind == "guest" {
-		trial, err := q.LockGuestTrialByID(ctx, i.GuestID.String)
+		trial, err := q.GetGuestTrialByID(ctx, i.GuestID.String)
 		if err != nil {
 			return PublisherIdentity{}, publisherLookupError(err, ErrPublisherIdentity)
 		}
-		if trial.TeamID != i.TeamID || g.Kind != "saved_public_url" || !trial.ExpiresAt.Time.After(now) || trial.EndedAt.Valid || trial.UsedReadyNs >= int64(GuestReadyAllowance) || trial.ActiveReadyAt.Valid && time.Duration(trial.UsedReadyNs)+max(time.Duration(0), now.Sub(trial.ActiveReadyAt.Time)) >= GuestReadyAllowance {
+		if i.TeamID.Valid || !i.GuestID.Valid || g.Kind != "service" || !g.ServiceID.Valid ||
+			!g.ExpiresAt.Valid || !g.ExpiresAt.Time.Equal(trial.ExpiresAt.Time) ||
+			!guestPublicationEligible(trial, now) || sourceIP == "" {
 			return PublisherIdentity{}, ErrPublisherIdentity
 		}
 		if sourceIP != "" {
@@ -218,8 +251,10 @@ func (d *Database) RotatePublisherKey(ctx context.Context, token, sourceIP, repl
 	q := controlstatedb.New(tx)
 	// key retirement fences connector admission under the same team guard as
 	// grant revocation, before any publication or identity locks are acquired.
-	if _, err := q.LockLocalTeamForMutation(ctx, identity.Scope.TeamID); err != nil {
-		return publisherLookupError(err, ErrPublisherIdentity)
+	if identity.GuestID == "" {
+		if _, err := q.LockLocalTeamForMutation(ctx, identity.Scope.TeamID); err != nil {
+			return publisherLookupError(err, ErrPublisherIdentity)
+		}
 	}
 	if _, _, err := d.livePublisher(ctx, q, identity.ID, identity.GrantID, sourceIP, now); err != nil {
 		return err

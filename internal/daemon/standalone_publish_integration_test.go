@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -46,7 +45,7 @@ func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
 	// the ready event itself must cover installation; do not wait for a later
 	// routing cursor or retry the visitor's first request.
 	ready := waitForPublisherReady(t, handle)
-	request, err := http.NewRequest(http.MethodGet, ready.PublicURL+"/through-tnl?source=integration", nil)
+	request, err := http.NewRequest(http.MethodGet, serviceHTTPAddress(ready)+"/through-tnl?source=integration", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,16 +93,14 @@ func TestIntegrationURLPublisherTerminatesVisitorTLSLocally(t *testing.T) {
 	fixture := newStandalonePublishFixture(t, "integration-url")
 	observed := make(chan string, 1)
 	quic, tcp := fixture.connectors()
-	config := fixture.identity.publisherConfig("", quic, tcp)
-	config.Purpose = controlv1.Webhooks
-	config.AllowedIPPrefixes = []string{"127.0.0.1/32"}
+	_, config := fixture.identity.prepareService(t, "", quic, tcp, controlv1.ProjectServiceConfiguration{})
 	config.Handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		observed <- request.RemoteAddr + " " + request.URL.RequestURI()
 		response.WriteHeader(http.StatusNoContent)
 	})
 	handle := startOwnedIntegrationPublisher(t, fixture.owner, config, fixture.diagnostics)
 	ready := fixture.waitReady(t, handle)
-	request, err := http.NewRequest(http.MethodPost, ready.PublicURL+"/hooks/stripe?event=one", strings.NewReader("signed-body"))
+	request, err := http.NewRequest(http.MethodPost, serviceHTTPAddress(ready)+"/hooks/stripe?event=one", strings.NewReader("signed-body"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,9 +134,14 @@ func TestIntegrationDeniedVisitorGetsHTTPS403(t *testing.T) {
 			}))
 			cleanupIntegrationHTTPServer(t, target, fixture.owner)
 			quic, tcp := fixture.connectors()
-			config := fixture.identity.publisherConfig(target.URL, quic, tcp)
-			config.AccessMode = controlv1.Restricted
-			config.AllowedIPPrefixes = []string{"127.0.0.1/32"}
+			if transport == "quic" {
+				tcp, _ = disabledIntegrationConnector("TLS/TCP disabled by denial test")
+			} else {
+				quic, _ = disabledIntegrationConnector("QUIC disabled by denial test")
+			}
+			_, config := fixture.identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{
+				Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: new(controlv1.Restricted)}},
+			})
 			handle := startOwnedIntegrationPublisher(t, fixture.owner, config, fixture.diagnostics)
 			ready := fixture.waitReady(t, handle)
 			http2Client, http2Transport := newIntegrationHTTPSClient(t, fixture.pebble.roots, fixture.publicAddress, true, fixture.owner)
@@ -152,7 +154,7 @@ func TestIntegrationDeniedVisitorGetsHTTPS403(t *testing.T) {
 				{accept: "text/html", client: fixture.visitor.client, proto: 1},
 				{accept: "text/plain", client: http2Client, proto: 2},
 			} {
-				request, err := http.NewRequest(http.MethodGet, ready.PublicURL, nil)
+				request, err := http.NewRequest(http.MethodGet, serviceHTTPAddress(ready), nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -274,7 +276,7 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 			for index := range concurrentRequests {
 				workers.Go(func() {
 					path := fmt.Sprintf("/parallel/%d", index)
-					request, err := http.NewRequestWithContext(join, http.MethodGet, ready.PublicURL+path, nil)
+					request, err := http.NewRequestWithContext(join, http.MethodGet, serviceHTTPAddress(ready)+path, nil)
 					if err != nil {
 						results <- err
 						return
@@ -326,25 +328,22 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 			if t.Failed() {
 				t.FailNow()
 			}
-			fallbacks := 0
-			for _, event := range handle.observedEvents() {
-				if event.Type == publisher.EventTransportFallback {
-					fallbacks++
-					if event.Transport != tunnel.TransportTLSTCP || event.PublishRunNumber != ready.PublishRunNumber {
-						t.Fatalf("transport fallback event = %#v", event)
-					}
-				}
+			wantTransport := tunnel.TransportQUIC
+			if transport == "tls-tcp" {
+				wantTransport = tunnel.TransportTLSTCP
 			}
-			if transport == "quic" && fallbacks != 0 {
-				t.Fatalf("QUIC publisher emitted %d transport fallback events", fallbacks)
+			statuses := handle.observedEvents()
+			if len(statuses) == 0 {
+				t.Fatal("publisher did not report transport readiness")
 			}
-			if transport == "tls-tcp" && fallbacks != 1 {
-				t.Fatalf("TLS/TCP publisher emitted %d transport fallback events; want 1", fallbacks)
+			current := statuses[len(statuses)-1]
+			if !current.Ready || current.Transports != [2]tunnel.Transport{wantTransport, wantTransport} {
+				t.Fatalf("connected publisher transports = %#v", current)
 			}
 
 			largeBody := bytes.Repeat([]byte("tnl-transport-payload-"), (1<<20)/len("tnl-transport-payload-")+1)
 			largeBody = largeBody[:1<<20]
-			request, err := http.NewRequest(http.MethodPost, ready.PublicURL+"/large-post", bytes.NewReader(largeBody))
+			request, err := http.NewRequest(http.MethodPost, serviceHTTPAddress(ready)+"/large-post", bytes.NewReader(largeBody))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -454,8 +453,8 @@ func TestIntegrationLongLivedHTTPStreams(t *testing.T) {
 			ready := fixture.waitReady(t, handle)
 
 			assertIntegrationWebSocketPushes(t, fixture, releaseWebSocket)
-			assertIntegrationSSEPushes(t, fixture, ready.PublicURL, releaseSSE)
-			assertIntegrationStreamingResponse(t, fixture, ready.PublicURL, releaseStream)
+			assertIntegrationSSEPushes(t, fixture, serviceHTTPAddress(ready), releaseSSE)
+			assertIntegrationStreamingResponse(t, fixture, serviceHTTPAddress(ready), releaseStream)
 			stopIntegrationPublisher(t, handle)
 		})
 	}
@@ -471,7 +470,7 @@ func TestIntegrationPublisherRestartReusesCertificate(t *testing.T) {
 
 	first := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
 	firstReady := fixture.waitReady(t, first)
-	firstResponse, body, err := fixture.visitor.requestURL(http.MethodGet, firstReady.PublicURL+"/before", nil)
+	firstResponse, body, err := fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(firstReady)+"/before", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,30 +479,30 @@ func TestIntegrationPublisherRestartReusesCertificate(t *testing.T) {
 	}
 	assertIntegrationPublicURLCertificate(t, firstResponse, fixture.identity.hostname)
 	firstSerial := firstResponse.TLS.PeerCertificates[0].SerialNumber.String()
-	firstOrderCount := integrationRouteOrderCount(t, fixture.inspect, firstReady.PublicURLID)
+	firstOrderCount := integrationServiceOrderCount(t, fixture.inspect, firstReady.ServiceId)
 
 	stopIntegrationPublisher(t, first)
 	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
 		var closed bool
 		err := fixture.inspect.QueryRowContext(ctx, `
 			SELECT closed_at IS NOT NULL
-			FROM control.publish_runs
-			WHERE public_url_id = $1 AND publish_run_number = $2
-		`, firstReady.PublicURLID, firstReady.PublishRunNumber).Scan(&closed)
+			FROM control.service_runs
+			WHERE service_id = $1 AND run_number = $2
+		`, firstReady.ServiceId, firstReady.RunNumber).Scan(&closed)
 		return err == nil && closed, err
 	})
 	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
-	response, _, unavailableErr := fixture.visitor.requestURL(http.MethodGet, firstReady.PublicURL+"/unavailable", nil)
+	response, _, unavailableErr := fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(firstReady)+"/unavailable", nil)
 	if unavailableErr == nil && response.StatusCode == http.StatusOK {
 		t.Fatal("route remained available after the publisher stopped")
 	}
 
 	second := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
 	secondReady := fixture.waitReady(t, second)
-	if secondReady.PublicURLID != firstReady.PublicURLID || secondReady.PublishRunNumber != firstReady.PublishRunNumber+1 {
-		t.Fatalf("restarted route = %q version %d, want %q version %d", secondReady.PublicURLID, secondReady.PublishRunNumber, firstReady.PublicURLID, firstReady.PublishRunNumber+1)
+	if secondReady.ServiceId != firstReady.ServiceId || secondReady.ServiceRunId == firstReady.ServiceRunId || secondReady.RunNumber != firstReady.RunNumber+1 {
+		t.Fatalf("restarted service = %q run %d, want %q run %d", secondReady.ServiceId, secondReady.RunNumber, firstReady.ServiceId, firstReady.RunNumber+1)
 	}
-	secondResponse, body, err := fixture.visitor.requestURL(http.MethodGet, secondReady.PublicURL+"/after", nil)
+	secondResponse, body, err := fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(secondReady)+"/after", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +514,7 @@ func TestIntegrationPublisherRestartReusesCertificate(t *testing.T) {
 	if secondSerial != firstSerial {
 		t.Fatalf("restarted certificate serial = %s, want %s", secondSerial, firstSerial)
 	}
-	if orderCount := integrationRouteOrderCount(t, fixture.inspect, secondReady.PublicURLID); orderCount != firstOrderCount {
+	if orderCount := integrationServiceOrderCount(t, fixture.inspect, secondReady.ServiceId); orderCount != firstOrderCount {
 		t.Fatalf("route ACME order count = %d, want %d", orderCount, firstOrderCount)
 	}
 }
@@ -529,7 +528,7 @@ func TestIntegrationNestedMemberHostname(t *testing.T) {
 	quic, tcp := fixture.connectors()
 	handle := fixture.startPublisher(t, target.URL, quic, tcp)
 	ready := fixture.waitReady(t, handle)
-	response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL, nil)
+	response, body, err := fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(ready), nil)
 	if err != nil || response.StatusCode != http.StatusOK || string(body) != "nested member URL" {
 		t.Fatalf("nested URL visitor failed: %v", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http/httptest"
+	"net/netip"
 	"reflect"
 	"strings"
 	"testing"
@@ -34,7 +35,7 @@ func (s *managedDNSStoreStub) WithDNSRecordLock(_ context.Context, _ string, run
 
 func (s *managedDNSStoreStub) ValidateServiceEndpointDNSWork(context.Context, controlstate.ServiceEndpointDNSWork, time.Time) error {
 	if !s.locked || s.stale {
-		return controlstate.ErrDNSPublicURLWorkStale
+		return controlstate.ErrServiceEndpointDNSWorkStale
 	}
 	return nil
 }
@@ -50,19 +51,18 @@ func TestServiceEndpointDNSUsesOwnedExactRecords(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		public     bool
-		state      controlstate.PublicURLDNSState
+		state      controlstate.ServiceEndpointDNSState
 		propagated bool
 	}{
-		{"loopback", false, controlstate.PublicURLDNSPending, true},
-		{"public", true, controlstate.PublicURLDNSPending, true},
-		{"waiting", true, controlstate.PublicURLDNSPending, false},
-		{"remove-private", false, controlstate.PublicURLDNSRemoving, true},
-		{"remove-public", true, controlstate.PublicURLDNSRemoving, true},
+		{"public", true, controlstate.ServiceEndpointDNSPending, true},
+		{"waiting", true, controlstate.ServiceEndpointDNSPending, false},
+		{"remove-private", false, controlstate.ServiceEndpointDNSRemoving, true},
+		{"remove-public", true, controlstate.ServiceEndpointDNSRemoving, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &managedDNSStoreStub{work: controlstate.ServiceEndpointDNSWork{Hostname: "api.production.storefront.tunnels.example.test", ServiceID: "svc_0123456789ABCDEFGHIJKL", OwnerID: "dpl_0123456789ABCDEFGHIJKL", DomainID: "domain", PoolID: controlstate.PrimaryIngressPoolID, Public: test.public, State: test.state, Revision: 1, Epoch: 1, Attempts: 1, Worker: "dns-worker", ExpiresAt: now.Add(time.Minute), AvailableAt: now}}
 			provider := &providerStub{}
-			verifier := &verifierStub{publicURLVerified: test.propagated}
+			verifier := &verifierStub{addressVerified: test.propagated}
 			worker, err := New(store, provider, verifier, Config{WorkerID: "dns-worker", ManagedDomain: "tunnels.example.test", ManagedZoneID: "Z123", IngressIPv4Addresses: []string{"192.0.2.10"}, IngressIPv6Addresses: []string{"2001:db8::10"}})
 			if err != nil {
 				t.Fatal(err)
@@ -73,10 +73,10 @@ func TestServiceEndpointDNSUsesOwnedExactRecords(t *testing.T) {
 			if found, err := worker.processServiceEndpoint(t.Context(), now); !found || err != nil {
 				t.Fatal(found, err)
 			}
-			if provider.record.Owner != ServiceOwner(store.work.OwnerID) || provider.record.WildcardHostname != "" || provider.record.CanonicalHostname != store.work.Hostname || store.saves != 1 {
+			if provider.record.Owner != ServiceOwner(store.work.OwnerID) || provider.record.CanonicalHostname != store.work.Hostname || store.saves != 1 {
 				t.Fatal("managed endpoint used another DNS owner or a broad wildcard", provider.record, store.saved)
 			}
-			removing := test.state == controlstate.PublicURLDNSRemoving
+			removing := test.state == controlstate.ServiceEndpointDNSRemoving
 			response := httptest.NewRecorder()
 			metrics.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
 			for _, phase := range []string{"claim", "provider", "verify", "advance", "save"} {
@@ -90,22 +90,96 @@ func TestServiceEndpointDNSUsesOwnedExactRecords(t *testing.T) {
 				}
 			}
 			if removing {
-				if provider.removeCalls != 1 || provider.publishCalls != 0 || store.saved.State != controlstate.PublicURLDNSRemoved {
+				if provider.removeCalls != 1 || provider.publishCalls != 0 || store.saved.State != controlstate.ServiceEndpointDNSRemoved {
 					t.Fatal("removal did not reconcile", provider, store.saved)
 				}
 			} else {
-				want4, want6 := []string{"127.0.0.1"}, []string(nil)
-				if test.public {
-					want4, want6 = []string{"192.0.2.10"}, []string{"2001:db8::10"}
-				}
+				want4, want6 := []string{"192.0.2.10"}, []string{"2001:db8::10"}
 				if !reflect.DeepEqual(provider.record.IngressIPv4Addresses, want4) || !reflect.DeepEqual(provider.record.IngressIPv6Addresses, want6) {
 					t.Fatal("incorrect DNS-selected access path", provider.record)
 				}
-				if (store.saved.State == controlstate.PublicURLDNSPublished) != test.propagated {
+				if (store.saved.State == controlstate.ServiceEndpointDNSPublished) != test.propagated {
 					t.Fatal("DNS readiness did not wait for authoritative propagation", store.saved)
 				}
 			}
 		})
+	}
+}
+
+func TestConnectorOnlyServiceCannotPublishDNS(t *testing.T) {
+	now := time.Now().UTC()
+	store := &managedDNSStoreStub{work: controlstate.ServiceEndpointDNSWork{
+		Hostname:  "api.production.storefront.tunnels.example.test",
+		ServiceID: "svc_0123456789ABCDEFGHIJKL", OwnerID: "dpl_0123456789ABCDEFGHIJKL",
+		DomainID: "domain", PoolID: controlstate.PrimaryIngressPoolID,
+		Public: false, State: controlstate.ServiceEndpointDNSPending,
+		Revision: 1, Epoch: 1, Attempts: 1, Worker: "dns-worker",
+		ExpiresAt: now.Add(time.Minute), AvailableAt: now,
+	}}
+	provider := &providerStub{}
+	worker, err := New(store, provider, &verifierStub{}, Config{
+		WorkerID: "dns-worker", ManagedDomain: "tunnels.example.test",
+		ManagedZoneID: "Z123", IngressIPv4Addresses: []string{"192.0.2.10"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker.now = func() time.Time { return now }
+	if found, err := worker.processServiceEndpoint(t.Context(), now); !found || err != nil {
+		t.Fatal(found, err)
+	}
+	if provider.publishCalls != 0 || provider.removeCalls != 0 ||
+		store.saved.State != controlstate.ServiceEndpointDNSFailed || store.saved.LastError == "" {
+		t.Fatalf("connector-only DNS work reached provider: calls=%d, saved=%+v", provider.publishCalls, store.saved)
+	}
+}
+
+func TestServiceEndpointDNSUsesPinnedIngressPool(t *testing.T) {
+	now := time.Now().UTC()
+	work := testServiceDNSWork(now)
+	work.PoolID = "ingress-b"
+	store := &dnsStoreStub{serviceEndpointWork: work, pool: controlstate.IngressPool{
+		ID: "ingress-b", State: controlstate.IngressPoolEnabled,
+		IPv4Address: netip.MustParseAddr("192.0.2.20"), IPv6Address: netip.MustParseAddr("2001:db8::20"),
+	}}
+	provider := &providerStub{}
+	verifier := &verifierStub{addressVerified: true}
+	worker := testDNSWorker(t, store, provider, verifier, now)
+	worker.config.ManagedDomain, worker.config.ManagedZoneID = "tunnels.example.test", "ZMANAGED"
+	worker.config.IngressIPv4Addresses = []string{"192.0.2.10"}
+	if found, err := worker.processServiceEndpoint(t.Context(), now); !found || err != nil {
+		t.Fatal(found, err)
+	}
+	if !reflect.DeepEqual(provider.record.IngressIPv4Addresses, []string{"192.0.2.20"}) ||
+		!reflect.DeepEqual(provider.record.IngressIPv6Addresses, []string{"2001:db8::20"}) ||
+		verifier.addressHostname != work.Hostname {
+		t.Fatal("service endpoint used another pool or verified another hostname", provider.record, verifier)
+	}
+	store.pool.State = controlstate.IngressPoolDisabled
+	store.serviceEndpointWork = work
+	if found, err := worker.processServiceEndpoint(t.Context(), now); !found || err != nil {
+		t.Fatal(found, err)
+	}
+	if provider.publishCalls != 1 || store.serviceEndpointSaved.State != controlstate.ServiceEndpointDNSPending {
+		t.Fatal("disabled secondary pool issued service DNS", provider, store.serviceEndpointSaved)
+	}
+}
+
+func TestServiceEndpointDNSUsesExactNestedHostname(t *testing.T) {
+	now := time.Now().UTC()
+	work := testServiceDNSWork(now)
+	work.Hostname = "api.preview.member.tunnels.example.test"
+	store := &dnsStoreStub{serviceEndpointWork: work}
+	provider, verifier := &providerStub{}, &verifierStub{addressVerified: true}
+	worker := testDNSWorker(t, store, provider, verifier, now)
+	worker.config.ManagedDomain, worker.config.ManagedZoneID = "tunnels.example.test", "ZMANAGED"
+	worker.config.IngressIPv4Addresses = []string{"192.0.2.10"}
+	if found, err := worker.processServiceEndpoint(t.Context(), now); !found || err != nil {
+		t.Fatal(found, err)
+	}
+	if provider.record.CanonicalHostname != work.Hostname || verifier.addressHostname != work.Hostname ||
+		provider.record.ZoneID != "ZMANAGED" {
+		t.Fatal("nested service endpoint did not use its exact hostname", provider.record, verifier)
 	}
 }
 
@@ -120,7 +194,7 @@ func TestServiceEndpointDNSFencesStaleWork(t *testing.T) {
 	if found, err := worker.processServiceEndpoint(t.Context(), now); !found || err != nil || provider.publishCalls != 0 || provider.removeCalls != 0 || store.saves != 0 {
 		t.Fatal("stale DNS work reached the provider", found, err, provider, store.saves)
 	}
-	if err = store.ValidateServiceEndpointDNSWork(t.Context(), store.work, now); !errors.Is(err, controlstate.ErrDNSPublicURLWorkStale) {
+	if err = store.ValidateServiceEndpointDNSWork(t.Context(), store.work, now); !errors.Is(err, controlstate.ErrServiceEndpointDNSWorkStale) {
 		t.Fatal(err)
 	}
 }

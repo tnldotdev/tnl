@@ -35,34 +35,18 @@ func TestOpeningAcknowledgmentPrecedesMetadataAndVisitorBytes(t *testing.T) {
 						stream muxsession.Stream
 						err    error
 					}
+					if hop == "relay" {
+						server.role = tunnelv1.Ingress
+					}
 					result := tunnelWorker(t, func() { _ = client.Close() }, func() opened {
-						if hop == "publisher" {
-							header := visitorStreamHeader()
-							header.ConfirmBeforeBytes = true
-							stream, err := client.OpenVisitorStream(ctx, header, nil, ReturnEvents{})
-							return opened{stream, err}
-						}
-						header := internalForwardingHeader()
-						header.ConfirmBeforeBytes = true
-						stream, err := client.OpenInternalForwardingStream(ctx, header, nil, nil, ReturnEvents{})
+						stream, err := client.OpenServiceForwardingStream(ctx, serviceStreamHeader())
 						return opened{stream, err}
 					})
-					var stream muxsession.Stream
-					var accept func() error
-					var deny func(tunnelv1.ErrorCode) error
-					if hop == "publisher" {
-						incoming, err := server.AcceptVisitorStream(ctx)
-						if err != nil {
-							t.Fatal(err)
-						}
-						stream, accept, deny = incoming.Stream, incoming.Accept, incoming.Reject
-					} else {
-						incoming, err := server.AcceptInternalForwardingStream(ctx)
-						if err != nil {
-							t.Fatal(err)
-						}
-						stream, accept, deny = incoming.Stream(), incoming.Accept, incoming.Reject
+					incoming, err := server.AcceptServiceForwardingStream(ctx)
+					if err != nil {
+						t.Fatal(err)
 					}
+					stream, accept, deny := incoming.Stream(), incoming.Accept, incoming.Reject
 					defer stream.Close()
 					if err := stream.SetReadDeadline(time.Now().Add(20 * time.Millisecond)); err != nil {
 						t.Fatal(err)

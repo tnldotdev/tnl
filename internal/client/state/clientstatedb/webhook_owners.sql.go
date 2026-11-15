@@ -18,6 +18,7 @@ WHERE t.id = ?1 AND t.server_origin = ?2
   AND t.primary_project_root = ?3 AND t.integration_namespace = ?4
   AND e.name = ?5
   AND e.fingerprint = ?6 AND t.state = 'ready'
+  AND t.service_id IS NOT NULL AND t.publish_run_number > 0
   AND t.stopped_at IS NULL AND t.lease_expires_at > ?7
 ON CONFLICT DO NOTHING
 `
@@ -54,6 +55,8 @@ DELETE FROM webhook_owners AS o WHERE o.server_origin = ?1
   AND o.name = ?4
   AND NOT EXISTS (
     SELECT 1 FROM local_tunnels t WHERE t.id = o.tunnel_id
+      AND t.server_origin = o.server_origin AND t.primary_project_root = o.primary_project_root
+      AND t.integration_namespace = o.integration_namespace
       AND t.stopped_at IS NULL AND t.lease_expires_at > ?5
   )
 `
@@ -78,13 +81,16 @@ func (q *Queries) DeleteExpiredWebhookOwner(ctx context.Context, arg DeleteExpir
 }
 
 const exclusiveWebhookReceiver = `-- name: ExclusiveWebhookReceiver :one
-SELECT t.id, t.server_origin, t.primary_project_root, t.integration_namespace, t.hostname, t.target, t.public_url_id, t.publish_run_number
+SELECT t.id, t.server_origin, t.primary_project_root, t.integration_namespace, t.hostname, t.target, t.service_id, t.publish_run_number
 FROM webhook_owners owner JOIN local_tunnels t ON t.id = owner.tunnel_id
 JOIN webhook_declarations e ON e.tunnel_id = t.id AND e.name = owner.name AND e.service = t.service
 WHERE owner.server_origin = ?1 AND owner.primary_project_root = ?2
   AND owner.integration_namespace = ?3
+  AND t.server_origin = owner.server_origin AND t.primary_project_root = owner.primary_project_root
+  AND t.integration_namespace = owner.integration_namespace
   AND owner.name = ?4 AND e.fingerprint = ?5
-  AND t.state = 'ready' AND t.stopped_at IS NULL AND t.lease_expires_at > ?6
+  AND t.state = 'ready' AND t.service_id IS NOT NULL AND t.publish_run_number > 0
+  AND t.stopped_at IS NULL AND t.lease_expires_at > ?6
 `
 
 type ExclusiveWebhookReceiverParams struct {
@@ -103,7 +109,7 @@ type ExclusiveWebhookReceiverRow struct {
 	IntegrationNamespace sql.NullString
 	Hostname             sql.NullString
 	Target               sql.NullString
-	PublicURLID          sql.NullString
+	ServiceID            sql.NullString
 	PublishRunNumber     sql.NullInt64
 }
 
@@ -124,7 +130,7 @@ func (q *Queries) ExclusiveWebhookReceiver(ctx context.Context, arg ExclusiveWeb
 		&i.IntegrationNamespace,
 		&i.Hostname,
 		&i.Target,
-		&i.PublicURLID,
+		&i.ServiceID,
 		&i.PublishRunNumber,
 	)
 	return i, err
@@ -184,6 +190,7 @@ WHERE t.id = ?1 AND t.server_origin = ?2
   AND t.primary_project_root = ?3 AND t.integration_namespace = ?4
   AND e.name = ?5
   AND e.fingerprint = ?6 AND t.state = 'ready'
+  AND t.service_id IS NOT NULL AND t.publish_run_number > 0
   AND t.stopped_at IS NULL AND t.lease_expires_at > ?7
 `
 
@@ -244,6 +251,8 @@ const webhookOwnerID = `-- name: WebhookOwnerID :one
 SELECT owner.tunnel_id FROM webhook_owners owner JOIN local_tunnels t ON t.id = owner.tunnel_id
 WHERE owner.server_origin = ?1 AND owner.primary_project_root = ?2
   AND owner.integration_namespace = ?3
+  AND t.server_origin = owner.server_origin AND t.primary_project_root = owner.primary_project_root
+  AND t.integration_namespace = owner.integration_namespace
   AND owner.name = ?4 AND t.stopped_at IS NULL AND t.lease_expires_at > ?5
 `
 

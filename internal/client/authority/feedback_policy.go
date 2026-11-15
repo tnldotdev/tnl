@@ -18,11 +18,11 @@ func (c *Client) SetTeamFeedbackPolicy(ctx context.Context, teamID string, polic
 		return c.api.SetTeamFeedbackPolicy(ctx, teamID, policy, e...)
 	})
 }
-func (c *Client) IssueControlBrowserHandoff(ctx context.Context, urlID string, refresh credentials.RefreshToken) (string, error) {
+func (c *Client) IssueControlBrowserHandoff(ctx context.Context, serviceID string, refresh credentials.RefreshToken) (string, error) {
 	result, err := request[struct {
 		URL string `json:"url"`
 	}](ctx, c, func(ctx context.Context, e ...authorityv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.IssueControlBrowserHandoff(ctx, authorityv1.IssueControlBrowserHandoffJSONRequestBody{PublicUrlId: urlID, RefreshToken: refresh.String()}, e...)
+		return c.api.IssueControlBrowserHandoff(ctx, authorityv1.IssueControlBrowserHandoffJSONRequestBody{ServiceId: serviceID, RefreshToken: refresh.String()}, e...)
 	})
 	return result.URL, err
 }

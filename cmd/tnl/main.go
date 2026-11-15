@@ -857,9 +857,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 	case "share service revoke <name> <access-id>":
 		return runServiceShareRevoke(ctx, flags.Share.Service.Revoke, project, stdout, stderr)
 	case "share service link create <name>":
-		return runServiceShareHTTPCreate(ctx, flags.Share.Service.Link.Create, project, "share", stdout, stderr)
+		return runServiceShareHTTPCreate(ctx, flags.Share.Service.Link.Create, project, false, stdout, stderr)
 	case "share service token create <name>":
-		return runServiceShareHTTPCreate(ctx, flags.Share.Service.Token.Create, project, "token", stdout, stderr)
+		return runServiceShareHTTPCreate(ctx, flags.Share.Service.Token.Create, project, true, stdout, stderr)
 	case "feedback list":
 		return runFeedbackList(ctx, flags.Feedback.List, project, stdout, stderr)
 	case "feedback inspect <feedback-id>":

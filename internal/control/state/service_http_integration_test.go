@@ -3,7 +3,9 @@ package state
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/netip"
 	"strings"
@@ -62,7 +64,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		installPrivateTestCertificate(t, d, prep, run, now)
 		for _, slot := range run.Connections {
 			lease := leases[slot.RelayServiceID].RelayLeaseIdentity
-			if _, err = d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+			if _, err = d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), lease, now); err != nil {
 				t.Fatal(err)
 			}
 			if _, err = d.ReadyServicePublisherConnection(t.Context(), slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {
@@ -237,7 +239,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	// browser credentials capture ready runs and stay separate from legacy URL
 	// sessions and managed bearer grants. a new pool member cannot redeem them.
 	binding := bytes.Repeat([]byte{7}, 32)
-	state, err := d.BeginServiceBrowserLogin(t.Context(), a.Subject, "/settings?tab=1", strings.Repeat("n", 43), strings.Repeat("v", 43), binding, nil, now)
+	state, err := d.BeginServiceBrowserLogin(t.Context(), a.Subject, "", "/settings?tab=1", strings.Repeat("n", 43), strings.Repeat("v", 43), binding, nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,12 +339,106 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 			t.Fatal("refresh extended the original browser lifetime", err)
 		}
 	})
-	if _, err = d.BrowserSession(t.Context(), a.Subject.ID, redemption.CookieSecret, now); err == nil {
-		t.Fatal("managed browser widened legacy URL scope")
+	if _, err = d.IssueVisitorToken(t.Context(), testVisitorIssuer, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}, BrowserSessionTokenSource{Secret: redemption.CookieSecret}, now); err == nil {
+		t.Fatal("service browser widened public URL scope")
 	}
 	if _, err = d.ServiceBrowserSession(t.Context(), later, redemption.CookieSecret, false, now); err == nil {
 		t.Fatal("browser session widened run scope")
 	}
+	t.Run("outside reviewer identity and share permission", func(t *testing.T) {
+		ctx := WithControlPrincipal(t.Context(), ControlPrincipal{SessionID: issued.SessionID, IdentityID: r.ActorID})
+		preview, err := d.CreatePreview(ctx, r.TeamID, r.ActorID, "service-review", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range []string{a.Subject.ID, b.Subject.ID} {
+			if _, err := d.AddPreviewService(ctx, AddPreviewServiceRequest{PreviewID: preview.ID, ServiceID: id, TeamID: r.TeamID, IdentityID: r.ActorID}, now); err != nil {
+				t.Fatal(err)
+			}
+		}
+		secret, raw, err := randomBrowserSecret()
+		if err != nil {
+			t.Fatal(err)
+		}
+		share, err := d.CreateShare(ctx, CreateShareRequest{PreviewID: preview.ID, TeamID: r.TeamID,
+			ActingIdentityID: r.ActorID, ServiceIDs: []string{a.Subject.ID, b.Subject.ID}, EntryServiceID: b.Subject.ID,
+			IdempotencyKey: "service-review", SecretFingerprint: sha256.Sum256(raw), ExpiresAt: now.Add(time.Hour)}, now)
+		if err != nil || share.EntryServiceID != b.Subject.ID {
+			t.Fatal("share lost its captured entry service", err)
+		}
+		decoded, _ := base64.RawURLEncoding.Strict().DecodeString(secret)
+		shareSession, err := d.RedeemShare(t.Context(), a, share.ID, decoded, nil, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		check(a, ShareSessionTokenSource{ShareID: share.ID, Secret: shareSession.CookieSecret, RunID: a.RunID}, true)
+		outside, err := d.CreateOIDCControlSession(t.Context(), "tunnels.example.test", OIDCIdentity{
+			Issuer: "https://identity.fixture.test", Subject: "outside-service-reviewer", DisplayName: "Sam",
+			AssertionDigest: sha256.Sum256([]byte("outside-service-reviewer")), AssertionExpiry: now.Add(time.Hour),
+		}, time.Hour, 24*time.Hour, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		state, err := d.BeginServiceBrowserLogin(t.Context(), a.Subject, preview.ID, "/", strings.Repeat("n", 43), strings.Repeat("v", 43), binding, nil, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		attempt, err := d.ConsumeBrowserLogin(t.Context(), state, binding, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		handoff, err := d.IssueBrowserHandoff(t.Context(), attempt, BrowserAccessSession{
+			IdentityID: outside.Identity.Identity.ID, DisplayName: "not trusted",
+			AccessToken: outside.AccessToken.String(), RefreshToken: outside.RefreshToken.String(),
+			AccessExpiresAt: outside.AccessExpiresAt, ExpiresAt: outside.RefreshExpiresAt,
+		}, now)
+		if err != nil {
+			t.Fatal("outside identity incorrectly required team visitor permission", err)
+		}
+		browser, err := d.RedeemServiceBrowserHandoff(t.Context(), a, handoff.Token, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		identity, err := d.ServiceBrowserSession(t.Context(), a, browser.CookieSecret, false, now)
+		if err != nil || !identity.Authenticated || identity.VisitAllowed || identity.TeamMember || identity.DisplayName != "Sam" {
+			t.Fatal("browser identity was confused with share visitor permission", identity, err)
+		}
+		check(a, BrowserSessionTokenSource{Secret: browser.CookieSecret}, false)
+		browserRaw, _ := base64.RawURLEncoding.Strict().DecodeString(browser.CookieSecret)
+		shareRaw, _ := base64.RawURLEncoding.Strict().DecodeString(shareSession.CookieSecret)
+		actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.10", ServiceRun: &a,
+			BrowserCookieSecret: browserRaw, ShareID: share.ID, CookieSecret: shareRaw}
+		thread, err := d.CreateFeedback(t.Context(), a, CreateFeedbackRequest{
+			PreviewID: preview.ID, Service: "a", PagePath: "/", ReportText: "The label is unclear",
+			AuthorDisplayName: "spoofed", Anchor: json.RawMessage(`null`),
+			Evidence:       json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`),
+			SourceAtReport: feedbackTestSource(t), IdempotencyKey: "outside-report", Actor: actor,
+		}, now)
+		if err != nil || !thread.AuthorVerified || thread.AuthorIdentityID != outside.Identity.Identity.ID ||
+			thread.AuthorDisplayName != "Sam" || thread.ServiceID != a.Subject.ID || thread.ServiceRunID != a.RunID || thread.RunNumber != a.Number {
+			t.Fatal("service-backed report lost its verified author or exact run provenance", thread, err)
+		}
+		tx, err := d.pool.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, nativeErr := privateVisitorAccess(t.Context(), tx, a.Subject.ID, outside.Identity.Identity.ID, now)
+		_ = tx.Rollback(t.Context())
+		if !errors.Is(nativeErr, ErrServiceAccess) {
+			t.Fatal("HTTP share or browser identity granted connector permission", nativeErr)
+		}
+		if _, err := d.RevokeShare(ctx, share.ID, r.ActorID, now); err != nil {
+			t.Fatal(err)
+		}
+		check(a, ShareSessionTokenSource{ShareID: share.ID, Secret: shareSession.CookieSecret, RunID: a.RunID}, false)
+		if _, _, err := d.ReviewerFeedbackScope(t.Context(), a, preview.ID, actor, now); err == nil {
+			t.Fatal("revoked share retained reviewer authority")
+		}
+		identity, err = d.ServiceBrowserSession(t.Context(), a, browser.CookieSecret, false, now)
+		if err != nil || !identity.Authenticated || identity.VisitAllowed {
+			t.Fatal("revoking a share destroyed independent browser identity", identity, err)
+		}
+	})
 	// manual/company suspension invalidates both a signed-in visitor and the
 	// current authority behind a service-scoped bearer grant, not the transport.
 	if _, err = d.pool.Exec(t.Context(), `UPDATE control.team_memberships SET manual_suspended_at=$3 WHERE team_id=$1 AND identity_id=$2`, r.TeamID, r.ActorID, now); err != nil {

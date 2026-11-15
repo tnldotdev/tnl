@@ -23,23 +23,19 @@ func (s *returnFrameReader) Close() error               { s.closed = true; retur
 func TestReturnFramesRejectAmbiguousCompletionAndDecisionOrder(t *testing.T) {
 	accepted := tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnAccepted}
 	data := tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnData, Data: []byte("TLS")}
-	promoted := tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnPromoted, Promotion: decisionPromotion()}
 	ended := tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnEnded}
 	for _, test := range []struct {
 		name   string
 		frames []tunnelv1.ReturnFrame
 		want   error
 		data   string
-		calls  int
 	}{
-		{"missing acceptance", []tunnelv1.ReturnFrame{data}, tunnelv1.ErrReturnFrame, "", 0},
-		{"promotion before acceptance", []tunnelv1.ReturnFrame{promoted}, tunnelv1.ErrReturnFrame, "", 0},
-		{"end before acceptance", []tunnelv1.ReturnFrame{ended}, tunnelv1.ErrReturnFrame, "", 0},
-		{"duplicate acceptance", []tunnelv1.ReturnFrame{accepted, accepted}, tunnelv1.ErrReturnFrame, "", 0},
-		{"duplicate promotion", []tunnelv1.ReturnFrame{accepted, promoted, promoted, data}, tunnelv1.ErrReturnFrame, "", 1},
-		{"bare EOF", []tunnelv1.ReturnFrame{accepted}, io.ErrUnexpectedEOF, "", 0},
-		{"payload then bare EOF", []tunnelv1.ReturnFrame{accepted, data}, io.ErrUnexpectedEOF, "TLS", 0},
-		{"explicit half-close", []tunnelv1.ReturnFrame{accepted, data, ended}, nil, "TLS", 0},
+		{"missing acceptance", []tunnelv1.ReturnFrame{data}, tunnelv1.ErrReturnFrame, ""},
+		{"end before acceptance", []tunnelv1.ReturnFrame{ended}, tunnelv1.ErrReturnFrame, ""},
+		{"duplicate acceptance", []tunnelv1.ReturnFrame{accepted, accepted}, tunnelv1.ErrReturnFrame, ""},
+		{"bare EOF", []tunnelv1.ReturnFrame{accepted}, io.ErrUnexpectedEOF, ""},
+		{"payload then bare EOF", []tunnelv1.ReturnFrame{accepted, data}, io.ErrUnexpectedEOF, "TLS"},
+		{"explicit half-close", []tunnelv1.ReturnFrame{accepted, data, ended}, nil, "TLS"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var wire bytes.Buffer
@@ -49,33 +45,26 @@ func TestReturnFramesRejectAmbiguousCompletionAndDecisionOrder(t *testing.T) {
 				}
 			}
 			underlying := &returnFrameReader{reader: bytes.NewReader(wire.Bytes())}
-			calls := 0
-			stream := &returnStream{Stream: underlying, events: ReturnEvents{Promoted: func(tunnelv1.AdmissionHeader) error { calls++; return nil }}}
+			stream := &returnStream{Stream: underlying}
 			got, err := io.ReadAll(stream)
-			if !errors.Is(err, test.want) || string(got) != test.data || calls != test.calls || underlying.closed != (test.want != nil) {
-				t.Fatal("ambiguous completion or decision escaped", string(got), err, calls, underlying.closed)
+			if !errors.Is(err, test.want) || string(got) != test.data || underlying.closed != (test.want != nil) {
+				t.Fatal("ambiguous completion or decision escaped", string(got), err, underlying.closed)
 			}
 		})
 	}
 }
 
-func TestReturnRejectionRetainsProtocolAndCallbackCauses(t *testing.T) {
+func TestReturnRejectionRetainsProtocolCause(t *testing.T) {
 	var wire bytes.Buffer
 	for _, frame := range []tunnelv1.ReturnFrame{{Kind: tunnelv1.ReturnAccepted}, {Kind: tunnelv1.ReturnRejected, Code: tunnelv1.CapacityExceeded}, {Kind: tunnelv1.ReturnData, Data: []byte("forbidden")}} {
 		if err := tunnelv1.WriteReturnFrame(&wire, frame); err != nil {
 			t.Fatal(err)
 		}
 	}
-	cause := errors.New("rejection forwarding failed")
-	stream := &returnStream{Stream: &returnFrameReader{reader: bytes.NewReader(wire.Bytes())}, events: ReturnEvents{Rejected: func(code tunnelv1.ErrorCode) error {
-		if code != tunnelv1.CapacityExceeded {
-			t.Error("rejection code changed")
-		}
-		return cause
-	}}}
+	stream := &returnStream{Stream: &returnFrameReader{reader: bytes.NewReader(wire.Bytes())}}
 	got, err := io.ReadAll(stream)
 	var rejected *ProtocolError
-	if len(got) != 0 || !errors.Is(err, cause) || !errors.As(err, &rejected) || rejected.Code != tunnelv1.CapacityExceeded {
+	if len(got) != 0 || !errors.As(err, &rejected) || rejected.Code != tunnelv1.CapacityExceeded {
 		t.Fatal("rejection lost its causes or leaked data", err)
 	}
 }

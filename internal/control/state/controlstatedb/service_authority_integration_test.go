@@ -112,14 +112,21 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		t.Fatalf("enroll exact private publisher: %v", err)
 	}
 	p, err := d.RedeemPublisherEnrollment(ctx, enrollment.Key, publicKey, now)
-	if err != nil || p.Scope.ServiceID != service.ID || p.Scope.PublicURLID != "" {
+	if err != nil || p.Scope.ServiceID != service.ID || p.Scope.DomainID != "" {
 		t.Fatalf("private publisher scope = %+v: %v", p, err)
 	}
 	publisherIdentityID, keyID, publisherGrantID := p.ID, p.KeyID, p.GrantID
-	publicURLScope := p
-	publicURLScope.Scope.Kind, publicURLScope.Scope.ServiceID, publicURLScope.Scope.PublicURLID = "saved_public_url", "", service.ID
-	if _, err = d.PrepareServiceRun(ctx, service.ID, publicURLScope, "wrong-scope", now, controlstate.ServiceRunRequest{Metadata: controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}}); !errors.Is(err, controlstate.ErrServiceAccess) {
-		t.Fatalf("public URL scope selected service: %v", err)
+	namespaceScope := p
+	namespaceScope.Scope.Kind, namespaceScope.Scope.ServiceID, namespaceScope.Scope.DomainID = "namespace", "", newID(opaqueid.DomainPrefix)
+	other, err := d.CreateServiceAt(ctx, teamID, identityID, "unrelated", "create-unrelated", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = d.PrepareServiceRun(ctx, other.ID, namespaceScope, "wrong-scope", now, controlstate.ServiceRunRequest{Metadata: controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}}); !errors.Is(err, controlstate.ErrServiceAccess) {
+		t.Fatalf("exact service grant selected unrelated service: %v", err)
+	}
+	if err := d.DeleteService(ctx, other.ID, identityID, now); err != nil {
+		t.Fatal(err)
 	}
 	for _, relay := range []string{"relay-a", "relay-b"} {
 		runID := newID(opaqueid.RelayRunPrefix)
@@ -193,7 +200,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	for index, assignment := range retried.Connections {
 		_, err := d.ClaimServicePublisherConnection(ctx, assignment.PublisherConnectionID, service.ID,
 			prepared.RunID, prepared.RunNumber, assignment.Revision, assignment.Credential,
-			lease(assignment.RelayServiceID), now)
+			netip.MustParseAddr("127.0.0.1"), lease(assignment.RelayServiceID), now)
 		if err != nil {
 			t.Fatalf("claim relay %d: %v", index, err)
 		}
@@ -202,7 +209,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ready relay %d: %v", index, err)
 		}
-		inventory, _, err := d.ListAvailableServices(ctx, visitorID, "", now)
+		inventory, _, err := d.ListAvailableServices(ctx, visitorID, "", "connector", now)
 		if err != nil || len(inventory) != 1 {
 			t.Fatalf("offline inventory after slot %d: %+v, %v", index, inventory, err)
 		}
@@ -244,7 +251,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if err := d.ClosePublicServiceVisitor(ctx, ingress, late.ConnectionID, now); err != nil {
 		t.Fatal(err)
 	}
-	if inventory, _, err := d.ListAvailableServices(ctx, visitorID, "", now); err != nil || len(inventory) != 1 || inventory[0].ServiceRunID != prepared.RunID {
+	if inventory, _, err := d.ListAvailableServices(ctx, visitorID, "", "connector", now); err != nil || len(inventory) != 1 || inventory[0].ServiceRunID != prepared.RunID {
 		t.Fatalf("one live lease lost visitor inventory: %+v, %v", inventory, err)
 	}
 	exec(`UPDATE control.relay_leases SET lease_expires_at=$1 WHERE relay_id='relay-a'`, now.Add(10*time.Minute))
@@ -306,10 +313,10 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	lost := retried.Connections[0]
 	survivor := retried.Connections[1]
 	if _, err = d.DisconnectServicePublisherConnection(ctx, lost.PublisherConnectionID, prepared.RunID,
-		prepared.RunNumber, lost.Revision, lease(lost.RelayServiceID), now); err != nil {
+		prepared.RunNumber, lost.Revision, lease(lost.RelayServiceID), now, true); err != nil {
 		t.Fatal(err)
 	}
-	if inventory, _, err := d.ListAvailableServices(ctx, visitorID, "", now); err != nil || len(inventory) != 1 || inventory[0].ServiceRunID != prepared.RunID {
+	if inventory, _, err := d.ListAvailableServices(ctx, visitorID, "", "connector", now); err != nil || len(inventory) != 1 || inventory[0].ServiceRunID != prepared.RunID {
 		t.Fatalf("one surviving relay lost ready inventory: %+v, %v", inventory, err)
 	}
 	live := admit()
@@ -397,23 +404,23 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		t.Fatalf("survivor was replayed as a new assignment: %v", err)
 	}
 	if _, err = d.ClaimServicePublisherConnection(ctx, lost.PublisherConnectionID, service.ID,
-		prepared.RunID, prepared.RunNumber, lost.Revision, lost.Credential, lease(lost.RelayServiceID), now); !errors.Is(err, controlstate.ErrServiceAccess) {
+		prepared.RunID, prepared.RunNumber, lost.Revision, lost.Credential, netip.MustParseAddr("127.0.0.1"), lease(lost.RelayServiceID), now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("closed relay assignment reused: %v", err)
 	}
 	newSlot := repaired.Connections[0]
 	if _, err = d.ClaimServicePublisherConnection(ctx, newSlot.PublisherConnectionID, service.ID,
-		prepared.RunID, prepared.RunNumber, lost.Revision, newSlot.Credential, lease(newSlot.RelayServiceID), now); !errors.Is(err, controlstate.ErrServiceAccess) {
+		prepared.RunID, prepared.RunNumber, lost.Revision, newSlot.Credential, netip.MustParseAddr("127.0.0.1"), lease(newSlot.RelayServiceID), now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("new slot accepted old assignment revision: %v", err)
 	}
 	if _, err = d.ClaimServicePublisherConnection(ctx, newSlot.PublisherConnectionID, service.ID,
-		prepared.RunID, prepared.RunNumber, newSlot.Revision, newSlot.Credential, lease(newSlot.RelayServiceID), now); err != nil {
+		prepared.RunID, prepared.RunNumber, newSlot.Revision, newSlot.Credential, netip.MustParseAddr("127.0.0.1"), lease(newSlot.RelayServiceID), now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = d.ReadyServicePublisherConnection(ctx, newSlot.PublisherConnectionID,
 		prepared.RunID, prepared.RunNumber, newSlot.Revision, lease(newSlot.RelayServiceID), now); err != nil {
 		t.Fatal(err)
 	}
-	if inventory, _, err := d.ListAvailableServices(ctx, visitorID, "", now); err != nil || len(inventory) != 1 || inventory[0].ServiceRunID != prepared.RunID {
+	if inventory, _, err := d.ListAvailableServices(ctx, visitorID, "", "connector", now); err != nil || len(inventory) != 1 || inventory[0].ServiceRunID != prepared.RunID {
 		t.Fatalf("replaced relay did not restore ready inventory: %+v, %v", inventory, err)
 	}
 	replacementAdmission := admit()
@@ -460,7 +467,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if recheckVisitor(live.ConnectionID, now) {
 		t.Fatal("revoked visitor grant kept active visitor")
 	}
-	if list, _, err := d.ListAvailableServices(ctx, visitorID, "", now); err != nil || len(list) != 0 {
+	if list, _, err := d.ListAvailableServices(ctx, visitorID, "", "connector", now); err != nil || len(list) != 0 {
 		t.Fatalf("revoked visitor still authorized: %+v, %v", list, err)
 	}
 	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, current.ConnectionID, prepared.RunNumber, source, service.Endpoint.Port, certificate.Raw, now); !errors.Is(err, controlstate.ErrServiceAccess) {
@@ -486,14 +493,14 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		t.Fatal("owner live visitor denied")
 	}
 	if _, err = d.DisconnectServicePublisherConnection(ctx, newSlot.PublisherConnectionID, prepared.RunID,
-		prepared.RunNumber, newSlot.Revision, lease(newSlot.RelayServiceID), now); err != nil {
+		prepared.RunNumber, newSlot.Revision, lease(newSlot.RelayServiceID), now, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = d.DisconnectServicePublisherConnection(ctx, survivor.PublisherConnectionID, prepared.RunID,
-		prepared.RunNumber, survivor.Revision, lease(survivor.RelayServiceID), now); err != nil {
+		prepared.RunNumber, survivor.Revision, lease(survivor.RelayServiceID), now, true); err != nil {
 		t.Fatal(err)
 	}
-	if inventory, _, err := d.ListAvailableServices(ctx, identityID, "", now); err != nil || len(inventory) != 1 || inventory[0].ServiceRunID != "" {
+	if inventory, _, err := d.ListAvailableServices(ctx, identityID, "", "connector", now); err != nil || len(inventory) != 1 || inventory[0].ServiceRunID != "" {
 		t.Fatalf("zero live relays still available: %+v, %v", inventory, err)
 	}
 	if recheckVisitor(ownerVisitor.ConnectionID, now) {
@@ -509,14 +516,14 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	}
 	first := recovering.Connections[0]
 	if _, err = d.ClaimServicePublisherConnection(ctx, first.PublisherConnectionID, service.ID, prepared.RunID,
-		prepared.RunNumber, first.Revision, first.Credential, lease(first.RelayServiceID), now); err != nil {
+		prepared.RunNumber, first.Revision, first.Credential, netip.MustParseAddr("127.0.0.1"), lease(first.RelayServiceID), now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = d.ReadyServicePublisherConnection(ctx, first.PublisherConnectionID, prepared.RunID,
 		prepared.RunNumber, first.Revision, lease(first.RelayServiceID), now); err != nil {
 		t.Fatal(err)
 	}
-	if inventory, _, err := d.ListAvailableServices(ctx, identityID, "", now); err != nil || len(inventory) != 1 || inventory[0].ServiceRunID != prepared.RunID {
+	if inventory, _, err := d.ListAvailableServices(ctx, identityID, "", "connector", now); err != nil || len(inventory) != 1 || inventory[0].ServiceRunID != prepared.RunID {
 		t.Fatalf("historically ready run did not recover on one relay: %+v, %v", inventory, err)
 	}
 	if !recheckVisitor(ownerVisitor.ConnectionID, now) {

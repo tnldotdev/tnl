@@ -4,9 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,7 +18,7 @@ func TestChallengeManagerReconcilesDurablePresentationSet(t *testing.T) {
 	current := sha256.Sum256([]byte("current"))
 	concurrent := sha256.Sum256([]byte("concurrent"))
 	store := &challengeStoreStub{challenge: controlstate.DNSChallengeContext{
-		PublicURLID: "public_url_1", TeamID: "team_1", DomainID: "domain_1",
+		ServiceID: "svc_1", TeamID: "team_1", DomainID: "domain_1",
 		CanonicalDomain: "tunnels.example.test", AuthorizationID: "acme_authorization_1",
 		Identifier: "*.member.tunnels.example.test", PresentationReference: "acme_presentation_1", State: "presenting",
 		ChallengeDigest: current,
@@ -34,7 +34,7 @@ func TestChallengeManagerReconcilesDurablePresentationSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.PresentSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1"); err != nil {
+	if err := manager.PresentSubject(t.Context(), serviceDNSSubject("svc_1"), "acme_authorization_1"); err != nil {
 		t.Fatal(err)
 	}
 	wantValues := []string{
@@ -46,13 +46,13 @@ func TestChallengeManagerReconcilesDurablePresentationSet(t *testing.T) {
 		t.Fatalf("presented challenge record = %#v", provider.record)
 	}
 	store.challenge.State = "presented"
-	verified, err := manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
+	verified, err := manager.VerifySubject(t.Context(), serviceDNSSubject("svc_1"), "acme_authorization_1")
 	if err != nil || !verified || verifier.expected != base64.RawURLEncoding.EncodeToString(current[:]) {
 		t.Fatalf("verified = %v, expected %q, error %v", verified, verifier.expected, err)
 	}
 	store.challenge.State = "cleaning"
 	store.challenge.Presentations[0].Active = false
-	if err := manager.CleanupSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1"); err != nil {
+	if err := manager.CleanupSubject(t.Context(), serviceDNSSubject("svc_1"), "acme_authorization_1"); err != nil {
 		t.Fatal(err)
 	}
 	wantRemaining := []string{base64.RawURLEncoding.EncodeToString(concurrent[:])}
@@ -65,8 +65,8 @@ func TestChallengeManagerReconcilesDurablePresentationSet(t *testing.T) {
 func TestChallengeManagerWaitsForRoute53Propagation(t *testing.T) {
 	digest := sha256.Sum256([]byte("challenge"))
 	store := &challengeStoreStub{challenge: controlstate.DNSChallengeContext{
-		PublicURLID: "public_url_1", TeamID: "team_1", DomainID: "domain_1",
-		Identifier: "*.member.tunnels.example.test", AuthorizationID: "authorization_1",
+		ServiceID: "svc_1", TeamID: "team_1", DomainID: "domain_1",
+		CanonicalDomain: "tunnels.example.test", Identifier: "*.member.tunnels.example.test", AuthorizationID: "authorization_1",
 		PresentationReference: "presentation_1", State: "presented", ChallengeDigest: digest,
 		Presentations: []controlstate.DNSChallengePresentation{{ChallengeDigest: digest, Active: true}},
 	}}
@@ -76,16 +76,16 @@ func TestChallengeManagerWaitsForRoute53Propagation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ready, err := manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_1")
+	ready, err := manager.VerifySubject(t.Context(), serviceDNSSubject("svc_1"), "authorization_1")
 	if err != nil || ready || verifier.calls != 0 {
 		t.Fatalf("pending Route 53 change reached CA readiness: ready=%t checks=%d error=%v", ready, verifier.calls, err)
 	}
-	ready, err = manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_1")
+	ready, err = manager.VerifySubject(t.Context(), serviceDNSSubject("svc_1"), "authorization_1")
 	if err != nil || ready || provider.calls != 1 || verifier.calls != 0 {
 		t.Fatalf("pending change was rewritten or verified: ready=%t writes=%d checks=%d error=%v", ready, provider.calls, verifier.calls, err)
 	}
 	provider.pending = false
-	ready, err = manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_1")
+	ready, err = manager.VerifySubject(t.Context(), serviceDNSSubject("svc_1"), "authorization_1")
 	if err != nil || !ready || verifier.calls != 1 {
 		t.Fatalf("INSYNC Route 53 change did not become ready: ready=%t checks=%d error=%v", ready, verifier.calls, err)
 	}
@@ -94,8 +94,8 @@ func TestChallengeManagerWaitsForRoute53Propagation(t *testing.T) {
 func TestChallengeManagerRecoversLostChangeReceipt(t *testing.T) {
 	digest := sha256.Sum256([]byte("challenge"))
 	store := &challengeStoreStub{challenge: controlstate.DNSChallengeContext{
-		PublicURLID: "public_url_1", TeamID: "team_1", DomainID: "domain_1",
-		Identifier: "*.member.tunnels.example.test", AuthorizationID: "authorization_1",
+		ServiceID: "svc_1", TeamID: "team_1", DomainID: "domain_1",
+		CanonicalDomain: "tunnels.example.test", Identifier: "*.member.tunnels.example.test", AuthorizationID: "authorization_1",
 		PresentationReference: "presentation_1", State: "presented", ChallengeDigest: digest,
 		Presentations: []controlstate.DNSChallengePresentation{{ChallengeDigest: digest, Active: true}},
 	}}
@@ -109,7 +109,7 @@ func TestChallengeManagerRecoversLostChangeReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ready, err := first.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_1")
+	ready, err := first.VerifySubject(t.Context(), serviceDNSSubject("svc_1"), "authorization_1")
 	if err != nil || ready || provider.refreshCalls != 1 || verifier.calls != 0 {
 		t.Fatalf("lost receipt recovery: ready=%t refreshes=%d checks=%d error=%v", ready, provider.refreshCalls, verifier.calls, err)
 	}
@@ -118,7 +118,7 @@ func TestChallengeManagerRecoversLostChangeReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ready, err = restarted.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_1")
+	ready, err = restarted.VerifySubject(t.Context(), serviceDNSSubject("svc_1"), "authorization_1")
 	if err != nil || !ready || provider.refreshCalls != 1 || verifier.calls != 1 {
 		t.Fatalf("restarted change check: ready=%t refreshes=%d checks=%d error=%v", ready, provider.refreshCalls, verifier.calls, err)
 	}
@@ -128,8 +128,8 @@ func TestChallengeManagerWaitsForLatestSharedTXTChange(t *testing.T) {
 	firstDigest := sha256.Sum256([]byte("wildcard"))
 	secondDigest := sha256.Sum256([]byte("exact"))
 	store := &challengeStoreStub{challenge: controlstate.DNSChallengeContext{
-		PublicURLID: "public_url_1", TeamID: "team_1", DomainID: "domain_1",
-		Identifier: "*.member.tunnels.example.test", AuthorizationID: "authorization_wildcard",
+		ServiceID: "svc_1", TeamID: "team_1", DomainID: "domain_1",
+		CanonicalDomain: "tunnels.example.test", Identifier: "*.member.tunnels.example.test", AuthorizationID: "authorization_wildcard",
 		PresentationReference: "presentation_1", State: "presenting", ChallengeDigest: firstDigest,
 		Presentations: []controlstate.DNSChallengePresentation{
 			{ChallengeDigest: firstDigest, Active: true}, {ChallengeDigest: secondDigest, Active: true},
@@ -141,25 +141,25 @@ func TestChallengeManagerWaitsForLatestSharedTXTChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.PresentSubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_wildcard"); err != nil {
+	if err := manager.PresentSubject(t.Context(), serviceDNSSubject("svc_1"), "authorization_wildcard"); err != nil {
 		t.Fatal(err)
 	}
 	store.challenge.State = "cleaning"
 	store.challenge.Presentations[0].Active = false
 	provider.pending = true
-	if err := manager.CleanupSubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_wildcard"); !errors.Is(err, errChallengePropagationPending) {
+	if err := manager.CleanupSubject(t.Context(), serviceDNSSubject("svc_1"), "authorization_wildcard"); !errors.Is(err, errChallengePropagationPending) {
 		t.Fatalf("cleanup completed before latest TXT change propagated: %v", err)
 	}
 	store.challenge.State = "presented"
 	store.challenge.AuthorizationID = "authorization_exact"
 	store.challenge.Identifier = "member.tunnels.example.test"
 	store.challenge.ChallengeDigest = secondDigest
-	ready, err := manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_exact")
+	ready, err := manager.VerifySubject(t.Context(), serviceDNSSubject("svc_1"), "authorization_exact")
 	if !errors.Is(err, errChallengePropagationPending) || ready || provider.calls != 1 || verifier.calls != 0 {
 		t.Fatalf("other authorization changed the pending shared TXT: ready=%t writes=%d checks=%d error=%v", ready, provider.calls, verifier.calls, err)
 	}
 	provider.pending = false
-	ready, err = manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_exact")
+	ready, err = manager.VerifySubject(t.Context(), serviceDNSSubject("svc_1"), "authorization_exact")
 	if err != nil || !ready || provider.calls != 2 || verifier.calls != 1 {
 		t.Fatalf("other authorization after shared TXT sync: ready=%t writes=%d checks=%d error=%v", ready, provider.calls, verifier.calls, err)
 	}
@@ -181,16 +181,16 @@ func TestChallengeManagerUsesOwnedCustomZone(t *testing.T) {
 			}
 			switch phase {
 			case "presenting":
-				err = manager.PresentSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
+				err = manager.PresentSubject(t.Context(), serviceDNSSubject("svc_1"), "acme_authorization_1")
 			case "presented":
 				var verified bool
-				verified, err = manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
+				verified, err = manager.VerifySubject(t.Context(), serviceDNSSubject("svc_1"), "acme_authorization_1")
 				if !verified || verifier.expected != base64.RawURLEncoding.EncodeToString(store.challenge.ChallengeDigest[:]) ||
 					verifier.recordName != "_acme-challenge.api.claimed.example.test" || !slices.Equal(verifier.nameservers, provider.zone.Nameservers) {
 					t.Errorf("verification = %v, verifier %#v", verified, verifier)
 				}
 			case "cleaning":
-				err = manager.CleanupSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
+				err = manager.CleanupSubject(t.Context(), serviceDNSSubject("svc_1"), "acme_authorization_1")
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -233,11 +233,11 @@ func TestChallengeManagerClaimedAuthorityGuards(t *testing.T) {
 					}
 					switch phase {
 					case "presenting":
-						err = manager.PresentSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
+						err = manager.PresentSubject(t.Context(), serviceDNSSubject("svc_1"), "acme_authorization_1")
 					case "presented":
-						_, err = manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
+						_, err = manager.VerifySubject(t.Context(), serviceDNSSubject("svc_1"), "acme_authorization_1")
 					case "cleaning":
-						err = manager.CleanupSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
+						err = manager.CleanupSubject(t.Context(), serviceDNSSubject("svc_1"), "acme_authorization_1")
 					}
 					var terminal *terminalError
 					if !errors.As(err, &terminal) || provider.calls != 0 || verifier.calls != 0 {
@@ -262,11 +262,11 @@ func TestChallengeManagerReleasingAuthorityAllowsOnlyCleanup(t *testing.T) {
 			}
 			switch phase {
 			case "presenting":
-				err = manager.PresentSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
+				err = manager.PresentSubject(t.Context(), serviceDNSSubject("svc_1"), "acme_authorization_1")
 			case "presented":
-				_, err = manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
+				_, err = manager.VerifySubject(t.Context(), serviceDNSSubject("svc_1"), "acme_authorization_1")
 			case "cleaning":
-				err = manager.CleanupSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
+				err = manager.CleanupSubject(t.Context(), serviceDNSSubject("svc_1"), "acme_authorization_1")
 			}
 			if phase == "cleaning" {
 				if err != nil || provider.calls != 1 || len(provider.record.DesiredOwnedValues) != 0 || len(provider.record.PreviouslyOwnedValues) != 1 {
@@ -283,7 +283,7 @@ func claimedChallengeStore() *challengeStoreStub {
 	digest := sha256.Sum256([]byte("claimed"))
 	return &challengeStoreStub{
 		challenge: controlstate.DNSChallengeContext{
-			PublicURLID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", DNSAuthorityReference: "dns_authority_1",
+			ServiceID: "svc_1", TeamID: "team_1", DomainID: "domain_1", DNSAuthorityReference: "dns_authority_1",
 			CanonicalDomain: "claimed.example.test", AuthorizationID: "acme_authorization_1",
 			Identifier: "api.claimed.example.test", PresentationReference: "acme_presentation_1", State: "presenting",
 			ChallengeDigest: digest,
@@ -313,11 +313,11 @@ func TestChallengeManagerRejectsWrongPhaseBeforeDNSWork(t *testing.T) {
 				}
 				switch operation {
 				case "present":
-					err = manager.PresentSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
+					err = manager.PresentSubject(t.Context(), serviceDNSSubject("svc_1"), "acme_authorization_1")
 				case "verify":
-					_, err = manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
+					_, err = manager.VerifySubject(t.Context(), serviceDNSSubject("svc_1"), "acme_authorization_1")
 				case "cleanup":
-					err = manager.CleanupSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
+					err = manager.CleanupSubject(t.Context(), serviceDNSSubject("svc_1"), "acme_authorization_1")
 				}
 				var terminal *terminalError
 				if !errors.As(err, &terminal) || provider.calls != 0 || verifier.calls != 0 {
@@ -333,12 +333,12 @@ func TestChallengeManagerResolvesHostedManagedContext(t *testing.T) {
 		name, reference, identifier, domain string
 		valid                               bool
 	}{
-		{"implicit", "", "*.member.tunnels.example.test", "", true},
-		{"opaque_without_authority", hostedManagedAuthorityReference, "*.member.tunnels.example.test", "", true},
-		{"known_managed_domain", hostedManagedAuthorityReference, "*.member.tunnels.example.test", "tunnels.example.test", true},
-		{"suffix_boundary", hostedManagedAuthorityReference, "*.member.nottunnels.example.test", "", false},
-		{"outside", hostedManagedAuthorityReference, "*.member.other.test", "", false},
-		{"domain_mismatch", hostedManagedAuthorityReference, "*.member.tunnels.example.test", "claimed.example.test", false},
+		{"missing_domain", "", "*.member.tunnels.example.test", "", false},
+		{"opaque_without_domain", "dns_authority_1", "*.member.tunnels.example.test", "", false},
+		{"known_managed_domain", "dns_authority_1", "*.member.tunnels.example.test", "tunnels.example.test", true},
+		{"suffix_boundary", "dns_authority_1", "*.member.nottunnels.example.test", "", false},
+		{"outside", "dns_authority_1", "*.member.other.test", "", false},
+		{"domain_mismatch", "dns_authority_1", "*.member.tunnels.example.test", "claimed.example.test", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := claimedChallengeStore()
@@ -350,7 +350,7 @@ func TestChallengeManagerResolvesHostedManagedContext(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = manager.PresentSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
+			err = manager.PresentSubject(t.Context(), serviceDNSSubject("svc_1"), "acme_authorization_1")
 			if test.valid {
 				if err != nil || store.authorityCalls != 0 || provider.calls != 1 || provider.record.ZoneID != "ZMANAGED" || provider.record.ZoneDomain != "tunnels.example.test" || provider.record.CustomZone {
 					t.Fatalf("managed context: error %v, provider %#v", err, provider)
@@ -394,8 +394,9 @@ func (s *challengeStoreStub) GetDNSChallengeContextForSubject(ctx context.Contex
 	return value, nil
 }
 
-func publicDNSSubject(id string) controlstate.CertificateSubject {
-	return controlstate.CertificateSubject{Kind: controlstate.CertificateSubjectPublicURL, ID: id, RunID: "session_" + strings.TrimPrefix(id, "public_url_"), RunNumber: 1}
+func serviceDNSSubject(id string) controlstate.CertificateSubject {
+	digest := sha256.Sum256([]byte(id))
+	return controlstate.CertificateSubject{Kind: controlstate.CertificateSubjectService, ID: id, RunID: "srun_" + hex.EncodeToString(digest[:])[:22], RunNumber: 1}
 }
 
 func (s *challengeStoreStub) GetDNSAuthority(context.Context, string) (controlstate.DNSAuthority, error) {

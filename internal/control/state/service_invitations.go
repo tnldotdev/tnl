@@ -73,7 +73,7 @@ func (d *Database) InviteServiceVisitor(ctx context.Context, serviceID, actorID,
 	secret := id + "." + base64.RawURLEncoding.EncodeToString(secretBytes[:])
 	digest := sha256.Sum256(secretBytes[:])
 	row, err := q.InsertServiceInvitation(ctx, controlstatedb.InsertServiceInvitationParams{
-		ID: id, ServiceID: serviceID, TeamID: service.TeamID, NormalizedEmail: email,
+		ID: id, ServiceID: serviceID, TeamID: service.TeamID.String, NormalizedEmail: email,
 		TokenDigest: digest[:], CreatedByIdentityID: actorID, IdempotencyKey: key,
 		RequestDigest: requestDigest[:], Now: timestamptz(now), ExpiresAt: timestamptz(expires),
 	})
@@ -104,7 +104,7 @@ func (d *Database) ListServiceInvitations(ctx context.Context, serviceID, actorI
 		return nil, "", err
 	}
 	defer rollback(ctx, tx, "list service invitations", &retErr)()
-	if _, err = lockService(ctx, tx, serviceID, actorID); err != nil {
+	if _, err = lockManagedService(ctx, tx, serviceID, actorID); err != nil {
 		return nil, "", err
 	}
 	rows, err := controlstatedb.New(tx).ListServiceInvitations(ctx, controlstatedb.ListServiceInvitationsParams{ServiceID: serviceID, AfterID: after})
@@ -244,7 +244,7 @@ func (d *Database) PreviewServiceInvitation(ctx context.Context, actor, secret s
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	result = ServiceInvitationPreview{ServiceID: service.ID, TeamID: service.TeamID, Name: service.Name, Protocol: service.Protocol, ExpiresAt: invitation.ExpiresAt.Time}
+	result = ServiceInvitationPreview{ServiceID: service.ID, TeamID: service.TeamID.String, Name: service.Name, Protocol: service.Protocol, ExpiresAt: invitation.ExpiresAt.Time}
 	return result, tx.Commit(ctx)
 }
 
@@ -265,7 +265,7 @@ func (d *Database) RevokeServiceInvitation(ctx context.Context, serviceID, actor
 		return err
 	}
 	defer rollback(ctx, tx, "revoke service invitation", &retErr)()
-	if _, err = lockService(ctx, tx, serviceID, actorID); err != nil {
+	if _, err = lockManagedService(ctx, tx, serviceID, actorID); err != nil {
 		return err
 	}
 	q := controlstatedb.New(tx)

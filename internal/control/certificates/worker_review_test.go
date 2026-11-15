@@ -75,10 +75,10 @@ func TestCertificateAttemptDeadlineReportsAndRetriesWithLiveParent(t *testing.T)
 						stop()
 						return controlstate.ACMEOrderWork{}, false, nil
 					}
-					return controlstate.ACMEOrderWork{Subject: testCertificateSubject("public_url_test"), Account: account, State: "pending", ChallengeMethod: "dns-01", CertificateIdentifiers: []string{"app.example.test"}}, true, nil
+					return controlstate.ACMEOrderWork{Subject: testCertificateSubject("service_test"), Account: account, State: "pending", ChallengeMethod: "dns-01", CertificateIdentifiers: []string{"app.example.test"}}, true, nil
 				}
 				store.save = func(controlstate.ACMEOrderWork) { stop() }
-				worker, err := NewPublicURLWorker(store, PublicURLConfig{WorkerID: "review", Profile: "tlsserver", HTTPClient: &http.Client{}, DNSChallenges: &dnsChallengesStub{}, OperationTimeout: 20 * time.Millisecond, IdleInterval: time.Millisecond, Observer: record.Owner})
+				worker, err := NewServiceWorker(store, ServiceConfig{WorkerID: "review", Profile: "tlsserver", HTTPClient: &http.Client{}, DNSChallenges: &dnsChallengesStub{}, OperationTimeout: 20 * time.Millisecond, IdleInterval: time.Millisecond, Observer: record.Owner})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -130,8 +130,8 @@ func TestCertificateLifetimeShutdownDoesNotReportAttemptFailure(t *testing.T) {
 			if mode == "cancel" {
 				api.started = stop
 			}
-			store := &certificateStoreStub{work: controlstate.ACMEOrderWork{Subject: testCertificateSubject("public_url_test"), Account: controlstate.ACMEAccount{AccountURL: "https://acme.example/account"}, State: "pending", ChallengeMethod: "dns-01", CertificateIdentifiers: []string{"app.example.test"}}}
-			worker, err := NewPublicURLWorker(store, PublicURLConfig{WorkerID: "review", Profile: "tlsserver", HTTPClient: &http.Client{}, DNSChallenges: &dnsChallengesStub{}, OperationTimeout: time.Second})
+			store := &certificateStoreStub{work: controlstate.ACMEOrderWork{Subject: testCertificateSubject("service_test"), Account: controlstate.ACMEAccount{AccountURL: "https://acme.example/account"}, State: "pending", ChallengeMethod: "dns-01", CertificateIdentifiers: []string{"app.example.test"}}}
+			worker, err := NewServiceWorker(store, ServiceConfig{WorkerID: "review", Profile: "tlsserver", HTTPClient: &http.Client{}, DNSChallenges: &dnsChallengesStub{}, OperationTimeout: time.Second})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -147,7 +147,7 @@ func TestCertificateLifetimeShutdownDoesNotReportAttemptFailure(t *testing.T) {
 }
 
 func TestServiceCertificateQueueCountsUnclassifiedClaims(t *testing.T) {
-	for _, phase := range []string{"begin", "query", "commit", "empty", "public_url", "service"} {
+	for _, phase := range []string{"begin", "query", "commit", "empty", "service"} {
 		t.Run(phase, func(t *testing.T) {
 			ctx, record := workerobservation.Start(t)
 			cause := &pgconn.PgError{Code: "XX000", Message: "private-provider-cause"}
@@ -157,11 +157,8 @@ func TestServiceCertificateQueueCountsUnclassifiedClaims(t *testing.T) {
 				if phase == "empty" {
 					return controlstate.ACMEOrderWork{}, false, nil
 				}
-				if phase == "public_url" || phase == "service" {
-					work := controlstate.ACMEOrderWork{Subject: testCertificateSubject("public_url_test"), Account: controlstate.ACMEAccount{AccountURL: "https://acme.example/account"}, State: "canceled", ChallengeMethod: "dns-01"}
-					if phase == "service" {
-						work.Subject = controlstate.CertificateSubject{Kind: controlstate.CertificateSubjectService, ID: "service", RunID: "service-run", RunNumber: 1}
-					}
+				if phase == "service" {
+					work := controlstate.ACMEOrderWork{Subject: testCertificateSubject("service_test"), Account: controlstate.ACMEAccount{AccountURL: "https://acme.example/account"}, State: "canceled", ChallengeMethod: "dns-01"}
 					return work, true, nil
 				}
 				wantErr = fmt.Errorf("claim ACME order work: %s: %w", phase, cause)
@@ -169,10 +166,10 @@ func TestServiceCertificateQueueCountsUnclassifiedClaims(t *testing.T) {
 			}}
 			if phase == "empty" {
 				outcome = "empty"
-			} else if phase == "public_url" || phase == "service" {
+			} else if phase == "service" {
 				kind, outcome = phase, "claimed"
 			}
-			worker, err := NewPublicURLWorker(store, PublicURLConfig{WorkerID: "review", Profile: "tlsserver", HTTPClient: &http.Client{}, DNSChallenges: &dnsChallengesStub{}, Observer: record.Owner})
+			worker, err := NewServiceWorker(store, ServiceConfig{WorkerID: "review", Profile: "tlsserver", HTTPClient: &http.Client{}, DNSChallenges: &dnsChallengesStub{}, Observer: record.Owner})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -194,7 +191,7 @@ func TestServiceCertificateQueueCountsUnclassifiedClaims(t *testing.T) {
 			if outcome == "error" {
 				record.AssertFailure(t, "certificate.service.attempt", "error", string(failure.ServerCertificateFailed))
 			}
-			if kind == "service_queue" && (strings.Contains(response.Body.String(), `tnl_control_certificate_claims_total{tnl_certificate_kind="public_url"`) || strings.Contains(response.Body.String(), `tnl_control_certificate_claims_total{tnl_certificate_kind="service"`)) {
+			if kind == "service_queue" && strings.Contains(response.Body.String(), `tnl_control_certificate_claims_total{tnl_certificate_kind="service"`) {
 				t.Fatal("unclassified claim invented a service kind")
 			}
 		})

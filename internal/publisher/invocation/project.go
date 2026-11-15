@@ -8,8 +8,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 )
 
@@ -26,7 +26,7 @@ type ProjectRuntime struct {
 	state             *clientstate.Database
 	manager           *publisherapp.Manager
 	TargetResolver    target.TargetResolver
-	AttachPublication func(context.Context, publisherapp.Service, *publisher.Config) error
+	AttachPublication func(context.Context, publisherapp.Service, *publisherservice.RunConfig) error
 }
 
 func NewProjectRuntime(project clientproject.Project, state *clientstate.Database, manager *publisherapp.Manager, resolver target.TargetResolver) *ProjectRuntime {

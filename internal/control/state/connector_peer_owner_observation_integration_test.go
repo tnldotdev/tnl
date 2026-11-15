@@ -35,7 +35,7 @@ func TestIntegrationConnectorRebindOwnerObservationDoesNotRenewDelivery(t *testi
 			}
 			at := f.now.Add(2 * time.Second)
 			for _, relay := range pair.Relays {
-				if _, err := f.d.DisconnectServicePublisherConnection(t.Context(), relay.PublisherConnectionID, pair.ServiceRunID, pair.RunNumber, relay.AssignmentRevision, relay.RelayLease, at); err != nil {
+				if _, err := f.d.DisconnectServicePublisherConnection(t.Context(), relay.PublisherConnectionID, pair.ServiceRunID, pair.RunNumber, relay.AssignmentRevision, relay.RelayLease, at, true); err != nil {
 					t.Fatal(err)
 				}
 			}

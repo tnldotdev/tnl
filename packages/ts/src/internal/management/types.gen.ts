@@ -111,16 +111,12 @@ export type UpdateDeploymentRequest = {
 
 export type DeploymentService = {
   /**
-   * The bound saved service or public URL ID.
+   * The bound service ID.
    */
   id: ResourceId;
   protocol: ServiceProtocol;
   trust_revision: number;
   endpoint?: ServiceEndpoint;
-  /**
-   * The saved HTTP public URL when this binding uses one rather than a private service endpoint.
-   */
-  public_url?: string;
 };
 
 export type Deployment = {
@@ -235,7 +231,6 @@ export type ProblemCode =
   | "unavailable"
   | "internal"
   | "name_unavailable"
-  | "publish_run_open"
   | "policy_revision_stale"
   | "dns_setup_pending"
   | "placement_unavailable"

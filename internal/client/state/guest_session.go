@@ -8,20 +8,18 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/state/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
 type GuestSession struct {
-	GuestID      string
-	AccessToken  string
-	TeamID       string
-	MembershipID string
-	DomainID     string
-	Namespace    string
-	ExpiresAt    time.Time
+	GuestID     string
+	AccessToken string
+	ExpiresAt   time.Time
 }
+
+func (GuestSession) String() string   { return "guest trial session" }
+func (GuestSession) GoString() string { return "guest trial session" }
 
 func (s *Store) GuestSession(ctx context.Context) (GuestSession, bool, error) {
 	stored, err := s.database.queries.GetGuestSession(ctx, s.controlEndpoint)
@@ -36,8 +34,7 @@ func (s *Store) GuestSession(ctx context.Context) (GuestSession, bool, error) {
 		return GuestSession{}, true, failure.Wrap("open guest demo credential", failure.ClientStateUnavailable, err)
 	}
 	session := GuestSession{
-		GuestID: stored.GuestID, AccessToken: string(access), TeamID: stored.TeamID,
-		MembershipID: stored.MembershipID, DomainID: stored.DomainID, Namespace: stored.Namespace,
+		GuestID: stored.GuestID, AccessToken: string(access),
 		ExpiresAt: time.Unix(0, stored.ExpiresAt).UTC(),
 	}
 	if err := validateGuestSession(session); err != nil {
@@ -56,8 +53,6 @@ func (s *Store) SaveGuestSession(ctx context.Context, session GuestSession) erro
 	}
 	if err := s.database.queries.SaveGuestSession(ctx, clientstatedb.SaveGuestSessionParams{
 		ServerOrigin: s.controlEndpoint, GuestID: session.GuestID, AccessTokenCiphertext: access,
-		TeamID: session.TeamID, MembershipID: session.MembershipID,
-		DomainID: session.DomainID, Namespace: session.Namespace,
 		ExpiresAt: session.ExpiresAt.UnixNano(),
 		CreatedAt: time.Now().UTC().UnixNano(),
 	}); err != nil {
@@ -74,21 +69,13 @@ func (s *Store) RemoveGuestSession(ctx context.Context) error {
 func guestSessionContext(guestID string) string { return "guest-session:" + guestID + ":access" }
 
 func validateGuestSession(session GuestSession) error {
-	if !opaqueid.Valid(session.GuestID, opaqueid.GuestPrefix) ||
-		!opaqueid.Valid(session.TeamID, opaqueid.TeamPrefix) ||
-		!opaqueid.Valid(session.MembershipID, opaqueid.MembershipPrefix) ||
-		!validOpaqueValue(session.DomainID, 256) {
+	if !opaqueid.Valid(session.GuestID, opaqueid.GuestPrefix) {
 		return failure.Wrap("validate guest demo state", failure.GuestSessionInvalid,
 			errors.New("clientstate: guest session is invalid"))
 	}
 	if _, _, err := credentials.ParseAccessToken(credentials.AccessToken(session.AccessToken)); err != nil {
 		return failure.Wrap("validate guest demo state", failure.GuestSessionInvalid,
 			errors.New("clientstate: guest credential is invalid"))
-	}
-	namespace, err := naming.CanonicalizeHostname(session.Namespace)
-	if err != nil || namespace != session.Namespace {
-		return failure.Wrap("validate guest demo state", failure.GuestSessionInvalid,
-			errors.New("clientstate: guest namespace is invalid"))
 	}
 	if session.ExpiresAt.IsZero() {
 		return failure.Wrap("validate guest demo state", failure.GuestSessionInvalid,

@@ -304,7 +304,17 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 			guardErr = errors.Join(guardErr, connection.Close(), backend.Close())
 		}()
 		_, finishForward := observability.Start(ctx, "ingress.forward_connector_visitor")
-		copied, err := streamcopy.Copy(public, upstream)
+		var observePublisherWrite func(int64)
+		if claimed.RecoveryEpisodeId != nil && p.config.ObserveRecovery != nil {
+			var firstPublisherByte sync.Once
+			ref := ingressv1.ServiceRunReference{ServiceId: claimed.ServiceId, ServiceRunId: claimed.ServiceRunId, RunNumber: claimed.RunNumber}
+			observePublisherWrite = func(int64) {
+				firstPublisherByte.Do(func() {
+					p.config.ObserveRecovery(ref, claimed.VisitorConnectionId, uint64(*claimed.RecoveryEpisodeId), time.Now().UTC())
+				})
+			}
+		}
+		copied, err := streamcopy.CopyObserved(public, upstream, nil, observePublisherWrite)
 		finishForward(err)
 		cancel()
 		<-done
@@ -361,6 +371,9 @@ func (p *Server) retireClosedTrafficRuns(ctx context.Context, lease ingressv1.In
 // public service admission uses the claim immediately, rather than installing history.
 // every included relay and the claim itself must still be current.
 func validatePublicServiceAdmission(p ingressv1.PublicServiceVisitorAdmission, now time.Time) error {
+	if p.RecoveryEpisodeId != nil && *p.RecoveryEpisodeId <= 0 {
+		return ErrServiceAdmission
+	}
 	if !opaqueid.Valid(p.ServiceId, opaqueid.ServicePrefix) || !opaqueid.Valid(p.ServiceRunId, opaqueid.ServiceRunPrefix) || p.RunNumber < 1 || !p.ExpiresAt.After(now) || len(p.ConnectedRelays) < 1 || len(p.ConnectedRelays) > 2 {
 		return ErrServiceAdmission
 	}

@@ -192,7 +192,7 @@ func (d *Database) SaveACMEOrderWork(
 	if err != nil {
 		return ACMEOrderWork{}, fmt.Errorf("controlstate: save ACME order work: update order: %w", err)
 	}
-	subject, err := certificateSubject(order.PublicURLID, order.PublishRunID, order.PublishRunNumber, order.ServiceID, order.ServiceRunID, order.ServiceRunNumber)
+	subject, err := certificateSubject(order.ServiceID, order.ServiceRunID, order.ServiceRunNumber)
 	if err != nil || subject != work.Subject {
 		return ACMEOrderWork{}, ErrCertificateIssuanceInvalid
 	}
@@ -274,7 +274,7 @@ func acmeOrderWork(
 	authorizations []controlstatedb.ControlAcmeAuthorization,
 	requireLease bool,
 ) (ACMEOrderWork, error) {
-	subject, err := certificateSubject(order.PublicURLID, order.PublishRunID, order.PublishRunNumber, order.ServiceID, order.ServiceRunID, order.ServiceRunNumber)
+	subject, err := certificateSubject(order.ServiceID, order.ServiceRunID, order.ServiceRunNumber)
 	if err != nil || order.OrderRevision <= 0 || order.WorkEpoch <= 0 ||
 		requireLease && (!order.WorkOwner.Valid || !order.WorkExpiresAt.Valid) ||
 		order.Attempts <= 0 || !order.AvailableAt.Valid || !order.CreatedAt.Valid || !order.UpdatedAt.Valid ||

@@ -162,7 +162,7 @@ schemas:
         type: object
         maxProperties: 32
         additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ProjectWebhook" }
-        description: Desired exact endpoints for the existing local webhook integration handler. Each endpoint names a declared local HTTP service with public_url enabled, including app, address, compose, and docker targets. Control does not fetch provider catalogs or provision remote webhook handlers during apply.
+        description: Desired exact endpoints for the existing local webhook integration handler. Each endpoint names a declared local HTTP service with public reachability enabled, including app, address, compose, and docker targets. Control does not fetch provider catalogs or provision remote webhook handlers during apply.
       settings:
         $ref: "../openapi.yaml#/components/schemas/DeploymentSettings"
       services:
@@ -458,7 +458,7 @@ schemas:
     properties:
       service: { type: string }
       deployment: { type: string }
-      service_kind: { type: string, enum: [public_url, service, local] }
+      service_kind: { type: string, enum: [service, local] }
       service_id: { type: string }
       hostname: { type: string }
       desired_revision:

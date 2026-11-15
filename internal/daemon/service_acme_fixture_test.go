@@ -115,7 +115,7 @@ func (f *privateFixtureDNS) ReleaseCustomZone(context.Context, controlstate.DNSA
 func (f *privateFixtureDNS) Verify(context.Context, string, []string) (bool, error) {
 	return false, errors.New("unexpected custom domain verification")
 }
-func (f *privateFixtureDNS) VerifyPublicURL(ctx context.Context, name string, ipv4, ipv6, _ []string) (bool, error) {
+func (f *privateFixtureDNS) VerifyAddress(ctx context.Context, name string, ipv4, ipv6, _ []string) (bool, error) {
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(name), dns.TypeA)
 	answer, _, err := (&dns.Client{}).ExchangeContext(ctx, m, f.address)
@@ -158,7 +158,7 @@ func startPrivateFixtureWorkers(t *testing.T, ctx context.Context, process *daem
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker, err := certificates.NewPublicURLWorker(d, certificates.PublicURLConfig{WorkerID: "private-fixture-acme", Profile: "tlsserver", HTTPClient: pebble.httpClient, DNSChallenges: manager, PollInterval: 20 * time.Millisecond, IdleInterval: 20 * time.Millisecond})
+	worker, err := certificates.NewServiceWorker(d, certificates.ServiceConfig{WorkerID: "private-fixture-acme", Profile: "tlsserver", HTTPClient: pebble.httpClient, DNSChallenges: manager, PollInterval: 20 * time.Millisecond, IdleInterval: 20 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}

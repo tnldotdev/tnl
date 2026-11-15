@@ -4,8 +4,47 @@ import (
 	"context"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
+
+// callers hold owner -> service -> run. settlement retains every issued offline
+// serving tail and is a no-op after the exact active run has been settled once.
+func closeServiceRun(ctx context.Context, q *controlstatedb.Queries, run controlstatedb.ControlServiceRun, now time.Time) (int64, error) {
+	count, err := q.CloseServiceRun(ctx, controlstatedb.CloseServiceRunParams{
+		ID: run.ID, ServiceID: run.ServiceID, RunNumber: run.RunNumber, Now: timestamptz(now),
+	})
+	if err != nil || count == 0 {
+		return count, err
+	}
+	if err = q.CancelOpenServiceRecoveryEpisode(ctx, controlstatedb.CancelOpenServiceRecoveryEpisodeParams{
+		ServiceRunID: run.ID, CanceledAt: timestamptz(now),
+	}); err != nil {
+		return count, err
+	}
+	if run.GuestID.Valid {
+		_, err = q.FinishGuestServiceRun(ctx, controlstatedb.FinishGuestServiceRunParams{
+			ServiceRunID: text(run.ID), ClosedAt: timestamptz(now), CloseReason: "closed",
+		})
+	}
+	return count, err
+}
+
+// callers hold the service owner and service locks. closure and suspension use
+// the same ordered run settlement and slot-release path.
+func closeServiceRuns(ctx context.Context, tx pgx.Tx, serviceID string, now time.Time) error {
+	q := controlstatedb.New(tx)
+	runs, err := q.LockServiceRunsForClose(ctx, serviceID)
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		if _, err = closeServiceRun(ctx, q, run, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // ClosedServiceRuns proves only terminal state for exact requested tuples.
 // a missing row, expired lease, or newer sibling is not closure evidence.

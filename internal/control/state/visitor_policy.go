@@ -3,10 +3,8 @@ package state
 import (
 	"context"
 	"crypto/ed25519"
-	"encoding/json"
 	"errors"
 	"net/netip"
-	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,7 +12,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
-	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -24,11 +21,11 @@ var ErrVisitorPolicy = errors.New("visitor policy is unavailable")
 // readVisitorPolicy uses one repeatable-read snapshot for facts, their covered
 // policy revision, and verification keys. no visitor operation calls this reader.
 func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visitorscope.Scope, after int64, now time.Time) (result controlv1.VisitorPolicyUpdate, err error) {
-	if !scope.Valid() || after < 0 {
+	if scope.Kind != visitorscope.Service || !scope.Valid() || after < 0 {
 		return result, ErrVisitorPolicy
 	}
 	q := controlstatedb.New(tx)
-	revision, err := q.ReadVisitorPolicyRevision(ctx, controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: string(scope.Kind), ResourceID: scope.ID})
+	revision, err := q.ReadVisitorPolicyRevision(ctx, scope.ID)
 	if err != nil {
 		return result, publisherLookupError(err, ErrVisitorPolicy)
 	}
@@ -58,100 +55,45 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 	var prefixes []netip.Prefix
 	ipRestricted := false
 	team := ""
-	switch scope.Kind {
-	case visitorscope.PublicURL:
-		row, err := q.GetFeedbackPublicURL(ctx, scope.ID)
-		if err != nil {
-			return result, err
-		}
-		team, policy.Hostname, policy.Port = row.TeamID, row.CanonicalHostname, 443
-		policy.Enabled = row.LifecycleState == "enabled" && (!row.ExpiresAt.Valid || row.ExpiresAt.Time.After(now))
-		policy.Anonymous = row.AccessMode == "anonymous"
-		if row.ExpiresAt.Valid && row.ExpiresAt.Time.After(now) && row.ExpiresAt.Time.Before(policy.ValidUntil) {
-			policy.ValidUntil = row.ExpiresAt.Time
-		}
-		ipRestricted = row.IpPolicy != "allow_all"
-		if ipRestricted {
-			initialized, err := q.HasVisitorIPSet(ctx, scope.ID)
+	guestID := ""
+	row, err := q.ReadVisitorPolicyService(ctx, scope.ID)
+	if err != nil {
+		return result, err
+	}
+	if !row.ServicePort.Valid || !serviceendpoint.Valid(row.Protocol, row.CertificateHostname, int(row.ServicePort.Int32), row.Public) {
+		return result, ErrVisitorPolicy
+	}
+	team, guestID, policy.Hostname, policy.Port = row.TeamID.String, row.GuestID.String, row.CertificateHostname, int(serviceendpoint.PermissionPort(row.Protocol))
+	policy.MetadataRevision = row.TrustRevision
+	policy.Enabled = row.Enabled && !row.DeletedAt.Valid && (!row.ExpiresAt.Valid || row.ExpiresAt.Time.After(now))
+	settings, err := d.serviceHTTPSettings(ctx, q, scope.ID)
+	if err != nil {
+		return result, err
+	}
+	policy.Anonymous = settings != nil && settings.Access != nil && settings.Access.VisitorMode() == "anonymous"
+	if settings != nil && settings.Access != nil && len(settings.Access.IP) > 0 {
+		ipRestricted = true
+		for _, raw := range settings.Access.IP {
+			prefix, err := netip.ParsePrefix(raw)
 			if err != nil {
 				return result, err
 			}
-			if initialized {
-				grants, err := d.readVisitorIPs(ctx, q, scope.ID, now)
-				if err != nil {
-					return result, err
-				}
-				for _, grant := range grants {
-					prefix, err := netip.ParsePrefix(grant.Prefix)
-					if err != nil {
-						return result, ErrVisitorPolicy
-					}
-					prefixes = append(prefixes, prefix)
-					if grant.ExpiresAt != nil && grant.ExpiresAt.Before(policy.ValidUntil) {
-						policy.ValidUntil = *grant.ExpiresAt
-					}
-				}
-			} else if len(row.AllowedIpPolicyCiphertext) != 0 {
-				prefixes, err = d.openIPPolicy(row.ID, row.AllowedIpPolicyStorageKeyID.String, row.AllowedIpPolicyCiphertext)
-				if err != nil {
-					return result, err
-				}
-			} else if len(row.AllowedIpHashes) != 0 {
-				var entries []ippolicy.Entry
-				if err := json.Unmarshal(row.AllowedIpHashes, &entries); err != nil {
-					return result, ErrVisitorPolicy
-				}
-				key, err := d.storageKey.IPPolicyKey(row.AllowedIpHashKeyID.String, "url:"+scope.ID)
-				if err != nil {
-					return result, err
-				}
-				ip := controlv1.VisitorPolicyIP{Key: key[:], Prefixes: []controlv1.HashedIPPrefix{}}
-				for _, entry := range entries {
-					ip.Prefixes = append(ip.Prefixes, controlv1.HashedIPPrefix{Family: controlv1.HashedIPPrefixFamily(entry.Family), PrefixLength: entry.Bits, Digest: entry.Digest})
-				}
-				policy.Ip = &ip
-			}
-		}
-	case visitorscope.Service:
-		row, err := q.ReadVisitorPolicyService(ctx, scope.ID)
-		if err != nil {
-			return result, err
-		}
-		if !row.ServicePort.Valid || !serviceendpoint.Valid(row.Protocol, row.CertificateHostname, int(row.ServicePort.Int32), row.Public) {
-			return result, ErrVisitorPolicy
-		}
-		team, policy.Hostname, policy.Port = row.TeamID, row.CertificateHostname, int(serviceendpoint.PermissionPort(row.Protocol))
-		policy.MetadataRevision = row.TrustRevision
-		policy.Enabled = row.Enabled && !row.DeletedAt.Valid
-		settings, err := d.serviceHTTPSettings(ctx, q, scope.ID)
-		if err != nil {
-			return result, err
-		}
-		policy.Anonymous = settings != nil && settings.Access != nil && settings.Access.VisitorMode() == "anonymous"
-		if settings != nil && settings.Access != nil && len(settings.Access.IP) > 0 {
-			ipRestricted = true
-			for _, raw := range settings.Access.IP {
-				prefix, err := netip.ParsePrefix(raw)
-				if err != nil {
-					return result, err
-				}
-				prefixes = append(prefixes, prefix)
-			}
+			prefixes = append(prefixes, prefix)
 		}
 	}
 	var activeTeam bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.teams WHERE id=$1 AND deleted_at IS NULL)`, team).Scan(&activeTeam); err != nil {
 		return result, err
 	}
-	if scope.Kind == visitorscope.PublicURL {
+	if guestID != "" {
 		var guest bool
 		var deadline time.Time
 		err := tx.QueryRow(ctx, `SELECT control.guest_share_live(id,$2),control.guest_serving_deadline(id,$2)
-		    FROM control.guest_trials WHERE team_id=$1`, team, now).Scan(&guest, &deadline)
+		    FROM control.guest_trials WHERE id=$1`, guestID, now).Scan(&guest, &deadline)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return result, err
 		}
-		activeTeam = activeTeam || guest
+		activeTeam = guest
 		if err == nil {
 			policy.ConnectionDeadline = &deadline
 		}
@@ -244,7 +186,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 			return result, ErrVisitorPolicy
 		}
 	}
-	events, err := q.ReadVisitorPolicyEvents(ctx, controlstatedb.ReadVisitorPolicyEventsParams{ResourceKind: string(scope.Kind), ResourceID: scope.ID, AfterRevision: after})
+	events, err := q.ReadVisitorPolicyEvents(ctx, controlstatedb.ReadVisitorPolicyEventsParams{ResourceID: scope.ID, AfterRevision: after})
 	if err != nil {
 		return result, err
 	}
@@ -281,59 +223,22 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 	}
 	defer rollback(ctx, tx, "read publisher visitor policy", &retErr)()
 	q := controlstatedb.New(tx)
-	var sourceKey []byte
-	switch scope.Kind {
-	case visitorscope.PublicURL:
-		// policy refresh does not mutate team authority. share the same guard
-		// as publish-run creation so sibling URLs can refresh concurrently,
-		// while queued authority mutations still fence later readers. retain
-		// team -> URL -> publisher identity/grant lock order.
-		if _, err := lockVisitorURLWithTeamGuard(ctx, q, scope.ID, q.LockLocalTeamForSession); err != nil {
-			return result, err
-		}
-		id, digest, err := credentials.ParsePublishRunToken(credentials.PublishRunToken(token))
-		if err != nil {
-			return result, ErrPublishRunCredential
-		}
-		row, err := q.GetPublishRun(ctx, run)
-		if err != nil {
-			return result, publisherLookupError(err, ErrPublishRunCredential)
-		}
-		if row.PublicURLID != scope.ID || row.PublishRunNumber != number || row.PublishRunTokenID != id.String() || !credentials.SecretHashMatches(row.PublishRunTokenDigest, digest) || row.ClosedAt.Valid || !row.PublisherExpiresAt.Time.After(now) || !slices.Contains([]string{"starting", "ready"}, row.State) {
-			return result, ErrPublishRunCredential
-		}
-		url, err := q.GetFeedbackPublicURL(ctx, scope.ID)
-		if err != nil {
-			return result, err
-		}
-		if live, err := d.publisherRunLive(ctx, q, url, row, now); err != nil || !live {
-			if err != nil {
-				return result, err
-			}
-			return result, ErrPublishRunCredential
-		}
-		key, err := visitortoken.PublicVisitorSourceKey(row.PublishRunTokenDigest, run, uint64(number))
-		if err != nil {
-			return result, err
-		}
-		sourceKey = key[:]
-	case visitorscope.Service:
-		row, err := serviceRunAuthorization(ctx, tx, q, scope.ID, run, token, now)
-		if err != nil {
-			return result, err
-		}
-		if row.RunNumber != number {
-			return result, ErrServiceAccess
-		}
-	default:
+	if scope.Kind != visitorscope.Service {
 		return result, ErrVisitorPolicy
+	}
+	if err := lockServiceAdmission(ctx, tx, scope.ID); err != nil {
+		return result, err
+	}
+	row, err := d.serviceRunAuthorization(ctx, tx, q, scope.ID, run, token, now)
+	if err != nil {
+		return result, err
+	}
+	if row.RunNumber != number {
+		return result, ErrServiceAccess
 	}
 	result, err = d.readVisitorPolicy(ctx, tx, scope, after, now)
 	if err != nil {
 		return result, err
-	}
-	if sourceKey != nil {
-		result.VisitorSourceKey = &sourceKey
 	}
 	return result, tx.Commit(ctx)
 }

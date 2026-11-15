@@ -136,7 +136,7 @@ func (d *Database) RedeemDeploymentPublisherEnrollment(ctx context.Context, secr
 	if err != nil {
 		return result, err
 	}
-	if _, err = q.InsertPublisherIdentity(ctx, controlstatedb.InsertPublisherIdentityParams{ID: id, TeamID: team, Name: name, Kind: "installed", CreatedByIdentityID: actor, CreatedAt: timestamptz(now), Ownership: "team"}); err != nil {
+	if _, err = q.InsertPublisherIdentity(ctx, controlstatedb.InsertPublisherIdentityParams{ID: id, TeamID: text(team), Name: name, Kind: "installed", CreatedByIdentityID: text(actor), CreatedAt: timestamptz(now), Ownership: "team"}); err != nil {
 		return result, err
 	}
 	if err = q.InsertPublisherKey(ctx, controlstatedb.InsertPublisherKeyParams{ID: kid, PublisherIdentityID: id, PublicKey: public, Revision: 1, CreatedAt: timestamptz(now)}); err != nil {
@@ -429,7 +429,7 @@ func (d *Database) removeDeploymentPublisher(ctx context.Context, tx pgx.Tx, q *
 		if err != nil {
 			return err
 		}
-		if err = d.retireProjectResource(ctx, tx, q, controlstatedb.ControlAppliedProjectService{ServiceID: text(id), TeamID: service.TeamID}, now); err != nil {
+		if err = d.retireProjectResource(ctx, tx, q, controlstatedb.ControlAppliedProjectService{ServiceID: text(id), TeamID: service.TeamID.String}, now); err != nil {
 			return err
 		}
 	}

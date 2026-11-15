@@ -21,15 +21,15 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func connectionPreparationFixture(t *testing.T) (*connectorConnectionBackend, controlv1.Service) {
+func connectionPreparationFixture(t *testing.T) (*connectorConnectionBackend, controlv1.ServiceSummary) {
 	t.Helper()
-	service := controlv1.Service{Id: "svc_" + strings.Repeat("s", 22), Enabled: true, Protocol: controlv1.ServiceProtocolHTTP, Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test", Port: 443}}
+	service := controlv1.ServiceSummary{Id: "svc_" + strings.Repeat("s", 22), Enabled: true, Protocol: controlv1.ServiceProtocolHTTP, Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test", Port: 443}}
 	lifetime, cancel := context.WithCancel(t.Context())
 	b := &connectorConnectionBackend{
 		scope: connectorruntime.Context{Services: []string{"api"}}, parentPID: 1,
 		connectorConnectionSession: connectorConnectionSession{deadline: time.Now().Add(time.Hour)},
 		project:                    projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}}}}},
-		services:                   map[string]controlv1.Service{"api": service}, listeners: map[string]*ownedServiceListener{},
+		services:                   map[string]controlv1.ServiceSummary{"api": service}, listeners: map[string]*ownedServiceListener{},
 		lifetime: lifetime, cancel: cancel,
 	}
 	t.Cleanup(func() {

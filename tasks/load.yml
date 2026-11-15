@@ -33,7 +33,7 @@ tasks:
       PUBLIC_URLS: "{{.PUBLIC_URLS}}"
       START_PARALLEL: '{{default "" .START_PARALLEL}}'
       READY_TIMEOUT: '{{default "" .READY_TIMEOUT}}'
-      PUBLIC_URL_CERTIFICATE_WORKERS: '{{default "" .PUBLIC_URL_CERTIFICATE_WORKERS}}'
+      SERVICE_CERTIFICATE_WORKERS: '{{default "" .SERVICE_CERTIFICATE_WORKERS}}'
       RPS: '{{default "" .RPS}}'
       DURATION: '{{default "" .DURATION}}'
       WORKERS: '{{default "" .WORKERS}}'

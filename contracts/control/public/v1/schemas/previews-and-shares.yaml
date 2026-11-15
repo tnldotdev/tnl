@@ -27,7 +27,7 @@ schemas:
   Preview:
     type: object
     additionalProperties: false
-    required: [schema_version, id, team_id, service_ids, created_at]
+    required: [schema_version, id, service_ids, created_at]
     properties:
       schema_version:
         $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"
@@ -35,6 +35,10 @@ schemas:
         $ref: "../openapi.yaml#/components/schemas/PreviewID"
       team_id:
         $ref: "../openapi.yaml#/components/schemas/TeamID"
+        x-go-type-skip-optional-pointer: true
+      guest_id:
+        $ref: "../openapi.yaml#/components/schemas/GuestID"
+        x-go-type-skip-optional-pointer: true
       service_ids:
         type: array
         uniqueItems: true
@@ -45,6 +49,13 @@ schemas:
       created_at:
         type: string
         format: date-time
+    not:
+      anyOf:
+        - required: [team_id, guest_id]
+        - not:
+            anyOf:
+              - required: [team_id]
+              - required: [guest_id]
   CreateShareRequest:
     type: object
     additionalProperties: false
@@ -83,18 +94,7 @@ schemas:
     type: object
     additionalProperties: false
     required:
-      [
-        schema_version,
-        id,
-        scope,
-        label,
-        team_id,
-        service_ids,
-        entry_service_id,
-        created_by_identity_id,
-        created_at,
-        expires_at,
-      ]
+      [schema_version, id, scope, label, service_ids, entry_service_id, created_at, expires_at]
     properties:
       schema_version:
         $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"
@@ -109,6 +109,10 @@ schemas:
         type: string
       team_id:
         $ref: "../openapi.yaml#/components/schemas/TeamID"
+        x-go-type-skip-optional-pointer: true
+      guest_id:
+        $ref: "../openapi.yaml#/components/schemas/GuestID"
+        x-go-type-skip-optional-pointer: true
       entry_service_id:
         $ref: "../openapi.yaml#/components/schemas/ServiceID"
       service_ids:
@@ -120,6 +124,7 @@ schemas:
           $ref: "../openapi.yaml#/components/schemas/ServiceID"
       created_by_identity_id:
         $ref: "../openapi.yaml#/components/schemas/IdentityID"
+        x-go-type-skip-optional-pointer: true
       created_at:
         type: string
         format: date-time
@@ -129,6 +134,20 @@ schemas:
       revoked_at:
         type: string
         format: date-time
+    not:
+      anyOf:
+        - required: [team_id, guest_id]
+        - not:
+            anyOf:
+              - required: [team_id]
+              - required: [guest_id]
+        - required: [team_id]
+          not: { required: [created_by_identity_id] }
+        - required: [guest_id]
+          anyOf:
+            - properties:
+                scope: { not: { const: guest } }
+            - required: [created_by_identity_id]
   SharePage:
     type: object
     additionalProperties: false
@@ -146,18 +165,18 @@ schemas:
   PreviewPageFeedbackRequest:
     type: object
     additionalProperties: false
-    required: [preview_id, publish_run_number, access]
+    required: [preview_id, run_number, access]
     properties:
       state:
         $ref: "../openapi.yaml#/components/schemas/FeedbackThreadState"
       preview_id:
         $ref: "../openapi.yaml#/components/schemas/PreviewID"
-      publish_run_number:
+      run_number:
         {
           type: string,
           pattern: "^[0-9]+$",
           x-go-type: int64,
-          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
         }
       page_path:
         type: string

@@ -11,8 +11,6 @@ servers:
 security:
   - clusterAuth: []
 paths:
-  /internal/v1/ingresses/{ingress_id}/visitor-policy:
-    $ref: "./paths/visitor-policy.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1visitor-policy"
   /internal/v1/ingresses/{ingress_id}/public-services/admit:
     $ref: "./paths/public-services.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1public-services~1admit"
   /internal/v1/ingresses/{ingress_id}/public-services/status:
@@ -31,12 +29,8 @@ paths:
     $ref: "./paths/leases.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1renew"
   /internal/v1/ingresses/{ingress_id}/drain:
     $ref: "./paths/leases.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1drain"
-  /internal/v1/ingresses/{ingress_id}/routing-table/snapshot:
-    $ref: "./paths/routing.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1routing-table~1snapshot"
-  /internal/v1/ingresses/{ingress_id}/routing-table/events:
-    $ref: "./paths/routing.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1routing-table~1events"
-  /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed:
-    $ref: "./paths/reporting.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1public-url-recovery~1{recovery_episode_id}~1observed"
+  /internal/v1/ingresses/{ingress_id}/service-recovery/{recovery_episode_id}/observed:
+    $ref: "./paths/reporting.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1service-recovery~1{recovery_episode_id}~1observed"
 components:
   securitySchemes:
     clusterAuth:
@@ -52,10 +46,6 @@ components:
     Problem:
       $ref: "./schemas/common.yaml#/responses/Problem"
   schemas:
-    IngressVisitorPolicyRequest:
-      $ref: "./schemas/visitor-policy.yaml#/schemas/IngressVisitorPolicyRequest"
-    VisitorPolicyUpdate:
-      $ref: "../../../public/v1/openapi.yaml#/components/schemas/VisitorPolicyUpdate"
     ServiceID:
       $ref: "./schemas/public-services.yaml#/schemas/ServiceID"
     ServiceRunID:
@@ -90,27 +80,13 @@ components:
       $ref: "./schemas/leases.yaml#/schemas/IngressDrainRequest"
     IngressLease:
       $ref: "./schemas/leases.yaml#/schemas/IngressLease"
-    IngressRoutingPublisherConnection:
-      $ref: "./schemas/routing.yaml#/schemas/IngressRoutingPublisherConnection"
-    IngressRoutingTableEntry:
-      $ref: "./schemas/routing.yaml#/schemas/IngressRoutingTableEntry"
     IngressTrafficLimits:
       $ref: "./schemas/leases.yaml#/schemas/IngressTrafficLimits"
-    IngressPublicRunObservation:
-      $ref: "./schemas/leases.yaml#/schemas/IngressPublicRunObservation"
-    HashedIPPrefix:
-      $ref: "./schemas/routing.yaml#/schemas/HashedIPPrefix"
-    IngressRoutingTableEvent:
-      $ref: "./schemas/routing.yaml#/schemas/IngressRoutingTableEvent"
-    IngressRoutingTableSnapshot:
-      $ref: "./schemas/routing.yaml#/schemas/IngressRoutingTableSnapshot"
-    IngressRoutingTablePage:
-      $ref: "./schemas/routing.yaml#/schemas/IngressRoutingTablePage"
-    PublicURLRecoveryObservationRequest:
-      $ref: "./schemas/reporting.yaml#/schemas/PublicURLRecoveryObservationRequest"
-    PublicURLRecoveryObservation:
-      $ref: "./schemas/reporting.yaml#/schemas/PublicURLRecoveryObservation"
+    ServiceRecoveryObservationRequest:
+      $ref: "./schemas/reporting.yaml#/schemas/ServiceRecoveryObservationRequest"
+    ServiceRecoveryObservation:
+      $ref: "./schemas/reporting.yaml#/schemas/ServiceRecoveryObservation"
     ProblemCode:
-      $ref: "./schemas/routing.yaml#/schemas/ProblemCode"
+      $ref: "./schemas/common.yaml#/schemas/ProblemCode"
     Problem:
-      $ref: "./schemas/routing.yaml#/schemas/Problem"
+      $ref: "./schemas/common.yaml#/schemas/Problem"

@@ -7,8 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"strconv"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,8 +24,8 @@ import (
 
 type serviceShareCommand struct {
 	Invite serviceShareInviteCommand `cmd:"" help:"Invite a verified-email identity to exactly one service."`
-	List   serviceShareListCommand   `cmd:"" help:"List exact-service identity/team grants and invitations, including expired and revoked entries."`
-	Revoke serviceShareRevokeCommand `cmd:"" help:"Revoke one invitation (and its derived grant), identity grant, or service HTTP credential."`
+	List   serviceShareListCommand   `cmd:"" help:"List service grants, invitations, and shares, including expired and revoked entries."`
+	Revoke serviceShareRevokeCommand `cmd:"" help:"Revoke one invitation, identity grant, HTTP credential, or exact service share."`
 	Link   serviceShareLinkCommand   `cmd:"" help:"Create a bounded share link for a publicly reachable service HTTP service."`
 	Token  serviceShareTokenCommand  `cmd:"" help:"Create a bounded token for a publicly reachable service HTTP service."`
 }
@@ -68,7 +67,7 @@ type serviceShareListCommand struct {
 
 type serviceShareRevokeCommand struct {
 	serviceShareSelection `embed:""`
-	ID                    string           `arg:"" name:"access-id" help:"Invitation (sivt_), identity grant (sgr_), or service HTTP grant (shg_) ID."`
+	ID                    string           `arg:"" name:"access-id" help:"Invitation (sivt_), identity grant (sgr_), HTTP grant (shg_), or exact service share (shr_) ID."`
 	Output                statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
@@ -120,12 +119,9 @@ func serviceShareKey(project projectConfiguration, name string) (string, error) 
 	if opaqueid.Valid(name, opaqueid.ServicePrefix) {
 		return "", nil
 	}
-	definition, found := project.Config.Services[name]
+	_, found := project.Config.Services[name]
 	if !found || name == "" {
 		return "", serviceShareInput("select a configured service key or exact service ID")
-	}
-	if config.SelectedDeployment(project.Config) == "local" && config.IsPublicService(definition) {
-		return "", serviceShareInput("this key selects a public URL; use tnl share invite, link, or token with its public URL")
 	}
 	return name, nil
 }
@@ -339,10 +335,10 @@ func runServiceShareList(ctx context.Context, f serviceShareListCommand, project
 		return err
 	}
 	defer s.Close()
-	return listServiceShares(ctx, s.Authenticated().Control, service.Id, f.Output, o)
+	return listServiceShares(ctx, s.Authenticated().Control, service.Id, service.TeamId, f.Output, o)
 }
 
-func listServiceShares(ctx context.Context, control *clientcontrol.Client, service string, mode statusOutputMode, o io.Writer) error {
+func listServiceShares(ctx context.Context, control *clientcontrol.Client, service, team string, mode statusOutputMode, o io.Writer) error {
 	grants, err := control.ListServiceGrants(ctx, service)
 	if err != nil {
 		return err
@@ -370,6 +366,16 @@ func listServiceShares(ctx context.Context, control *clientcontrol.Client, servi
 			return serviceShareResponse()
 		}
 	}
+	shares, err := control.ListTeamShares(ctx, team)
+	if err != nil {
+		return err
+	}
+	shares = slices.DeleteFunc(shares, func(share controlv1.Share) bool { return !slices.Contains(share.ServiceIds, service) })
+	for _, share := range shares {
+		if share.TeamId != team {
+			return serviceShareResponse()
+		}
+	}
 	if mode == statusOutputJSON {
 		return failure.Wrap("write service access list", failure.OutputUnavailable, json.NewEncoder(o).Encode(struct {
 			SchemaVersion int                                 `json:"schema_version"`
@@ -377,7 +383,8 @@ func listServiceShares(ctx context.Context, control *clientcontrol.Client, servi
 			Grants        []controlv1.ServiceGrant            `json:"grants"`
 			Invitations   []controlv1.ServiceInvitation       `json:"invitations"`
 			HTTPGrants    []controlv1.ServiceHTTPGrantSummary `json:"http_grants"`
-		}{1, service, grants, invitations, httpGrants}))
+			Shares        []controlv1.Share                   `json:"shares"`
+		}{1, service, grants, invitations, httpGrants, shares}))
 	}
 	now := time.Now()
 	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "service ID", Value: service})}
@@ -416,6 +423,13 @@ func listServiceShares(ctx context.Context, control *clientcontrol.Client, servi
 			clioutput.Field{Label: "expires", Value: grant.ExpiresAt.UTC().Format(time.RFC3339)},
 		)))
 	}
+	for _, share := range shares {
+		blocks = append(blocks, clioutput.Section(share.Id, clioutput.Fields(
+			clioutput.Field{Label: "scope", Value: string(share.Scope)},
+			clioutput.Field{Label: "state", Value: serviceShareState(&share.ExpiresAt, share.RevokedAt, now)},
+			clioutput.Field{Label: "expires", Value: share.ExpiresAt.UTC().Format(time.RFC3339)},
+		)))
+	}
 	return writeHumanFrame(o, "tnl share service list", "access", "", blocks...)
 }
 
@@ -430,22 +444,22 @@ func serviceShareState(expires, revoked *time.Time, now time.Time) string {
 }
 
 func serviceShareAccessID(id string) bool {
-	return opaqueid.Valid(id, opaqueid.ServiceInvitationPrefix) || opaqueid.Valid(id, opaqueid.ServiceGrantPrefix) || opaqueid.Valid(id, "shg_")
+	return opaqueid.Valid(id, opaqueid.ServiceInvitationPrefix) || opaqueid.Valid(id, opaqueid.ServiceGrantPrefix) || opaqueid.Valid(id, "shg_") || opaqueid.Valid(id, opaqueid.SharePrefix)
 }
 
 func runServiceShareRevoke(ctx context.Context, f serviceShareRevokeCommand, project projectConfiguration, o, d io.Writer) error {
 	if !serviceShareAccessID(f.ID) {
-		return serviceShareInput("select an exact service invitation, identity grant, or service HTTP grant ID")
+		return serviceShareInput("select an exact service invitation, identity grant, HTTP grant, or share ID")
 	}
 	s, service, err := openServiceShare(ctx, f.serviceShareSelection, project, "tnl share service revoke", d)
 	if err != nil {
 		return err
 	}
 	defer s.Close()
-	return revokeServiceShare(ctx, s.Authenticated().Control, service.Id, f, o)
+	return revokeServiceShare(ctx, s.Authenticated().Control, service.Id, service.TeamId, f, o)
 }
 
-func revokeServiceShare(ctx context.Context, control *clientcontrol.Client, service string, f serviceShareRevokeCommand, o io.Writer) error {
+func revokeServiceShare(ctx context.Context, control *clientcontrol.Client, service, team string, f serviceShareRevokeCommand, o io.Writer) error {
 	var err error
 	switch {
 	case opaqueid.Valid(f.ID, opaqueid.ServiceInvitationPrefix):
@@ -474,6 +488,18 @@ func revokeServiceShare(ctx context.Context, control *clientcontrol.Client, serv
 		err = control.RevokeServiceGrant(ctx, service, f.ID)
 	case opaqueid.Valid(f.ID, "shg_"):
 		err = control.RevokeServiceHTTPGrant(ctx, service, f.ID)
+	case opaqueid.Valid(f.ID, opaqueid.SharePrefix):
+		share, readErr := control.GetShare(ctx, f.ID)
+		if readErr != nil {
+			return readErr
+		}
+		if share.Id != f.ID || share.TeamId != team || !slices.Contains(share.ServiceIds, service) {
+			return serviceShareResponse()
+		}
+		if share.Scope != "service" || len(share.ServiceIds) != 1 || share.EntryServiceId != service {
+			return serviceShareInput("use tnl share revoke to revoke a preview share affecting several services")
+		}
+		_, err = control.RevokeShare(ctx, f.ID)
 	default:
 		return serviceShareInput("select an exact service access ID")
 	}
@@ -492,7 +518,7 @@ func revokeServiceShare(ctx context.Context, control *clientcontrol.Client, serv
 	))
 }
 
-func runServiceShareHTTPCreate(ctx context.Context, f serviceShareHTTPCreateCommand, project projectConfiguration, kind controlv1.CreateVisitorCredentialRequestKind, o, d io.Writer) error {
+func runServiceShareHTTPCreate(ctx context.Context, f serviceShareHTTPCreateCommand, project projectConfiguration, token bool, o, d io.Writer) error {
 	at, err := f.deadline(time.Now(), 7*24*time.Hour)
 	if err != nil {
 		return err
@@ -502,36 +528,13 @@ func runServiceShareHTTPCreate(ctx context.Context, f serviceShareHTTPCreateComm
 		return err
 	}
 	defer s.Close()
-	return createServiceShareHTTP(ctx, s.Authenticated().Control, service, f.Output, kind, at, o)
+	return createServiceShareHTTP(ctx, s.Authenticated().Control, service, f.Output, token, at, o)
 }
 
-func createServiceShareHTTP(ctx context.Context, control *clientcontrol.Client, service controlv1.Service, mode statusOutputMode, kind controlv1.CreateVisitorCredentialRequestKind, at time.Time, o io.Writer) error {
+func createServiceShareHTTP(ctx context.Context, control *clientcontrol.Client, service controlv1.Service, mode statusOutputMode, token bool, at time.Time, o io.Writer) error {
 	if service.Protocol != controlv1.ServiceProtocolHTTP || service.Endpoint == nil || !service.Endpoint.Public {
 		return serviceShareInput("HTTP links and tokens require a publicly reachable service HTTP service; use an identity invitation for connector access")
 	}
-	grant, err := control.CreateServiceHTTPGrant(ctx, service.Id, controlv1.CreateVisitorCredentialRequest{Kind: kind, ExpiresAt: at})
-	if err != nil {
-		return err
-	}
-	refresh, versioned := strings.CutPrefix(grant.RefreshCredential, "vrf1.")
-	permission := grant.Permission
-	if permission.Resource.Kind != "service" || permission.Resource.Id != service.Id || string(grant.Kind) != string(kind) || !grant.ExpiresAt.Equal(at) || !opaqueid.Valid(grant.GrantId, "shg_") || !versioned || !serviceShareSecret(refresh, grant.GrantId) || permission.Hostname != service.Endpoint.Hostname || permission.Port != service.Endpoint.Port || permission.VisitorPolicyRevision < 1 || permission.ExpiresAt.After(grant.ExpiresAt) || !permission.ExpiresAt.After(time.Now()) || len(permission.VisitorToken) > 2048 || strings.Count(permission.VisitorToken, ".") != 2 {
-		return serviceShareResponse()
-	}
-	value := permission.VisitorToken
-	if kind == controlv1.CreateVisitorCredentialRequestKindToken && grant.ShareUrl != nil {
-		return serviceShareResponse()
-	}
-	if kind == controlv1.CreateVisitorCredentialRequestKindShare {
-		expected := "https://" + net.JoinHostPort(service.Endpoint.Hostname, strconv.Itoa(service.Endpoint.Port)) + "/__tnl/share/" + grant.RefreshCredential
-		if grant.ShareUrl == nil || *grant.ShareUrl != expected {
-			return serviceShareResponse()
-		}
-		value = *grant.ShareUrl
-	}
-	if mode == statusOutputJSON {
-		return failure.Wrap("write service HTTP credential", failure.OutputUnavailable, json.NewEncoder(o).Encode(grant))
-	}
-	_, err = fmt.Fprintln(o, value)
-	return failure.Wrap("write service HTTP credential", failure.OutputUnavailable, err)
+	return createShareCredential(ctx, control, controlv1.CreateShareRequest{ServiceIds: []string{service.Id}, EntryServiceId: service.Id, ExpiresAt: at},
+		nil, service.TeamId, *service.Endpoint, token, mode, nil, o)
 }

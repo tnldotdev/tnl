@@ -8,6 +8,7 @@ import (
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestControlProxyBackendFailureIsUnavailable(t *testing.T) {
@@ -33,7 +34,7 @@ func TestControlProxyBackendFailureIsUnavailable(t *testing.T) {
 	if _, err := client.Discovery(t.Context()); !errors.Is(err, clientcontrol.ErrUnavailable) {
 		t.Fatal("stopped backend was reported as a malformed control response", err)
 	}
-	if _, err := client.HeartbeatPublishRun(t.Context(), "pr_0000000000000000000000", 1, "fixture"); !errors.Is(err, clientcontrol.ErrUnavailable) {
+	if _, err := client.HeartbeatServiceRun(t.Context(), "svc_0000000000000000000000", "srun_0000000000000000000000", "fixture", controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 4}); !errors.Is(err, clientcontrol.ErrUnavailable) {
 		t.Fatal("stopped backend made heartbeat terminal", err)
 	}
 }

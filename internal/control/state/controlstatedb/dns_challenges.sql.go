@@ -34,82 +34,13 @@ func (q *Queries) GetDNSChallengeChange(ctx context.Context, arg GetDNSChallenge
 	return i, err
 }
 
-const getDNSChallengeContext = `-- name: GetDNSChallengeContext :one
-SELECT
-    routes.id AS public_url_id,
-    routes.team_id,
-    routes.domain_id,
-    routes.dns_authority_reference,
-    routes.canonical_hostname,
-    COALESCE(authorities.canonical_domain, '')::text AS canonical_domain,
-    authorizations.id AS authorization_id,
-    authorizations.identifier,
-    authorizations.challenge_digest,
-    authorizations.presentation_reference,
-    authorizations.state
-FROM control.acme_authorizations AS authorizations
-JOIN control.acme_orders AS orders ON orders.id = authorizations.order_id
-JOIN control.public_urls AS routes ON routes.id = orders.public_url_id
-LEFT JOIN control.dns_authorities AS authorities
-    ON authorities.authority_reference = routes.dns_authority_reference
-    AND authorities.team_id = routes.team_id
-    AND authorities.domain_id = routes.domain_id
-WHERE routes.id = $1
-  AND authorizations.id = $2
-  AND authorizations.challenge_type = 'dns-01'
-`
-
-type GetDNSChallengeContextParams struct {
-	PublicURLID     string
-	AuthorizationID string
-}
-
-type GetDNSChallengeContextRow struct {
-	PublicURLID           string
-	TeamID                string
-	DomainID              string
-	DnsAuthorityReference pgtype.Text
-	CanonicalHostname     string
-	CanonicalDomain       string
-	AuthorizationID       string
-	Identifier            string
-	ChallengeDigest       []byte
-	PresentationReference pgtype.Text
-	State                 string
-}
-
-func (q *Queries) GetDNSChallengeContext(ctx context.Context, arg GetDNSChallengeContextParams) (GetDNSChallengeContextRow, error) {
-	row := q.db.QueryRow(ctx, getDNSChallengeContext, arg.PublicURLID, arg.AuthorizationID)
-	var i GetDNSChallengeContextRow
-	err := row.Scan(
-		&i.PublicURLID,
-		&i.TeamID,
-		&i.DomainID,
-		&i.DnsAuthorityReference,
-		&i.CanonicalHostname,
-		&i.CanonicalDomain,
-		&i.AuthorizationID,
-		&i.Identifier,
-		&i.ChallengeDigest,
-		&i.PresentationReference,
-		&i.State,
-	)
-	return i, err
-}
-
 const getDNSChallengeSubject = `-- name: GetDNSChallengeSubject :one
-SELECT
-    COALESCE(orders.public_url_id, '')::text AS public_url_id,
-    COALESCE(orders.publish_run_id, '')::text AS publish_run_id,
-    COALESCE(orders.publish_run_number, 0)::bigint AS publish_run_number,
-    COALESCE(orders.service_id, '')::text AS service_id,
-    COALESCE(orders.service_run_id, '')::text AS service_run_id,
-    COALESCE(orders.service_run_number, 0)::bigint AS service_run_number
+SELECT orders.service_id,orders.service_run_id,orders.service_run_number
 FROM control.acme_orders AS orders
 JOIN control.acme_authorizations AS authorizations ON authorizations.order_id = orders.id
 WHERE authorizations.id = $1
   AND authorizations.challenge_type = 'dns-01'
-  AND (orders.public_url_id = $2 OR orders.service_id = $2)
+  AND orders.service_id = $2
 `
 
 type GetDNSChallengeSubjectParams struct {
@@ -118,9 +49,6 @@ type GetDNSChallengeSubjectParams struct {
 }
 
 type GetDNSChallengeSubjectRow struct {
-	PublicURLID      string
-	PublishRunID     string
-	PublishRunNumber int64
 	ServiceID        string
 	ServiceRunID     string
 	ServiceRunNumber int64
@@ -129,14 +57,7 @@ type GetDNSChallengeSubjectRow struct {
 func (q *Queries) GetDNSChallengeSubject(ctx context.Context, arg GetDNSChallengeSubjectParams) (GetDNSChallengeSubjectRow, error) {
 	row := q.db.QueryRow(ctx, getDNSChallengeSubject, arg.AuthorizationID, arg.OwnerID)
 	var i GetDNSChallengeSubjectRow
-	err := row.Scan(
-		&i.PublicURLID,
-		&i.PublishRunID,
-		&i.PublishRunNumber,
-		&i.ServiceID,
-		&i.ServiceRunID,
-		&i.ServiceRunNumber,
-	)
+	err := row.Scan(&i.ServiceID, &i.ServiceRunID, &i.ServiceRunNumber)
 	return i, err
 }
 

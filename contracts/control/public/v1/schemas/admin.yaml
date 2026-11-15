@@ -8,7 +8,7 @@ schemas:
       cursor: { type: string, pattern: "^[1-9][0-9]{0,18}$" }
       team_id: { type: string }
       service_id: { type: string }
-      service_kind: { type: string, enum: [public_url, service] }
+      service_kind: { type: string, enum: [service] }
       event_type: { type: string, maxLength: 64 }
       occurred_at: { type: string, format: date-time }
       actor_identity_id: { type: string }
@@ -47,10 +47,10 @@ schemas:
         role,
         started_at,
         current_time,
-        enabled_public_urls,
-        suspended_public_urls,
-        starting_publish_runs,
-        ready_publish_runs,
+        enabled_services,
+        suspended_services,
+        starting_service_runs,
+        ready_service_runs,
         ingress_leases,
         relay_leases,
       ]
@@ -64,18 +64,22 @@ schemas:
       current_time:
         type: string
         format: date-time
-      enabled_public_urls:
+      enabled_services:
         type: integer
         minimum: 0
-      suspended_public_urls:
+        description: Enabled saved services that are not deleted or expired, including connector-only and guest services.
+      suspended_services:
         type: integer
         minimum: 0
-      starting_publish_runs:
+        description: Suspended saved services that are not deleted or expired.
+      starting_service_runs:
         type: integer
         minimum: 0
-      ready_publish_runs:
+        description: Unclosed starting service runs with current publisher authority and lifetime. Prepared runs are not included.
+      ready_service_runs:
         type: integer
         minimum: 0
+        description: Unclosed healthy ready service runs with current publisher authority, publisher lifetime, and certificate lifetime. This count does not independently probe connected relays.
       ingress_leases:
         type: integer
         minimum: 0
@@ -187,7 +191,7 @@ schemas:
         format: date-time
   MaintenanceControlName:
     type: string
-    enum: [public_url_creation, publish_run_creation, certificate_issuance]
+    enum: [service_creation, service_run_creation, certificate_issuance]
   MaintenanceControl:
     type: object
     additionalProperties: false

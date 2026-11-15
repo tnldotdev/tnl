@@ -20,6 +20,7 @@ type Preview struct {
 	SchemaVersion       int
 	ID                  string
 	TeamID              string
+	GuestID             string
 	CreatedByIdentityID string
 	ServiceIDs          []string
 	TeamAccessEnabled   bool
@@ -51,7 +52,7 @@ func (d *Database) CreatePreview(ctx context.Context, teamID, identityID, key st
 		return result, err
 	}
 	row, err := q.CreatePreview(ctx, controlstatedb.CreatePreviewParams{
-		ID: id, TeamID: teamID, CreatedByIdentityID: identityID, IdempotencyKey: key, CreatedAt: timestamp(now),
+		ID: id, TeamID: text(teamID), CreatedByIdentityID: text(identityID), IdempotencyKey: key, CreatedAt: timestamp(now),
 	})
 	if err != nil {
 		return result, err
@@ -81,8 +82,8 @@ func (d *Database) GetPreview(ctx context.Context, id string) (Preview, error) {
 	if ids == nil {
 		ids = []string{}
 	}
-	return Preview{SchemaVersion: int(row.SchemaVersion), ID: row.ID, TeamID: row.TeamID,
-		CreatedByIdentityID: row.CreatedByIdentityID, ServiceIDs: ids,
+	return Preview{SchemaVersion: int(row.SchemaVersion), ID: row.ID, TeamID: row.TeamID.String, GuestID: row.GuestID.String,
+		CreatedByIdentityID: row.CreatedByIdentityID.String, ServiceIDs: ids,
 		TeamAccessEnabled: row.TeamAccessEnabled, CreatedAt: row.CreatedAt.Time}, nil
 }
 
@@ -108,7 +109,7 @@ func (d *Database) AddPreviewService(ctx context.Context, request AddPreviewServ
 	if err != nil {
 		return result, publisherLookupError(err, ErrPreviewNotFound)
 	}
-	if group.TeamID != request.TeamID || group.CreatedByIdentityID != request.IdentityID || group.DemoServiceRunID.Valid {
+	if group.GuestID.Valid || group.TeamID.String != request.TeamID || group.CreatedByIdentityID.String != request.IdentityID || group.DemoServiceRunID.Valid {
 		return result, ErrPreviewAccess
 	}
 	service, err := q.LockService(ctx, request.ServiceID)
@@ -129,7 +130,7 @@ func (d *Database) AddPreviewService(ctx context.Context, request AddPreviewServ
 		return result, err
 	}
 	if _, err = q.AddPreviewService(ctx, controlstatedb.AddPreviewServiceParams{
-		PreviewID: group.ID, ServiceID: service.ID, IdentityID: request.IdentityID, AddedAt: timestamptz(now),
+		PreviewID: group.ID, ServiceID: service.ID, IdentityID: text(request.IdentityID), AddedAt: timestamptz(now),
 	}); err != nil {
 		return result, publisherLookupError(err, ErrPreviewStale)
 	}

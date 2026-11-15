@@ -25,13 +25,13 @@ var (
 const maximumShareLifetime = 30 * 24 * time.Hour
 
 type Share struct {
-	SchemaVersion                       int
-	ID, PreviewID, TeamID, Scope, Label string
-	ServiceIDs                          []string
-	EntryServiceID, CreatedByIdentityID string
-	EntryHostname                       string
-	CreatedAt, ExpiresAt                time.Time
-	RevokedAt                           *time.Time
+	SchemaVersion                                int
+	ID, PreviewID, TeamID, GuestID, Scope, Label string
+	ServiceIDs                                   []string
+	EntryServiceID, CreatedByIdentityID          string
+	EntryHostname                                string
+	CreatedAt, ExpiresAt                         time.Time
+	RevokedAt                                    *time.Time
 }
 
 type SharePage struct {
@@ -98,7 +98,7 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 		if err != nil {
 			return result, publisherLookupError(err, ErrPreviewNotFound)
 		}
-		if preview.TeamID != request.TeamID || preview.CreatedByIdentityID != request.ActingIdentityID || preview.DemoServiceRunID.Valid {
+		if preview.GuestID.Valid || preview.TeamID.String != request.TeamID || preview.CreatedByIdentityID.String != request.ActingIdentityID || preview.DemoServiceRunID.Valid {
 			return result, ErrPreviewAccess
 		}
 		included, err := q.ListPreviewServices(ctx, preview.ID)
@@ -114,7 +114,7 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 	if err = shareServicesForManagement(ctx, tx, ids, member, true); err != nil {
 		return result, err
 	}
-	existing, err := q.FindShareRequest(ctx, controlstatedb.FindShareRequestParams{CreatedByIdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey})
+	existing, err := q.FindShareRequest(ctx, controlstatedb.FindShareRequestParams{CreatedByIdentityID: text(request.ActingIdentityID), IdempotencyKey: request.IdempotencyKey})
 	if err == nil {
 		if subtle.ConstantTimeCompare(existing.RequestDigest, digest[:]) != 1 {
 			return result, ErrShareIdempotency
@@ -148,15 +148,15 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 		scope = "preview"
 	}
 	row, err := q.CreateShare(ctx, controlstatedb.CreateShareParams{ID: id, PreviewID: nullableText(request.PreviewID),
-		TeamID: request.TeamID, Scope: scope, Label: request.Label, EntryServiceID: request.EntryServiceID,
-		ControlSessionID: nullableText(companySessionID(ctx, request.ActingIdentityID)), CreatedByIdentityID: request.ActingIdentityID,
+		TeamID: text(request.TeamID), Scope: scope, Label: request.Label, EntryServiceID: request.EntryServiceID,
+		ControlSessionID: nullableText(companySessionID(ctx, request.ActingIdentityID)), CreatedByIdentityID: text(request.ActingIdentityID),
 		IdempotencyKey: request.IdempotencyKey, RequestDigest: digest[:], SecretDigest: request.SecretFingerprint[:],
 		CreatedAt: timestamptz(now), ExpiresAt: timestamptz(request.ExpiresAt)})
 	if err != nil {
 		return result, err
 	}
 	for _, service := range ids {
-		if _, err = q.AddShareService(ctx, controlstatedb.AddShareServiceParams{ServiceID: service, ShareID: row.ID, IdentityID: request.ActingIdentityID}); err != nil {
+		if _, err = q.AddShareService(ctx, controlstatedb.AddShareServiceParams{ServiceID: service, ShareID: row.ID, IdentityID: text(request.ActingIdentityID)}); err != nil {
 			return result, publisherLookupError(err, ErrShareStale)
 		}
 		if err = auditPrivateMutation(ctx, tx, service, request.ActingIdentityID, "grant.create", row.ID, now); err != nil {
@@ -216,36 +216,48 @@ func (d *Database) currentShareIssuer(ctx context.Context, tx pgx.Tx, share cont
 		return time.Time{}, ErrShareNotFound
 	}
 	if share.GuestID.Valid {
-		var live bool
-		var deadline time.Time
-		err = tx.QueryRow(ctx, `SELECT control.guest_share_live(guest.id,$3) AND NOT EXISTS(
-			SELECT 1 FROM control.share_services included WHERE included.share_id=$1 AND NOT EXISTS(
-				SELECT 1 FROM control.services service WHERE service.guest_id=guest.id AND service.id=included.service_id
-					AND service.enabled AND service.deleted_at IS NULL)),
-			LEAST(guest.expires_at,control.guest_serving_deadline(guest.id,$3))
-			FROM control.guest_trials guest WHERE guest.id=$2 AND guest.active_ready_at IS NOT NULL`, share.ID, share.GuestID.String, now).Scan(&live, &deadline)
+		if share.TeamID.Valid || share.CreatedByIdentityID.Valid || share.Scope != "guest" || len(ids) != 1 || ids[0] != share.EntryServiceID {
+			return time.Time{}, ErrShareNotFound
+		}
+		trial, err := q.GetGuestTrialByID(ctx, share.GuestID.String)
 		if err != nil {
 			return time.Time{}, publisherLookupError(err, ErrShareNotFound)
 		}
-		if !live || !deadline.After(now) {
+		service, err := q.GetService(ctx, share.EntryServiceID)
+		if err != nil {
+			return time.Time{}, publisherLookupError(err, ErrShareNotFound)
+		}
+		if !guestPublicationEligible(trial, now) || service.GuestID != share.GuestID || service.TeamID.Valid ||
+			!service.Enabled || service.DeletedAt.Valid {
 			return time.Time{}, ErrShareNotFound
 		}
-		return minTime(until, deadline), nil
+		until = minTime(until, trial.ExpiresAt.Time)
+		if trial.ActiveServiceRunID.Valid {
+			deadline, err := q.GuestServiceServingDeadline(ctx, controlstatedb.GuestServiceServingDeadlineParams{ServiceID: service.ID, Now: timestamptz(now)})
+			if err != nil || !deadline.Valid || !deadline.Time.After(now) {
+				if err != nil {
+					return time.Time{}, publisherLookupError(err, ErrShareNotFound)
+				}
+				return time.Time{}, ErrShareNotFound
+			}
+			until = minTime(until, deadline.Time)
+		}
+		return until, nil
 	}
-	principal := ControlPrincipal{IdentityID: share.CreatedByIdentityID, SessionID: share.ControlSessionID.String}
+	principal := ControlPrincipal{IdentityID: share.CreatedByIdentityID.String, SessionID: share.ControlSessionID.String}
 	if share.ControlSessionID.Valid {
 		parent, err := q.GetVisitorParentSession(ctx, share.ControlSessionID.String)
 		if err != nil {
 			return time.Time{}, publisherLookupError(err, ErrShareNotFound)
 		}
-		if parent.IdentityID != share.CreatedByIdentityID || parent.RevokedAt.Valid ||
+		if parent.IdentityID != share.CreatedByIdentityID.String || parent.RevokedAt.Valid ||
 			!parent.AccessExpiresAt.Time.After(now) || !parent.RefreshExpiresAt.Time.After(now) {
 			return time.Time{}, ErrShareNotFound
 		}
 		until = minTime(until, minTime(parent.AccessExpiresAt.Time, parent.RefreshExpiresAt.Time))
 	}
 	ctx = WithControlPrincipal(context.WithValue(ctx, serviceActorKey{}, nil), principal)
-	member, err := serviceMembershipForActor(ctx, tx, share.TeamID, share.CreatedByIdentityID, now)
+	member, err := serviceMembershipForActor(ctx, tx, share.TeamID.String, share.CreatedByIdentityID.String, now)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -255,11 +267,9 @@ func (d *Database) currentShareIssuer(ctx context.Context, tx pgx.Tx, share cont
 	return until, nil
 }
 
-func (d *Database) CreateGuestShare(ctx context.Context, guestID, serviceID, key, label string, fingerprint [32]byte, expiresAt, now time.Time) (result Share, retErr error) {
-	now = now.UTC().Truncate(time.Microsecond)
-	expiresAt = expiresAt.UTC().Truncate(time.Microsecond)
-	if guestID == "" || !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) || key == "" || len(key) > 128 || len(label) > 128 ||
-		!expiresAt.After(now) || expiresAt.After(now.Add(maximumShareLifetime)) {
+func (d *Database) CreateGuestShare(ctx context.Context, credential GuestCredential, serviceID, key, label string, fingerprint [32]byte, expiresAt, now time.Time) (result Share, retErr error) {
+	clock := newAuthorizationClock(now)
+	if !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) || key == "" || len(key) > 128 || len(label) > 128 {
 		return result, ErrShareInvalid
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -267,33 +277,39 @@ func (d *Database) CreateGuestShare(ctx context.Context, guestID, serviceID, key
 		return result, err
 	}
 	defer rollback(ctx, tx, "create guest share", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, serviceID); err != nil {
-		return result, err
-	}
 	q := controlstatedb.New(tx)
-	var live bool
-	if err = tx.QueryRow(ctx, `SELECT control.guest_share_live($1,$3) AND EXISTS(
-		SELECT 1 FROM control.services WHERE guest_id=$1 AND id=$2)`, guestID, serviceID, now).Scan(&live); err != nil {
+	trial, err := d.lockGuestCredential(ctx, q, credential, clock)
+	if err != nil {
 		return result, err
 	}
-	if !live {
+	service, err := q.LockService(ctx, serviceID)
+	if err != nil {
+		return result, publisherLookupError(err, ErrShareStale)
+	}
+	if service.GuestID.String != trial.ID || service.TeamID.Valid || !service.Enabled || service.DeletedAt.Valid ||
+		!guestPublicationEligible(trial, clock.current()) {
 		return result, ErrShareStale
 	}
-	digest := sha256.Sum256([]byte(guestID + ":" + serviceID + ":" + expiresAt.Format(time.RFC3339Nano) + ":" + label))
-	existing, err := q.FindShareRequest(ctx, controlstatedb.FindShareRequestParams{CreatedByIdentityID: guestID, IdempotencyKey: key})
+	expiresAt = minTime(expiresAt, trial.ExpiresAt.Time).UTC().Truncate(time.Microsecond)
+	encoded, err := json.Marshal(struct {
+		ServiceID, Label string
+		ExpiresAt        time.Time
+	}{serviceID, label, expiresAt})
+	if err != nil {
+		return result, err
+	}
+	digest := sha256.Sum256(encoded)
+	existing, err := q.FindGuestShareRequest(ctx, controlstatedb.FindGuestShareRequestParams{GuestID: text(trial.ID), IdempotencyKey: key})
 	if err == nil {
 		if subtle.ConstantTimeCompare(existing.RequestDigest, digest[:]) != 1 {
 			return result, ErrShareIdempotency
-		}
-		if err = tx.Commit(ctx); err != nil {
-			return result, err
 		}
 		return result, &CredentialDeliveryUnavailable{ResourceID: existing.ID}
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
 	}
-	count, err := q.CountActiveSharesForService(ctx, controlstatedb.CountActiveSharesForServiceParams{ServiceID: serviceID, Now: timestamptz(now)})
+	count, err := q.CountActiveSharesForService(ctx, controlstatedb.CountActiveSharesForServiceParams{ServiceID: serviceID, Now: timestamptz(clock.current())})
 	if err != nil {
 		return result, err
 	}
@@ -304,26 +320,29 @@ func (d *Database) CreateGuestShare(ctx context.Context, guestID, serviceID, key
 	if err != nil {
 		return result, err
 	}
-	row, err := q.CreateGuestShare(ctx, controlstatedb.CreateGuestShareParams{ID: id, GuestID: guestID, ServiceID: serviceID,
-		IdempotencyKey: key, Label: label, RequestDigest: digest[:], SecretDigest: fingerprint[:], ExpiresAt: timestamptz(expiresAt), Now: timestamptz(now)})
+	row, err := q.CreateGuestShare(ctx, controlstatedb.CreateGuestShareParams{
+		ID: id, GuestID: trial.ID, ServiceID: serviceID, Label: label, IdempotencyKey: key,
+		RequestDigest: digest[:], SecretDigest: fingerprint[:], Now: timestamptz(clock.current()), ExpiresAt: timestamptz(expiresAt),
+	})
 	if err != nil {
 		return result, publisherLookupError(err, ErrShareStale)
 	}
-	if _, err = q.AddGuestShareService(ctx, row.ID); err != nil {
-		return result, publisherLookupError(err, ErrShareStale)
+	if count, err := q.AddGuestShareService(ctx, controlstatedb.AddGuestShareServiceParams{ShareID: row.ID, GuestID: text(trial.ID)}); err != nil {
+		return result, err
+	} else if count != 1 {
+		return result, ErrShareStale
 	}
-	if err = auditPrivateMutation(ctx, tx, serviceID, "", "grant.create", row.ID, now); err != nil {
+	if err = auditPrivateMutation(ctx, tx, serviceID, "", "grant.create", row.ID, clock.current()); err != nil {
 		return result, err
 	}
-	result, err = shareWithServices(ctx, q, row)
-	if err != nil {
+	if _, err = tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
 		return result, err
 	}
-	entry, err := q.GetService(ctx, row.EntryServiceID)
-	if err != nil {
-		return result, err
+	if !guestPublicationEligible(trial, clock.current()) || !expiresAt.After(clock.current()) {
+		return result, ErrShareStale
 	}
-	result.EntryHostname = entry.CertificateHostname
+	result = shareFromModel(row, []string{serviceID})
+	result.EntryHostname = service.CertificateHostname
 	return result, tx.Commit(ctx)
 }
 
@@ -356,7 +375,7 @@ func (d *Database) ListTeamShares(ctx context.Context, team, identity, cursor st
 		return SharePage{}, ErrShareInvalid
 	}
 	q := controlstatedb.New(d.pool)
-	rows, err := q.ListTeamShares(ctx, controlstatedb.ListTeamSharesParams{TeamID: team, IdentityID: identity, AfterID: cursor})
+	rows, err := q.ListTeamShares(ctx, controlstatedb.ListTeamSharesParams{TeamID: text(team), IdentityID: text(identity), AfterID: cursor})
 	if err != nil {
 		return SharePage{}, err
 	}
@@ -393,13 +412,13 @@ func (d *Database) RevokeShare(ctx context.Context, id, identity string, now tim
 	if err != nil {
 		return result, publisherLookupError(err, ErrShareNotFound)
 	}
-	if row.CreatedByIdentityID != identity || row.GuestID.Valid {
+	if row.CreatedByIdentityID.String != identity || row.GuestID.Valid {
 		return result, ErrShareNotFound
 	}
-	if _, err = q.LockLocalTeamForMutation(ctx, row.TeamID); err != nil {
+	if _, err = q.LockLocalTeamForMutation(ctx, row.TeamID.String); err != nil {
 		return result, err
 	}
-	member, err := serviceMembershipForActor(ctx, tx, row.TeamID, identity, now)
+	member, err := serviceMembershipForActor(ctx, tx, row.TeamID.String, identity, now)
 	if err != nil {
 		return result, err
 	}
@@ -422,6 +441,53 @@ func (d *Database) RevokeShare(ctx context.Context, id, identity string, now tim
 	return shareFromModel(row, ids), tx.Commit(ctx)
 }
 
+func (d *Database) RevokeGuestShare(ctx context.Context, credential GuestCredential, id string, now time.Time) (result Share, retErr error) {
+	clock := newAuthorizationClock(now)
+	if !opaqueid.Valid(id, opaqueid.SharePrefix) {
+		return result, ErrShareInvalid
+	}
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return result, err
+	}
+	defer rollback(ctx, tx, "revoke guest share", &retErr)()
+	q := controlstatedb.New(tx)
+	trial, err := d.lockGuestCredential(ctx, q, credential, clock)
+	if err != nil {
+		return result, err
+	}
+	share, err := q.GetShare(ctx, id)
+	if err != nil {
+		return result, publisherLookupError(err, ErrShareNotFound)
+	}
+	if share.GuestID.String != trial.ID || share.TeamID.Valid || share.Scope != "guest" {
+		return result, ErrShareNotFound
+	}
+	service, err := q.LockService(ctx, share.EntryServiceID)
+	if err != nil {
+		return result, publisherLookupError(err, ErrShareNotFound)
+	}
+	if service.GuestID != share.GuestID || service.TeamID.Valid {
+		return result, ErrShareNotFound
+	}
+	row, err := q.RevokeGuestShare(ctx, controlstatedb.RevokeGuestShareParams{
+		ShareID: id, GuestID: text(trial.ID), Now: timestamptz(clock.current()),
+	})
+	if err != nil {
+		return result, err
+	}
+	if err = auditPrivateMutation(ctx, tx, service.ID, "", "grant.revoke", id, clock.current()); err != nil {
+		return result, err
+	}
+	if _, err = tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
+		return result, err
+	}
+	if !trial.ExpiresAt.Time.After(clock.current()) {
+		return result, ErrGuestTrialSpent
+	}
+	return shareFromModel(row, []string{service.ID}), tx.Commit(ctx)
+}
+
 func shareWithServices(ctx context.Context, q *controlstatedb.Queries, row controlstatedb.ControlShare) (Share, error) {
 	ids, err := q.ListShareServices(ctx, row.ID)
 	if err != nil {
@@ -432,6 +498,6 @@ func shareWithServices(ctx context.Context, q *controlstatedb.Queries, row contr
 
 func shareFromModel(row controlstatedb.ControlShare, ids []string) Share {
 	return Share{SchemaVersion: int(row.SchemaVersion), ID: row.ID, PreviewID: row.PreviewID.String,
-		TeamID: row.TeamID, Scope: row.Scope, Label: row.Label, ServiceIDs: ids, EntryServiceID: row.EntryServiceID,
-		CreatedByIdentityID: row.CreatedByIdentityID, CreatedAt: row.CreatedAt.Time, ExpiresAt: row.ExpiresAt.Time, RevokedAt: optionalTime(row.RevokedAt)}
+		TeamID: row.TeamID.String, GuestID: row.GuestID.String, Scope: row.Scope, Label: row.Label, ServiceIDs: ids, EntryServiceID: row.EntryServiceID,
+		CreatedByIdentityID: row.CreatedByIdentityID.String, CreatedAt: row.CreatedAt.Time, ExpiresAt: row.ExpiresAt.Time, RevokedAt: optionalTime(row.RevokedAt)}
 }

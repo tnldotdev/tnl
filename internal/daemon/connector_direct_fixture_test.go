@@ -231,7 +231,7 @@ func startConnectorDirectPublisher(t *testing.T, f *privateSeparatedFixture, ser
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.authority, enrollment.EnrollmentKey)
+	native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, publisheridentity.NativeControl{Services: f.identity.routes}, f.identity.authority, enrollment.EnrollmentKey)
 	if err != nil {
 		t.Fatal(err)
 	}

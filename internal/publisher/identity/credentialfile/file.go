@@ -30,7 +30,6 @@ type File struct {
 	GrantID             string  `json:"grant_id"`
 	TeamID              string  `json:"team_id"`
 	Kind                string  `json:"kind"`
-	PublicURLID         *string `json:"public_url_id,omitempty"`
 	ServiceID           *string `json:"service_id,omitempty"`
 	DomainID            *string `json:"domain_id,omitempty"`
 	Namespace           *string `json:"namespace,omitempty"`
@@ -38,7 +37,7 @@ type File struct {
 }
 
 func New(server string, identity authorityv1.PublisherEnrollmentResult, private ed25519.PrivateKey) (File, error) {
-	f := File{Version: 1, ControlURL: server, PublisherIdentityID: identity.ClientId, KeyID: identity.KeyId, GrantID: identity.GrantId, TeamID: identity.TeamId, Kind: string(identity.Kind), PublicURLID: identity.PublicUrlId, ServiceID: identity.ServiceId, DomainID: identity.DomainId, Namespace: identity.Namespace, PrivateKey: base64.RawURLEncoding.EncodeToString(private)}
+	f := File{Version: 1, ControlURL: server, PublisherIdentityID: identity.ClientId, KeyID: identity.KeyId, GrantID: identity.GrantId, TeamID: identity.TeamId, Kind: string(identity.Kind), ServiceID: identity.ServiceId, DomainID: identity.DomainId, Namespace: identity.Namespace, PrivateKey: base64.RawURLEncoding.EncodeToString(private)}
 	if _, _, err := f.Validate(); err != nil {
 		return File{}, err
 	}
@@ -56,16 +55,12 @@ func (f File) Validate() (authorityv1.PublisherEnrollmentResult, ed25519.Private
 	if err != nil || len(private) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(private[:ed25519.SeedSize]), private) || base64.RawURLEncoding.EncodeToString(private) != f.PrivateKey {
 		return authorityv1.PublisherEnrollmentResult{}, nil, ErrInvalid
 	}
-	i := authorityv1.PublisherEnrollmentResult{ClientId: f.PublisherIdentityID, KeyId: f.KeyID, GrantId: f.GrantID, TeamId: f.TeamID, Kind: authorityv1.PublisherEnrollmentResultKind(f.Kind), PublicUrlId: f.PublicURLID, ServiceId: f.ServiceID, DomainId: f.DomainID, Namespace: f.Namespace}
+	i := authorityv1.PublisherEnrollmentResult{ClientId: f.PublisherIdentityID, KeyId: f.KeyID, GrantId: f.GrantID, TeamId: f.TeamID, Kind: authorityv1.PublisherEnrollmentResultKind(f.Kind), ServiceId: f.ServiceID, DomainId: f.DomainID, Namespace: f.Namespace}
 	if !opaqueid.Valid(i.ClientId, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(i.KeyId, opaqueid.PublisherIdentityKeyPrefix) || !opaqueid.Valid(i.GrantId, opaqueid.PublisherGrantPrefix) || i.TeamId == "" {
 		return i, nil, ErrInvalid
 	}
-	if i.Kind == "saved_public_url" {
-		if i.PublicUrlId == nil || !opaqueid.Valid(*i.PublicUrlId, opaqueid.PublicURLPrefix) || i.DomainId != nil || i.Namespace != nil || i.ServiceId != nil {
-			return i, nil, ErrInvalid
-		}
-	} else if i.Kind == "namespace" {
-		if i.PublicUrlId != nil || i.DomainId == nil || !opaqueid.Valid(*i.DomainId, opaqueid.DomainPrefix) || i.Namespace == nil || i.ServiceId != nil {
+	if i.Kind == "namespace" {
+		if i.DomainId == nil || !opaqueid.Valid(*i.DomainId, opaqueid.DomainPrefix) || i.Namespace == nil || i.ServiceId != nil {
 			return i, nil, ErrInvalid
 		}
 		canonical, err := naming.CanonicalizeHostname(*i.Namespace)
@@ -73,7 +68,7 @@ func (f File) Validate() (authorityv1.PublisherEnrollmentResult, ed25519.Private
 			return i, nil, ErrInvalid
 		}
 	} else if i.Kind == "service" {
-		if i.ServiceId == nil || !opaqueid.Valid(*i.ServiceId, opaqueid.ServicePrefix) || i.PublicUrlId != nil || i.DomainId != nil || i.Namespace != nil {
+		if i.ServiceId == nil || !opaqueid.Valid(*i.ServiceId, opaqueid.ServicePrefix) || i.DomainId != nil || i.Namespace != nil {
 			return i, nil, ErrInvalid
 		}
 	} else {

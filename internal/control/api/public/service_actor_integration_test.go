@@ -516,7 +516,7 @@ func TestIntegrationServiceActorAccessPagination(t *testing.T) {
 	if _, err := f.sql.Exec(ctx, `UPDATE control.visitor_grants SET revoked_at=$2 WHERE service_id=$1`, service.ID, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if rows, _, err := f.d.ListAvailableServices(ctx, recipient.Identity.Identity.Id, "", f.now); err != nil || len(rows) != 0 {
+	if rows, _, err := f.d.ListAvailableServices(ctx, recipient.Identity.Identity.Id, "", "connector", f.now); err != nil || len(rows) != 0 {
 		t.Fatal("grant history became visitor access", err)
 	}
 	serviceResult(t, f.serviceCall("GET", base+"/grants", serviceOwnerSub, nil, nil), 200, nil)

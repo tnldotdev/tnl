@@ -20,13 +20,13 @@ import (
 )
 
 type ServiceRunPreparation struct {
-	ServiceID, TeamID, RunID, PublisherIdentityID, PublisherGrantID, PublisherKeyID, IdempotencyKey string
-	RunNumber                                                                                       int64
-	ExpiresAt                                                                                       time.Time
-	CertificatePlan                                                                                 CertificatePlan
-	Hostname, DomainID                                                                              string
-	Traffic                                                                                         trafficlimits.Limits
-	RequirePostQuantum                                                                              bool
+	ServiceID, TeamID, GuestID, RunID, PublisherIdentityID, PublisherGrantID, PublisherKeyID, IdempotencyKey string
+	RunNumber                                                                                                int64
+	ExpiresAt                                                                                                time.Time
+	CertificatePlan                                                                                          CertificatePlan
+	Hostname, DomainID                                                                                       string
+	Traffic                                                                                                  trafficlimits.Limits
+	RequirePostQuantum                                                                                       bool
 }
 
 // ServiceRunRequest separates run-local selections from saved target trust.
@@ -65,10 +65,10 @@ func serviceRunPreparation(r controlstatedb.ControlServiceRun) (ServiceRunPrepar
 	if err != nil {
 		return ServiceRunPreparation{}, err
 	}
-	return ServiceRunPreparation{ServiceID: r.ServiceID, TeamID: r.TeamID, RunID: r.ID,
+	return ServiceRunPreparation{ServiceID: r.ServiceID, TeamID: r.TeamID.String, GuestID: r.GuestID.String, RunID: r.ID,
 		PublisherIdentityID: r.PublisherIdentityID, PublisherGrantID: r.PublisherGrantID,
 		PublisherKeyID: r.PublisherKeyID, IdempotencyKey: r.IdempotencyKey,
-		RunNumber: r.RunNumber, ExpiresAt: r.PreparationExpiresAt.Time,
+		RunNumber: r.RunNumber, ExpiresAt: minTime(r.PreparationExpiresAt.Time, r.PublisherExpiresAt.Time),
 		Hostname: r.CertificateHostname, DomainID: r.CertificateDomainID.String,
 		Traffic:            traffic,
 		RequirePostQuantum: r.RequirePostQuantum,
@@ -100,6 +100,9 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		return result, ErrServiceAccess
 	}
 	if err != nil {
+		return result, err
+	}
+	if err = d.guestServiceSource(ctx, q, service.GuestID.String, publisherRequestSource(ctx), clock.current()); err != nil {
 		return result, err
 	}
 	saved, err := checkedServiceMetadata(service)
@@ -170,10 +173,22 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		if !result.ExpiresAt.After(clock.current()) {
 			return ServiceRunPreparation{}, ErrServiceAccess
 		}
+		if _, err = tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
+			return ServiceRunPreparation{}, err
+		}
+		if err = d.guestServiceSource(ctx, q, run.GuestID.String, publisherRequestSource(ctx), clock.current()); err != nil {
+			return ServiceRunPreparation{}, err
+		}
+		if !run.PublisherExpiresAt.Time.After(clock.current()) || !run.PreparationExpiresAt.Time.After(clock.current()) {
+			return ServiceRunPreparation{}, ErrServiceAccess
+		}
 		if err = tx.Commit(ctx); err != nil {
 			return result, err
 		}
 		return result, nil
+	}
+	if err := requireNewServiceWork(ctx, q, MaintenanceControlServiceRunCreation); err != nil {
+		return result, err
 	}
 	traffic, err := resolveRunTraffic(request.TrafficSelection, request.TrafficDefaults, request.TrafficCeiling)
 	if err != nil {
@@ -197,9 +212,7 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		if active.PublisherExpiresAt.Time.After(clock.current()) && (serviceRunLifecycleState(active.State) != serviceRunPrepared || active.PreparationExpiresAt.Time.After(clock.current())) {
 			return result, ErrServiceConflict
 		}
-		if _, err = q.CloseServiceRun(ctx, controlstatedb.CloseServiceRunParams{
-			ID: active.ID, ServiceID: serviceID, RunNumber: active.RunNumber, Now: timestamptz(now),
-		}); err != nil {
+		if _, err = closeServiceRun(ctx, q, active, clock.current()); err != nil {
 			return result, err
 		}
 	}
@@ -247,6 +260,21 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 	if err != nil {
 		return result, err
 	}
+	if run.GuestID.Valid {
+		count, err := q.BeginGuestServiceRun(ctx, controlstatedb.BeginGuestServiceRunParams{
+			ServiceRunID: run.ID, ServiceID: serviceID, StartedAt: timestamptz(clock.current()),
+		})
+		if err != nil {
+			return result, err
+		}
+		if count != 1 {
+			return result, ErrGuestTrialSpent
+		}
+		run, err = boundGuestServingAuthority(ctx, q, run, clock.current())
+		if err != nil {
+			return result, err
+		}
+	}
 	result, err = serviceRunPreparation(run)
 	if err != nil {
 		return result, err
@@ -255,6 +283,9 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		return ServiceRunPreparation{}, err
 	}
 	if _, err = serviceRunPublisherPermission(ctx, tx, run, clock.current()); err != nil {
+		return ServiceRunPreparation{}, err
+	}
+	if err = d.guestServiceSource(ctx, q, run.GuestID.String, publisherRequestSource(ctx), clock.current()); err != nil {
 		return ServiceRunPreparation{}, err
 	}
 	if !until.After(clock.current()) {
@@ -309,7 +340,7 @@ func privateAssignments(ctx context.Context, q *controlstatedb.Queries, seed cre
 	return result, nil
 }
 
-func serviceRunAuthorization(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, serviceID, runID, token string, now time.Time) (controlstatedb.ControlServiceRun, error) {
+func (d *Database) serviceRunAuthorization(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, serviceID, runID, token string, now time.Time) (controlstatedb.ControlServiceRun, error) {
 	clock := newAuthorizationClock(now)
 	if !opaqueid.Valid(runID, opaqueid.ServiceRunPrefix) {
 		return controlstatedb.ControlServiceRun{}, ErrServiceAccess
@@ -335,7 +366,10 @@ func serviceRunAuthorization(ctx context.Context, tx pgx.Tx, q *controlstatedb.Q
 	if _, err = serviceRunPublisherPermission(ctx, tx, run, clock.current()); err != nil {
 		return run, err
 	}
-	observability.AuthenticatedServerScope(ctx, observability.Identity{TeamID: run.TeamID, PublisherIdentityID: run.PublisherIdentityID, ServiceID: run.ServiceID}, observability.Fields{Component: "control"})
+	if err = d.guestServiceSource(ctx, q, run.GuestID.String, publisherRequestSource(ctx), clock.current()); err != nil {
+		return run, err
+	}
+	observability.AuthenticatedServerScope(ctx, observability.Identity{TeamID: run.TeamID.String, PublisherIdentityID: run.PublisherIdentityID, ServiceID: run.ServiceID}, observability.Fields{Component: "control"})
 	return run, nil
 }
 
@@ -388,6 +422,11 @@ func replenishServiceConnections(ctx context.Context, q *controlstatedb.Queries,
 	var replaced []controlstatedb.ControlServiceConnectionSlot
 	used := make(map[string]bool, 2)
 	for _, slot := range stale {
+		if PublisherConnectionState(slot.State) == PublisherConnectionReady && slot.Unexpected {
+			if err := openServiceRecoveryEpisode(ctx, q, run, now); err != nil {
+				return err
+			}
+		}
 		if PublisherConnectionState(slot.State) == PublisherConnectionReady || PublisherConnectionState(slot.State) == PublisherConnectionConnected {
 			if _, err = q.ExpireServiceConnectionSlot(ctx, controlstatedb.ExpireServiceConnectionSlotParams{
 				PublisherConnectionID: slot.PublisherConnectionID, ServiceRunID: run.ID, Now: timestamptz(now),
@@ -500,11 +539,12 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	run, err := serviceRunAuthorization(ctx, tx, q, serviceID, runID, token, clock.current())
+	run, err := d.serviceRunAuthorization(ctx, tx, q, serviceID, runID, token, clock.current())
 	if err != nil {
 		return result, err
 	}
 	previousExpiration := run.PublisherExpiresAt.Time
+	firstReadiness := !run.ReadyAt.Valid
 	if report.StreamCapacity < 1 || report.StreamCapacity > 1<<20 || report.ActiveStreams < 0 {
 		return result, ErrServiceAccess
 	}
@@ -512,9 +552,13 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 		return result, err
 	}
 	run.Healthy, run.StreamCapacity, run.ReportedStreams = report.Healthy, report.StreamCapacity, report.ActiveStreams
+	until := now.Add(45 * time.Second)
+	if run.GuestID.Valid && run.PublisherExpiresAt.Time.After(until) {
+		until = run.PublisherExpiresAt.Time
+	}
 	run, err = q.RenewServiceRun(ctx, controlstatedb.RenewServiceRunParams{
 		ID: runID, ServiceID: serviceID, RunNumber: run.RunNumber,
-		RunTokenDigest: run.RunTokenDigest, PublisherExpiresAt: timestamptz(now.Add(45 * time.Second)), Now: timestamptz(clock.current()),
+		RunTokenDigest: run.RunTokenDigest, PublisherExpiresAt: timestamptz(until), Now: timestamptz(clock.current()),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
@@ -540,7 +584,12 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	if err != nil {
 		return result, err
 	}
+	var previousConnections []controlstatedb.ControlServiceConnectionSlot
 	if ready < 2 {
+		previousConnections, err = q.ListServiceConnectionSlots(ctx, run.ID)
+		if err != nil {
+			return result, err
+		}
 		if err = replenishServiceConnections(ctx, q, seed, run, clock.current()); err != nil {
 			return result, err
 		}
@@ -558,6 +607,14 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 			}
 		}
 	}
+	if run.State == "ready" {
+		run, err = markGuestServiceRunReady(ctx, q, run, clock.current())
+	} else {
+		run, err = boundGuestServingAuthority(ctx, q, run, clock.current())
+	}
+	if err != nil {
+		return result, err
+	}
 	connections, err := privateAssignments(ctx, q, seed, run)
 	if err != nil {
 		return result, err
@@ -568,11 +625,31 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	if _, err = serviceRunPublisherPermission(ctx, tx, run, clock.current()); err != nil {
 		return result, err
 	}
+	if err = d.guestServiceSource(ctx, q, run.GuestID.String, publisherRequestSource(ctx), clock.current()); err != nil {
+		return result, err
+	}
 	if !previousExpiration.After(clock.current()) || !run.PublisherExpiresAt.Time.After(clock.current()) {
 		return result, ErrServiceAccess
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return result, err
+	}
+	if firstReadiness && run.ReadyAt.Valid {
+		d.activity.metrics.Load().ObserveServiceRunReady()
+	}
+	for _, previous := range previousConnections {
+		for _, current := range connections {
+			if previous.ConnectionSlot != current.ConnectionSlot || previous.PublisherConnectionID == current.PublisherConnectionID {
+				continue
+			}
+			reason := "unavailable"
+			if previous.State == "ready" {
+				reason = "failed_ready"
+			} else if !previous.CredentialExpiresAt.Time.After(now) {
+				reason = "expired"
+			}
+			d.activity.metrics.Load().AddAssignmentReplacements(reason, 1)
+		}
 	}
 	return ServiceRunState{ServiceID: serviceID, RunID: runID, RunNumber: run.RunNumber,
 		Healthy: run.Healthy, StreamCapacity: run.StreamCapacity, ReportedStreams: run.ReportedStreams,
@@ -607,9 +684,16 @@ func (d *Database) CloseServiceRun(ctx context.Context, serviceID, runID, token 
 	if !bytes.Equal(digest[:], run.RunTokenDigest) || run.ClosedAt.Valid || !serviceRunLifecycleState(run.State).active() {
 		return ErrServiceAccess
 	}
-	count, err := q.CloseServiceRun(ctx, controlstatedb.CloseServiceRunParams{
-		ID: runID, ServiceID: serviceID, RunNumber: run.RunNumber, Now: timestamptz(now),
-	})
+	if run.GuestID.Valid {
+		trial, err := q.GetGuestTrialByID(ctx, run.GuestID.String)
+		if err != nil {
+			return err
+		}
+		if err = d.guestSourceAddress(trial, publisherRequestSource(ctx)); err != nil {
+			return err
+		}
+	}
+	count, err := closeServiceRun(ctx, q, run, now)
 	if err != nil {
 		return err
 	}

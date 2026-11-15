@@ -10,9 +10,9 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [public_url_id, refresh_token]
+              required: [service_id, refresh_token]
               properties:
-                public_url_id: { type: string }
+                service_id: { type: string }
                 refresh_token: { type: string }
       responses:
         "201":

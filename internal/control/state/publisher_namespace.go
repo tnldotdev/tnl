@@ -209,19 +209,15 @@ func (d *Database) allocateService(ctx context.Context, tx pgx.Tx, p PublisherId
 	if until != nil && !until.After(clock.current()) {
 		return ServiceRecord{}, ErrPublisherIdentity
 	}
-	allowed, err := q.LockPublicURLCreationControl(ctx)
-	if err != nil {
+	if err := requireNewServiceWork(ctx, q, MaintenanceControlServiceCreation); err != nil {
 		return ServiceRecord{}, err
-	}
-	if !allowed {
-		return ServiceRecord{}, ErrPublicURLCreationGated
 	}
 	id, err := opaqueid.New(opaqueid.ServicePrefix)
 	if err != nil {
 		return ServiceRecord{}, err
 	}
 	ownership := sha256.Sum256([]byte(p.ID + "\x00" + p.GrantID + "\x00" + r.Invocation))
-	if _, err = q.InsertService(ctx, controlstatedb.InsertServiceParams{ID: id, TeamID: p.Scope.TeamID, Name: s.Name, NameScope: "allocation/" + id, CreatedByIdentityID: p.CreatorID, IdempotencyKey: "allocation/" + id, RequestDigest: ownership[:], Now: timestamptz(clock.entered)}); err != nil {
+	if _, err = q.InsertService(ctx, controlstatedb.InsertServiceParams{ID: id, TeamID: text(p.Scope.TeamID), Name: s.Name, NameScope: "allocation/" + id, CreatedByIdentityID: text(p.CreatorID), IdempotencyKey: "allocation/" + id, RequestDigest: ownership[:], Now: timestamptz(clock.entered)}); err != nil {
 		return ServiceRecord{}, err
 	}
 	trust, err := appliedServiceTargetTrust(s.TargetTLS)
@@ -318,9 +314,4 @@ func (d *Database) DeletePublisherService(ctx context.Context, p PublisherIdenti
 		return ErrServiceAccess
 	}
 	return tx.Commit(ctx)
-}
-
-// the retained saved-URL engine cannot publish service allocations.
-func (d *Database) PublisherMayStartRun(_ context.Context, p PublisherIdentity, id string) (bool, error) {
-	return p.Scope.Kind == "saved_public_url" && p.Scope.PublicURLID == id, nil
 }

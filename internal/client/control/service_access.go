@@ -10,6 +10,12 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
+func (c *Client) CreateServiceGrant(ctx context.Context, service, key string, body controlv1.CreateServiceGrantRequest) (controlv1.ServiceGrant, error) {
+	return requestWithAccess[controlv1.ServiceGrant](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateServiceGrant(ctx, service, &controlv1.CreateServiceGrantParams{IdempotencyKey: key}, body, editors...)
+	})
+}
+
 func (c *Client) InviteServiceVisitor(ctx context.Context, service, key string, body controlv1.CreateServiceInvitationRequest) (controlv1.ServiceInvitationCreation, error) {
 	return requestWithAccess[controlv1.ServiceInvitationCreation](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.InviteServiceVisitor(ctx, service, &controlv1.InviteServiceVisitorParams{IdempotencyKey: key}, body, e...)

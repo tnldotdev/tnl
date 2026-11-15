@@ -150,7 +150,7 @@ func TestIntegrationCreatePlainServiceRemainsDeclarationFree(t *testing.T) {
 	}
 }
 
-func TestIntegrationCreateServiceDeclarationRejectsMetadataUpdates(t *testing.T) {
+func TestIntegrationCreateServiceDeclarationRejectsContradictoryMetadataUpdates(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "create_declaration_metadata")
 	actor := oidcRouteRequest(t, d, now)
 	ctx := t.Context()
@@ -230,17 +230,15 @@ func TestIntegrationCreateServiceDeclarationRejectsMetadataUpdates(t *testing.T)
 		t.Fatal(err)
 	}
 	for name, change := range map[string]func(*ServiceMetadata){
-		"unchanged":    func(*ServiceMetadata) {},
 		"remove trust": func(m *ServiceMetadata) { m.TLS = nil },
 		"change trust": func(m *ServiceMetadata) { m.TLS = changedTrust },
 		"protocol":     func(m *ServiceMetadata) { m.Protocol = "tcp" },
-		"pool":         func(m *ServiceMetadata) { m.PublisherPool = !m.PublisherPool },
 	} {
 		t.Run(name, func(t *testing.T) {
 			metadata := service.ServiceMetadata
 			change(&metadata)
-			if _, err := d.ConfigureService(ctx, service.ID, actor.ActingIdentityID, metadata, now); !errors.Is(err, ErrServiceConflict) {
-				t.Fatal("metadata-only update accepted a service-owned declaration", err)
+			if _, err := d.ConfigureService(ctx, service.ID, actor.ActingIdentityID, metadata, nil, ServiceUpdateConditions{}, now); !errors.Is(err, ErrServiceConflict) {
+				t.Fatal("metadata-only update contradicted a service-owned declaration", err)
 			}
 			currentStored, err := q.GetServiceConfiguration(ctx, service.ID)
 			if err != nil || !reflect.DeepEqual(stored, currentStored) {
@@ -260,6 +258,10 @@ func TestIntegrationCreateServiceDeclarationRejectsMetadataUpdates(t *testing.T)
 			}
 		})
 	}
+	if unchanged, err := d.ConfigureService(ctx, service.ID, actor.ActingIdentityID, service.ServiceMetadata, nil, ServiceUpdateConditions{}, now); err != nil ||
+		!reflect.DeepEqual(unchanged.ServiceMetadata, service.ServiceMetadata) {
+		t.Fatal("matching metadata could not retain the declaration", err)
+	}
 	if _, err := d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 1}); err != nil {
 		t.Fatal("rejected metadata updates revoked the existing run's authority", err)
 	}
@@ -269,7 +271,7 @@ func TestIntegrationCreateServiceDeclarationRejectsMetadataUpdates(t *testing.T)
 	}
 	plainMetadata := plain.ServiceMetadata
 	plainMetadata.Protocol = "postgres"
-	updated, err := d.ConfigureService(ctx, plain.ID, actor.ActingIdentityID, plainMetadata, now)
+	updated, err := d.ConfigureService(ctx, plain.ID, actor.ActingIdentityID, plainMetadata, nil, ServiceUpdateConditions{}, now)
 	if err != nil || updated.Protocol != "postgres" || updated.TrustRevision != plain.TrustRevision+1 || updated.Endpoint == nil || updated.Endpoint.Public {
 		t.Fatal("declaration guard changed ordinary metadata-only service updates", err)
 	}

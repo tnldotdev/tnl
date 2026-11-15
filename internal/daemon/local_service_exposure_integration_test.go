@@ -15,6 +15,7 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -63,6 +64,10 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 	service, err := f.identity.routes.GetService(t.Context(), realized.ServiceId)
 	if err != nil || service.Endpoint == nil || !service.Endpoint.Public || service.Endpoint.Port != 443 {
 		t.Fatal("local HTTP did not use shared HTTPS", service, err)
+	}
+	var beforeServiceCount int
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.services WHERE team_id=$1 AND deleted_at IS NULL`, f.identity.teamID).Scan(&beforeServiceCount); err != nil {
+		t.Fatal(err)
 	}
 	var proof *httpaccess.ReadinessProof
 	prepared := make(chan struct{})
@@ -193,9 +198,9 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 	if err != nil || !found || net.JoinHostPort("127.0.0.1", strconv.Itoa(port)) != local.Addr().String() {
 		t.Fatal("exposure renumbered SQLite assignment", port, err)
 	}
-	var publicURLs int
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.public_urls`).Scan(&publicURLs); err != nil || publicURLs != 0 || posts.Load() != 4 {
-		t.Fatal("local service created another publication or replayed a request", publicURLs, posts.Load(), err)
+	var serviceCount int
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.services WHERE team_id=$1 AND deleted_at IS NULL`, f.identity.teamID).Scan(&serviceCount); err != nil || serviceCount != beforeServiceCount || posts.Load() != 4 {
+		t.Fatal("local exposure created another service or replayed a request", serviceCount, beforeServiceCount, posts.Load(), err)
 	}
 	setPublic(false)
 	_, err = f.identity.routes.ReleaseServiceEndpoint(t.Context(), service.Id, controlv1.ReleaseServiceEndpointRequest{
@@ -383,7 +388,8 @@ func TestIntegrationLocalHTTPServiceRequestLimitsAcrossPublicAndConnectorAccess(
 				if readErr != nil || response.StatusCode != want {
 					t.Fatal("local HTTP request budget not enforced", response.StatusCode, want, readErr)
 				}
-				if want == http.StatusServiceUnavailable && (string(body) != "HTTP request limit reached\n" || response.Header.Get("Retry-After") != "") {
+				if want == http.StatusServiceUnavailable && (string(body) != diagnostic.Text(diagnostic.RequestBudgetExhausted) ||
+					response.Header.Get("Tnl-Error-Code") != string(diagnostic.RequestBudgetExhausted) || response.Header.Get("Retry-After") != "") {
 					t.Fatal("HTTP request failed outside its configured total budget", string(body), response.Header.Get("Retry-After"))
 				}
 			}

@@ -26,8 +26,8 @@ func fixture(t *testing.T) File {
 	if err != nil {
 		t.Fatal(err)
 	}
-	url := id(opaqueid.PublicURLPrefix)
-	f, err := New("https://control.example", authorityv1.PublisherEnrollmentResult{ClientId: id(opaqueid.PublisherIdentityPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix), GrantId: id(opaqueid.PublisherGrantPrefix), TeamId: "team", Kind: "saved_public_url", PublicUrlId: &url}, key)
+	service := id(opaqueid.ServicePrefix)
+	f, err := New("https://control.example", authorityv1.PublisherEnrollmentResult{ClientId: id(opaqueid.PublisherIdentityPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix), GrantId: id(opaqueid.PublisherGrantPrefix), TeamId: "team", Kind: "service", ServiceId: &service}, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestServiceGrantRoundTripsOnlyExactBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base.Kind, base.PublicURLID, base.ServiceID = "service", nil, &id
+	base.Kind, base.ServiceID = "service", &id
 	identity, key, err := base.Validate()
 	if err != nil || identity.ServiceId == nil || *identity.ServiceId != id {
 		t.Fatalf("private binding: %v", err)
@@ -54,14 +54,24 @@ func TestServiceGrantRoundTripsOnlyExactBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded, err := Read(path)
-	if err != nil || loaded.ServiceID == nil || *loaded.ServiceID != id || loaded.PublicURLID != nil || loaded.DomainID != nil || loaded.Namespace != nil {
+	if err != nil || loaded.ServiceID == nil || *loaded.ServiceID != id || loaded.DomainID != nil || loaded.Namespace != nil {
 		t.Fatalf("private file round trip: %v", err)
+	}
+	document, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := strings.TrimSuffix(strings.TrimSpace(string(document)), "}") + `,"public_url_id":"url_0123456789ABCDEFGHIJKL"}`
+	if err := os.WriteFile(path, []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Read(path); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("retired URL field was accepted: %v", err)
 	}
 	url, domain, namespace := "url_invalid", "dom_invalid", "member.example"
 	for _, change := range []func(*File){
 		func(f *File) { f.ServiceID = nil },
 		func(f *File) { f.ServiceID = &url },
-		func(f *File) { f.PublicURLID = &url },
 		func(f *File) { f.DomainID = &domain },
 		func(f *File) { f.Namespace = &namespace },
 		func(f *File) { f.Kind = "namespace" },
@@ -93,7 +103,7 @@ func TestPortableFileRejectsReplacementSymlinkAndPermissiveModes(t *testing.T) {
 		t.Fatalf("overwrote existing key: %v", err)
 	}
 	loaded, err := Read(path)
-	if err != nil || loaded.PrivateKey != f.PrivateKey || loaded.ControlURL != f.ControlURL || loaded.PublicURLID == nil || *loaded.PublicURLID != *f.PublicURLID {
+	if err != nil || loaded.PrivateKey != f.PrivateKey || loaded.ControlURL != f.ControlURL || loaded.ServiceID == nil || *loaded.ServiceID != *f.ServiceID {
 		t.Fatalf("portable file round trip: %v", err)
 	}
 	if err := os.Chmod(path, 0400); err != nil {

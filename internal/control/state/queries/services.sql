@@ -9,6 +9,10 @@ SELECT * FROM control.services WHERE id = sqlc.arg(id) FOR UPDATE;
 -- name: GetService :one
 SELECT * FROM control.services WHERE id = sqlc.arg(id) AND deleted_at IS NULL;
 
+-- name: SetServiceEnabled :one
+UPDATE control.services SET enabled=sqlc.arg(enabled),updated_at=sqlc.arg(now)
+WHERE id=sqlc.arg(id) AND deleted_at IS NULL RETURNING *;
+
 -- name: GetServiceConfiguration :one
 -- local normalization uses the logical service key, not its generated saved name.
 SELECT COALESCE(local.service,service.name)::text AS service,
@@ -32,7 +36,8 @@ WHERE id=sqlc.arg(service_id);
 -- caller closes all current runs and publishes a tombstone under this service
 -- lock in the same transaction.
 UPDATE control.services SET enabled = false, deleted_at = sqlc.arg(now), updated_at = sqlc.arg(now)
-WHERE id = sqlc.arg(id) AND team_id = sqlc.arg(team_id) AND deleted_at IS NULL RETURNING *;
+WHERE id = sqlc.arg(id) AND team_id IS NOT DISTINCT FROM sqlc.narg(team_id)
+    AND guest_id IS NOT DISTINCT FROM sqlc.narg(guest_id) AND deleted_at IS NULL RETURNING *;
 
 -- name: ListServicesForTeam :many
 SELECT * FROM control.services
@@ -114,18 +119,21 @@ WHERE created_by_identity_id = sqlc.arg(created_by_identity_id)
 AND idempotency_key = sqlc.arg(idempotency_key) FOR UPDATE;
 
 -- name: ListAvailableServices :many
--- visitor inventory includes authorized saved services while the publisher is
--- offline. two live slots are required for the first ready transition; after
--- that, one surviving slot keeps a ready run available during replacement.
--- do not include target addresses or credentials.
-SELECT s.id, s.team_id, s.name, s.created_at, s.protocol,s.tls_metadata,s.publisher_pool,s.trust_revision,
-    s.certificate_hostname,s.service_port,s.public,r.id AS service_run_id, r.run_number
+-- connector candidates already have native identity permission. public HTTP
+-- candidates are authorized by the existing HTTP permission owner before paging.
+-- keep offline services, bound each scan, and never select publisher-only trust.
+SELECT s.id, s.team_id, t.display_name AS team_name, s.name, s.created_at, s.protocol,s.publisher_pool,s.trust_revision,
+    s.certificate_hostname,s.service_port,s.public,r.id AS service_run_id, r.run_number,
+    COALESCE(permission.reason,'')::text AS visitor_access
 FROM control.services s
 JOIN control.teams t ON t.id = s.team_id AND t.deleted_at IS NULL
 JOIN control.identities i ON i.id = sqlc.arg(identity_id) AND i.disabled_at IS NULL
+LEFT JOIN LATERAL control.visitor_identity_permission(
+    'service',s.id,i.id,sqlc.arg(control_session_id)::text,'',sqlc.arg(now)) permission ON true
 LEFT JOIN control.service_runs r ON r.service_id=s.id AND r.id=(SELECT candidate.id
     FROM control.service_runs candidate WHERE candidate.service_id=s.id
     AND candidate.state='ready' AND candidate.healthy AND candidate.closed_at IS NULL AND candidate.publisher_expires_at>sqlc.arg(now)
+    AND candidate.certificate_expires_at>sqlc.arg(now)
     AND EXISTS (SELECT 1 FROM control.publisher_service_permission(candidate.publisher_identity_id,candidate.publisher_grant_id,s.id,sqlc.arg(now)))
     AND EXISTS (SELECT 1 FROM control.publisher_identity_keys signing JOIN control.publisher_grants pg ON pg.id=candidate.publisher_grant_id
         WHERE signing.id=candidate.publisher_key_id AND signing.publisher_identity_id=candidate.publisher_identity_id
@@ -138,9 +146,14 @@ LEFT JOIN control.service_runs r ON r.service_id=s.id AND r.id=(SELECT candidate
          WHERE slot.service_run_id = candidate.id AND slot.state = 'ready' AND slot.session_open)
     ORDER BY candidate.run_number DESC LIMIT 1)
 WHERE s.deleted_at IS NULL AND s.enabled AND s.id > sqlc.arg(after_id)
+    AND (s.expires_at IS NULL OR s.expires_at>sqlc.arg(now))
     AND control.company_subject_session_authorized(s.team_id,i.id,sqlc.arg(control_session_id)::text,sqlc.arg(now))
-    AND EXISTS(SELECT 1 FROM control.visitor_identity_permission(
-        'service',s.id,i.id,sqlc.arg(control_session_id)::text,'',sqlc.arg(now)))
+    AND ((sqlc.arg(access_path)::text='connector' AND permission.reason IS NOT NULL)
+        OR (sqlc.arg(access_path)::text='public_endpoint' AND s.public
+            AND EXISTS(SELECT 1 FROM control.service_endpoints endpoint
+                WHERE endpoint.service_id=s.id AND endpoint.hostname=s.certificate_hostname
+                    AND endpoint.domain_id=s.domain_id AND endpoint.retired_at IS NULL)
+            AND (s.protocol='http' OR permission.reason IS NOT NULL)))
 ORDER BY s.id LIMIT 101;
 
 -- name: PrepareServiceRun :one
@@ -149,11 +162,12 @@ ORDER BY s.id LIMIT 101;
 -- a retry with the same idempotency key returns the same prepared row.
 -- endpoint retirement does not revoke the saved connector identity. capture
 -- retained provenance only for this exact service, hostname and domain.
-INSERT INTO control.service_runs(preferred_regions, traffic_limits, id, service_id, team_id, run_number,
+INSERT INTO control.service_runs(preferred_regions, traffic_limits, id, service_id, team_id, guest_id, run_number,
     publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key,
     request_digest, preparation_expires_at, assignment_seed_ciphertext,
     assignment_seed_storage_key_id, certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,certificate_hostname,certificate_namespace,require_post_quantum,state, created_at, publisher_expires_at)
-VALUES (sqlc.arg(preferred_regions), convert_from(sqlc.arg(traffic_limits)::bytea,'UTF8')::jsonb, sqlc.arg(id), sqlc.arg(service_id), sqlc.arg(team_id), sqlc.arg(run_number),
+VALUES (sqlc.arg(preferred_regions), convert_from(sqlc.arg(traffic_limits)::bytea,'UTF8')::jsonb, sqlc.arg(id), sqlc.arg(service_id), sqlc.narg(team_id),
+    (SELECT service.guest_id FROM control.services service WHERE service.id=sqlc.arg(service_id)),sqlc.arg(run_number),
     sqlc.arg(publisher_identity_id), sqlc.arg(publisher_grant_id), sqlc.arg(publisher_key_id),
     sqlc.arg(idempotency_key), sqlc.arg(request_digest),
     sqlc.arg(preparation_expires_at), sqlc.arg(assignment_seed_ciphertext),
@@ -166,6 +180,11 @@ VALUES (sqlc.arg(preferred_regions), convert_from(sqlc.arg(traffic_limits)::byte
 -- name: LockServiceRun :one
 SELECT * FROM control.service_runs
 WHERE id = sqlc.arg(id) AND service_id = sqlc.arg(service_id) FOR UPDATE;
+
+-- name: LockServiceRunsForClose :many
+SELECT * FROM control.service_runs
+WHERE service_id=sqlc.arg(service_id) AND closed_at IS NULL
+ORDER BY run_number FOR UPDATE;
 
 -- name: ClosedServiceRuns :many
 -- only an exact stored terminal tuple proves a finite traffic budget can retire.
@@ -181,7 +200,8 @@ JOIN control.publisher_identity_keys publisher_key
     ON publisher_key.id = run.publisher_key_id
     AND publisher_key.publisher_identity_id = run.publisher_identity_id
 JOIN control.publisher_identities publisher ON publisher.id = run.publisher_identity_id
-    AND publisher.revoked_at IS NULL AND publisher.team_id = run.team_id
+    AND publisher.revoked_at IS NULL AND publisher.team_id IS NOT DISTINCT FROM run.team_id
+    AND publisher.guest_id IS NOT DISTINCT FROM run.guest_id
     AND control.active_publisher(publisher.id,sqlc.arg(now))
 JOIN control.publisher_grants grant_record ON grant_record.id = run.publisher_grant_id
     AND grant_record.publisher_identity_id = publisher.id
@@ -235,7 +255,8 @@ WHERE run.id = sqlc.arg(id) AND run.run_number = sqlc.arg(run_number)
     AND publisher_grant.id = run.publisher_grant_id AND publisher_grant.publisher_identity_id=run.publisher_identity_id
     AND publisher_grant.revoked_at IS NULL
     AND (publisher_grant.expires_at IS NULL OR publisher_grant.expires_at > sqlc.arg(now))
-    AND publisher.id = run.publisher_identity_id AND publisher.team_id = service.team_id
+    AND publisher.id = run.publisher_identity_id AND publisher.team_id IS NOT DISTINCT FROM service.team_id
+    AND publisher.guest_id IS NOT DISTINCT FROM service.guest_id
     AND publisher.revoked_at IS NULL
     AND control.active_publisher(publisher.id,sqlc.arg(now))
     AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,run.service_id,sqlc.arg(now)))
@@ -264,7 +285,11 @@ ORDER BY connection_slot;
 -- name: ListServiceConnectionSlotsNeedingReplacement :many
 -- replace expired never-ready claims even with a live relay lease.
 -- ready slots retain ownership and streams while their matching lease is live.
-SELECT slot.* FROM control.service_connection_slots slot
+SELECT slot.*, NOT EXISTS (
+    SELECT 1 FROM control.relay_leases planned
+    WHERE planned.relay_id=slot.relay_id AND planned.relay_run_id=slot.relay_run_id
+      AND planned.relay_lease_revision=slot.relay_lease_revision AND planned.draining
+) AS unexpected FROM control.service_connection_slots slot
 WHERE slot.service_run_id = sqlc.arg(service_run_id)
     AND (slot.state = 'closed' OR slot.state IN ('assigned', 'connected') AND slot.credential_expires_at <= sqlc.arg(now)
         OR slot.state IN ('connected', 'ready') AND NOT EXISTS (

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"net/netip"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -37,6 +38,7 @@ func countReadyServiceConnections(ctx context.Context, tx pgx.Tx, runID string, 
 
 func lockServiceConnectionRun(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries,
 	connectionID, serviceID, runID string, runNumber, revision int64, now time.Time) (controlstatedb.ControlServiceRun, error) {
+	clock := newAuthorizationClock(now)
 	binding, err := checkedPrivateAssignmentBinding(serviceID, runID, connectionID, runNumber, revision)
 	if err != nil {
 		return controlstatedb.ControlServiceRun{}, ErrServiceAccess
@@ -51,13 +53,13 @@ func lockServiceConnectionRun(ctx context.Context, tx pgx.Tx, q *controlstatedb.
 	if err != nil {
 		return run, err
 	}
-	if !binding.ServiceRunReference.matches(run) || !activeServiceRun(run, now) {
+	if !binding.ServiceRunReference.matches(run) || !activeServiceRun(run, clock.current()) {
 		return run, ErrServiceAccess
 	}
 	_, err = q.GetServiceRunPublisherIdentity(ctx, controlstatedb.GetServiceRunPublisherIdentityParams{
 		ID: runID, ServiceID: serviceID, RunNumber: runNumber,
 		PublisherIdentityID: run.PublisherIdentityID, PublisherGrantID: run.PublisherGrantID,
-		PublisherKeyID: run.PublisherKeyID, Now: timestamptz(now),
+		PublisherKeyID: run.PublisherKeyID, Now: timestamptz(clock.current()),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return run, ErrServiceAccess
@@ -85,9 +87,13 @@ func resolvePrivateRelay(ctx context.Context, tx pgx.Tx, lease RelayLeaseIdentit
 	return lease, err
 }
 
-func (d *Database) ClaimServicePublisherConnection(ctx context.Context, connectionID, serviceID, runID string, runNumber, revision int64, credential string, lease RelayLeaseIdentity, now time.Time) (result ServicePublisherConnection, retErr error) {
+// observedSourceIP is the original publisher transport peer reported by the
+// authenticated relay. every claim requires a real bare address, even for a
+// team service; a relay's control peer is not the publisher's source.
+func (d *Database) ClaimServicePublisherConnection(ctx context.Context, connectionID, serviceID, runID string, runNumber, revision int64, credential string, observedSourceIP netip.Addr, lease RelayLeaseIdentity, now time.Time) (result ServicePublisherConnection, retErr error) {
+	clock := newAuthorizationClock(now)
 	digest, err := credentials.ParsePublisherConnectionCredential(credentials.PublisherConnectionCredential(credential))
-	if err != nil {
+	if err != nil || !observedSourceIP.IsValid() || observedSourceIP.Zone() != "" || observedSourceIP.Unmap().IsUnspecified() {
 		return result, ErrServiceAccess
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -100,7 +106,11 @@ func (d *Database) ClaimServicePublisherConnection(ctx context.Context, connecti
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	if _, err = lockServiceConnectionRun(ctx, tx, q, connectionID, serviceID, runID, runNumber, revision, now); err != nil {
+	run, err := lockServiceConnectionRun(ctx, tx, q, connectionID, serviceID, runID, runNumber, revision, clock.current())
+	if err != nil {
+		return result, err
+	}
+	if err = d.guestServiceSource(ctx, q, run.GuestID.String, observedSourceIP, clock.current()); err != nil {
 		return result, err
 	}
 	slots, err := q.ListServiceConnectionSlots(ctx, runID)
@@ -116,7 +126,7 @@ func (d *Database) ClaimServicePublisherConnection(ctx context.Context, connecti
 	}
 	binding, err := checkedPrivateAssignmentBinding(serviceID, runID, connectionID, runNumber, revision)
 	if err != nil || !binding.matches(connection) ||
-		!connection.CredentialExpiresAt.Time.After(now) || subtle.ConstantTimeCompare(connection.CredentialDigest, digest[:]) != 1 {
+		!connection.CredentialExpiresAt.Time.After(clock.current()) || subtle.ConstantTimeCompare(connection.CredentialDigest, digest[:]) != 1 {
 		return result, ErrServiceAccess
 	}
 	current, err := q.GetRelayLeaseForClaim(ctx, lease.RelayID)
@@ -126,7 +136,7 @@ func (d *Database) ClaimServicePublisherConnection(ctx context.Context, connecti
 	if err != nil {
 		return result, err
 	}
-	if err = validateClaimRelayLease(current, lease, connection.RelayServiceID, now); err != nil {
+	if err = validateClaimRelayLease(current, lease, connection.RelayServiceID, clock.current()); err != nil {
 		return result, ErrServiceAccess
 	}
 	// only the exact connected claim can recover a lost response. ready slots
@@ -158,7 +168,7 @@ func (d *Database) ClaimServicePublisherConnection(ctx context.Context, connecti
 	row, err := q.ClaimServiceConnectionSlot(ctx, controlstatedb.ClaimServiceConnectionSlotParams{
 		PublisherConnectionID: connectionID, CredentialDigest: digest[:], ConnectionAssignmentRevision: revision,
 		RelayID: text(lease.RelayID), RelayRunID: text(lease.RelayRunID),
-		RelayLeaseRevision: pgtype.Int8{Int64: int64(lease.RelayLeaseRevision), Valid: true}, Now: timestamptz(now),
+		RelayLeaseRevision: pgtype.Int8{Int64: int64(lease.RelayLeaseRevision), Valid: true}, Now: timestamptz(clock.current()),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
@@ -169,6 +179,19 @@ func (d *Database) ClaimServicePublisherConnection(ctx context.Context, connecti
 	if row.ServiceID != serviceID || row.ServiceRunID != runID || row.RunNumber != runNumber || row.RelayServiceID != lease.RelayServiceID {
 		return result, ErrServiceAccess
 	}
+	if _, err = tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
+		return result, err
+	}
+	if err = d.guestServiceSource(ctx, q, run.GuestID.String, observedSourceIP, clock.current()); err != nil {
+		return result, err
+	}
+	if !row.CredentialExpiresAt.Time.After(clock.current()) || !run.PublisherExpiresAt.Time.After(clock.current()) ||
+		validateClaimRelayLease(current, lease, row.RelayServiceID, clock.current()) != nil {
+		return result, ErrServiceAccess
+	}
+	if _, err = serviceRunPublisherPermission(ctx, tx, run, clock.current()); err != nil {
+		return result, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return result, err
 	}
@@ -176,6 +199,7 @@ func (d *Database) ClaimServicePublisherConnection(ctx context.Context, connecti
 }
 
 func (d *Database) ReadyServicePublisherConnection(ctx context.Context, connectionID, runID string, runNumber, revision int64, lease RelayLeaseIdentity, now time.Time) (result ServicePublisherConnection, retErr error) {
+	clock := newAuthorizationClock(now)
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
@@ -193,7 +217,7 @@ func (d *Database) ReadyServicePublisherConnection(ctx context.Context, connecti
 		return result, ErrServiceAccess
 	}
 	q := controlstatedb.New(tx)
-	run, err := lockServiceConnectionRun(ctx, tx, q, connectionID, serviceID, runID, runNumber, revision, now)
+	run, err := lockServiceConnectionRun(ctx, tx, q, connectionID, serviceID, runID, runNumber, revision, clock.current())
 	if err != nil {
 		return result, err
 	}
@@ -201,7 +225,7 @@ func (d *Database) ReadyServicePublisherConnection(ctx context.Context, connecti
 		return result, err
 	}
 	row, err := q.ReadyServiceConnectionSlot(ctx, controlstatedb.ReadyServiceConnectionSlotParams{
-		PublisherConnectionID: connectionID, ConnectionAssignmentRevision: revision, Now: timestamptz(now),
+		PublisherConnectionID: connectionID, ConnectionAssignmentRevision: revision, Now: timestamptz(clock.current()),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
@@ -212,26 +236,45 @@ func (d *Database) ReadyServicePublisherConnection(ctx context.Context, connecti
 	if row.RelayServiceID != lease.RelayServiceID || row.RelayID.String != lease.RelayID || row.RelayRunID.String != lease.RelayRunID || row.RelayLeaseRevision.Int64 != int64(lease.RelayLeaseRevision) || row.ServiceRunID != runID || row.RunNumber != runNumber {
 		return result, ErrServiceAccess
 	}
-	count, err := countReadyServiceConnections(ctx, tx, runID, now)
+	count, err := countReadyServiceConnections(ctx, tx, runID, clock.current())
 	if err != nil {
 		return result, err
 	}
-	certificateReady := run.CertificateExpiresAt.Valid && run.CertificateExpiresAt.Time.After(now)
+	certificateReady := run.CertificateExpiresAt.Valid && run.CertificateExpiresAt.Time.After(clock.current())
+	firstReadiness := !run.ReadyAt.Valid
 	if run.Healthy && certificateReady && (count == 2 || run.ReadyAt.Valid && count >= 1) {
 		if serviceRunLifecycleState(run.State) == serviceRunStarting {
-			run, err = q.ReadyServiceRun(ctx, controlstatedb.ReadyServiceRunParams{ID: runID, ServiceID: serviceID, RunNumber: runNumber, Now: timestamptz(now)})
+			run, err = q.ReadyServiceRun(ctx, controlstatedb.ReadyServiceRunParams{ID: runID, ServiceID: serviceID, RunNumber: runNumber, Now: timestamptz(clock.current())})
 			if err != nil {
 				return result, err
 			}
 		}
 	}
+	if run.State == "ready" {
+		run, err = markGuestServiceRunReady(ctx, q, run, clock.current())
+		if err != nil {
+			return result, err
+		}
+	}
+	if _, err = tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
+		return result, err
+	}
+	if _, err = serviceRunPublisherPermission(ctx, tx, run, clock.current()); err != nil {
+		return result, err
+	}
+	if !run.PublisherExpiresAt.Time.After(clock.current()) || run.State == "ready" && !run.CertificateExpiresAt.Time.After(clock.current()) {
+		return result, ErrServiceAccess
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return result, err
+	}
+	if firstReadiness && run.ReadyAt.Valid {
+		d.activity.metrics.Load().ObserveServiceRunReady()
 	}
 	return servicePublisherConnection(row), nil
 }
 
-func (d *Database) DisconnectServicePublisherConnection(ctx context.Context, connectionID, runID string, runNumber, revision int64, lease RelayLeaseIdentity, now time.Time) (result ServicePublisherConnection, retErr error) {
+func (d *Database) DisconnectServicePublisherConnection(ctx context.Context, connectionID, runID string, runNumber, revision int64, lease RelayLeaseIdentity, now time.Time, unexpected bool) (result ServicePublisherConnection, retErr error) {
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
@@ -258,8 +301,9 @@ func (d *Database) DisconnectServicePublisherConnection(ctx context.Context, con
 	if !validStateText(lease.RelayID) || !validStateText(lease.RelayRunID) || lease.RelayLeaseRevision == 0 || lease.RelayLeaseRevision > uint64(^uint64(0)>>1) {
 		return result, ErrServiceAccess
 	}
-	if err = tx.QueryRow(ctx, `SELECT relay_service_id FROM control.service_connection_slots WHERE publisher_connection_id=$1 AND relay_id=$2 AND relay_run_id=$3 AND relay_lease_revision=$4`,
-		connectionID, lease.RelayID, lease.RelayRunID, int64(lease.RelayLeaseRevision)).Scan(&lease.RelayServiceID); errors.Is(err, pgx.ErrNoRows) {
+	var previousState string
+	if err = tx.QueryRow(ctx, `SELECT relay_service_id,state FROM control.service_connection_slots WHERE publisher_connection_id=$1 AND relay_id=$2 AND relay_run_id=$3 AND relay_lease_revision=$4`,
+		connectionID, lease.RelayID, lease.RelayRunID, int64(lease.RelayLeaseRevision)).Scan(&lease.RelayServiceID, &previousState); errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
 	} else if err != nil {
 		return result, err
@@ -277,6 +321,11 @@ func (d *Database) DisconnectServicePublisherConnection(ctx context.Context, con
 	}
 	if row.RelayServiceID != lease.RelayServiceID || row.ServiceID != serviceID {
 		return result, ErrServiceAccess
+	}
+	if unexpected && previousState == "ready" {
+		if err = openServiceRecoveryEpisode(ctx, q, run, now); err != nil {
+			return result, err
+		}
 	}
 	if serviceRunLifecycleState(run.State) == serviceRunReady && !run.ClosedAt.Valid {
 		ready, err := countReadyServiceConnections(ctx, tx, runID, now)

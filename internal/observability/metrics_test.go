@@ -77,11 +77,11 @@ func TestPrivateCPUProfileIsBounded(t *testing.T) {
 
 func TestReadinessAndRelayMetricsKeepFixedLabels(t *testing.T) {
 	control := New("control")
-	control.ObservePublishRunReadiness("publish_run_secret", time.Millisecond, 45*time.Second)
-	control.ObserveCertificateIterationContext(t.Context(), "public_url", "challenge_token_secret", "error_secret", time.Millisecond)
-	control.ObserveCertificateMilestone("public_url", "challenge_token_secret", time.Second)
-	control.ObserveCertificateMilestone("public_url", "ready", 30*time.Second)
-	control.ObserveCertificateMilestone("public_url", "cleanup", 45*time.Second)
+	control.ObserveServiceRunReadiness("untrusted_state", time.Millisecond, 45*time.Second)
+	control.ObserveCertificateIterationContext(t.Context(), "service", "challenge_token_secret", "error_secret", time.Millisecond)
+	control.ObserveCertificateMilestone("service", "challenge_token_secret", time.Second)
+	control.ObserveCertificateMilestone("service", "ready", 30*time.Second)
+	control.ObserveCertificateMilestone("service", "cleanup", 45*time.Second)
 	control.SetGuestTrialStats(2, 1, 1, 0, 0)
 	ingress := New("ingress")
 	ingress.ObserveRelayAttempt("relay_address_secret", "error_secret")
@@ -93,11 +93,11 @@ func TestReadinessAndRelayMetricsKeepFixedLabels(t *testing.T) {
 		if response.Code != http.StatusOK || strings.Contains(body, "secret") {
 			t.Fatalf("unbounded diagnostic labels: status=%d body=%s", response.Code, body)
 		}
-		if metrics == control && (!strings.Contains(body, `tnl_control_publish_run_readiness_duration_seconds_count{tnl_state="error"} 1`) ||
+		if metrics == control && (!strings.Contains(body, `tnl_control_service_run_readiness_duration_seconds_count{tnl_state="error"} 1`) ||
 			!strings.Contains(body, `tnl_control_guest_trials_last_24h{tnl_event="issued"} 2`) ||
-			!strings.Contains(body, `tnl_control_certificate_work_duration_seconds_count{tnl_certificate_kind="public_url",tnl_operation="other",tnl_outcome="error",tnl_reason="retry"} 1`) ||
-			!strings.Contains(body, `tnl_control_certificate_milestone_age_seconds_count{tnl_certificate_kind="public_url",tnl_event="ready"} 1`) ||
-			!strings.Contains(body, `tnl_control_certificate_milestone_age_seconds_count{tnl_certificate_kind="public_url",tnl_event="cleanup"} 1`)) {
+			!strings.Contains(body, `tnl_control_certificate_work_duration_seconds_count{tnl_certificate_kind="service",tnl_operation="other",tnl_outcome="error",tnl_reason="retry"} 1`) ||
+			!strings.Contains(body, `tnl_control_certificate_milestone_age_seconds_count{tnl_certificate_kind="service",tnl_event="ready"} 1`) ||
+			!strings.Contains(body, `tnl_control_certificate_milestone_age_seconds_count{tnl_certificate_kind="service",tnl_event="cleanup"} 1`)) {
 			t.Fatalf("missing bounded readiness or certificate outcomes: %s", body)
 		}
 		if metrics == ingress && !strings.Contains(body, `tnl_ingress_relay_attempts_total{tnl_outcome="error",tnl_reason="other"} 1`) {
@@ -114,17 +114,17 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 	metrics.AddReadyPublisherConnections(1)
 	metrics.SetIngressStreams(4)
 	metrics.AddRelayStreams(2)
-	metrics.IncCapacityRejection("public_url_connections")
+	metrics.IncCapacityRejection("public_connections")
 	metrics.IncInspectionFailure("client_hello")
 	metrics.ObserveVisitor("policy_denied")
 	metrics.AddForwardedBytes("visitor_to_publisher", 1024)
-	metrics.observeAPIRequest("control", http.MethodPost, "/v1/public-urls", APIRequestSuccess, 10*time.Millisecond)
+	metrics.observeAPIRequest("control", http.MethodPost, "/v1/services", APIRequestSuccess, 10*time.Millisecond)
 	metrics.ObserveRoutingHistoryFloor(100)
 	metrics.ObserveRoutingHistoryFloor(50)
 	metrics.ObserveRoutingHistoryBatch(0, 0, true)
-	metrics.ObserveCertificateOrder("public_url", "managed", "exact")
-	metrics.ObserveCertificateOrder("public_url", "hostname-secret", "exact")
-	metrics.ObserveCertificateOrder("public_url", "managed", "certificate-secret")
+	metrics.ObserveCertificateOrder("service", "managed", "exact")
+	metrics.ObserveCertificateOrder("service", "hostname-secret", "exact")
+	metrics.ObserveCertificateOrder("service", "managed", "certificate-secret")
 
 	families, err := metrics.registry.Gather()
 	if err != nil {
@@ -136,7 +136,7 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 		value  float64
 	}
 	want := map[string]sample{
-		"tnl_control_certificate_orders_total":                {"COUNTER", map[string]string{"tnl_certificate_kind": "public_url", "tnl_domain_kind": "managed", "tnl_certificate_plan": "exact"}, 1},
+		"tnl_control_certificate_orders_total":                {"COUNTER", map[string]string{"tnl_certificate_kind": "service", "tnl_domain_kind": "managed", "tnl_certificate_plan": "exact"}, 1},
 		"tnl_control_routing_history_cleanup_skipped_total":   {kind: "COUNTER", value: 1},
 		"tnl_control_routing_history_retained_after_revision": {kind: "GAUGE", value: 100},
 		"tnl_process_info":                        {"GAUGE", map[string]string{"tnl_role": "standalone"}, 1},
@@ -144,11 +144,11 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 		"tnl_relay_publisher_connections_ready":   {kind: "GAUGE", value: 3},
 		"tnl_ingress_backend_streams":             {kind: "GAUGE", value: 4},
 		"tnl_relay_visitor_stream_slots_occupied": {kind: "GAUGE", value: 2},
-		"tnl_admission_rejections_total":          {"COUNTER", map[string]string{"tnl_capacity_resource": "public_url_connections"}, 1},
+		"tnl_admission_rejections_total":          {"COUNTER", map[string]string{"tnl_capacity_resource": "public_connections"}, 1},
 		"tnl_ingress_inspection_failures_total":   {"COUNTER", map[string]string{"tnl_operation": "client_hello"}, 1},
 		"tnl_ingress_visitor_connections_total":   {"COUNTER", map[string]string{"tnl_outcome": "denied", "tnl_reason": "policy_denied"}, 1},
 		"tnl_ingress_forwarded_bytes_total":       {"COUNTER", map[string]string{"tnl_direction": "visitor_to_publisher"}, 1024},
-		"tnl_api_request_duration_seconds":        {"HISTOGRAM", map[string]string{"tnl_component": "control", "http_request_method": "POST", "http_route": "/v1/public-urls", "tnl_outcome": "success"}, 0.01},
+		"tnl_api_request_duration_seconds":        {"HISTOGRAM", map[string]string{"tnl_component": "control", "http_request_method": "POST", "http_route": "/v1/services", "tnl_outcome": "success"}, 0.01},
 	}
 	for _, family := range families {
 		name := family.GetName()
@@ -216,11 +216,11 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 func TestMetricsExposeEffectiveCapacityLimits(t *testing.T) {
 	metrics := New("ingress")
 	metrics.SetCapacityLimit("public_connections", 101)
-	metrics.SetCapacityLimit("public_url_connections", 50)
+	metrics.SetCapacityLimit("source_connections", 50)
 	response := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `tnl_admission_limit{tnl_capacity_resource="public_connections"} 101`) ||
-		!strings.Contains(response.Body.String(), `tnl_admission_limit{tnl_capacity_resource="public_url_connections"} 50`) {
+		!strings.Contains(response.Body.String(), `tnl_admission_limit{tnl_capacity_resource="source_connections"} 50`) {
 		t.Fatalf("effective limits missing: %s", response.Body.String())
 	}
 }

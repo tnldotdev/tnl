@@ -53,9 +53,9 @@ func TestRelayTransportRejectsConnectorPublisherRoleConfusion(t *testing.T) {
 				roots.AddCert(certificate.Certificate())
 				var connectorCalls, publisher atomic.Int32
 				acceptor, err := NewPublisherAcceptor(PublisherAcceptorConfig{
-					Select: func(string) (PublisherConnectionController, *Registry, bool) {
+					Select: func(string) (ServicePublisherTarget, bool) {
 						publisher.Add(1)
-						return nil, nil, false
+						return ServicePublisherTarget{}, false
 					},
 					Connector: func(string) (*ConnectorAcceptor, bool) { connectorCalls.Add(1); return nil, false },
 				})

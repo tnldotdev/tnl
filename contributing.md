@@ -107,6 +107,10 @@ OpenAPI sources live in `contracts/`. SQL sources live beside each state package
 `sqlc.yaml`. [Generation tasks](tasks/generate.yml) list the generated paths.
 The tunnel protocol in `pkg/protocol/tunnelv1` is handwritten.
 
+SQL generation stages fresh output before replacing marked `sqlc` files, including
+removing output for retired queries. Handwritten files are preserved. Run
+`mise exec -- task generate:test` to check generation tooling.
+
 Hey API generates the browser and telemetry TypeScript validators. Its supported
 Zod resolvers keep closed request objects strict and JSON counters numeric; server
 authorization and validation remain authoritative. The generator uses a pinned

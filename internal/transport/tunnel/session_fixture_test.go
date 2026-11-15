@@ -227,29 +227,25 @@ func rejectingConnector(t *testing.T, code tunnelv1.ErrorCode) muxsession.Connec
 func publisherHello() tunnelv1.Message {
 	return tunnelv1.Message{
 		Type: tunnelv1.Hello, ProtocolVersion: 1, Role: tunnelv1.Publisher, Credential: "credential",
-		PublisherConnection: &tunnelv1.PublisherConnectionRef{
-			PublishRunID: "publish_run_1", PublicURLID: "public_url_1", PublishRunNumber: 2,
-			PublisherConnectionID: "publisher_connection_1", ConnectionSlot: 0,
-			ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1",
+		ServiceConnection: &tunnelv1.ServicePublisherConnectionRef{
+			ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012", RunNumber: 2,
+			PublisherConnectionID: "pc_1234567890123456789012", ConnectionSlot: 0,
+			ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1"},
+	}
+}
+func serviceStreamHeader() tunnelv1.ServiceForwardingHeader {
+	ref := publisherHello().ServiceConnection
+	return tunnelv1.ServiceForwardingHeader{
+		ServiceStreamHeader: tunnelv1.ServiceStreamHeader{
+			ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
+			ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber,
+			PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
+			VisitorConnectionID: "vc_1234567890123456789012", SourceIP: "192.0.2.1",
+			PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress_1", IngressRunID: "ir_1234567890123456789012", IngressLeaseRevision: 4, DestinationPort: 443},
+			ExpiresAt:     time.Now().Add(time.Hour).UTC().Truncate(time.Second),
 		},
-	}
-}
-func visitorStreamHeader() tunnelv1.VisitorStreamHeader {
-	return tunnelv1.VisitorStreamHeader{
-		ConfirmBeforeBytes: true,
-		ProtocolVersion:    1, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor_connection_1",
-		PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
-		PublisherConnectionID: "publisher_connection_1", ConnectionAssignmentRevision: 3,
-	}
-}
-func internalForwardingHeader() tunnelv1.InternalForwardingHeader {
-	now := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
-	return tunnelv1.InternalForwardingHeader{
-		ConfirmBeforeBytes: true,
-		ProtocolVersion:    1, Kind: tunnelv1.InternalForwardingStream, VisitorConnectionID: "visitor_connection_1",
-		PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
-		PublisherConnectionID: "publisher_connection_1", ConnectionSlot: 0, ConnectionAssignmentRevision: 3,
-		RelayServiceID: "relay_service_1", RelayID: "relay_1", RelayRunID: "relay_run_1", RelayLeaseRevision: 4,
-		PublicUrlExpiresAt: now.Add(time.Minute), LeaseExpiresAt: now.Add(time.Minute),
+		ConnectionSlot: ref.ConnectionSlot, RelayServiceID: ref.RelayServiceID,
+		RelayID: "relay_1", RelayRunID: "rr_1234567890123456789012", RelayLeaseRevision: 4,
+		LeaseExpiresAt: time.Now().Add(time.Hour).UTC().Truncate(time.Second),
 	}
 }

@@ -33,11 +33,16 @@ func TestTraceContextCanonicalAndBounded(t *testing.T) {
 	}
 }
 
-func TestTraceVisitorGoldenFramedWireAndUnknownFields(t *testing.T) {
-	const payload = `{"trace_context":{"traceparent":"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"},"protocol_version":1,"kind":"visitor","visitor_connection_id":"v","public_url_id":"u","publish_run_id":"r","publish_run_number":1,"publisher_connection_id":"p","connection_assignment_revision":1}`
-	want := VisitorStreamHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: 1, Kind: VisitorStream, VisitorConnectionID: "v", PublicURLID: "u", PublishRunID: "r", PublishRunNumber: 1, PublisherConnectionID: "p", ConnectionAssignmentRevision: 1}
+func TestTraceServiceGoldenFramedWireAndUnknownFields(t *testing.T) {
+	want := publicServiceAdmissionFixture()
+	want.TraceContext = TraceContext{goldenTraceParent}
+	encoded, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := string(encoded)
 	var wire bytes.Buffer
-	if err := WriteVisitorStreamHeader(&wire, want); err != nil {
+	if err := WriteServiceForwardingHeader(&wire, want); err != nil {
 		t.Fatal(err)
 	}
 	expected, _ := io.ReadAll(frame(payload))
@@ -47,8 +52,8 @@ func TestTraceVisitorGoldenFramedWireAndUnknownFields(t *testing.T) {
 	// reading the telemetry frame must leave the encrypted visitor bytes intact.
 	withVisitor := append(append([]byte{}, wire.Bytes()...), []byte("\x16\x03visitor")...)
 	r := bytes.NewReader(withVisitor)
-	got, err := ReadVisitorStreamHeader(r)
-	if err != nil || got != want {
+	got, err := ReadServiceForwardingHeader(r)
+	if err != nil || !bytes.Equal(wireJSON(t, got), encoded) {
 		t.Fatal(got, err)
 	}
 	rest, _ := io.ReadAll(r)
@@ -60,41 +65,9 @@ func TestTraceVisitorGoldenFramedWireAndUnknownFields(t *testing.T) {
 		strings.Replace(payload, `"traceparent":`, `"tracestate":"other=state","traceparent":`, 1),
 		strings.Replace(payload, goldenTraceParent, strings.ToUpper(goldenTraceParent), 1),
 	} {
-		if _, err := ReadVisitorStreamHeader(frame(bad)); err == nil {
+		if _, err := ReadServiceForwardingHeader(frame(bad)); err == nil {
 			t.Fatal("accepted invalid telemetry")
 		}
-	}
-}
-
-func TestTraceForwardingMaximumFrameAllFields(t *testing.T) {
-	// time.MarshalJSON accepts four-digit years and zone offsets below 24h.
-	// a non-UTC offset and nanoseconds give the longest accepted timestamp.
-	now := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.FixedZone("max", 23*3600+59*60))
-	h := InternalForwardingHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: Version, Kind: InternalForwardingStream,
-		VisitorConnectionID: strings.Repeat("\x01", 256), PublicURLID: strings.Repeat("\x01", 256), PublishRunID: strings.Repeat("\x01", 256), PublishRunNumber: math.MaxUint64,
-		PublisherConnectionID: strings.Repeat("\x01", 256), ConnectionSlot: 1, ConnectionAssignmentRevision: math.MaxUint64,
-		RelayServiceID: strings.Repeat("\x01", 256), RelayID: strings.Repeat("\x01", 256), RelayRunID: strings.Repeat("\x01", 256), RelayLeaseRevision: math.MaxUint64,
-		PublicUrlExpiresAt: now, LeaseExpiresAt: now, AccessPending: true}
-	data, err := json.Marshal(h)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(data) > MaxHeaderBytes {
-		t.Fatalf("all fields need %d bytes, cap is %d", len(data), MaxHeaderBytes)
-	}
-	t.Logf("maximum public protocol header: %d JSON bytes", len(data))
-	var wire bytes.Buffer
-	if err := WriteInternalForwardingHeader(&wire, h); err != nil {
-		t.Fatal(err)
-	}
-	got, private, err := ReadForwardingHeader(&wire)
-	roundTrip, marshalErr := json.Marshal(got)
-	if err != nil || marshalErr != nil || private != nil || !bytes.Equal(roundTrip, data) {
-		t.Fatal("maximum public header changed", err, marshalErr)
-	}
-	h.RelayID += "\x01"
-	if err := WriteInternalForwardingHeader(&wire, h); err == nil {
-		t.Fatal("over-limit identifier accepted")
 	}
 }
 
@@ -108,10 +81,11 @@ func FuzzWireTraceContext(f *testing.F) {
 			t.Fatal("unbounded trace context")
 		}
 		var wire bytes.Buffer
-		h := VisitorStreamHeader{TraceContext: tc, ProtocolVersion: 1, Kind: VisitorStream, VisitorConnectionID: "v", PublicURLID: "u", PublishRunID: "r", PublishRunNumber: 1, PublisherConnectionID: "p", ConnectionAssignmentRevision: 1}
-		if err := WriteVisitorStreamHeader(&wire, h); err == nil {
-			got, err := ReadVisitorStreamHeader(&wire)
-			if err != nil || got != h {
+		h := publicServiceAdmissionFixture()
+		h.TraceContext = tc
+		if err := WriteServiceForwardingHeader(&wire, h); err == nil {
+			got, err := ReadServiceForwardingHeader(&wire)
+			if err != nil || !bytes.Equal(wireJSON(t, got), wireJSON(t, h)) {
 				t.Fatal("trace round trip", err)
 			}
 		}
@@ -155,8 +129,6 @@ func TestTracePrivateGoldenAndEveryHeaderValidation(t *testing.T) {
 	}
 	bad := TraceContext{TraceParent: "invalid"}
 	for _, validate := range []func() error{
-		func() error { return (VisitorStreamHeader{TraceContext: bad}).Validate() },
-		func() error { return (InternalForwardingHeader{TraceContext: bad}).Validate() },
 		func() error {
 			return (ServiceForwardingHeader{ServiceStreamHeader: ServiceStreamHeader{TraceContext: bad}}).Validate()
 		},
@@ -181,8 +153,8 @@ func TestTracePrivateMaximumFieldsFitFrameCap(t *testing.T) {
 			t.Fatal("max private header no longer fits cap", err)
 		}
 		t.Logf("maximum public service protocol header: %d JSON bytes", wire.Len()-4)
-		_, got, err := ReadForwardingHeader(&wire)
-		if err != nil || got == nil || got.TraceContext != h.TraceContext || got.PublicService == nil {
+		got, err := ReadServiceForwardingHeader(&wire)
+		if err != nil || got.TraceContext != h.TraceContext || got.PublicService == nil {
 			t.Fatal(got, err)
 		}
 		for _, mutate := range []func(*ServiceForwardingHeader){
@@ -203,39 +175,37 @@ func TestTracePrivateMaximumFieldsFitFrameCap(t *testing.T) {
 	}
 }
 
-func TestForwardingDispatchSelectedKindCapsAndUnknownFields(t *testing.T) {
-	public := InternalForwardingHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: Version, Kind: InternalForwardingStream,
-		VisitorConnectionID: "v", PublicURLID: "u", PublishRunID: "r", PublishRunNumber: 1, PublisherConnectionID: "p", ConnectionAssignmentRevision: 1,
-		RelayServiceID: "s", RelayID: "i", RelayRunID: "r", RelayLeaseRevision: 1, PublicUrlExpiresAt: time.Now(), LeaseExpiresAt: time.Now()}
-	private := ServiceForwardingHeader{ServiceStreamHeader: ServiceStreamHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: Version, Kind: ServiceForwardingStream,
+func TestServiceHeaderCapAndUnknownFields(t *testing.T) {
+	h := ServiceForwardingHeader{ServiceStreamHeader: ServiceStreamHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: Version, Kind: ServiceForwardingStream,
 		ServiceID: testOpaqueID(opaqueid.ServicePrefix), ServiceRunID: testOpaqueID(opaqueid.ServiceRunPrefix), RunNumber: 1, SourceIP: "192.0.2.1",
 		VisitorConnectionID: testOpaqueID(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: testOpaqueID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 1, ExpiresAt: time.Now(),
 		PublicService: &PublicServiceAdmission{IngressID: "i", IngressRunID: testOpaqueID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 1024}},
 		RelayServiceID: "s", RelayID: "i", RelayRunID: testOpaqueID(opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, LeaseExpiresAt: time.Now()}
-	for _, test := range []struct {
-		name   string
-		header any
-		limit  int
-	}{{"public", public, MaxHeaderBytes}, {"private", private, MaxServiceHeaderBytes}} {
-		t.Run(test.name, func(t *testing.T) {
-			data, err := json.Marshal(test.header)
-			if err != nil {
-				t.Fatal(err)
-			}
-			atLimit := string(data) + strings.Repeat(" ", test.limit-len(data))
-			reader := io.MultiReader(frame(atLimit), strings.NewReader("visitor bytes"))
-			if _, _, err := ReadForwardingHeader(reader); err != nil {
-				t.Fatalf("selected kind exact cap rejected: %v", err)
-			}
-			rest, _ := io.ReadAll(reader)
-			if string(rest) != "visitor bytes" {
-				t.Fatal("overconsumed visitor bytes")
-			}
-			for _, bad := range []string{atLimit + " ", strings.Replace(string(data), `"traceparent":`, `"baggage":"untrusted","traceparent":`, 1), strings.Replace(string(data), goldenTraceParent, "bad", 1)} {
-				if _, _, err := ReadForwardingHeader(frame(bad)); err == nil {
-					t.Fatal("accepted overcap or unknown/bad trace fields")
-				}
-			}
-		})
+	data, err := json.Marshal(h)
+	if err != nil {
+		t.Fatal(err)
 	}
+	atLimit := string(data) + strings.Repeat(" ", MaxServiceHeaderBytes-len(data))
+	reader := io.MultiReader(frame(atLimit), strings.NewReader("visitor bytes"))
+	if _, err := ReadServiceForwardingHeader(reader); err != nil {
+		t.Fatalf("selected kind exact cap rejected: %v", err)
+	}
+	rest, _ := io.ReadAll(reader)
+	if string(rest) != "visitor bytes" {
+		t.Fatal("overconsumed visitor bytes")
+	}
+	for _, bad := range []string{atLimit + " ", strings.Replace(string(data), `"traceparent":`, `"baggage":"untrusted","traceparent":`, 1), strings.Replace(string(data), goldenTraceParent, "bad", 1)} {
+		if _, err := ReadServiceForwardingHeader(frame(bad)); err == nil {
+			t.Fatal("accepted overcap or unknown/bad trace fields")
+		}
+	}
+}
+
+func wireJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }

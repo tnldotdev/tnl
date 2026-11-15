@@ -2,24 +2,24 @@ package invocation
 
 import (
 	"bytes"
-	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/client/auth"
-	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
-	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -28,125 +28,257 @@ type publicationHTTPTransport func(*http.Request) (*http.Response, error)
 
 func (f publicationHTTPTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestForegroundPublicationReusesItsIdentityAndNeverCreatesRunsWithTheSession(t *testing.T) {
-	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer state.Close()
-	const server = "https://control.example"
-	store, err := state.Server(t.Context(), server)
-	if err != nil {
-		t.Fatal(err)
-	}
-	newID := func(prefix string) string {
-		t.Helper()
-		id, err := opaqueid.New(prefix)
-		if err != nil {
-			t.Fatal(err)
+func foregroundPlan() targetplan.TargetPlan {
+	return targetplan.TargetPlan{Protocol: config.ProtocolHTTP, Target: "http://127.0.0.1:3000"}
+}
+
+func foregroundDigest(declaration controlv1.ProjectServiceConfiguration) string {
+	encoded, _ := json.Marshal(declaration)
+	digest := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(digest[:])
+}
+
+func newForegroundFixture(t *testing.T) *serviceSetupFixture {
+	t.Helper()
+	f := newServiceSetupFixture(t, "app.member.example")
+	f.before = func(r *http.Request) (*http.Response, bool) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/services/"+f.saved.Id+"/configuration" {
+			response := serviceTestResponse(r, 200, f.declaration)
+			response.Header.Set("ETag", `"`+foregroundDigest(f.declaration)+`"`)
+			return response, true
 		}
-		return id
-	}
-	prefixes := []string{}
-	publicURL := controlv1.PublicURL{Id: newID(opaqueid.PublicURLPrefix), TeamId: newID(opaqueid.TeamPrefix), DomainId: newID(opaqueid.DomainPrefix), CanonicalHostname: "app.example", ServiceProtocol: controlv1.Http, PublicUrlScope: controlv1.Shared, Purpose: controlv1.App, LifecycleState: controlv1.Enabled, PolicyRevision: 1, NextPublishRunNumber: 1, CreatedAt: time.Now(), UpdatedAt: time.Now(), AllowedIpPrefixes: &prefixes}
-	enrollmentID := newID(opaqueid.PublisherEnrollmentPrefix)
-	enrollmentKey := enrollmentID + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 32))
-	identity := authorityv1.PublisherEnrollmentResult{ClientId: newID(opaqueid.PublisherIdentityPrefix), KeyId: newID(opaqueid.PublisherIdentityKeyPrefix), GrantId: newID(opaqueid.PublisherGrantPrefix), TeamId: publicURL.TeamId, PublicUrlId: &publicURL.Id, Kind: authorityv1.SavedPublicUrl}
-	sessionToken, _, _, err := credentials.NewAccessToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var public ed25519.PublicKey
-	enrollments, redemptions, runs := 0, 0, 0
-	httpClient := &http.Client{Transport: publicationHTTPTransport(func(r *http.Request) (*http.Response, error) {
-		var value any
-		status := http.StatusOK
-		switch r.Method + " " + r.URL.Path {
-		case "GET /v1/public-urls":
-			if r.URL.Query().Get("team_id") != publicURL.TeamId || r.URL.Query().Get("canonical_hostname") != publicURL.CanonicalHostname {
-				t.Errorf("publication selected an unfiltered URL lookup: %s", r.URL)
-			}
-			value = controlv1.PublicURLPage{PublicUrls: []controlv1.PublicURL{publicURL}}
-		case "POST /v1/publisher-enrollments":
-			enrollments++
-			var body controlv1.CreatePublisherEnrollmentRequest
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				return nil, err
-			}
-			if body.PublicUrlId == nil || *body.PublicUrlId != publicURL.Id || body.DomainId != nil || body.TeamId != publicURL.TeamId || r.Header.Get("Authorization") != "Bearer "+sessionToken.String() {
-				t.Errorf("foreground owner did not request its exact saved URL: %+v", body)
-			}
-			status = http.StatusCreated
-			value = controlv1.PublisherEnrollment{Id: enrollmentID, EnrollmentKey: enrollmentKey, ExpiresAt: time.Now().Add(time.Minute), PublicUrlId: &publicURL.Id, TeamId: publicURL.TeamId, Kind: "saved_public_url"}
-		case "POST /v1/publisher-enrollments/redeem":
-			redemptions++
-			var body authorityv1.RedeemPublisherEnrollmentRequest
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				return nil, err
-			}
-			if body.EnrollmentKey != enrollmentKey {
-				t.Error("foreground owner redeemed a different enrollment")
-			}
-			public, err = base64.RawURLEncoding.DecodeString(body.PublicKey)
+		if r.Method == http.MethodPut && r.URL.Path == "/v1/services/"+f.saved.Id {
+			data, err := io.ReadAll(r.Body)
 			if err != nil {
-				return nil, err
+				t.Fatal(err)
 			}
-			value = identity
-		case "POST /v1/publisher-token":
-			var body authorityv1.PublisherTokenRequest
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				return nil, err
+			r.Body = io.NopCloser(bytes.NewReader(data))
+			var body controlv1.UpdateServiceRequest
+			if err := json.Unmarshal(data, &body); err != nil {
+				t.Fatal(err)
 			}
-			if _, err := publisherproof.Verify(body.ClientAssertion, identity.ClientId, identity.KeyId, identity.GrantId, server+"/v1/publisher-token", public, time.Now()); err != nil {
-				return nil, err
+			if body.ExpectedConfigurationDigest == nil || *body.ExpectedConfigurationDigest != foregroundDigest(f.declaration) {
+				t.Fatal("foreground update omitted the declaration compare-and-swap", body)
 			}
-			value = authorityv1.PublisherTokenResponse{AccessToken: "publisher-access", TokenType: "Bearer", ExpiresIn: 60, GrantId: identity.GrantId}
-		case "POST /v1/public-urls/" + publicURL.Id + "/publish-runs":
-			runs++
-			if r.Header.Get("Authorization") != "Bearer publisher-access" {
-				t.Error("publish run used the team session")
+			if body.PublisherPool != f.saved.PublisherPool {
+				t.Fatal("foreground update changed publisher-pool intent")
 			}
-			if _, err := publisherproof.VerifyRun(public, r.Header.Get("Publisher-Run-Proof"), publicURL.Id, r.Header.Get("Idempotency-Key")); err != nil {
-				return nil, err
-			}
-			status = http.StatusServiceUnavailable
-			value = map[string]string{"code": "unavailable"}
-		default:
-			return nil, errors.New("unexpected publication request: " + r.Method + " " + r.URL.Path)
 		}
-		data, err := json.Marshal(value)
-		if err != nil {
-			return nil, err
-		}
-		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(data)), Request: r}, nil
-	})}
-	control, err := clientcontrol.New(server, httpClient, sessionToken)
-	if err != nil {
-		t.Fatal(err)
+		return nil, false
 	}
-	authority, err := clientauthority.New(server, httpClient, sessionToken)
-	if err != nil {
-		t.Fatal(err)
-	}
-	services := publisherServices{state: store, hostname: publicURL.CanonicalHostname, teamID: publicURL.TeamId, domainID: publicURL.DomainId, publicURLScope: controlv1.Shared, routes: control, authenticated: &auth.Client{ServerEndpoint: server, Control: control, Authority: authority}}
+	return f
+}
+
+func TestForegroundPublicationReusesItsServiceAndIdentityWithoutSessionRuns(t *testing.T) {
+	f := newForegroundFixture(t)
 	for range 2 {
-		cfg := services.config("http://127.0.0.1:3000", prefixes, applicationlimits.Limits{})
-		cfg.ServiceProtocol = controlv1.Http
-		cleanup, err := selectForegroundPublisher(t.Context(), state, services, &cfg, nil)
+		native, saved, plan, err := prepareForegroundService(t.Context(), f.services, PublicOptions{}, resolvedVisitorAccess{}, foregroundPlan())
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !cfg.PreserveSavedPublicURLTarget || cfg.Target != "http://127.0.0.1:3000" {
-			t.Fatalf("private foreground target = %+v", cfg)
+		if saved.Id != f.saved.Id || plan.Target != foregroundPlan().Target || f.declaration.Target != "app" || saved.Source != nil {
+			t.Fatal("foreground listener replaced saved service intent", saved, plan, f.declaration)
 		}
-		if _, err := cfg.Control.CreatePublishRun(t.Context(), publicURL.Id, newID(opaqueid.IdempotencyPrefix)); !errors.Is(err, clientcontrol.ErrUnavailable) {
-			t.Fatalf("signed run request = %v", err)
-		}
-		if err := cleanup(); err != nil {
+		access, err := native.Access(t.Context())
+		if err != nil {
 			t.Fatal(err)
 		}
+		if _, err := native.PrepareServiceRun(t.Context(), saved.Id, "attempt", access, publisheridentity.ServiceDeclaration(saved)); !errors.Is(err, clientcontrol.ErrUnavailable) {
+			t.Fatal("service run was not created with its exact signed grant", err)
+		}
 	}
-	if enrollments != 1 || redemptions != 1 || runs != 2 {
-		t.Fatalf("enrollments=%d, redemptions=%d, signed runs=%d", enrollments, redemptions, runs)
+	if f.creates != 1 || f.enrollments != 1 || f.redemptions != 1 || f.runs != 2 || f.updates != 0 {
+		t.Fatal("restart changed saved service, key, or policy", f.creates, f.enrollments, f.redemptions, f.runs, f.updates)
+	}
+}
+
+func TestForegroundRestartPreservesSavedPolicyTargetAndPublisherPool(t *testing.T) {
+	f := newForegroundFixture(t)
+	flags := PublicOptions{RequirePostQuantum: new(true), Limits: applicationlimits.Limits{Requests: 700, Concurrency: 50, RateRequests: 10, RatePer: time.Second, RateBurst: 20}}
+	policy := resolvedVisitorAccess{explicit: true, access: controlv1.Anonymous, prefixes: []string{"192.0.2.0/24"}}
+	if _, _, _, err := prepareForegroundService(t.Context(), f.services, flags, policy, foregroundPlan()); err != nil {
+		t.Fatal(err)
+	}
+	f.declaration.Target = "saved.internal:8080"
+	f.saved.PublisherPool = true
+	before, _ := json.Marshal(f.declaration)
+	plan := foregroundPlan()
+	plan.Target = "http://127.0.0.1:4000"
+	_, saved, actual, err := prepareForegroundService(t.Context(), f.services, PublicOptions{}, resolvedVisitorAccess{}, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _ := json.Marshal(f.declaration)
+	if !bytes.Equal(before, after) || f.updates != 0 || !saved.RequirePostQuantum || !saved.PublisherPool || actual.Target != plan.Target {
+		t.Fatal("restart reset saved declaration or selected the saved runtime target", string(before), string(after), saved, actual)
+	}
+}
+
+func TestForegroundOverrideMergesOnlySelectedPolicyFields(t *testing.T) {
+	f := newForegroundFixture(t)
+	if _, _, _, err := prepareForegroundService(t.Context(), f.services, PublicOptions{}, resolvedVisitorAccess{}, foregroundPlan()); err != nil {
+		t.Fatal(err)
+	}
+	f.declaration.Target = "saved.internal:8080"
+	f.declaration.RequirePostQuantum = new(true)
+	f.declaration.Http = &controlv1.ProjectServiceHTTP{
+		Access: &controlv1.ProjectHTTPAccess{Mode: new(controlv1.Anonymous)},
+		Limits: &controlv1.ProjectHTTPApplicationLimits{Total: new(900), Rate: &controlv1.ProjectApplicationRate{Count: 5, Per: "1s", Burst: new(12)}},
+	}
+	f.saved.PublisherPool = true
+	f.applyDeclaration()
+	flags := PublicOptions{RequirePostQuantum: new(false), Limits: applicationlimits.Limits{Concurrency: 7}}
+	_, saved, _, err := prepareForegroundService(t.Context(), f.services, flags, resolvedVisitorAccess{}, foregroundPlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual := f.declaration
+	if f.updates != 1 || saved.RequirePostQuantum || !saved.PublisherPool || actual.Target != "saved.internal:8080" ||
+		*actual.Http.Access.Mode != controlv1.Anonymous || *actual.Http.Limits.Total != 900 || *actual.Http.Limits.Concurrency != 7 ||
+		actual.Http.Limits.Rate.Count != 5 || *actual.Http.Limits.Rate.Burst != 12 {
+		t.Fatal("foreground override replaced unrelated saved policy", actual, saved, f.updates)
+	}
+}
+
+func TestForegroundOverrideRereadsPolicyAfterConflictOrLostReply(t *testing.T) {
+	for _, conflict := range []bool{true, false} {
+		t.Run(map[bool]string{true: "conflict", false: "lost reply"}[conflict], func(t *testing.T) {
+			f := newForegroundFixture(t)
+			if _, _, _, err := prepareForegroundService(t.Context(), f.services, PublicOptions{}, resolvedVisitorAccess{}, foregroundPlan()); err != nil {
+				t.Fatal(err)
+			}
+			previous := f.before
+			attempts := 0
+			f.before = func(r *http.Request) (*http.Response, bool) {
+				if response, handled := previous(r); handled {
+					return response, true
+				}
+				if r.Method == http.MethodPut {
+					attempts++
+					if attempts == 1 && conflict {
+						f.declaration.Target = "concurrent.internal:8080"
+						f.declaration.Http = &controlv1.ProjectServiceHTTP{Limits: &controlv1.ProjectHTTPApplicationLimits{Total: new(800)}}
+						return serviceTestResponse(r, 409, map[string]any{"status": 409, "code": "conflict"}), true
+					}
+				}
+				return nil, false
+			}
+			if !conflict {
+				f.afterUpdate = func() error {
+					f.afterUpdate = nil
+					f.declaration.Target = "concurrent.internal:8080"
+					f.declaration.Http.Limits.Total = new(800)
+					return io.ErrUnexpectedEOF
+				}
+			}
+			_, saved, _, err := prepareForegroundService(t.Context(), f.services, PublicOptions{Limits: applicationlimits.Limits{Concurrency: 7}}, resolvedVisitorAccess{}, foregroundPlan())
+			if err != nil || saved.Id != f.saved.Id || f.creates != 1 || f.declaration.Target != "concurrent.internal:8080" ||
+				*f.declaration.Http.Limits.Total != 800 || *f.declaration.Http.Limits.Concurrency != 7 {
+				t.Fatal("retry overwrote current declaration or selected another service", err, f.declaration, saved)
+			}
+		})
+	}
+}
+
+func TestForegroundRestartRetainsSavedTargetTrustAndRejectsPlaintext(t *testing.T) {
+	f := newForegroundFixture(t)
+	declaration, err := targettrust.NewDeclaration("target.example", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trust, err := declaration.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := foregroundPlan()
+	plan.Target, plan.Trust = "https://127.0.0.1:3000", trust
+	if _, _, _, err := prepareForegroundService(t.Context(), f.services, PublicOptions{}, resolvedVisitorAccess{}, plan); err != nil {
+		t.Fatal(err)
+	}
+	_, saved, actual, err := prepareForegroundService(t.Context(), f.services, PublicOptions{Target: "4000"}, resolvedVisitorAccess{}, foregroundPlan())
+	if err != nil || !reflect.DeepEqual(actual.Trust, trust) || actual.Target != "https://127.0.0.1:3000" || saved.TargetTls.Hostname != "target.example" {
+		t.Fatal("restart replaced saved target trust", actual, saved, err)
+	}
+	if _, _, _, err := prepareForegroundService(t.Context(), f.services, PublicOptions{Target: "http://127.0.0.1:4000"}, resolvedVisitorAccess{}, foregroundPlan()); err == nil {
+		t.Fatal("saved target TLS silently became plaintext")
+	}
+}
+
+func TestForegroundServiceDeclarationDoesNotMutateItsSavedInput(t *testing.T) {
+	current := controlv1.ProjectServiceConfiguration{Target: "saved.internal:8080",
+		Http: &controlv1.ProjectServiceHTTP{Limits: &controlv1.ProjectHTTPApplicationLimits{Concurrency: new(9)}}}
+	before, _ := json.Marshal(current)
+	selected, err := foregroundServiceDeclaration(PublicOptions{Limits: applicationlimits.Limits{Concurrency: 7}}, resolvedVisitorAccess{}, foregroundPlan(), &current)
+	after, _ := json.Marshal(current)
+	if err != nil || !bytes.Equal(before, after) || *selected.Http.Limits.Concurrency != 7 || selected.Target != current.Target {
+		t.Fatal("foreground merge changed its source snapshot", current, selected, err)
+	}
+}
+
+func TestForegroundServiceRejectsOtherOwnershipAndWorktree(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*controlv1.Service)
+	}{
+		{"team", func(s *controlv1.Service) { s.TeamId = "another-team" }},
+		{"domain", func(s *controlv1.Service) { s.DomainId = new("another-domain") }},
+		{"worktree", func(s *controlv1.Service) {
+			s.Placement = &controlv1.ServicePlacement{WorktreeKey: new("another-worktree")}
+		}},
+		{"project", func(s *controlv1.Service) { s.Source = &controlv1.LocalServiceSource{} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newForegroundFixture(t)
+			if _, _, _, err := prepareForegroundService(t.Context(), f.services, PublicOptions{}, resolvedVisitorAccess{}, foregroundPlan()); err != nil {
+				t.Fatal(err)
+			}
+			tc.mutate(&f.saved)
+			_, _, _, err := prepareForegroundService(t.Context(), f.services, PublicOptions{}, resolvedVisitorAccess{}, foregroundPlan())
+			if err == nil || f.creates != 1 || f.updates != 0 || f.enrollments != 1 {
+				t.Fatal("foreground publication adopted another owner's service", err, f.creates, f.updates, f.enrollments)
+			}
+		})
+	}
+}
+
+func TestForegroundTemporarySelectionUsesTheRealMemberNamespace(t *testing.T) {
+	f := newServiceSetupFixture(t, "unused.member.example")
+	f.services.membershipID = serviceTestID(t, opaqueid.MembershipPrefix)
+	f.services.namespace = "member.example"
+	f.identity.Kind, f.identity.ServiceId = authorityv1.Namespace, nil
+	f.identity.DomainId, f.identity.Namespace = &f.services.domainID, &f.services.namespace
+	f.before = func(r *http.Request) (*http.Response, bool) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/publisher-enrollments" {
+			return nil, false
+		}
+		var body controlv1.CreatePublisherEnrollmentRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.TeamId != f.services.teamID || body.DomainId == nil || *body.DomainId != f.services.domainID ||
+			body.ServiceId != nil || r.Header.Get("Authorization") != "Bearer session" {
+			t.Fatal("temporary publisher selected a synthetic team, domain, or service", body)
+		}
+		f.enrollments++
+		return serviceTestResponse(r, 201, controlv1.PublisherEnrollment{
+			Id: f.enrollment, EnrollmentKey: f.enrollment + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+			ExpiresAt: time.Now().Add(time.Minute), TeamId: f.services.teamID,
+			Kind: controlv1.PublisherEnrollmentKindNamespace, DomainId: &f.services.domainID, Namespace: &f.services.namespace,
+		}), true
+	}
+	for range 2 {
+		native, _, err := publisheridentity.EnsureNamespace(t.Context(), f.services.state, f.services.authenticated.Control, f.services.authenticated.Authority, f.services.teamID, f.services.domainID, f.services.namespace)
+		if err != nil || native == nil {
+			t.Fatal("real namespace selection failed", err)
+		}
+		if err := native.NamespaceScope(); err != nil {
+			t.Fatal(err)
+		}
+		if native.Allocations == nil {
+			t.Fatal("namespace owner omitted explicit service allocation capability")
+		}
+	}
+	if f.enrollments != 1 || f.redemptions != 1 || f.creates != 0 || f.updates != 0 {
+		t.Fatal("namespace selection replaced its key or reserved a service", f.enrollments, f.redemptions, f.creates, f.updates)
 	}
 }

@@ -19,7 +19,7 @@ import (
 )
 
 func TestConnectorHTTPInstructionsKeepCanonicalAuthorityWithoutHostEdits(t *testing.T) {
-	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: controlv1.ServiceProtocolHTTP, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "orders.example.test", Port: 443, Public: true}}
+	service := controlv1.ServiceSummary{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: controlv1.ServiceProtocolHTTP, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "orders.example.test", Port: 443, Public: true}}
 	for _, listen := range []string{"127.0.0.1:25443", "127.0.0.1:15432", "[::1]:15432"} {
 		profile, err := serviceConnectionProfile(service, listen)
 		if err != nil {
@@ -59,7 +59,7 @@ func TestConnectorHTTPCurlDialsOverrideWithVerifiedAuthority(t *testing.T) {
 	// even a configured HTTPS proxy must not divert this local connector command.
 	t.Setenv("https_proxy", "http://127.0.0.1:1")
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
-	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: controlv1.ServiceProtocolHTTP, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "example.com", Port: 443, Public: true}}
+	service := controlv1.ServiceSummary{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: controlv1.ServiceProtocolHTTP, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "example.com", Port: 443, Public: true}}
 	invoke := func() ([]byte, error) {
 		t.Helper()
 		profile, err := serviceConnectionProfile(service, target.Listener.Addr().String())
@@ -81,7 +81,7 @@ func TestConnectorHTTPCurlDialsOverrideWithVerifiedAuthority(t *testing.T) {
 func TestConnectorProfileSeparatesLocalDialAndVerifiedIdentity(t *testing.T) {
 	for _, public := range []bool{false, true} {
 		for _, protocol := range []controlv1.ServiceProtocol{controlv1.ServiceProtocolHTTP, controlv1.Postgres, controlv1.Mysql, controlv1.Tcp, "kubernetes"} {
-			service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: protocol, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "orders.production.example.test", Port: 25443, Public: public}}
+			service := controlv1.ServiceSummary{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: protocol, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "orders.production.example.test", Port: 25443, Public: public}}
 			if protocol == controlv1.ServiceProtocolHTTP {
 				service.Endpoint.Port = 443
 			}
@@ -124,7 +124,7 @@ func TestConnectorProfileSeparatesLocalDialAndVerifiedIdentity(t *testing.T) {
 func TestConnectModeMatrix(t *testing.T) {
 	for _, public := range []bool{false, true} {
 		for _, protocol := range []controlv1.ServiceProtocol{controlv1.ServiceProtocolHTTP, controlv1.Postgres, controlv1.Mysql, controlv1.Tcp, "kubernetes"} {
-			service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: protocol, Endpoint: &controlv1.ServiceEndpoint{Hostname: "service.example.test", Port: 25443, Public: public}}
+			service := controlv1.ServiceSummary{Id: "svc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: protocol, Endpoint: &controlv1.ServiceEndpoint{Hostname: "service.example.test", Port: 25443, Public: public}}
 			if protocol == controlv1.ServiceProtocolHTTP {
 				service.Endpoint.Port = 443
 			}
@@ -140,7 +140,7 @@ func TestConnectModeMatrix(t *testing.T) {
 
 func TestConnectorPrivateIdentityNeedsNoPublicReservation(t *testing.T) {
 	for _, protocol := range []controlv1.ServiceProtocol{"http", "tcp", "postgres", "mysql", "kubernetes"} {
-		service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: protocol,
+		service := controlv1.ServiceSummary{Id: "svc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: protocol,
 			Endpoint: &controlv1.ServiceEndpoint{Hostname: "private.example.test"}}
 		port := 0
 		if protocol == controlv1.ServiceProtocolHTTP {
@@ -175,7 +175,7 @@ func TestNativeMySQLRequiresExplicitServerRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("SSL_CERT_FILE", selected)
-	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: controlv1.Mysql, Endpoint: &controlv1.ServiceEndpoint{Hostname: "database.example.test", Port: 25443, Public: true}}
+	service := controlv1.ServiceSummary{Id: "svc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: controlv1.Mysql, Endpoint: &controlv1.ServiceEndpoint{Hostname: "database.example.test", Port: 25443, Public: true}}
 	profile, err := serviceConnectionProfile(service, "127.0.0.1:15432")
 	if err != nil || profile.ServerCAFile != selected {
 		t.Fatal("mysql omitted explicit roots", err)

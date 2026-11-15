@@ -30,7 +30,7 @@ func TestServiceHTTPWaitsForIngressAfterRequestAuthorization(t *testing.T) {
 					w.WriteHeader(http.StatusNoContent)
 				}), h2, inline, func(f *HTTP) {
 					service, run, secret := f.Subject.ID, f.RunID, f.Token
-					f.browser = &httpaccess.Browser{Subject: f.Subject, ControlURL: "https://control.example.test"}
+					f.browser = &httpaccess.Browser{Subject: f.Subject, Client: serviceHTTPAdmissionControl{}, RunID: f.RunID, Number: f.Number, Token: f.Token, ControlURL: "https://control.example.test"}
 					f.Control = serviceHTTPAdmissionControl{authorize: func(ctx context.Context, gotService, gotRun string, gotToken credentials.ServiceRunToken, input controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
 						if gotService != service || gotRun != run || gotToken != secret || input.RunNumber != 1 || input.VisitorConnectionId != "vc_"+strings.Repeat("V", 22) || input.SourceIp != "192.0.2.1" || input.DestinationPort != 443 {
 							t.Error("HTTP admission lost its exact run or trusted forwarding facts")

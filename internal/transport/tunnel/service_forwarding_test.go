@@ -3,6 +3,7 @@ package tunnel
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -28,7 +29,7 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 	accepted := make(chan *Session, 1)
 	go func() {
 		session, _, err := Accept(ctx, server, func(_ context.Context, hello tunnelv1.Message) error {
-			if hello.ServiceConnection == nil || *hello.ServiceConnection != ref || hello.PublisherConnection != nil {
+			if hello.ServiceConnection == nil || *hello.ServiceConnection != ref {
 				return errors.New("not a private publisher connection")
 			}
 			return nil
@@ -132,6 +133,49 @@ func TestServicePublisherTransportRequiresClaimedPublisherRole(t *testing.T) {
 		var rejected *ProtocolError
 		if borrowed != nil || !errors.As(err, &rejected) || rejected.Code != tunnelv1.Unauthenticated {
 			t.Fatal("unclaimed or wrong-role session lent its transport", err)
+		}
+	}
+}
+
+func TestServiceForwardingAcceptsIngressWithoutBorrowingPublisherIdentity(t *testing.T) {
+	ingress, relay := newHeaderBoundsPair(t, ingressBoundsHello())
+	ctx := tunnelContext(t)
+	header := maximumServiceHeader("relay-a")
+	type opened struct {
+		stream io.ReadWriteCloser
+		err    error
+	}
+	result := tunnelWorker(t, func() { _ = ingress.Close() }, func() opened {
+		stream, err := ingress.OpenServiceForwardingStream(ctx, header)
+		return opened{stream, err}
+	})
+	incoming, err := relay.AcceptServiceForwardingStream(ctx)
+	if err != nil || incoming.Header.ServiceID != header.ServiceID || incoming.Header.ServiceRunID != header.ServiceRunID {
+		t.Fatal("ingress forwarding was mistaken for a claimed publisher", err)
+	}
+	defer incoming.Stream().Close()
+	if err := incoming.Accept(); err != nil {
+		t.Fatal(err)
+	}
+	stream := await(t, result)
+	if stream.err != nil {
+		t.Fatal(stream.err)
+	}
+	defer stream.stream.Close()
+	write := tunnelWorker(t, func() { _ = stream.stream.Close() }, func() error {
+		_, err := io.WriteString(stream.stream, "visitor bytes")
+		return err
+	})
+	payload := make([]byte, len("visitor bytes"))
+	if _, err := io.ReadFull(incoming.Stream(), payload); err != nil || string(payload) != "visitor bytes" {
+		t.Fatal("service forwarding changed visitor bytes", err)
+	}
+	if err := await(t, write); err != nil {
+		t.Fatal(err)
+	}
+	for _, wrong := range []*Session{nil, {}, {role: tunnelv1.Publisher}, {role: tunnelv1.Connector}} {
+		if _, err := wrong.AcceptServiceForwardingStream(ctx); err == nil {
+			t.Fatal("unclaimed or unrelated peer accepted service forwarding")
 		}
 	}
 }

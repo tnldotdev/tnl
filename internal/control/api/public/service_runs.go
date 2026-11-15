@@ -106,7 +106,7 @@ func (h *handler) PrepareServiceRun(w http.ResponseWriter, r *http.Request, serv
 		return
 	}
 	response := controlv1.ServiceRunPreparation{
-		TeamId: prepared.TeamID, ServiceId: prepared.ServiceID,
+		TeamId: prepared.TeamID, GuestId: prepared.GuestID, ServiceId: prepared.ServiceID,
 		ServiceRunId: prepared.RunID, RunNumber: prepared.RunNumber,
 		PublisherIdentityId: prepared.PublisherIdentityID, PublisherGrantId: prepared.PublisherGrantID,
 		PublisherKeyId: prepared.PublisherKeyID, IdempotencyKey: prepared.IdempotencyKey,

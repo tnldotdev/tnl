@@ -12,12 +12,12 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 )
 
 // Observer records a login before sending the authorization response to the browser.
-func Observer(state *clientstate.Database, server, hostname string, group clientstate.IntegrationScope, tunnelID string) publisher.ResponseObserver {
-	return func(response *http.Response, run publisher.PublishRunIdentity) error {
+func Observer(state *clientstate.Database, server, hostname string, group clientstate.IntegrationScope, tunnelID string) func(*http.Response, publisherservice.HTTPRun) error {
+	return func(response *http.Response, run publisherservice.HTTPRun) error {
 		location, err := url.Parse(response.Header.Get("Location"))
 		if err != nil || location.Scheme != "https" || location.Host == "" {
 			return nil
@@ -54,7 +54,7 @@ func Observer(state *clientstate.Database, server, hostname string, group client
 		}
 		if err := state.SaveOAuthCallback(ctx, clientstate.SaveOAuthCallbackInput{
 			Scope:       clientstate.OAuthCallbackScope{Server: server, Hostname: hostname, IntegrationScope: group},
-			Origin:      clientstate.OAuthRedirectOrigin{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number},
+			Origin:      clientstate.OAuthRedirectOrigin{Hostname: run.Hostname, ServiceID: run.ServiceID, RunNumber: uint64(run.Number)},
 			Destination: clientstate.OAuthCallbackDestination{TunnelID: tunnelID, Path: callback.Path, Query: callback.RawQuery}, State: query.Get("state"),
 		}); err != nil {
 			return diagnostic.Wrap(diagnostic.OAuthCallbackUnavailable, err)

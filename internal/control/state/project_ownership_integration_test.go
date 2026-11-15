@@ -73,8 +73,12 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 	if _, err = d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, member.IdentityID, "local"); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("member read manager configuration", err)
 	}
-	if _, err = d.ConfigureService(ctx, first.ServiceID, r.ActorID, *first.Metadata, now); !errors.Is(err, ErrProjectManaged) {
+	if _, err = d.ConfigureService(ctx, first.ServiceID, r.ActorID, *first.Metadata, nil, ServiceUpdateConditions{}, now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("direct managed definition changed", err)
+	}
+	if _, err = d.ConfigureService(ctx, first.ServiceID, r.ActorID, *first.Metadata,
+		&ProjectServiceConfiguration{Target: "localhost:4000"}, ServiceUpdateConditions{}, now); !errors.Is(err, ErrProjectManaged) {
+		t.Fatal("explicit declaration bypassed project management", err)
 	}
 	if err = d.DeleteService(ctx, first.ServiceID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("public service deleted", err)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -88,6 +89,9 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 		return publisherapp.Configuration{}, err
 	}
 	readiness := &serviceRunReadiness{binding: binding, transport: transport, path: service.Readiness.Path}
+	if saved.Protocol == controlv1.ServiceProtocolHTTP {
+		binding.Changed = func() { a.manager.TargetChanged(service.Name, service.RegistrationID, service.Target) }
+	}
 	if saved.Protocol == controlv1.ServiceProtocolHTTP && saved.Endpoint != nil && saved.Endpoint.Public {
 		readiness.publicURL = "https://" + saved.Endpoint.Hostname
 	}
@@ -105,7 +109,50 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	}
 	publication := &publisherapp.ServicePublication{Options: clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, ServiceID: saved.Id,
 		Server: auth.ServerEndpoint, Project: project.Root, Target: service.Target, Service: service.Name, ServiceProtocol: saved.Protocol}, Check: readiness.check, URL: readiness.publicURL}
-	publication.Run = func(ctx context.Context, observe func(uint64, bool) error, summary inspection.Observer) error {
+	base := publisherservice.RunConfig{Telemetry: a.Telemetry, Control: native, State: profile, Access: native.Access,
+		PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId,
+		ServiceID: saved.Id, Target: plan.Target, Metadata: publisheridentity.ServiceMetadata(saved), InspectionMode: policy.Mode,
+		ProjectRoot: project.Root, ProjectService: service.Name}
+	if saved.Protocol == controlv1.ServiceProtocolHTTP {
+		base.ResolveHTTPTarget = func(request *http.Request) (string, string, error) {
+			selected, err := readiness.captureHTTP(request.Context())
+			return selected.Address, selected.Identity, err
+		}
+		base.Mounts, err = ProjectMounts(ctx, project.Project, service.Name, func(name string) string {
+			for _, candidate := range a.manager.Snapshot().Services {
+				if candidate.Name == name && a.manager.CurrentRegistration(name, candidate.RegistrationID, candidate.Target) {
+					return candidate.Target
+				}
+			}
+			return ""
+		}, a.TargetResolver)
+		if err != nil {
+			return publisherapp.Configuration{}, err
+		}
+		preview, err := ensurePreview(ctx, a.state, profile, auth.Control, auth.ServerEndpoint, saved.TeamId, project.Root)
+		if err != nil {
+			return publisherapp.Configuration{}, err
+		}
+		included, err := auth.Control.AddPreviewService(ctx, preview, saved.Id)
+		if err != nil {
+			return publisherapp.Configuration{}, err
+		}
+		if included.Id != preview || included.TeamId != saved.TeamId || !slices.Contains(included.ServiceIds, saved.Id) {
+			return publisherapp.Configuration{}, failure.Wrap("associate preview", failure.ServerResponseInvalid, errors.New("preview omitted the selected service"))
+		}
+		base.PreviewID, base.Feedback = preview, effective.Feedback != nil && *effective.Feedback
+	}
+	publication.Run = func(ctx context.Context, tunnel *clientstate.Tunnel, observe func(uint64, bool) error, summary inspection.Observer) error {
+		base.ObserveSummary = summary
+		if saved.Protocol == controlv1.ServiceProtocolHTTP {
+			stop, err := attachRuntimeIntegrations(ctx, a.state, project.Project, service, tunnel, &base)
+			if err != nil {
+				return err
+			}
+			if stop != nil {
+				defer stop()
+			}
+		}
 		var pending targetplan.TargetSnapshot
 		capture := func(target targetplan.TargetSnapshot) error {
 			actual, err := binding.Capture(ctx)
@@ -124,53 +171,60 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 			var prepared *serviceRunBinding
 			var notified bool
 			var observationError error
-			err := targetplan.PublishPrivate(runCtx, plan, publisherservice.RunConfig{Telemetry: a.Telemetry, Control: native, State: profile, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: saved.Id, Target: plan.Target, Metadata: publisheridentity.ServiceMetadata(saved),
-				InspectionMode: policy.Mode, ObserveSummary: summary,
-				Prepared: func(preparation controlv1.ServiceRunPreparation) error {
-					prepared = readiness.prepare(pending, preparation)
-					notified = false
-					return observe(uint64(preparation.RunNumber), false)
-				},
-				AdmitRequest: func(r *http.Request) error {
-					current := readiness.load()
-					if ctx.Err() != nil || !a.manager.CurrentRun(service.Name, service.RegistrationID, service.Target, current.run.Number) {
-						return publisherapp.ErrRegistrationStale
-					}
-					if readiness.load() != current || !binding.Current(r.Context(), current.target) {
-						return publisherapp.ErrRegistrationStale
-					}
-					return nil
-				},
-				ReadinessProof: readinessProof,
-				Healthy: func(probe context.Context) bool {
-					current := service
-					current.RunNumber = readiness.load().run.Number
-					observation := readiness.localCheck(probe, current)
-					if readiness.publicURL == "" {
-						a.manager.Observe(observation)
-					}
-					return observation.Ready
-				}, Ready: func() error {
-					if prepared == nil {
-						return publisherapp.ErrRegistrationStale
-					}
-					if err := observe(prepared.run.Number, true); err != nil {
-						return err
-					}
-					notified = true
-					return nil
-				}, ObserveReadiness: func(status publisherservice.RunStatus) {
-					// the runtime reports status before its first Ready callback.
-					// only that callback announces initial publication; later status
-					// changes use the manager's current availability, not a copy.
-					if !notified || runCtx.Err() != nil || observationError != nil {
-						return
-					}
-					if err := a.observeServiceReadiness(service, prepared.run, status, observe); err != nil {
-						observationError = err
-						cancel()
-					}
-				}}, targetplan.TargetHooks{Resolver: a.TargetResolver, Capture: capture})
+			cfg := base
+			cfg.Prepared = func(preparation controlv1.ServiceRunPreparation) error {
+				prepared = readiness.prepare(pending, preparation)
+				notified = false
+				return observe(uint64(preparation.RunNumber), false)
+			}
+			cfg.AdmitRequest = func(r *http.Request) error {
+				current := readiness.load()
+				if ctx.Err() != nil || !a.manager.CurrentRun(service.Name, service.RegistrationID, service.Target, current.run.Number) {
+					return publisherapp.ErrRegistrationStale
+				}
+				if saved.Protocol != controlv1.ServiceProtocolHTTP && (readiness.load() != current || !binding.Current(r.Context(), current.target)) {
+					return publisherapp.ErrRegistrationStale
+				}
+				return nil
+			}
+			cfg.ReadinessProof = readinessProof
+			cfg.Healthy = func(probe context.Context) bool {
+				current := service
+				current.RunNumber = readiness.load().run.Number
+				observation := readiness.localCheck(probe, current)
+				if readiness.publicURL == "" {
+					a.manager.Observe(observation)
+				}
+				return observation.Ready
+			}
+			cfg.Ready = func() error {
+				if prepared == nil {
+					return publisherapp.ErrRegistrationStale
+				}
+				if err := observe(prepared.run.Number, true); err != nil {
+					return err
+				}
+				notified = true
+				return nil
+			}
+			cfg.ObserveReadiness = func(status publisherservice.RunStatus) {
+				// the runtime reports status before its first Ready callback.
+				// only that callback announces initial publication; later status
+				// changes use the manager's current availability, not a copy.
+				if !notified || runCtx.Err() != nil || observationError != nil {
+					return
+				}
+				if err := a.observeServiceReadiness(service, prepared.run, status, observe); err != nil {
+					observationError = err
+					cancel()
+				}
+			}
+			if a.AttachPublication != nil {
+				if err := a.AttachPublication(runCtx, service, &cfg); err != nil {
+					return err
+				}
+			}
+			err := targetplan.PublishPrivate(runCtx, plan, cfg, targetplan.TargetHooks{Resolver: a.TargetResolver, Capture: capture})
 			return errors.Join(err, observationError)
 		}
 		for attempt := 0; ctx.Err() == nil; attempt++ {
@@ -245,6 +299,21 @@ func (r *serviceRunReadiness) load() serviceRunBinding {
 	return *r.current
 }
 
+// HTTP target replacement invalidates observations, not the current run or
+// requests already using an earlier target. the exact run proof remains shared.
+func (r *serviceRunReadiness) captureHTTP(ctx context.Context) (targetplan.TargetSnapshot, error) {
+	selected, err := r.binding.Capture(ctx)
+	if err != nil {
+		return targetplan.TargetSnapshot{}, err
+	}
+	r.mu.Lock()
+	if r.current != nil {
+		r.current.target = selected
+	}
+	r.mu.Unlock()
+	return selected, nil
+}
+
 func (r *serviceRunReadiness) prepare(target targetplan.TargetSnapshot, preparation controlv1.ServiceRunPreparation) *serviceRunBinding {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -274,6 +343,12 @@ func (r *serviceRunReadiness) proof(run httpaccess.ReadinessRun) *httpaccess.Rea
 }
 
 func (r *serviceRunReadiness) localCheck(ctx context.Context, service publisherapp.Service) publisherapp.Observation {
+	if r.transport.Protocol == config.ProtocolHTTP {
+		if _, err := r.captureHTTP(ctx); err != nil {
+			return publisherapp.Observation{Target: service.Target, RegistrationID: service.RegistrationID, RunNumber: service.RunNumber,
+				Readiness: service.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"}
+		}
+	}
 	current := r.load()
 	observation := publisherapp.Observation{Target: service.Target, RegistrationID: service.RegistrationID, RunNumber: service.RunNumber, Readiness: service.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"}
 	if current.run.Number != service.RunNumber || current.target.Address == "" || !r.binding.Current(ctx, current.target) {
@@ -296,6 +371,10 @@ func (r *serviceRunReadiness) check(ctx context.Context, service publisherapp.Se
 	}
 	r.probeMu.Lock()
 	defer r.probeMu.Unlock()
+	if _, err := r.captureHTTP(ctx); err != nil {
+		return publisherapp.Observation{Target: service.Target, RegistrationID: service.RegistrationID, RunNumber: service.RunNumber,
+			Readiness: service.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"}
+	}
 	current := r.load()
 	observation := publisherapp.Observation{Target: service.Target, RegistrationID: service.RegistrationID, RunNumber: service.RunNumber, Readiness: service.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"}
 	if current.run.Number != service.RunNumber || current.proof == nil || current.target.Address == "" || !r.binding.Current(ctx, current.target) {

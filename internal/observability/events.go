@@ -28,23 +28,9 @@ func (m *Metrics) ObserveWebhookProviderSource(provider, outcome string) {
 	m.webhookProviderSources.With(providerKey.Dimension(provider), result.dimension()).Inc()
 }
 
-func validPublicURLPurpose(purpose string) bool {
-	switch purpose {
-	case "app", "alias", "demo", "oauth", "webhooks":
-		return true
-	}
-	return false
-}
-
-func (m *Metrics) ObservePublicURLCreated(purpose string) {
-	if m != nil && validPublicURLPurpose(purpose) {
-		m.publicURLsCreated.With(publicURLPurpose.Dimension(purpose)).Inc()
-	}
-}
-
-func (m *Metrics) ObservePublishRunReady(purpose string) {
-	if m != nil && validPublicURLPurpose(purpose) {
-		m.publishRunsReady.With(publicURLPurpose.Dimension(purpose)).Inc()
+func (m *Metrics) ObserveServiceRunReady() {
+	if m != nil {
+		m.serviceRunsReady.Inc()
 	}
 }
 
@@ -101,17 +87,16 @@ func (m *Metrics) ObservePublisherExit(unexpected bool) {
 	m.publisherExits.With(Reason.Dimension(reason)).Inc()
 }
 
-func (m *Metrics) ObserveRelayTransfer(kind string, toPublisher, toVisitor int64, err error) {
-	if m == nil || kind != "public_url" && kind != "service" {
+func (m *Metrics) ObserveRelayTransfer(toPublisher, toVisitor int64, err error) {
+	if m == nil {
 		return
 	}
-	serviceKind := NormalizeServiceKind(kind)
-	m.relayCompletions.With(ServiceKindKey.Dimension(serviceKind), OutcomeKey.Dimension(ErrorOutcome(err))).Inc()
+	m.relayCompletions.With(OutcomeKey.Dimension(ErrorOutcome(err))).Inc()
 	if toPublisher >= 0 {
-		m.relayBytes.With(ServiceKindKey.Dimension(serviceKind), Direction.Dimension("visitor_to_publisher")).Add(float64(toPublisher))
+		m.relayBytes.With(Direction.Dimension("visitor_to_publisher")).Add(float64(toPublisher))
 	}
 	if toVisitor >= 0 {
-		m.relayBytes.With(ServiceKindKey.Dimension(serviceKind), Direction.Dimension("publisher_to_visitor")).Add(float64(toVisitor))
+		m.relayBytes.With(Direction.Dimension("publisher_to_visitor")).Add(float64(toVisitor))
 	}
 }
 
@@ -152,7 +137,7 @@ func (m *Metrics) ObserveRecoveryAttempt(outcome RecoveryAttemptOutcome) {
 }
 
 func (m *Metrics) ObserveCertificateClaim(kind string, outcome CertificateClaimOutcome) {
-	if m == nil || kind != "relay" && kind != "public_url" && kind != "service" && kind != "service_queue" {
+	if m == nil || kind != "relay" && kind != "service" && kind != "service_queue" {
 		return
 	}
 	if outcome != CertificateClaimed && outcome != CertificateEmpty && outcome != CertificateError {
@@ -162,14 +147,14 @@ func (m *Metrics) ObserveCertificateClaim(kind string, outcome CertificateClaimO
 }
 
 func (m *Metrics) ObserveCertificateOrder(kind, domain, plan string) {
-	if m == nil || kind != "public_url" && kind != "service" || domain != "managed" && domain != "custom" || plan != "exact" && plan != "wildcard" {
+	if m == nil || kind != "service" || domain != "managed" && domain != "custom" || plan != "exact" && plan != "wildcard" {
 		return
 	}
 	m.certificateOrders.With(CertificateKind.Dimension(kind), domainKind.Dimension(domain), certificatePlan.Dimension(plan)).Inc()
 }
 
 func (m *Metrics) ObserveCertificateTransition(kind, state string) {
-	if m == nil || kind != "relay" && kind != "public_url" && kind != "service" {
+	if m == nil || kind != "relay" && kind != "service" {
 		return
 	}
 	switch state {
@@ -189,7 +174,7 @@ func (m *Metrics) ObserveDNSWorkContext(ctx context.Context, kind, phase string,
 		return
 	}
 	switch kind {
-	case "authority", "public_url", "service", "public_url_challenge", "service_challenge", "relay_challenge":
+	case "authority", "service", "service_challenge", "relay_challenge":
 	default:
 		return
 	}
@@ -210,7 +195,7 @@ func (m *Metrics) ObserveDNSWorkContext(ctx context.Context, kind, phase string,
 }
 
 func (m *Metrics) ObserveDNSTransition(kind, state string) {
-	if m == nil || kind != "authority" && kind != "public_url" && kind != "service" {
+	if m == nil || kind != "authority" && kind != "service" {
 		return
 	}
 	switch state {
@@ -226,7 +211,7 @@ func (m *Metrics) ObserveCleanup(kind string, count int, busy bool, err error) {
 		return
 	}
 	switch kind {
-	case "expired_publish_runs", "ephemeral_public_urls", "routing_floor", "routing_prune", "service_audit", "guest_private_state", "workloads":
+	case "service_runs", "routing_floor", "routing_prune", "service_audit", "guest_private_state", "workloads":
 	default:
 		return
 	}

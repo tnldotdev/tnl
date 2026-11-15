@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
+	"github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
@@ -43,6 +44,8 @@ type Prepared struct {
 	clock               func() time.Time
 	target              string
 	handler             http.Handler
+	mounts              []proxy.Mount
+	resolveHTTPTarget   func(*http.Request) (address, identity string, err error)
 	inspectionMode      inspection.Mode
 	observeSummary      inspection.Observer
 	admitRequest        func(*http.Request) error
@@ -56,6 +59,7 @@ type Prepared struct {
 	managedPublic       bool
 	serviceHTTPRequests *requestlimit.HTTP
 	httpResponseHooks   httpstream.ResponseHooks
+	connectorHTTP       servicestream.ConnectorHTTPFrontend
 	policy              *visitorlease.Lease
 	metadataRevision    int64
 }
@@ -363,7 +367,13 @@ func (c *Claimed) Drain(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.session.RequestPublisherDrain(ctx, id)
+	err = c.session.RequestPublisherDrain(ctx, id)
+	sessionErr := c.session.Err()
+	sessionClosed := errors.Is(sessionErr, muxsession.ErrClosed) && serviceDrainCloseOnly(sessionErr, false)
+	if context.Cause(ctx) == nil && (errors.Is(err, muxsession.ErrClosed) || sessionClosed) && serviceDrainCloseOnly(err, sessionClosed) {
+		return nil
+	}
+	return err
 }
 
 func (c *Claimed) Close() error {
@@ -504,6 +514,21 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	b.active[stream] = struct{}{}
 	b.mu.Unlock()
 	defer func() { b.mu.Lock(); delete(b.active, stream); b.mu.Unlock() }()
+	if policy := b.prepared.policy; policy != nil {
+		life, cancel := context.WithCancel(ctx)
+		defer cancel()
+		// time-limited serving authority fences metadata, TLS setup, and idle
+		// sockets. this guard grants no visitor access and leaves ordinary
+		// policies' request-level lifetimes unchanged.
+		guard, err := policy.BindConnection(func() { cancel(); _ = stream.Close() })
+		if err != nil {
+			return errors.Join(ErrPrivateStream, err)
+		}
+		if guard != nil {
+			defer guard.Close()
+		}
+		ctx = life
+	}
 	deadline := time.Now().Add(10 * time.Second)
 	if err := stream.SetDeadline(deadline); err != nil {
 		return err
@@ -610,10 +635,12 @@ func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor ser
 		return err
 	}
 	managed := servicestream.Stream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, Handler: b.prepared.handler, HTTPRequests: b.prepared.serviceHTTPRequests,
+		Mounts: b.prepared.mounts, ResolveHTTPTarget: b.prepared.resolveHTTPTarget,
 		InspectionMode: b.prepared.inspectionMode, ObserveSummary: b.prepared.observeSummary,
 		AdmitRequest: b.prepared.admitRequest, HTTPResponseHooks: b.prepared.httpResponseHooks, HTTPDrain: drain,
-		Authority: authority,
-		TLS:       b.prepared.visitorTLS, TargetTLS: targetTLS, Visitor: visitor}
+		ConnectorHTTP: b.prepared.connectorHTTP,
+		Authority:     authority,
+		TLS:           b.prepared.visitorTLS, TargetTLS: targetTLS, Visitor: visitor}
 	return managed.Forward(ctx, stream)
 }
 

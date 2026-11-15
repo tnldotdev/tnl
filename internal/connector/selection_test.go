@@ -96,6 +96,9 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 					_ = json.NewEncoder(w).Encode(controlv1.LocalProjectService{Service: "orders", WorktreeKey: worktree, ServiceId: "svc_bound", Metadata: &controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP}})
 				case "/v1/visitor/services":
 					inventory++
+					if r.URL.Query().Get("access_path") != "connector" {
+						t.Error("native selection requested public endpoint discovery")
+					}
 					services := []controlv1.ServiceSummary{{Id: "svc_unrelated", Name: "orders", TeamId: "team_one"}, {Id: "svc_alias", Name: alias, TeamId: "team_one"}, {Id: "svc_remote", Name: group, TeamId: "team_one"}, {Id: "svc_worktree_b", Name: "orders-other-worktree", TeamId: "team_one"}, {Id: "svc_spoof", Name: "svc_bound", TeamId: "team_one"}}
 					if !test.omitID {
 						services = append(services, controlv1.ServiceSummary{Id: "svc_bound", Name: "database-scoped", TeamId: "team_one"})
@@ -137,8 +140,12 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 			if local && lookup != 1 || !local && lookup != 0 || local && (test.status != 0 || test.corrupt) && inventory != 0 {
 				t.Fatalf("unexpected lookup/inventory calls: %d/%d", lookup, inventory)
 			}
-			if remote && (remoteLookup != 1 || inventory != 0) || !remote && remoteLookup != 0 {
-				t.Fatalf("applied selection fell back to friendly inventory: %d/%d", remoteLookup, inventory)
+			expectedRemoteInventory := 0
+			if remote && test.status == 0 {
+				expectedRemoteInventory = 1
+			}
+			if remote && (remoteLookup != 1 || inventory != expectedRemoteInventory) || !remote && remoteLookup != 0 {
+				t.Fatalf("applied selection did not retain its exact source-bound native identity: %d/%d", remoteLookup, inventory)
 			}
 		})
 	}

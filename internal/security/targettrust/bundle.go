@@ -89,6 +89,9 @@ func NewCache(client *http.Client) *Cache {
 		client = http.DefaultClient
 	}
 	copy := *client
+	if copy.Transport == nil {
+		copy.Transport = http.DefaultTransport
+	}
 	if transport, ok := copy.Transport.(*http.Transport); ok {
 		transport = transport.Clone()
 		if transport.TLSClientConfig != nil {
@@ -96,8 +99,6 @@ func NewCache(client *http.Client) *Cache {
 			transport.TLSClientConfig.InsecureSkipVerify = false
 		}
 		copy.Transport = transport
-	} else if copy.Transport == nil {
-		copy.Transport = http.DefaultTransport.(*http.Transport).Clone()
 	}
 	copy.Timeout = 10 * time.Second
 	copy.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }

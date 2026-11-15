@@ -143,15 +143,15 @@ func TestIntegrationCLIDeploymentCRUD(t *testing.T) {
 		Deployment: "mixed", ServiceDeclarations: map[string]string{"db": "postgres", "cache": "tcp", "web": "http"},
 		TeamID: team, ActorID: session.Identity.Identity.ID, ProjectKey: "shop", SourceFingerprint: strings.Repeat("a", 64), ExpectedRevision: applied.Revision, Now: now,
 		Configuration: controlstate.ProjectConfiguration{Settings: &controlstate.DeploymentSettings{}, Services: map[string]controlstate.ProjectServiceConfiguration{
-			"db": {Protocol: "postgres", Target: "database.internal:5432"}, "web": {Target: "http://app.internal:3000", PublicURL: &controlstate.ProjectServicePublicURL{}},
+			"db": {Protocol: "postgres", Target: "database.internal:5432"}, "web": {Protocol: "http", Target: "http://app.internal:3000", Public: new(true)},
 		}},
 	})
 	if err != nil || len(mixed.Services) != 2 {
 		t.Fatal("mixed deployment fixture failed", err)
 	}
 	mixedDeployment := read("show", "mixed")
-	if !strings.HasPrefix(mixedDeployment.Services["web"].Id, "url_") || mixedDeployment.Services["web"].PublicUrl == nil {
-		t.Fatal("mixed deployment did not retain its public URL binding")
+	if !strings.HasPrefix(mixedDeployment.Services["web"].Id, "svc_") || mixedDeployment.Services["web"].Endpoint == nil || !mixedDeployment.Services["web"].Endpoint.Public {
+		t.Fatal("mixed deployment did not retain its public HTTP service binding")
 	}
 	updated = read("update", "mixed", "--target", "db=replacement.internal:5432")
 	if updated.Services["web"].Id != mixedDeployment.Services["web"].Id {

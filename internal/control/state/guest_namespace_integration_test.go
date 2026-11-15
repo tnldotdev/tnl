@@ -10,16 +10,17 @@ import (
 
 func TestIntegrationGuestReservesNamespaceAndBootstrapsDomain(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "guest_namespace")
+	enableGuestTestIngress(t, database)
 	guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	domainID, err := database.CreateGuestTrial(t.Context(), guest, "routes.example.test", now)
-	if err != nil || domainID == "" {
-		t.Fatalf("create guest trial: %q, %v", domainID, err)
+	trial, err := database.CreateGuestTrial(t.Context(), guest, "routes.example.test", now)
+	if err != nil || trial.DomainID == "" {
+		t.Fatalf("create guest trial: %+v, %v", trial, err)
 	}
 	stored, err := database.GuestTrialByAccessToken(t.Context(), guest.Token)
-	if err != nil || stored.DomainID != domainID || stored.DNSAuthorityReference != "" {
+	if err != nil || stored.DomainID != trial.DomainID || stored.DNSAuthorityReference != "" {
 		t.Fatalf("stored managed guest: %+v, %v", stored, err)
 	}
 	admin, err := createTestControlSession(t.Context(), database, "routes.example.test", time.Hour, 24*time.Hour, now)
@@ -38,6 +39,7 @@ func TestIntegrationGuestReservesNamespaceAndBootstrapsDomain(t *testing.T) {
 
 func TestIntegrationGuestNamespaceAllocationIsAtomic(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "guest_namespace_collision")
+	enableGuestTestIngress(t, database)
 	const callers = 8
 	results := make(chan error, callers)
 	var workers sync.WaitGroup

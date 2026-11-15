@@ -27,7 +27,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
-	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -41,15 +40,11 @@ type wiringControl struct {
 	promoted      int
 	closed        int
 	promotedReady chan struct{}
-	routingReady  chan struct{}
-	routingOnce   sync.Once
+	renewed       chan struct{}
+	renewedOnce   sync.Once
 	load          func() int64
 	pendingLoad   int64
 	promotedLoad  int64
-}
-
-func (*wiringControl) ReadIngressVisitorPolicy(context.Context, string, ingressv1.IngressVisitorPolicyRequest) (controlv1.VisitorPolicyUpdate, error) {
-	return controlv1.VisitorPolicyUpdate{}, ingress.ErrServiceAdmission
 }
 
 func (c *wiringControl) RegisterIngress(_ context.Context, r ingressv1.IngressRegistration) (ingressv1.IngressLease, error) {
@@ -72,19 +67,9 @@ func (c *wiringControl) DrainIngress(_ context.Context, _ ingressv1.IngressID, r
 func (c *wiringControl) RenewIngress(_ context.Context, _ ingressv1.IngressID, r ingressv1.IngressRenewal) (ingressv1.IngressLease, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.lease.RoutingTableRevision = r.RoutingTableRevision
 	c.lease.ReportedConnections = r.ReportedConnections
+	c.renewedOnce.Do(func() { close(c.renewed) })
 	return c.lease, nil
-}
-func (*wiringControl) GetIngressRoutingTableSnapshot(context.Context, ingressv1.IngressID, ingressv1.GetIngressRoutingTableSnapshotParams) (ingressv1.IngressRoutingTableSnapshot, error) {
-	return ingressv1.IngressRoutingTableSnapshot{}, nil
-}
-func (c *wiringControl) GetIngressRoutingTableEvents(ctx context.Context, _ ingressv1.IngressID, _ ingressv1.GetIngressRoutingTableEventsParams) (ingressv1.IngressRoutingTablePage, error) {
-	if c.routingReady != nil {
-		c.routingOnce.Do(func() { close(c.routingReady) })
-	}
-	<-ctx.Done()
-	return ingressv1.IngressRoutingTablePage{}, ctx.Err()
 }
 func (c *wiringControl) IngestServiceObservations(_ context.Context, _ controlstate.IngressLeaseIdentity, batch serviceaudit.Batch) (controlstate.ServiceObservationResult, error) {
 	return controlstate.ServiceObservationResult{Accepted: len(batch.Events)}, nil
@@ -180,7 +165,7 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 				ServiceID: wiringServiceID(t, opaqueid.ServicePrefix), ServiceRunID: wiringServiceID(t, opaqueid.ServiceRunPrefix), RunNumber: 2,
 				PublisherConnectionID: wiringServiceID(t, opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 1, RelayServiceID: "relay",
 			}
-			control := &wiringControl{routingReady: make(chan struct{}), promotedReady: make(chan struct{})}
+			control := &wiringControl{renewed: make(chan struct{}), promotedReady: make(chan struct{})}
 			ca := newTestCertificateAuthority(t)
 			material := ca.issue(t, "pool.example")
 			certificate, err := tls.X509KeyPair(material.certificatePEM, material.privateKeyPEM)
@@ -215,11 +200,11 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 						session, hello, err := tunnel.Accept(ctx, mux, func(_ context.Context, h tunnelv1.Message) error {
 							switch h.Role {
 							case tunnelv1.Ingress:
-								if h.Credential == "0123456789abcdef0123456789abcdef" && h.PublisherConnection == nil && h.ServiceConnection == nil {
+								if h.Credential == "0123456789abcdef0123456789abcdef" && h.ServiceConnection == nil {
 									return nil
 								}
 							case tunnelv1.Publisher:
-								if h.Credential == "service-publisher-credential" && h.PublisherConnection == nil && h.ServiceConnection != nil && *h.ServiceConnection == ref {
+								if h.Credential == "service-publisher-credential" && h.ServiceConnection != nil && *h.ServiceConnection == ref {
 									return nil
 								}
 							}
@@ -333,7 +318,7 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 			metrics := observability.New("ingress")
 			t.Cleanup(func() { _ = metrics.Shutdown(context.Background()) })
 			settings := ingressSettingsFrom(daemonconfig.Config{
-				VisitorConnectionLimit: 16, LeaseRenewalInterval: time.Minute, ControlRetryInterval: time.Millisecond, RoutingTableWait: time.Second,
+				VisitorConnectionLimit: 16, LeaseRenewalInterval: time.Millisecond, ControlRetryInterval: time.Millisecond, IngressPoolID: "ingress-a",
 				RequireProxyHeader: true, IngressTrustedProxies: []string{"127.0.0.1/32"},
 			})
 			if err := d.startIngressRuntime(ctx, settings, metrics, ingressRuntimeConfig{client: control, ingressID: "ingress", listener: listener, clusterSecret: "0123456789abcdef0123456789abcdef"}); err != nil {
@@ -346,7 +331,7 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			wiringServiceAwait(t, control.routingReady)
+			wiringServiceAwait(t, control.renewed)
 			control.mu.Lock()
 			control.load = d.ingresses[0].load
 			control.mu.Unlock()
@@ -354,7 +339,7 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 				t.Fatal("idle ingress reported physical visitors", got)
 			}
 			if !d.ingresses[0].controller.Ready(time.Now()) {
-				t.Fatal("production controller not ready after installing its empty snapshot")
+				t.Fatal("production controller not ready after renewing its lease")
 			}
 			httpTransport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: ca.roots}, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 				if address != "pool.example:443" {

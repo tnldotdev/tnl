@@ -48,6 +48,11 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 			}
 			defer rollback(ctx, tx, "expire service run", &retErr)()
 			q := controlstatedb.New(tx)
+			if err = lockServiceOwner(ctx, tx, c.service); errors.Is(err, ErrServiceAccess) {
+				return false, nil
+			} else if err != nil {
+				return false, err
+			}
 			_, err = q.LockService(ctx, c.service)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return false, nil
@@ -70,7 +75,7 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 			if permissionErr == nil && run.PublisherExpiresAt.Time.After(checkedAt) && (run.State != "prepared" || run.PreparationExpiresAt.Time.After(checkedAt)) {
 				return false, nil
 			}
-			if _, err = q.CloseServiceRun(ctx, controlstatedb.CloseServiceRunParams{ID: c.id, ServiceID: c.service, RunNumber: run.RunNumber, Now: timestamptz(checkedAt)}); err != nil {
+			if _, err = closeServiceRun(ctx, q, run, checkedAt); err != nil {
 				return false, err
 			}
 			return true, tx.Commit(ctx)
@@ -95,7 +100,12 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 	if _, err = d.ReleaseServicePorts(ctx, now); err != nil {
 		return count, err
 	}
-	if err = d.expireServices(ctx, clock.current()); err != nil {
+	expiredServices, err := d.expireServices(ctx, clock.current())
+	count += expiredServices
+	if err != nil {
+		return count, err
+	}
+	if err = d.expireCompanyEligibility(ctx, clock.current()); err != nil {
 		return count, err
 	}
 	return count, nil
@@ -103,74 +113,81 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 
 // a fixed expiration never renews. ephemeral cleanup instead waits for the last
 // run to close and a short idle grace period; endpoint edits cannot extend it.
-func (d *Database) expireServices(ctx context.Context, now time.Time) error {
-	rows, err := d.pool.Query(ctx, `SELECT service.id,service.team_id FROM control.services service
+func (d *Database) expireServices(ctx context.Context, now time.Time) (count int, retErr error) {
+	clock := newAuthorizationClock(now)
+	rows, err := d.pool.Query(ctx, `SELECT service.id FROM control.services service
 	    WHERE service.deleted_at IS NULL
 	      AND NOT EXISTS(SELECT 1 FROM control.service_runs run WHERE run.service_id=service.id AND run.closed_at IS NULL)
 	      AND (service.expires_at<=$1 OR service.ephemeral
 	        AND COALESCE((SELECT max(run.closed_at) FROM control.service_runs run WHERE run.service_id=service.id),service.created_at)<=$2)
 	    ORDER BY service.created_at,service.id LIMIT 100`, now, now.Add(-ephemeralServiceGracePeriod))
 	if err != nil {
-		return err
+		return 0, err
 	}
-	type candidate struct{ id, team string }
+	type candidate struct{ id string }
 	var candidates []candidate
 	for rows.Next() {
 		var service candidate
-		if err := rows.Scan(&service.id, &service.team); err != nil {
+		if err := rows.Scan(&service.id); err != nil {
 			rows.Close()
-			return err
+			return 0, err
 		}
 		candidates = append(candidates, service)
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	for _, candidate := range candidates {
-		err := func() (retErr error) {
+		deleted, err := func() (_ bool, retErr error) {
 			tx, err := d.pool.Begin(ctx)
 			if err != nil {
-				return err
+				return false, err
 			}
 			defer rollback(ctx, tx, "expire service", &retErr)()
 			q := controlstatedb.New(tx)
-			if _, err := q.LockLocalTeamForMutation(ctx, candidate.team); errors.Is(err, pgx.ErrNoRows) {
-				return nil
+			if err := lockServiceOwner(ctx, tx, candidate.id); errors.Is(err, ErrServiceAccess) {
+				return false, nil
 			} else if err != nil {
-				return err
+				return false, err
 			}
 			service, err := q.LockService(ctx, candidate.id)
 			if err != nil {
-				return err
+				return false, err
 			}
 			if service.DeletedAt.Valid {
-				return nil
+				return false, nil
 			}
 			var open bool
 			var idleSince time.Time
 			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.service_runs WHERE service_id=$1 AND closed_at IS NULL),
 			    COALESCE((SELECT max(closed_at) FROM control.service_runs WHERE service_id=$1),$2::timestamptz)`,
 				service.ID, service.CreatedAt.Time).Scan(&open, &idleSince); err != nil {
-				return err
+				return false, err
 			}
-			expired := service.ExpiresAt.Valid && !service.ExpiresAt.Time.After(now)
-			idle := service.Ephemeral && !idleSince.Add(ephemeralServiceGracePeriod).After(now)
+			expired := service.ExpiresAt.Valid && !service.ExpiresAt.Time.After(clock.current())
+			idle := service.Ephemeral && !idleSince.Add(ephemeralServiceGracePeriod).After(clock.current())
 			if open || !expired && !idle {
-				return nil
+				return false, nil
 			}
-			if _, err := q.DeleteService(ctx, controlstatedb.DeleteServiceParams{ID: service.ID, TeamID: service.TeamID, Now: timestamptz(now)}); err != nil {
-				return err
+			if _, err := q.DeleteService(ctx, controlstatedb.DeleteServiceParams{ID: service.ID, TeamID: service.TeamID, GuestID: service.GuestID, Now: timestamptz(clock.current())}); err != nil {
+				return false, err
 			}
 			if err := auditPrivateMutation(ctx, tx, service.ID, "", "service.delete", "expiration/"+service.ID, now); err != nil {
-				return err
+				return false, err
 			}
-			return tx.Commit(ctx)
+			if err := tx.Commit(ctx); err != nil {
+				return false, err
+			}
+			return true, nil
 		}()
 		if err != nil {
-			return err
+			return count, err
+		}
+		if deleted {
+			count++
 		}
 	}
-	return nil
+	return count, nil
 }

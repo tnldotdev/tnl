@@ -10,7 +10,7 @@ import (
 
 // local assignments belong to this machine, identity, and immutable service.
 // endpoint reachability and public port changes never select a local port.
-func listenConnector(ctx context.Context, store *clientstate.Store, identity string, service controlv1.Service, override string) (net.Listener, error) {
+func listenConnector(ctx context.Context, store *clientstate.Store, identity string, service controlv1.ServiceSummary, override string) (net.Listener, error) {
 	if override != "" {
 		return store.ListenServiceAt(ctx, identity, service.Id, override)
 	}

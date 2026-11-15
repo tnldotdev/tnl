@@ -1,9 +1,9 @@
 -- +goose Up
 CREATE TABLE baseline_identity (
     id INTEGER PRIMARY KEY CHECK (id = 1),
-    identity TEXT NOT NULL CHECK (identity = 'tnl-client-fresh-v1-telemetry')
+    identity TEXT NOT NULL CHECK (identity = 'tnl-client-fresh-v1-service-integrations')
 ) STRICT;
-INSERT INTO baseline_identity (id, identity) VALUES (1, 'tnl-client-fresh-v1-telemetry');
+INSERT INTO baseline_identity (id, identity) VALUES (1, 'tnl-client-fresh-v1-service-integrations');
 
 -- provisioning journals are append-only and protected by the client wrapping
 -- key. no expiration may discard a key after a remote enrollment committed.
@@ -167,10 +167,6 @@ CREATE TABLE guest_demo_sessions (
     server_origin TEXT PRIMARY KEY REFERENCES server_profiles (origin) ON DELETE CASCADE,
     guest_id TEXT NOT NULL,
     access_token_ciphertext BLOB NOT NULL,
-    team_id TEXT NOT NULL,
-    membership_id TEXT NOT NULL,
-    domain_id TEXT NOT NULL,
-    namespace TEXT NOT NULL,
     expires_at INTEGER NOT NULL,
     created_at INTEGER NOT NULL
 ) STRICT;
@@ -196,6 +192,8 @@ CREATE TABLE integration_url_leases (
     server_origin TEXT NOT NULL REFERENCES server_profiles(origin) ON DELETE CASCADE,
     hostname TEXT NOT NULL,
     publisher_instance_id TEXT NOT NULL,
+    service_id TEXT NOT NULL CHECK (length(service_id) = 26 AND substr(service_id, 1, 4) = 'svc_'),
+    run_number INTEGER NOT NULL CHECK (run_number > 0),
     expires_at INTEGER NOT NULL,
     PRIMARY KEY (server_origin, hostname)
 ) STRICT;
@@ -214,14 +212,16 @@ CREATE TABLE oauth_pending_callbacks (
     hostname TEXT NOT NULL,
     state_digest BLOB NOT NULL,
     tunnel_id TEXT NOT NULL REFERENCES local_tunnels(id) ON DELETE CASCADE,
+    primary_project_root TEXT NOT NULL CHECK (primary_project_root <> ''),
+    integration_namespace TEXT NOT NULL CHECK (integration_namespace <> ''),
     callback_path TEXT NOT NULL,
     callback_query TEXT NOT NULL,
-    public_url_id TEXT NOT NULL,
-    publish_run_number INTEGER NOT NULL CHECK (publish_run_number > 0),
+    service_id TEXT NOT NULL CHECK (length(service_id) = 26 AND substr(service_id, 1, 4) = 'svc_'),
+    run_number INTEGER NOT NULL CHECK (run_number > 0),
     expires_at INTEGER NOT NULL,
     origin_hostname TEXT NOT NULL DEFAULT '',
-    origin_public_url_id TEXT NOT NULL DEFAULT '',
-    origin_publish_run_number INTEGER NOT NULL DEFAULT 0,
+    origin_service_id TEXT NOT NULL CHECK (length(origin_service_id) = 26 AND substr(origin_service_id, 1, 4) = 'svc_'),
+    origin_run_number INTEGER NOT NULL CHECK (origin_run_number > 0),
     PRIMARY KEY (server_origin, hostname, state_digest)
 ) STRICT;
 CREATE INDEX oauth_pending_callbacks_expiry_idx ON oauth_pending_callbacks (expires_at);
@@ -269,6 +269,7 @@ CREATE TABLE alias_declarations (
     alias_id TEXT NOT NULL REFERENCES project_aliases(id) ON DELETE CASCADE,
     tunnel_id TEXT NOT NULL REFERENCES local_tunnels(id) ON DELETE CASCADE,
     fingerprint BLOB NOT NULL CHECK (length(fingerprint) = 32),
+    integration_namespace TEXT NOT NULL CHECK (integration_namespace <> ''),
     PRIMARY KEY (alias_id, tunnel_id)
 ) STRICT;
 
@@ -277,10 +278,10 @@ CREATE TABLE alias_publish_runs (
     owner TEXT NOT NULL,
     tunnel_id TEXT NOT NULL REFERENCES local_tunnels(id) ON DELETE CASCADE,
     selection_revision INTEGER NOT NULL CHECK (selection_revision > 0),
-    public_url_id TEXT NOT NULL,
-    publish_run_number INTEGER NOT NULL CHECK (publish_run_number > 0),
-    target_public_url_id TEXT NOT NULL,
-    target_publish_run_number INTEGER NOT NULL CHECK (target_publish_run_number > 0)
+    service_id TEXT NOT NULL CHECK (length(service_id) = 26 AND substr(service_id, 1, 4) = 'svc_'),
+    run_number INTEGER NOT NULL CHECK (run_number > 0),
+    target_service_id TEXT NOT NULL CHECK (length(target_service_id) = 26 AND substr(target_service_id, 1, 4) = 'svc_'),
+    target_run_number INTEGER NOT NULL CHECK (target_run_number > 0)
 ) STRICT;
 
 CREATE TABLE oauth_alias_handoffs (
@@ -288,8 +289,8 @@ CREATE TABLE oauth_alias_handoffs (
     hostname TEXT NOT NULL,
     state_digest BLOB NOT NULL CHECK (length(state_digest) = 32),
     callback_path TEXT NOT NULL,
-    public_url_id TEXT NOT NULL,
-    publish_run_number INTEGER NOT NULL CHECK (publish_run_number > 0),
+    service_id TEXT NOT NULL CHECK (length(service_id) = 26 AND substr(service_id, 1, 4) = 'svc_'),
+    run_number INTEGER NOT NULL CHECK (run_number > 0),
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL CHECK (expires_at > created_at),
     consumed_at INTEGER CHECK (consumed_at IS NULL OR consumed_at >= created_at),

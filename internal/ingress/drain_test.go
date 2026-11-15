@@ -14,10 +14,6 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-type singleBackend struct{ connection net.Conn }
-
-func (singleBackend) ConnectionSlot() uint8 { return 0 }
-
 type drainReadConn struct {
 	net.Conn
 	reading func()
@@ -35,10 +31,6 @@ func (l *drainListener) Close() error {
 	err := l.Listener.Close()
 	l.once.Do(func() { close(l.closed) })
 	return err
-}
-
-func (b singleBackend) Start(ctx context.Context, _ string, _ bool, proxy, initial []byte) (net.Conn, error) {
-	return startTestBackend(ctx, b.connection, proxy, initial)
 }
 
 func TestDrainDeadlineForcesBackendClosed(t *testing.T) {

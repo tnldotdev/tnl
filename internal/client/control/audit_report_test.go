@@ -16,18 +16,19 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func TestPublisherAuditUsesExactRunTokenAndAcknowledgement(t *testing.T) {
-	const run = "pr_0123456789ABCDEFGHIJKL"
-	const token = credentials.PublishRunToken("private-audit-token")
-	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: "url_0123456789ABCDEFGHIJKL", ServiceKind: "public_url", EventType: "http.decision", OccurredAt: time.Now(), RunID: run, RunNumber: 7, VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", Outcome: "allowed"}
+func TestServiceHTTPAuditUsesExactRunTokenAndAcknowledgement(t *testing.T) {
+	const service = "svc_0123456789ABCDEFGHIJKL"
+	const run = "srun_0123456789ABCDEFGHIJKL"
+	const token = credentials.ServiceRunToken("private-audit-token")
+	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service, ServiceKind: "service", EventType: "http.decision", OccurredAt: time.Now(), RunID: run, RunNumber: 7, VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", SourceIP: "192.0.2.1", Outcome: "allowed"}
 	var calls int
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if r.Method != "POST" || r.URL.Path != "/v1/publish-runs/"+run+"/service-observations" || r.Header.Get("Authorization") != "Bearer "+token.String() {
+		if r.Method != "POST" || r.URL.Path != "/v1/services/"+service+"/runs/"+run+"/service-observations" || r.Header.Get("Authorization") != "Bearer "+token.String() {
 			t.Error("audit used another authentication scope")
 		}
-		var body controlv1.PublishRunServiceObservations
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.PublishRunNumber != 7 || len(body.Events) != 1 || body.Events[0].EventId != o.EventID {
+		var body controlv1.ServiceRunObservations
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.RunNumber != 7 || len(body.Events) != 1 || body.Events[0].EventId != o.EventID {
 			t.Error("typed observation changed")
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -38,19 +39,19 @@ func TestPublisherAuditUsesExactRunTokenAndAcknowledgement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = c.ReportPublisherServiceObservations(t.Context(), run, 7, token, serviceaudit.Batch{Events: []serviceaudit.Observation{o}}); err != nil {
+	if err = c.ReportServiceRunObservations(t.Context(), service, run, 7, token, serviceaudit.Batch{Events: []serviceaudit.Observation{o}}); err != nil {
 		t.Fatal(err)
 	}
-	if err = c.ReportPublisherServiceObservations(t.Context(), run, 8, token, serviceaudit.Batch{Events: []serviceaudit.Observation{o}}); !errors.Is(err, serviceaudit.ErrInvalid) || !errors.Is(err, serviceaudit.ErrRejected) || calls != 1 {
+	if err = c.ReportServiceRunObservations(t.Context(), service, run, 8, token, serviceaudit.Batch{Events: []serviceaudit.Observation{o}}); !errors.Is(err, serviceaudit.ErrInvalid) || !errors.Is(err, serviceaudit.ErrRejected) || calls != 1 {
 		t.Fatal("cross-run number reached the network", err)
 	}
 }
 
 func TestPublisherAuditQueueIsolatesLocalScopeRejection(t *testing.T) {
-	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: "url_0123456789ABCDEFGHIJKL", ServiceKind: "public_url", EventType: "http.decision", OccurredAt: time.Now(), RunID: "pr_0123456789ABCDEFGHIJKL", RunNumber: 1, VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", Outcome: "allowed"}
+	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: "svc_0123456789ABCDEFGHIJKL", ServiceKind: "service", EventType: "http.decision", OccurredAt: time.Now(), RunID: "srun_0123456789ABCDEFGHIJKL", RunNumber: 1, VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", SourceIP: "192.0.2.1", Outcome: "allowed"}
 	stored := map[string]bool{}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body controlv1.PublishRunServiceObservations
+		var body controlv1.ServiceRunObservations
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Error(err)
 			w.WriteHeader(400)
@@ -73,14 +74,14 @@ func TestPublisherAuditQueueIsolatesLocalScopeRejection(t *testing.T) {
 	var dropped uint64
 	queue, err := serviceaudit.NewQueue(t.Context(), serviceaudit.QueueConfig{FlushInterval: time.Hour, Dropped: func(n uint64) { dropped += n },
 		Report: func(ctx context.Context, batch serviceaudit.Batch) error {
-			return c.ReportPublisherServiceObservations(ctx, o.RunID, 1, "run-token", batch)
+			return c.ReportServiceRunObservations(ctx, o.ServiceID, o.RunID, 1, "run-token", batch)
 		}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	bad, next := o, o
 	bad.EventID, next.EventID = serviceaudit.NewID(), serviceaudit.NewID()
-	bad.RunID = "pr_ABCDEFGHIJKL0123456789"
+	bad.RunID = "srun_ABCDEFGHIJKL0123456789"
 	for _, event := range []serviceaudit.Observation{o, bad, next} {
 		if !queue.Observe(event) {
 			t.Fatal("queue rejected syntax-valid event")
@@ -92,7 +93,7 @@ func TestPublisherAuditQueueIsolatesLocalScopeRejection(t *testing.T) {
 }
 
 func TestPublisherAuditErrorsExcludeResponseAndTransportSecrets(t *testing.T) {
-	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: "url_0123456789ABCDEFGHIJKL", ServiceKind: "public_url", EventType: "http.decision", OccurredAt: time.Now(), RunID: "pr_0123456789ABCDEFGHIJKL", RunNumber: 1, VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", Outcome: "allowed"}
+	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: "svc_0123456789ABCDEFGHIJKL", ServiceKind: "service", EventType: "http.decision", OccurredAt: time.Now(), RunID: "srun_0123456789ABCDEFGHIJKL", RunNumber: 1, VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", SourceIP: "192.0.2.1", Outcome: "allowed"}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.WriteHeader(403)
@@ -100,14 +101,14 @@ func TestPublisherAuditErrorsExcludeResponseAndTransportSecrets(t *testing.T) {
 	}))
 	defer server.Close()
 	c, _ := New(server.URL, server.Client(), "")
-	err := c.ReportPublisherServiceObservations(t.Context(), o.RunID, 1, "secret-token", serviceaudit.Batch{Events: []serviceaudit.Observation{o}})
+	err := c.ReportServiceRunObservations(t.Context(), o.ServiceID, o.RunID, 1, "secret-token", serviceaudit.Batch{Events: []serviceaudit.Observation{o}})
 	if !errors.Is(err, serviceaudit.ErrRejected) || strings.Contains(err.Error(), "never-log-secret") || strings.Contains(err.Error(), "secret-token") {
 		t.Fatalf("unsafe report error %v", err)
 	}
 }
 
 func TestPublisherAuditStatusClassificationDoesNotDependOnProblemBody(t *testing.T) {
-	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: "url_0123456789ABCDEFGHIJKL", ServiceKind: "public_url", EventType: "http.decision", OccurredAt: time.Now(), RunID: "pr_0123456789ABCDEFGHIJKL", RunNumber: 1, VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", Outcome: "allowed"}
+	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: "svc_0123456789ABCDEFGHIJKL", ServiceKind: "service", EventType: "http.decision", OccurredAt: time.Now(), RunID: "srun_0123456789ABCDEFGHIJKL", RunNumber: 1, VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", SourceIP: "192.0.2.1", Outcome: "allowed"}
 	for _, status := range []int{400, 401, 403, 404, 409, 410, 413, 429, 500, 503} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -119,7 +120,7 @@ func TestPublisherAuditStatusClassificationDoesNotDependOnProblemBody(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = c.ReportPublisherServiceObservations(t.Context(), o.RunID, 1, "private-token", serviceaudit.Batch{Events: []serviceaudit.Observation{o}})
+			err = c.ReportServiceRunObservations(t.Context(), o.ServiceID, o.RunID, 1, "private-token", serviceaudit.Batch{Events: []serviceaudit.Observation{o}})
 			if err == nil || errors.Is(err, serviceaudit.ErrRejected) != (status < 429) || strings.Contains(err.Error(), "never-log-secret") || strings.Contains(err.Error(), "private-token") {
 				t.Fatalf("status %d classification: %v", status, err)
 			}

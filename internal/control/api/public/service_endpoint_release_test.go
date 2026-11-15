@@ -14,7 +14,6 @@ import (
 )
 
 type serviceEndpointReleaseStore struct {
-	PublicURLStore
 	ServiceStore
 	calls int
 	err   error

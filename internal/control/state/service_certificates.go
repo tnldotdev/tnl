@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
@@ -22,7 +23,7 @@ func serviceCertificatePlan(ctx context.Context, tx pgx.Tx, service controlstate
 	if service.CertificateHostname == "" || service.CertificateScope == "" || !service.DomainID.Valid {
 		return CertificatePlan{}, ErrCertificateIssuanceInvalid
 	}
-	if _, err := controlstatedb.New(tx).GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: service.DomainID.String, TeamID: text(service.TeamID)}); err != nil {
+	if _, err := controlstatedb.New(tx).GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: service.DomainID.String, TeamID: service.TeamID}); err != nil {
 		return CertificatePlan{}, publisherLookupError(err, ErrServiceAccess)
 	}
 	var kind string
@@ -44,7 +45,7 @@ func serviceCertificatePlan(ctx context.Context, tx pgx.Tx, service controlstate
 			return CertificatePlan{}, ErrServiceAccess
 		}
 	}
-	plan := authorization.PublicURLCertificatePlan(service.CertificateHostname, scope, false, true)
+	plan := authorization.ServiceCertificatePlan(service.CertificateHostname, scope, false, true)
 	if plan == nil || !certificateidentity.Covers(plan.Identifiers, service.CertificateHostname) {
 		return CertificatePlan{}, ErrCertificateIssuanceInvalid
 	}
@@ -66,7 +67,7 @@ func (d *Database) CreateServiceCertificateIssuance(ctx context.Context, service
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	run, err := serviceRunAuthorization(ctx, tx, q, service, runID, token, clock.current())
+	run, err := d.serviceRunAuthorization(ctx, tx, q, service, runID, token, clock.current())
 	if err != nil {
 		return result, err
 	}
@@ -124,7 +125,7 @@ func (d *Database) CreateServiceCertificateIssuance(ctx context.Context, service
 			return result, err
 		}
 		result.NewOrder = true
-		if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: run.TeamID, ServiceID: service, ServiceKind: "service", EventType: "certificate.issue", RunID: runID, PublisherIdentityID: run.PublisherIdentityID, OccurredAt: now}, id); err != nil {
+		if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: run.TeamID.String, ServiceID: service, ServiceKind: "service", EventType: "certificate.issue", RunID: runID, PublisherIdentityID: run.PublisherIdentityID, OccurredAt: now}, id); err != nil {
 			return result, err
 		}
 	} else if err != nil {
@@ -172,7 +173,7 @@ func (d *Database) GetServiceCertificateIssuance(ctx context.Context, service, r
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	run, err := serviceRunAuthorization(ctx, tx, q, service, runID, token, clock.current())
+	run, err := d.serviceRunAuthorization(ctx, tx, q, service, runID, token, clock.current())
 	if err != nil {
 		return result, err
 	}
@@ -215,7 +216,7 @@ func (d *Database) MarkServiceCertificateInstalled(ctx context.Context, service,
 		return err
 	}
 	q := controlstatedb.New(tx)
-	run, err := serviceRunAuthorization(ctx, tx, q, service, runID, token, clock.current())
+	run, err := d.serviceRunAuthorization(ctx, tx, q, service, runID, token, clock.current())
 	if err != nil {
 		return err
 	}
@@ -255,7 +256,7 @@ func (d *Database) MarkServiceCertificateInstalled(ctx context.Context, service,
 	if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET certificate_issuance_id=$2,certificate_expires_at=$3 WHERE id=$1`, runID, issuance, notAfter); err != nil {
 		return err
 	}
-	if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: run.TeamID, ServiceID: service, ServiceKind: "service", EventType: "certificate.install", RunID: runID, PublisherIdentityID: run.PublisherIdentityID, OccurredAt: now}, runID+"/"+issuance); err != nil {
+	if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: run.TeamID.String, ServiceID: service, ServiceKind: "service", EventType: "certificate.install", RunID: runID, PublisherIdentityID: run.PublisherIdentityID, OccurredAt: now}, runID+"/"+issuance); err != nil {
 		return err
 	}
 	if _, err = serviceRunPublisherPermission(ctx, tx, run, clock.current()); err != nil {
@@ -274,11 +275,12 @@ func authorizeServiceCertificateOrder(ctx context.Context, tx pgx.Tx, run contro
 	if order.ServiceRunID == "" || order.ChallengeMethod != "dns-01" || order.CertificateScope != run.CertificateScope || order.CertificateCacheKey != run.CertificateCacheKey || order.CertificateDomainID.String != domain || !slices.Equal(order.CertificateIdentifiers, run.CertificateIdentifiers) {
 		return ErrCertificateIssuanceInvalid
 	}
-	var publisher, team string
-	if err := tx.QueryRow(ctx, `SELECT publisher_identity_id,team_id FROM control.service_runs WHERE id=$1`, order.ServiceRunID).Scan(&publisher, &team); err != nil {
+	var publisher string
+	var team, guest pgtype.Text
+	if err := tx.QueryRow(ctx, `SELECT publisher_identity_id,team_id,guest_id FROM control.service_runs WHERE id=$1`, order.ServiceRunID).Scan(&publisher, &team, &guest); err != nil {
 		return publisherLookupError(err, ErrCertificateIssuanceInvalid)
 	}
-	if publisher != run.PublisherIdentityID || team != run.TeamID {
+	if publisher != run.PublisherIdentityID || team != run.TeamID || guest != run.GuestID {
 		return ErrCertificateIssuanceInvalid
 	}
 	return nil

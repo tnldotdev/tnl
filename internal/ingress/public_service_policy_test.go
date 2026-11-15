@@ -181,7 +181,7 @@ func TestPublicServiceLiveVisitorCannotExtendExpiredLeaseOrTimedOutCheck(t *test
 				_, err := stream.Read(make([]byte, 1))
 				var timeout net.Error
 				if err == nil || errors.As(err, &timeout) && timeout.Timeout() || time.Now().After(until) {
-					t.Fatal("idle visitor survived its exact authority deadline", boundary, time.Now().Sub(until), err)
+					t.Fatal("idle visitor survived its exact authority deadline", boundary, time.Since(until), err)
 				}
 				stop()
 				if control.recheckActive.Load() != 0 || activeChecks.Load() != 0 || server.Load() != 0 || !publicServiceCapacityReleased(server) {

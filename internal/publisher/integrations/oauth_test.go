@@ -12,7 +12,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 )
 
 const testServer = "https://control.example.test"
@@ -34,30 +34,36 @@ func callbackState(t *testing.T) (*clientstate.Database, string) {
 	return state, root
 }
 
-func readyTunnel(t *testing.T, state *clientstate.Database, target, hostname string) (*clientstate.Tunnel, publisher.PublishRunIdentity) {
+func readyTunnel(t *testing.T, state *clientstate.Database, target, hostname string) (*clientstate.Tunnel, publisherservice.HTTPRun) {
 	t.Helper()
+	id, err := opaqueid.New(opaqueid.ServicePrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
 	tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandPublish, Server: testServer, Target: target,
-		Project: t.TempDir(), Service: "api", IntegrationScope: testIntegrationScope,
+		Project: t.TempDir(), Service: "api", ServiceID: id, IntegrationScope: testIntegrationScope,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = tunnel.Finish(context.Background(), nil) })
-	id, err := opaqueid.New(opaqueid.PublicURLPrefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := tunnel.SetPublicURL(t.Context(), id, hostname); err != nil {
-		t.Fatal(err)
-	}
 	if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
 	if err := tunnel.SetReady(t.Context(), "https://"+hostname, 1); err != nil {
 		t.Fatal(err)
 	}
-	return tunnel, publisher.PublishRunIdentity{PublicURLID: id, Number: 1}
+	return tunnel, publisherservice.HTTPRun{ServiceID: id, Hostname: hostname, Number: 1}
+}
+
+func readyIntegrationURL(t *testing.T, state *clientstate.Database, hostname, instance string) publisherservice.HTTPRun {
+	t.Helper()
+	_, run := readyTunnel(t, state, "3000", hostname)
+	if err := state.MarkIntegrationURLReady(t.Context(), testServer, hostname, instance, run.ServiceID, uint64(run.Number)); err != nil {
+		t.Fatal(err)
+	}
+	return run
 }
 
 func authorizationResponse(state, query string) *http.Response {
@@ -74,9 +80,7 @@ func TestOAuthCallbacksDispatchAcrossWorktreesAndStateHandles(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = leader.Close() })
-	if err := leader.MarkIntegrationURLReady(t.Context(), testServer, testOAuthHost, "leader"); err != nil {
-		t.Fatal(err)
-	}
+	readyIntegrationURL(t, leader, testOAuthHost, "leader")
 	redirects := 0
 	for _, label := range []string{"main", "feature"} {
 		tunnel, run := readyTunnel(t, state, "3000", label+".example.test")
@@ -111,9 +115,7 @@ func TestOAuthObservationRejectsUnavailableOrReplacedRuns(t *testing.T) {
 	if err := observe(authorizationResponse("one", ""), run); err == nil {
 		t.Fatal("unready integration URL publisher accepted a login")
 	}
-	if err := state.MarkIntegrationURLReady(t.Context(), testServer, testOAuthHost, "leader"); err != nil {
-		t.Fatal(err)
-	}
+	readyIntegrationURL(t, state, testOAuthHost, "leader")
 	if err := observe(authorizationResponse("one", ""), run); err != nil {
 		t.Fatal(err)
 	}
@@ -137,9 +139,7 @@ func TestOAuthObservationRejectsUnavailableOrReplacedRuns(t *testing.T) {
 func TestOAuthObserverRejectsDuplicateStateAndIgnoresUnrelatedRedirects(t *testing.T) {
 	state, _ := callbackState(t)
 	tunnel, run := readyTunnel(t, state, "3000", "feature.example.test")
-	if err := state.MarkIntegrationURLReady(t.Context(), testServer, testOAuthHost, "leader"); err != nil {
-		t.Fatal(err)
-	}
+	readyIntegrationURL(t, state, testOAuthHost, "leader")
 	observe := Observer(state, testServer, testOAuthHost, testIntegrationScope, tunnel.ID())
 	withoutResponseType := authorizationResponse("provider-without-response-type", "")
 	withoutResponseType.Header.Set("Location", strings.Replace(withoutResponseType.Header.Get("Location"), "response_type=code&", "", 1))
@@ -173,9 +173,7 @@ func TestOAuthObserverRejectsDuplicateStateAndIgnoresUnrelatedRedirects(t *testi
 func TestOAuthConcurrentConsumptionAndCrossServerAdmission(t *testing.T) {
 	state, _ := callbackState(t)
 	tunnel, run := readyTunnel(t, state, "3000", "feature.example.test")
-	if err := state.MarkIntegrationURLReady(t.Context(), testServer, testOAuthHost, "leader"); err != nil {
-		t.Fatal(err)
-	}
+	readyIntegrationURL(t, state, testOAuthHost, "leader")
 	if err := Observer(state, testServer, testOAuthHost, testIntegrationScope, tunnel.ID())(authorizationResponse("one", ""), run); err != nil {
 		t.Fatal(err)
 	}

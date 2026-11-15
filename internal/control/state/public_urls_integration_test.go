@@ -106,7 +106,7 @@ func TestIntegrationSimpleManagedOrganizationNamespace(t *testing.T) {
 		ManagedURLMode: naming.ManagedURLModeSimple, TeamID: team.ID, DomainID: domains[0].ID,
 		MembershipID: members[0].ID, ActingIdentityID: owner, PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeApp,
 		IdempotencyKey: "simple-organization", RequestDigest: sha256.Sum256([]byte("simple-organization")),
-		Target: "http://127.0.0.1:3000", DNSState: PublicURLDNSUnmanaged,
+		Target: "http://127.0.0.1:3000", DNSState: ServiceEndpointDNSUnmanaged,
 	}
 	request.CanonicalHostname = "app." + members[0].MemberSlug + "." + team.DisplayName + "." + domains[0].CanonicalDomain
 	publicURL, err := database.CreatePublicURL(t.Context(), request, now)
@@ -282,9 +282,9 @@ func TestIntegrationEphemeralRouteExpiry(t *testing.T) {
 func TestIntegrationDNSPublicURLWork(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "dns_route_work")
 	request := oidcRouteRequest(t, database, now)
-	request.DNSState = PublicURLDNSPending
+	request.DNSState = ServiceEndpointDNSPending
 	publicURL, err := database.CreatePublicURL(t.Context(), request, now)
-	if err != nil || publicURL.DNSState != PublicURLDNSPending || publicURL.DNSAuthorityReference != "" {
+	if err != nil || publicURL.DNSState != ServiceEndpointDNSPending || publicURL.DNSAuthorityReference != "" {
 		t.Fatalf("DNS route = %#v, %v", publicURL, err)
 	}
 	work, found, err := database.ClaimDNSPublicURLWork(t.Context(), "dns-worker", now, time.Minute)
@@ -295,24 +295,24 @@ func TestIntegrationDNSPublicURLWork(t *testing.T) {
 		t.Fatalf("concurrent DNS claim = %t, %v", found, err)
 	}
 	stale := work
-	work.State, work.AvailableAt = PublicURLDNSPublished, time.Time{}
+	work.State, work.AvailableAt = ServiceEndpointDNSPublished, time.Time{}
 	saved, err := database.SaveDNSPublicURLWork(t.Context(), work, now)
-	if err != nil || saved.State != PublicURLDNSPublished || !saved.AvailableAt.IsZero() || saved.DNSRevision != 2 {
+	if err != nil || saved.State != ServiceEndpointDNSPublished || !saved.AvailableAt.IsZero() || saved.DNSRevision != 2 {
 		t.Fatalf("published DNS work = %#v, %v", saved, err)
 	}
-	if _, err := database.SaveDNSPublicURLWork(t.Context(), stale, now); !errors.Is(err, ErrDNSPublicURLWorkStale) {
+	if _, err := database.SaveDNSPublicURLWork(t.Context(), stale, now); !errors.Is(err, ErrServiceEndpointDNSWorkStale) {
 		t.Fatalf("stale DNS save: %v", err)
 	}
 	if err := database.DeletePublicURL(t.Context(), request.ActingIdentityID, publicURL.ID, now); err != nil {
 		t.Fatal(err)
 	}
 	removal, found, err := database.ClaimDNSPublicURLWork(t.Context(), "dns-worker", now, time.Minute)
-	if err != nil || !found || removal.PublicURLID != publicURL.ID || removal.State != PublicURLDNSRemoving || removal.Attempts != 2 {
+	if err != nil || !found || removal.PublicURLID != publicURL.ID || removal.State != ServiceEndpointDNSRemoving || removal.Attempts != 2 {
 		t.Fatalf("DNS removal = %#v, %t, %v", removal, found, err)
 	}
-	removal.State, removal.AvailableAt = PublicURLDNSRemoved, time.Time{}
+	removal.State, removal.AvailableAt = ServiceEndpointDNSRemoved, time.Time{}
 	removed, err := database.SaveDNSPublicURLWork(t.Context(), removal, now)
-	if err != nil || removed.State != PublicURLDNSRemoved || !removed.AvailableAt.IsZero() {
+	if err != nil || removed.State != ServiceEndpointDNSRemoved || !removed.AvailableAt.IsZero() {
 		t.Fatalf("removed DNS work = %#v, %v", removed, err)
 	}
 	request.IdempotencyKey, request.RequestDigest, request.Ephemeral = "replacement", sha256.Sum256([]byte("replacement")), true
@@ -328,7 +328,7 @@ func TestIntegrationDNSPublicURLWork(t *testing.T) {
 		t.Fatalf("expired DNS route = %s/%s, %v", lifecycle, dns, err)
 	}
 	removal, found, err = database.ClaimDNSPublicURLWork(t.Context(), "expiry-worker", *ephemeral.ExpiresAt, time.Minute)
-	if err != nil || !found || removal.PublicURLID != ephemeral.ID || removal.State != PublicURLDNSRemoving {
+	if err != nil || !found || removal.PublicURLID != ephemeral.ID || removal.State != ServiceEndpointDNSRemoving {
 		t.Fatalf("expired DNS cleanup = %#v, %t, %v", removal, found, err)
 	}
 }
@@ -343,7 +343,7 @@ func oidcRouteRequest(t *testing.T, database *Database, now time.Time) CreatePub
 	}
 	return CreatePublicURLRequest{TeamID: membership.TeamID, DomainID: domains[0].ID, MembershipID: membership.ID,
 		ActingIdentityID: session.Identity.Identity.ID, IdempotencyKey: "route", RequestDigest: sha256.Sum256([]byte("route")),
-		CanonicalHostname: "demo." + membership.ManagedLabel + ".tunnels.example.test", Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeApp, DNSState: PublicURLDNSUnmanaged}
+		CanonicalHostname: "demo." + membership.ManagedLabel + ".tunnels.example.test", Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeApp, DNSState: ServiceEndpointDNSUnmanaged}
 }
 
 func createTestPublicURL(t *testing.T, database *Database, request CreatePublicURLRequest, now time.Time) PublicURL {

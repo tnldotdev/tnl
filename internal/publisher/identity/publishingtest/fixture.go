@@ -347,7 +347,7 @@ func (f *Fixture) enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body controlv1.CreatePublisherEnrollmentRequest
-	if !decode(r, &body) || body.PublicUrlId != nil || body.TeamId != "tm_0000000000000000000001" {
+	if !decode(r, &body) || body.TeamId != "tm_0000000000000000000001" {
 		w.WriteHeader(400)
 		return
 	}
@@ -417,8 +417,12 @@ func (f *Fixture) allocate(w http.ResponseWriter, r *http.Request, e *enrollment
 		w.WriteHeader(502)
 		return
 	}
-	service.ExpiresAt = body.ExpiresAt
-	f.backend.SetServiceExpiration(service.Id, body.ExpiresAt)
+	service, err = f.backend.SetServiceExpiration(service.Id, body.ExpiresAt)
+	if err != nil {
+		f.t.Error(err)
+		w.WriteHeader(502)
+		return
+	}
 	f.allocations[key], f.allocatedOwner[service.Id] = allocation{service.Id, body, e.result.GrantId}, e.result.GrantId
 	f.Allocations.Add(1)
 	writeStatus(w, 201, service)
@@ -644,7 +648,7 @@ func (f *Fixture) browser(w http.ResponseWriter, r *http.Request, run testutil.P
 		return
 	}
 	if parts[6] == "handoff" {
-		write(w, controlv1.BrowserHandoffResponse{CookieSecret: cookie, ExpiresAt: permission.ExpiresAt, Permission: permission, ReturnPath: "/"})
+		write(w, controlv1.BrowserHandoffResponse{CookieSecret: cookie, ExpiresAt: permission.ExpiresAt, Permission: &permission, ReturnPath: "/"})
 	} else {
 		write(w, controlv1.BrowserAccessResponse{IdentityId: browser.subject.IdentityID, DisplayName: "fixture owner", TeamMember: true, VisitAllowed: true})
 	}

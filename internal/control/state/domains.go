@@ -205,7 +205,6 @@ func (d *Database) ReleaseTeamDomain(
 	}
 	defer rollback(ctx, tx, "release team domain", &retErr)()
 	queries := controlstatedb.New(tx)
-	pendingEvents := pendingIngressRoutingTableEvents{}
 	actor, err := lockTeamActor(ctx, queries, identityID, teamID)
 	if err != nil {
 		return err
@@ -261,26 +260,38 @@ func (d *Database) ReleaseTeamDomain(
 	if updated != 1 {
 		return ErrAuthorityConflict
 	}
-	routes, err := queries.LockDomainPublicURLs(ctx, controlstatedb.LockDomainPublicURLsParams{TeamID: teamID, DomainID: domainID})
+	rows, err := tx.Query(ctx, `SELECT id FROM control.services
+		WHERE team_id=$1 AND domain_id=$2 AND deleted_at IS NULL ORDER BY id`, teamID, domainID)
 	if err != nil {
-		return fmt.Errorf("controlstate: release team domain: lock public_urls: %w", err)
+		return fmt.Errorf("controlstate: release team domain: list services: %w", err)
 	}
-	for _, route := range routes {
-		if err := closeOpenPublishRun(ctx, queries, &pendingEvents, route, now, "domain_releasing"); err != nil {
+	var services []string
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
 			return err
 		}
-		updated, err := queries.SuspendAuthorityPublicURL(ctx, controlstatedb.SuspendAuthorityPublicURLParams{
-			SuspensionReason: text("domain_releasing"), SuspendedAt: timestamptz(now), PublicURLID: route.ID,
-		})
-		if err != nil {
-			return fmt.Errorf("controlstate: release team domain: suspend public_url: %w", err)
-		}
-		if updated != 1 {
-			return ErrAuthorityConflict
-		}
+		services = append(services, id)
 	}
-	if err := pendingEvents.publish(ctx, queries); err != nil {
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
 		return err
+	}
+	for _, id := range services {
+		if _, err = queries.LockService(ctx, id); err != nil {
+			return fmt.Errorf("controlstate: release team domain: lock service: %w", err)
+		}
+		if err = closeServiceRuns(ctx, tx, id, now); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `UPDATE control.services SET enabled=false, visitor_revision=visitor_revision+1, updated_at=$2 WHERE id=$1`, id, now); err != nil {
+			return err
+		}
+		if err = retireServiceEndpoints(ctx, tx, id, "", now); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("controlstate: release team domain: commit: %w", err)

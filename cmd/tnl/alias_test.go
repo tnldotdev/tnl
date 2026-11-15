@@ -12,12 +12,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
-	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestNestedAliasDiagnosticNamesDomainPolicyAndAvailableCustomDomain(t *testing.T) {
 	for _, custom := range []bool{false, true} {
-		policy := invocation.AliasHostnamePolicy{Hostname: "api.shop.member.tnl.dev", Namespace: "member.tnl.dev", DomainKind: authorityv1.Managed, Scope: controlv1.Member, CustomDomainAvailable: custom, MaxMemberChildLabels: 1}
+		policy := invocation.AliasHostnamePolicy{Hostname: "api.shop.member.tnl.dev", Namespace: "member.tnl.dev", DomainKind: authorityv1.Managed, MemberNamespace: true, CustomDomainAvailable: custom, MaxMemberChildLabels: 1}
 		err := invocation.CheckAliasHostnamePolicy(policy)
 		if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.MemberHostnameDepthExceeded {
 			t.Fatal("nested name did not have its own policy diagnostic")

@@ -66,7 +66,13 @@ paths:
       summary: List services available to the signed-in visitor
       description: "List services the signed-in visitor may use, including offline services. Results include visitor endpoints, not target addresses, target trust, or secrets. Listing a service does not grant traffic access. Initial readiness needs two publisher connections; one surviving connection can keep an already-ready run available."
       security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceCursor" }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceCursor" }
+        - name: access_path
+          in: query
+          description: Select connector permission or current public endpoint identity permission. Public HTTP preview-team access never grants connector access.
+          schema:
+            $ref: "../openapi.yaml#/components/schemas/ServiceAccessPath"
       responses:
         "200":
           {

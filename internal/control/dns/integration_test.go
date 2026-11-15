@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"net/url"
 	"slices"
@@ -19,18 +20,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/control/storagekey"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
-const hostedManagedAuthorityReference = "da_0123456789ABCDEFGHIJKL"
-
-func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
+func TestIntegrationServiceDNSChallenges(t *testing.T) {
 	database, sql, _ := challengeDatabase(t)
 	for _, custom := range []bool{false, true} {
-		name, domain, reference := "managed_opaque_reference", "tunnels.example.test", hostedManagedAuthorityReference
+		name, domain, reference := "managed", "tunnels.example.test", ""
 		if custom {
 			name, domain = "custom", "custom.example.test"
 			var err error
@@ -52,12 +50,9 @@ func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			seedHostedChallenge(t, database, sql, name, domain, reference)
 			if !custom {
-				challenge, err := database.GetDNSChallengeContextForSubject(t.Context(), publicDNSSubject("public_url_"+name), "authorization_"+name)
-				if err != nil || challenge.CanonicalDomain != "" || challenge.DNSAuthorityReference != reference {
-					t.Fatalf("hosted managed context = %#v, error %v", challenge, err)
-				}
-				if _, err := database.GetDNSAuthority(t.Context(), reference); !errors.Is(err, controlstate.ErrDNSAuthorityNotFound) {
-					t.Fatalf("opaque hosted reference must not require a control authority row: %v", err)
+				challenge, err := database.GetDNSChallengeContextForSubject(t.Context(), serviceDNSSubject(challengeServiceID(name)), "authorization_"+name)
+				if err != nil || challenge.CanonicalDomain != domain || challenge.DNSAuthorityReference != "" {
+					t.Fatalf("managed service context = %#v, error %v", challenge, err)
 				}
 			}
 			provider := &challengeProviderStub{zone: Zone{ID: "Z123", Nameservers: []string{"ns-1.example.test", "ns-2.example.test"}}}
@@ -65,7 +60,7 @@ func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.PresentSubject(t.Context(), publicDNSSubject("public_url_"+name), "authorization_"+name); err != nil {
+			if err := manager.PresentSubject(t.Context(), serviceDNSSubject(challengeServiceID(name)), "authorization_"+name); err != nil {
 				t.Fatal(err)
 			}
 			if provider.record.CustomZone != custom || provider.record.ZoneDomain != domain || provider.record.RecordName != "_acme-challenge.member."+domain {
@@ -74,41 +69,41 @@ func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
 			if _, err := sql.Exec(t.Context(), `UPDATE control.acme_authorizations SET state = 'presented' WHERE id = $1`, "authorization_"+name); err != nil {
 				t.Fatal(err)
 			}
-			if valid, err := manager.VerifySubject(t.Context(), publicDNSSubject("public_url_"+name), "authorization_"+name); err != nil || !valid {
+			if valid, err := manager.VerifySubject(t.Context(), serviceDNSSubject(challengeServiceID(name)), "authorization_"+name); err != nil || !valid {
 				t.Fatalf("verify = %v, %v", valid, err)
 			}
 			if custom {
 				if _, err := sql.Exec(t.Context(), `UPDATE control.dns_authorities SET state = 'releasing' WHERE authority_reference = $1`, reference); err != nil {
 					t.Fatal(err)
 				}
-				if valid, err := manager.VerifySubject(t.Context(), publicDNSSubject("public_url_"+name), "authorization_"+name); err == nil || valid {
+				if valid, err := manager.VerifySubject(t.Context(), serviceDNSSubject(challengeServiceID(name)), "authorization_"+name); err == nil || valid {
 					t.Fatalf("releasing authority verified new work: %v, %v", valid, err)
 				}
 			}
 			if _, err := sql.Exec(t.Context(), `UPDATE control.acme_authorizations SET state = 'cleaning' WHERE id = $1`, "authorization_"+name); err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.CleanupSubject(t.Context(), publicDNSSubject("public_url_"+name), "authorization_"+name); err != nil {
+			if err := manager.CleanupSubject(t.Context(), serviceDNSSubject(challengeServiceID(name)), "authorization_"+name); err != nil {
 				t.Fatal(err)
 			}
 			if len(provider.record.DesiredOwnedValues) != 0 || len(provider.record.PreviouslyOwnedValues) != 1 {
 				t.Fatalf("cleanup %#v", provider.record)
 			}
 			calls := provider.calls
-			if err := manager.CleanupSubject(t.Context(), publicDNSSubject("wrong_route"), "authorization_"+name); !errors.Is(err, controlstate.ErrDNSChallengeNotFound) {
-				t.Fatalf("wrong route identity = %v", err)
+			if err := manager.CleanupSubject(t.Context(), serviceDNSSubject(challengeServiceID("wrong")), "authorization_"+name); !errors.Is(err, controlstate.ErrDNSChallengeNotFound) {
+				t.Fatalf("wrong service identity = %v", err)
 			}
-			if _, err := sql.Exec(t.Context(), `UPDATE control.public_urls SET canonical_hostname = $2 WHERE id = $1`, "public_url_"+name, "outside."+name+".example.test"); err != nil {
+			if _, err := sql.Exec(t.Context(), `UPDATE control.domains SET canonical_domain = $2 WHERE id = $1`, challengeDomainID(name, domain), "outside."+name+".example.test"); err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.CleanupSubject(t.Context(), publicDNSSubject("public_url_"+name), "authorization_"+name); err == nil || provider.calls != calls {
-				t.Fatalf("out-of-scope route cleanup = %v, calls %d", err, provider.calls)
+			if err := manager.CleanupSubject(t.Context(), serviceDNSSubject(challengeServiceID(name)), "authorization_"+name); err == nil || provider.calls != calls {
+				t.Fatalf("out-of-scope service cleanup = %v, calls %d", err, provider.calls)
 			}
 		})
 	}
 	var domains int
-	if err := sql.QueryRow(t.Context(), `SELECT count(*) FROM control.domains`).Scan(&domains); err != nil || domains != 0 {
-		t.Fatalf("builtin domains = %d, error %v", domains, err)
+	if err := sql.QueryRow(t.Context(), `SELECT count(*) FROM control.domains`).Scan(&domains); err != nil || domains != 2 {
+		t.Fatalf("fixture domains = %d, error %v", domains, err)
 	}
 }
 
@@ -120,7 +115,7 @@ func TestIntegrationDNSChallengeSerialization(t *testing.T) {
 	}
 	t.Cleanup(otherDatabase.Close)
 	for _, name := range []string{"old", "new"} {
-		seedHostedChallenge(t, database, sql, name, "tunnels.example.test", hostedManagedAuthorityReference)
+		seedHostedChallenge(t, database, sql, name, "tunnels.example.test", "")
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -153,7 +148,7 @@ func TestIntegrationDNSChallengeSerialization(t *testing.T) {
 	var workers sync.WaitGroup
 	t.Cleanup(func() { release(); cancel(); workers.Wait() })
 	workers.Go(func() {
-		firstDone <- manager.PresentSubject(ctx, publicDNSSubject("public_url_new"), "authorization_new")
+		firstDone <- manager.PresentSubject(ctx, serviceDNSSubject(challengeServiceID("new")), "authorization_new")
 	})
 	select {
 	case <-providerStarted:
@@ -166,7 +161,7 @@ func TestIntegrationDNSChallengeSerialization(t *testing.T) {
 		t.Fatal(err)
 	}
 	workers.Go(func() {
-		secondDone <- otherManager.CleanupSubject(ctx, publicDNSSubject("public_url_old"), "authorization_old")
+		secondDone <- otherManager.CleanupSubject(ctx, serviceDNSSubject(challengeServiceID("old")), "authorization_old")
 	})
 	// observe PostgreSQL contention rather than assuming a goroutine was scheduled.
 	tick := time.NewTicker(time.Millisecond)
@@ -191,7 +186,7 @@ func TestIntegrationDNSChallengeSerialization(t *testing.T) {
 		t.Fatalf("unrelated record or pool read was blocked: %v", err)
 	}
 	// this presentation did not exist in either caller's pre-lock snapshot.
-	seedHostedChallenge(t, database, sql, "third", "tunnels.example.test", hostedManagedAuthorityReference)
+	seedHostedChallenge(t, database, sql, "third", "tunnels.example.test", "")
 	release()
 	for _, done := range []chan error{firstDone, secondDone} {
 		select {
@@ -267,9 +262,13 @@ func seedHostedChallenge(t *testing.T, database *controlstate.Database, sql *pgx
 	now := time.Now().UTC()
 	digest := sha256.Sum256([]byte(name))
 	base := "member." + domain
-	domainID := "external_domain_" + name
-	if domain == "tunnels.example.test" {
-		domainID = "external_domain_managed"
+	domainID := challengeDomainID(name, domain)
+	serviceID := challengeServiceID(name)
+	runID := serviceDNSSubject(serviceID).RunID
+	domainKind := "managed"
+	var teamID, authorityReference any
+	if reference != "" {
+		domainKind, teamID, authorityReference = "custom", "external_team", reference
 	}
 	account, err := database.EnsureACMEAccount(t.Context(), "https://acme.example.test/directory", "operator@example.test", now)
 	if err != nil {
@@ -284,30 +283,36 @@ func seedHostedChallenge(t *testing.T, database *controlstate.Database, sql *pgx
 		t.Fatal(err)
 	}
 	csrDigest := sha256.Sum256(csr)
-	keyring, err := storagekey.New("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sealedURLDigest, err := keyring.Seal("control.public_urls.request_digest_ciphertext\x00public_url_"+name, digest[:])
-	if err != nil {
-		t.Fatal(err)
-	}
-	sealedRunDigest, err := keyring.Seal("control.publish_runs.request_digest_ciphertext\x00session_"+name, digest[:])
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, statement := range []struct {
 		query string
 		args  []any
 	}{
 		{`INSERT INTO control.identities (id, kind, display_name, created_at, updated_at) VALUES ('external_identity', 'authority', 'External identity', $1, $1) ON CONFLICT DO NOTHING`, []any{now}},
-		{`INSERT INTO control.public_urls (id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname, target, public_url_scope, purpose, policy_revision, ip_policy, lifecycle_state, dns_authority_reference, dns_state, created_at, updated_at) VALUES ($1, 'external_team', $2, 'external_membership', 'external_identity', $1, $3, $4, $5, 'http://127.0.0.1:3000', 'member', 'app', 1, 'allow_all', 'enabled', $6, 'published', $7, $7)`, []any{"public_url_" + name, domainID, sealedURLDigest, keyring.CurrentID(), name + "." + base, reference, now}},
-		{`INSERT INTO control.publish_runs (id, public_url_id, team_id, acting_identity_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at) VALUES ($1, $2, 'external_team', 'external_identity', 1, $1, $3, $4, $1, $5, 1, $6, $6, $7, 'dns-01', 'starting', $8, $8, $9)`, []any{"session_" + name, "public_url_" + name, sealedRunDigest, keyring.CurrentID(), digest[:], base, []string{base, "*." + base}, now, now.Add(time.Hour)}},
-		{`INSERT INTO control.acme_orders (id, account_id, publish_run_id, public_url_id, publish_run_number, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_identifiers, challenge_method, csr_der, csr_digest, state, available_at, created_at, updated_at) VALUES ($1, $2, $3, $4, 1, $1, $5, $6, $6, $7, 'dns-01', $8, $9, 'authorizing', $10, $10, $10)`, []any{"order_" + name, account.ID, "session_" + name, "public_url_" + name, digest[:], base, []string{base, "*." + base}, csr, csrDigest[:], now}},
+		{`INSERT INTO control.managed_label_reservations (label, created_at) VALUES ('external', $1) ON CONFLICT DO NOTHING`, []any{now}},
+		{`INSERT INTO control.teams (id, kind, display_name, managed_label, created_by_identity_id, created_at, updated_at) VALUES ('external_team', 'organization', 'external', 'external', 'external_identity', $1, $1) ON CONFLICT DO NOTHING`, []any{now}},
+		{`INSERT INTO control.domains (id, kind, team_id, canonical_domain, dns_authority_reference, state, authority_revision, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, 'ready', 1, $6, $6) ON CONFLICT DO NOTHING`, []any{domainID, domainKind, teamID, domain, authorityReference, now}},
+		{`INSERT INTO control.publisher_identities (id, team_id, name, kind, created_by_identity_id, ownership, created_at) VALUES ('dns_publisher', 'external_team', 'dns', 'automation', 'external_identity', 'team', $1) ON CONFLICT DO NOTHING`, []any{now}},
+		{`INSERT INTO control.publisher_identity_keys (id, publisher_identity_id, public_key, revision, created_at) VALUES ('dns_publisher_key', 'dns_publisher', $1, 1, $2) ON CONFLICT DO NOTHING`, []any{digest[:], now}},
+		{`INSERT INTO control.services (id, team_id, name, protocol, domain_id, certificate_hostname, certificate_scope, created_by_identity_id, idempotency_key, request_digest, created_at, updated_at) VALUES ($1, 'external_team', $2, 'http', $3, $4, $5, 'external_identity', $1, $6, $7, $7)`, []any{serviceID, name, domainID, name + "." + base, base, digest[:], now}},
+		{`INSERT INTO control.publisher_grants (id, publisher_identity_id, team_id, created_by_identity_id, kind, service_id, created_at) VALUES ($1, 'dns_publisher', 'external_team', 'external_identity', 'service', $2, $3)`, []any{"grant_" + name, serviceID, now}},
+		{`INSERT INTO control.service_runs (id, service_id, team_id, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, traffic_limits, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, created_at, publisher_expires_at) VALUES ($1, $2, 'external_team', 1, 'dns_publisher', $3, 'dns_publisher_key', $1, $4, $5, $4, 'test-key', '{}', $6, $6, $7, $8, $9, $6, $10, $11)`, []any{runID, serviceID, "grant_" + name, digest[:], now.Add(time.Minute), base, []string{base, "*." + base}, domainID, name + "." + base, now, now.Add(time.Hour)}},
+		{`INSERT INTO control.acme_orders (id, account_id, service_run_id, service_id, service_run_number, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, available_at, created_at, updated_at) VALUES ($1, $2, $3, $4, 1, $1, $5, $6, $6, $7, $8, 'dns-01', $9, $10, 'authorizing', $11, $11, $11)`, []any{"order_" + name, account.ID, runID, serviceID, digest[:], base, domainID, []string{base, "*." + base}, csr, csrDigest[:], now}},
 		{`INSERT INTO control.acme_authorizations (id, order_id, identifier, authorization_url, challenge_type, challenge_url, challenge_token, challenge_digest, presentation_reference, state, available_at, expires_at, created_at, updated_at) VALUES ($1, $2, $3, $4, 'dns-01', $5, 'token', $6, $1, 'presenting', $7, $8, $7, $7)`, []any{"authorization_" + name, "order_" + name, "*." + base, "https://acme.example.test/authz/" + name, "https://acme.example.test/challenge/" + name, digest[:], now, now.Add(time.Hour)}},
 	} {
 		if _, err := sql.Exec(t.Context(), statement.query, statement.args...); err != nil {
 			t.Fatal(err)
 		}
 	}
+}
+
+func challengeServiceID(name string) string {
+	digest := sha256.Sum256([]byte(name))
+	return "svc_" + hex.EncodeToString(digest[:])[:22]
+}
+
+func challengeDomainID(name, domain string) string {
+	if domain == "tunnels.example.test" {
+		return "external_domain_managed"
+	}
+	return "external_domain_" + name
 }

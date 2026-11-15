@@ -72,10 +72,6 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.visitor_token_keys WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.relay_services WHERE transport_private_key_storage_key_id = $1) +
 			(SELECT count(*) FROM control.relay_certificate_orders WHERE private_key_storage_key_id = $1) +
-			(SELECT count(*) FROM control.guest_retry_keys WHERE guest_retry_master_key_storage_key_id = $1) +
-			(SELECT count(*) FROM control.public_urls WHERE allowed_ip_policy_storage_key_id = $1) +
-			(SELECT count(*) FROM control.public_urls WHERE request_digest_storage_key_id = $1) +
-			(SELECT count(*) FROM control.publish_runs WHERE request_digest_storage_key_id = $1) +
 			(SELECT count(*) FROM control.service_runs WHERE assignment_seed_storage_key_id = $1) +
 			(SELECT count(*) FROM control.connector_peer_pairs WHERE storage_key_id = $1) +
 			(SELECT count(*) FROM control.connector_peer_pairs WHERE session_key_storage_key_id = $1) +
@@ -87,12 +83,8 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.deployment_publisher_enrollments WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.service_http_browser_logins WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.service_http_browser_sessions WHERE storage_key_id=$1) +
-			(SELECT count(*) FROM control.browser_login_attempts WHERE verifier_storage_key_id=$1) +
-			(SELECT count(*) FROM control.browser_access_sessions WHERE storage_key_id=$1) +
-			(SELECT count(*) FROM control.browser_access_handoffs WHERE storage_key_id=$1) +
-			(SELECT count(*) FROM control.visitor_ip_grants WHERE storage_key_id=$1) +
-			(SELECT count(*) FROM control.deployment_namespace_renames WHERE storage_key_id=$1) +
-			(SELECT count(*) FROM control.ingress_routing_table_events WHERE policy_storage_key_id = $1)
+			(SELECT count(*) FROM control.service_http_browser_handoffs WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.deployment_namespace_renames WHERE storage_key_id=$1)
 	`, previousKeyID).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("controlstate: count previous-key secrets: %w", err)
@@ -298,28 +290,6 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		return 0, fmt.Errorf("controlstate: rotate relay certificate order private keys: %w", err)
 	}
 
-	if err := rotate(`
-		SELECT ctid::text, guest_retry_master_key_ciphertext
-		FROM control.guest_retry_keys
-		WHERE guest_retry_master_key_storage_key_id = $1
-		FOR UPDATE SKIP LOCKED
-		LIMIT $2
-	`, func(rows pgx.Rows) (string, string, []byte, error) {
-		var rowID string
-		var ciphertext []byte
-		err := rows.Scan(&rowID, &ciphertext)
-		return rowID, guestRetryMasterKeyContext(), ciphertext, err
-	}, func(rowID, keyID string, ciphertext []byte) error {
-		_, err := tx.Exec(ctx, `
-			UPDATE control.guest_retry_keys
-			SET guest_retry_master_key_ciphertext = $1, guest_retry_master_key_storage_key_id = $2
-			WHERE ctid = $3::tid AND guest_retry_master_key_storage_key_id = $4
-		`, ciphertext, keyID, rowID, previousKeyID)
-		return err
-	}); err != nil {
-		return 0, fmt.Errorf("controlstate: rotate guest retry master key: %w", err)
-	}
-
 	for _, source := range []struct {
 		query, column, keyIDColumn, table string
 		context                           func(string) string
@@ -327,22 +297,16 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		{`SELECT ctid::text, 'device-login:' || encode(credential_digest,'hex'), payload FROM control.device_logins
 		  WHERE storage_key_id=$1 ORDER BY credential_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"payload", "storage_key_id", "control.device_logins", func(scope string) string { return scope }},
-		{`SELECT ctid::text, public_url_id || ':' || id, prefix_ciphertext FROM control.visitor_ip_grants
-		  WHERE storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
-			"prefix_ciphertext", "storage_key_id", "control.visitor_ip_grants", func(id string) string { return "visitor-ip-grant:" + id }},
-		{`SELECT ctid::text, encode(state_digest,'hex'), verifier_ciphertext FROM control.browser_login_attempts
-		  WHERE verifier_storage_key_id=$1 ORDER BY state_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
-			"verifier_ciphertext", "verifier_storage_key_id", "control.browser_login_attempts", func(id string) string { return "browser-access:" + id }},
-		{`SELECT ctid::text, encode(token_digest,'hex'), cookie_ciphertext FROM control.browser_access_handoffs
+		{`SELECT ctid::text, encode(token_digest,'hex'), cookie_ciphertext FROM control.service_http_browser_handoffs
 		  WHERE storage_key_id=$1 ORDER BY token_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
-			"cookie_ciphertext", "storage_key_id", "control.browser_access_handoffs", func(id string) string { return "browser-access:" + id }},
+			"cookie_ciphertext", "storage_key_id", "control.service_http_browser_handoffs", func(id string) string { return "browser-access:" + id }},
 		{`SELECT ctid::text,id,credential_ciphertext FROM control.workload_sessions WHERE storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"credential_ciphertext", "storage_key_id", "control.workload_sessions", workloadCredentialContext},
 		{`SELECT ctid::text, encode(state_digest,'hex'), verifier_ciphertext FROM control.service_http_browser_logins
 		  WHERE storage_key_id=$1 ORDER BY state_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"verifier_ciphertext", "storage_key_id", "control.service_http_browser_logins", func(id string) string { return "browser-access:" + id }},
-		{`SELECT ctid::text, encode(handoff_digest,'hex'), refresh_ciphertext FROM control.service_http_browser_sessions
-		  WHERE storage_key_id=$1 ORDER BY handoff_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
+		{`SELECT ctid::text, encode(token_digest,'hex'), refresh_ciphertext FROM control.service_http_browser_sessions
+		  WHERE storage_key_id=$1 ORDER BY token_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"refresh_ciphertext", "storage_key_id", "control.service_http_browser_sessions", func(id string) string { return "browser-access:" + id }},
 		{`SELECT ctid::text, team_id || '/' || project_key, configuration_ciphertext FROM control.applied_projects
 		  WHERE storage_key_id=$1 ORDER BY team_id,project_key FOR UPDATE SKIP LOCKED LIMIT $2`,
@@ -359,15 +323,6 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		{`SELECT ctid::text, team_id || '/' || project_key || '/' || idempotency_key, response_ciphertext FROM control.deployment_namespace_renames
 		  WHERE storage_key_id=$1 ORDER BY team_id,project_key,idempotency_key LIMIT $2 FOR UPDATE SKIP LOCKED`,
 			"response_ciphertext", "storage_key_id", "control.deployment_namespace_renames", func(id string) string { return "publisher-namespace-rename/" + id }},
-		{`SELECT ctid::text, id, allowed_ip_policy_ciphertext FROM control.public_urls
-		  WHERE allowed_ip_policy_storage_key_id = $1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
-			"allowed_ip_policy_ciphertext", "allowed_ip_policy_storage_key_id", "control.public_urls", publicURLIPPolicyContext},
-		{`SELECT ctid::text, id, request_digest_ciphertext FROM control.public_urls
-		  WHERE request_digest_storage_key_id = $1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
-			"request_digest_ciphertext", "request_digest_storage_key_id", "control.public_urls", publicURLRequestDigestContext},
-		{`SELECT ctid::text, id, request_digest_ciphertext FROM control.publish_runs
-		  WHERE request_digest_storage_key_id = $1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
-			"request_digest_ciphertext", "request_digest_storage_key_id", "control.publish_runs", publishRunRequestDigestContext},
 		{`SELECT ctid::text, id, assignment_seed_ciphertext FROM control.service_runs
 		  WHERE assignment_seed_storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"assignment_seed_ciphertext", "assignment_seed_storage_key_id", "control.service_runs", serviceAssignmentSeedContext},
@@ -380,9 +335,6 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		{`SELECT ctid::text, pair_id, key_ciphertext FROM control.connector_peer_pending_bindings
 		  WHERE storage_key_id=$1 ORDER BY pair_id FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"key_ciphertext", "storage_key_id", "control.connector_peer_pending_bindings", connectorPeerPairKeyContext},
-		{`SELECT ctid::text, public_url_id, policy_ciphertext FROM control.ingress_routing_table_events
-		  WHERE policy_storage_key_id = $1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
-			"policy_ciphertext", "policy_storage_key_id", "control.ingress_routing_table_events", publicURLIPPolicyContext},
 	} {
 		if err := rotate(source.query, func(rows pgx.Rows) (string, string, []byte, error) {
 			var rowID, id string
@@ -395,44 +347,6 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 			return err
 		}); err != nil {
 			return 0, fmt.Errorf("rotate stored secrets in %s: %w", source.table, err)
-		}
-	}
-	// both browser tokens share one key ID; rotate them together under one row
-	// claim so readers can never observe tokens encrypted with different keys.
-	if remaining > 0 {
-		rows, err := tx.Query(ctx, `SELECT ctid::text, token_digest, access_ciphertext, refresh_ciphertext
-			FROM control.browser_access_sessions WHERE storage_key_id=$1 ORDER BY token_digest FOR UPDATE SKIP LOCKED LIMIT $2`, previousKeyID, remaining)
-		if err != nil {
-			return 0, fmt.Errorf("claim browser session secrets: %w", err)
-		}
-		type tokens struct {
-			rowID                   string
-			digest, access, refresh []byte
-		}
-		claimed, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (tokens, error) {
-			var value tokens
-			err := row.Scan(&value.rowID, &value.digest, &value.access, &value.refresh)
-			return value, err
-		})
-		if err != nil {
-			return 0, err
-		}
-		for _, value := range claimed {
-			for _, token := range []*[]byte{&value.access, &value.refresh} {
-				plain, _, err := d.openSecret(previousKeyID, browserContext(value.digest), *token)
-				if err != nil {
-					return 0, fmt.Errorf("open browser session secret for rotation: %w", err)
-				}
-				*token, err = d.sealSecret(browserContext(value.digest), plain)
-				if err != nil {
-					return 0, err
-				}
-			}
-			if _, err := tx.Exec(ctx, `UPDATE control.browser_access_sessions SET access_ciphertext=$1,refresh_ciphertext=$2,storage_key_id=$3 WHERE ctid=$4::tid AND storage_key_id=$5`, value.access, value.refresh, d.storageKey.CurrentID(), value.rowID, previousKeyID); err != nil {
-				return 0, fmt.Errorf("rotate browser session secrets: %w", err)
-			}
-			rotated++
-			remaining--
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {

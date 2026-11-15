@@ -166,8 +166,9 @@ func (d *Database) AliasCandidate(ctx context.Context, id string) (AliasSelectio
 		return AliasSelection{}, TunnelInfo{}, err
 	}
 	selection := aliasSelection(row)
+	at := d.now().UTC()
 	tunnel, err := queries.ReadyAliasReceiver(ctx, clientstatedb.ReadyAliasReceiverParams{
-		AliasID: id, ProjectRoot: row.SelectedProjectRoot, Now: d.now().UTC().UnixNano(),
+		AliasID: id, ProjectRoot: row.SelectedProjectRoot, Now: at.UnixNano(),
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return selection, TunnelInfo{}, ErrAliasReceiverUnavailable
@@ -178,10 +179,7 @@ func (d *Database) AliasCandidate(ctx context.Context, id string) (AliasSelectio
 	if err := tx.Commit(); err != nil {
 		return selection, TunnelInfo{}, err
 	}
-	return selection, TunnelInfo{ID: tunnel.ID, Server: tunnel.ServerOrigin, Project: tunnel.ProjectRoot,
-		Service: tunnel.Service.String, IntegrationScope: IntegrationScope{PrimaryProjectRoot: tunnel.PrimaryProjectRoot.String, Namespace: tunnel.IntegrationNamespace.String}, State: TunnelState(tunnel.State),
-		Target: tunnel.Target.String, Hostname: tunnel.Hostname.String, PublicURL: "https://" + tunnel.Hostname.String,
-		PublicURLID: tunnel.PublicURLID.String, PublishRunNumber: uint64(tunnel.PublishRunNumber.Int64)}, nil
+	return selection, tunnelInfo(tunnel, at), nil
 }
 
 // SelectAlias requires a ready caller service. without force, another selected

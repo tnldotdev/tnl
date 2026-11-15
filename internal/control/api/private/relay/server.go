@@ -28,30 +28,6 @@ func (s generatedServer) DisconnectServicePublisherConnection(w http.ResponseWri
 	s.handler.disconnectServicePublisherConnection(w, r, id)
 }
 
-func (s generatedServer) ClaimPublisherConnection(
-	response http.ResponseWriter,
-	request *http.Request,
-	publisherConnectionID relayv1.PublisherConnectionID,
-) {
-	s.handler.claimPublisherConnection(response, request, publisherConnectionID)
-}
-
-func (s generatedServer) DisconnectPublisherConnection(
-	response http.ResponseWriter,
-	request *http.Request,
-	publisherConnectionID relayv1.PublisherConnectionID,
-) {
-	s.handler.disconnectPublisherConnection(response, request, publisherConnectionID)
-}
-
-func (s generatedServer) MarkPublisherConnectionReady(
-	response http.ResponseWriter,
-	request *http.Request,
-	publisherConnectionID relayv1.PublisherConnectionID,
-) {
-	s.handler.markPublisherConnectionReady(response, request, publisherConnectionID)
-}
-
 func (s generatedServer) RegisterRelay(response http.ResponseWriter, request *http.Request) {
 	s.handler.registerRelay(response, request)
 }

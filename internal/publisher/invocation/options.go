@@ -92,8 +92,7 @@ type EnrolledOptions struct {
 	Enrolled            bool
 	Traffic             *trafficlimits.Selection
 	ReadinessPath       string
-	SelectProtocol      func(controlv1.PublicURLServiceProtocol) (applicationlimits.Limits, error)
-	SelectPrivate       func(controlv1.ServiceProtocol) (applicationlimits.Limits, error)
+	SelectProtocol      func(controlv1.ServiceProtocol) (applicationlimits.Limits, error)
 	ServicePresentation *ServicePresentation
 }
 

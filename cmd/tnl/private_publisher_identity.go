@@ -6,7 +6,6 @@ import (
 
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/connector"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
@@ -15,22 +14,14 @@ import (
 )
 
 func managedService(ctx context.Context, session *clientteam.Session, id string) (controlv1.Service, error) {
+	if !opaqueid.Valid(id, opaqueid.ServicePrefix) {
+		return controlv1.Service{}, publisherCLIError("pass an exact service ID")
+	}
 	current, err := session.Current(ctx)
 	if err != nil {
 		return controlv1.Service{}, err
 	}
-	services, err := session.Authenticated().Control.ListServices(ctx, current.Team().Id)
-	if err != nil {
-		return controlv1.Service{}, err
-	}
-	service, err := connector.SelectService(services, id, current.Team().Id)
-	if err != nil {
-		return service, err
-	}
-	if !service.Enabled {
-		return service, publisheridentity.ErrScope
-	}
-	service, err = session.Authenticated().Control.GetService(ctx, service.Id)
+	service, err := session.Authenticated().Control.GetService(ctx, id)
 	if err != nil {
 		return service, err
 	}
@@ -82,14 +73,14 @@ func runPrivatePublisherProvision(ctx context.Context, flags publisherProvisionC
 	if err != nil {
 		return err
 	}
-	if enrollment.Kind != "service" || enrollment.ServiceId == nil || *enrollment.ServiceId != service.Id || enrollment.TeamId != service.TeamId {
+	if enrollment.Kind != "service" || enrollment.ServiceId == nil || *enrollment.ServiceId != service.Id || enrollment.TeamId != service.TeamId || enrollment.DomainId != nil || enrollment.Namespace != nil {
 		return publisheridentity.ErrScope
 	}
-	native, identity, err := publisheridentity.EnrollNative(ctx, session.Store(), publisheridentity.NativeControl{PublicURLControl: session.Authenticated().Control, Services: session.Authenticated().Control}, session.Authenticated().Authority, enrollment.EnrollmentKey)
+	native, identity, err := publisheridentity.EnrollNative(ctx, session.Store(), publisheridentity.NativeControl{Services: session.Authenticated().Control}, session.Authenticated().Authority, enrollment.EnrollmentKey)
 	if err != nil {
 		return err
 	}
-	if identity.Kind != "service" || identity.ServiceId == nil || *identity.ServiceId != service.Id || identity.TeamId != service.TeamId {
+	if identity.Kind != "service" || identity.ServiceId == nil || *identity.ServiceId != service.Id || identity.TeamId != service.TeamId || identity.DomainId != nil || identity.Namespace != nil {
 		return publisheridentity.ErrScope
 	}
 	if _, err := native.SavedService(ctx); err != nil {

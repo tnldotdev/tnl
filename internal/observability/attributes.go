@@ -73,8 +73,6 @@ var (
 	DeploymentID           = metricStringKey{keyName{"tnl.deployment_id"}}
 	PublisherIdentityID    = metricStringKey{keyName{"tnl.publisher_identity_id"}}
 	ServiceID              = metricStringKey{keyName{"tnl.service_id"}}
-	PublicURLID            = metricStringKey{keyName{"tnl.public_url_id"}}
-	ServiceKindKey         = metricEnumKey[ServiceKind]{keyName{"tnl.service_kind"}}
 	Component              = metricStringKey{keyName{"tnl.component"}}
 	ServiceProtocol        = metricEnumKey[Protocol]{keyName{"tnl.service_protocol"}}
 	KubernetesVerb         = stringKey{keyName{"tnl.kubernetes_verb"}}
@@ -107,8 +105,8 @@ var (
 	ResponseOrigin         = metricStringKey{keyName{"tnl.response_origin"}}
 	VisitorConnectionID    = stringKey{keyName{"tnl.visitor_connection_id"}}
 	RequestID              = stringKey{keyName{"tnl.request_id"}}
-	PublishRunID           = stringKey{keyName{"tnl.publish_run_id"}}
-	PublishRunNumber       = intKey{keyName{"tnl.publish_run_number"}}
+	ServiceRunID           = stringKey{keyName{"tnl.service_run_id"}}
+	ServiceRunNumber       = intKey{keyName{"tnl.service_run_number"}}
 	PublisherConnectionID  = stringKey{keyName{"tnl.publisher_connection_id"}}
 	GrantID                = stringKey{keyName{"tnl.grant_id"}}
 	ActorID                = stringKey{keyName{"tnl.actor_id"}}
@@ -126,7 +124,6 @@ var (
 	targetResourceID       = stringKey{keyName{"tnl.target_resource_id"}}
 	connectionClass        = metricStringKey{keyName{"tnl.connection_class"}}
 	providerKey            = metricStringKey{keyName{"tnl.provider"}}
-	publicURLPurpose       = metricStringKey{keyName{"tnl.public_url_purpose"}}
 	domainKind             = metricStringKey{keyName{"tnl.domain_kind"}}
 	certificatePlan        = metricStringKey{keyName{"tnl.certificate_plan"}}
 	ingresspool            = metricStringKey{keyName{"tnl.ingress_pool"}}

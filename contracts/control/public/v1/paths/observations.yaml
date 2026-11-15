@@ -24,38 +24,3 @@ paths:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/ServiceObservationResult" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/publish-runs/{run_id}/service-observations:
-    post:
-      operationId: reportPublishRunServiceObservations
-      tags: [observations]
-      summary: Report service observations through a public URL publish run
-      description: Submit bounded connection observations using the exact publish run token. Control checks the current run and counts accepted and duplicate events; observations do not create visitor grants or authorize traffic.
-      security: [{ publishRunAuth: [] }]
-      parameters:
-        - { name: run_id, in: path, required: true, schema: { type: string } }
-      requestBody:
-        {
-          required: true,
-          content:
-            {
-              application/json:
-                {
-                  schema:
-                    { $ref: "../openapi.yaml#/components/schemas/PublishRunServiceObservations" },
-                },
-            },
-        }
-      responses:
-        "200":
-          {
-            description: Accepted and duplicate observation counters,
-            content:
-              {
-                application/json:
-                  {
-                    schema:
-                      { $ref: "../openapi.yaml#/components/schemas/ServiceObservationResult" },
-                  },
-              },
-          }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

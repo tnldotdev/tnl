@@ -28,12 +28,15 @@ func lockAppliedProjectPublications(ctx context.Context, tx pgx.Tx, team, projec
 }
 
 func (d *Database) createAppliedService(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, key, scope string, s ProjectServiceConfiguration, publisherPool bool) (string, error) {
+	if err := requireNewServiceWork(ctx, q, MaintenanceControlServiceCreation); err != nil {
+		return "", err
+	}
 	id, err := opaqueid.New(opaqueid.ServicePrefix)
 	if err != nil {
 		return "", err
 	}
 	digest := sha256.Sum256([]byte(r.TeamID + "\x00" + r.ProjectKey + "\x00" + key))
-	_, err = q.InsertService(ctx, controlstatedb.InsertServiceParams{ID: id, TeamID: r.TeamID, Name: s.Name, NameScope: scope, CreatedByIdentityID: r.ActorID, IdempotencyKey: "applied/" + id, RequestDigest: digest[:], Now: timestamptz(r.Now)})
+	_, err = q.InsertService(ctx, controlstatedb.InsertServiceParams{ID: id, TeamID: text(r.TeamID), Name: s.Name, NameScope: scope, CreatedByIdentityID: text(r.ActorID), IdempotencyKey: "applied/" + id, RequestDigest: digest[:], Now: timestamptz(r.Now)})
 	if err != nil {
 		return "", projectConstraintError(err)
 	}
@@ -63,6 +66,9 @@ func (d *Database) updateAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 	if err != nil {
 		return err
 	}
+	if err = requireServiceProtocolChange(ctx, tx, row, s.Protocol); err != nil {
+		return err
+	}
 	trust, err := appliedServiceTargetTrust(s.TargetTLS)
 	if err != nil {
 		return err
@@ -72,7 +78,7 @@ func (d *Database) updateAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 	if err != nil {
 		return err
 	}
-	changed := !serviceMetadataMatches(saved, metadata) || row.PublisherPool != metadata.PublisherPool
+	changed := !serviceMetadataMatches(saved, metadata)
 	if saved.Protocol != s.Protocol || row.NameScope != scope {
 		if _, err = tx.Exec(ctx, `UPDATE control.deployment_publisher_enrollment_services SET revoked_at=COALESCE(revoked_at,$2) WHERE service_id=$1`, id, now); err != nil {
 			return err
@@ -91,6 +97,7 @@ func (d *Database) updateAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE control.services SET protocol=$2,tls_metadata=$3::jsonb,publisher_pool=$4,trust_revision=trust_revision+CASE WHEN $5 THEN 1 ELSE 0 END,
+	    service_port=CASE WHEN protocol<>$2 THEN CASE WHEN $2='http' THEN 443 ELSE 0 END ELSE service_port END,
 	    updated_at=$6,name=$7,name_scope=$8,ephemeral=$9,require_post_quantum=COALESCE($10::boolean,require_post_quantum) WHERE id=$1`, id, s.Protocol, string(encoded), metadata.PublisherPool, changed, now, s.Name, scope, s.Ephemeral, s.RequirePostQuantum)
 	return projectConstraintError(err)
 }
@@ -181,7 +188,7 @@ func (d *Database) retireProjectResource(ctx context.Context, tx pgx.Tx, q *cont
 		if _, err := tx.Exec(ctx, `UPDATE control.service_runs SET state='closed',closed_at=$2 WHERE service_id=$1 AND closed_at IS NULL`, s.ServiceID.String, now); err != nil {
 			return err
 		}
-		if _, err := q.DeleteService(ctx, controlstatedb.DeleteServiceParams{ID: s.ServiceID.String, TeamID: s.TeamID, Now: timestamptz(now)}); err != nil {
+		if _, err := q.DeleteService(ctx, controlstatedb.DeleteServiceParams{ID: s.ServiceID.String, TeamID: text(s.TeamID), Now: timestamptz(now)}); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE control.visitor_grants SET revoked_at=COALESCE(revoked_at,$2) WHERE service_id=$1`, s.ServiceID.String, now); err != nil {
@@ -272,7 +279,7 @@ func (d *Database) ensureDeploymentServiceGrant(ctx context.Context, tx pgx.Tx, 
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	scope := servicePublisherScope{s.TeamID, s.ServiceID.String}
+	scope := servicePublisherScope{teamID: s.TeamID, serviceID: s.ServiceID.String}
 	g, err := insertPublisherGrant(ctx, q, publisher, actor, scope, nil, now)
 	if err != nil {
 		return err

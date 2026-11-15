@@ -41,39 +41,39 @@ func (q *Queries) GetAppliedProject(ctx context.Context, arg GetAppliedProjectPa
 
 const listProjectPublications = `-- name: ListProjectPublications :many
 WITH resources AS (
-    SELECT applied.service,COALESCE(deployment.name,'local')::text AS deployment,''::text AS worktree_key,applied.service_id,applied.public_url_id
+    SELECT applied.service,COALESCE(deployment.name,'local')::text AS deployment,''::text AS worktree_key,applied.service_id
     FROM control.applied_project_services applied
     LEFT JOIN control.deployments deployment ON deployment.id=applied.deployment_id
     WHERE applied.team_id=$2 AND applied.project_key=$3
-       AND (applied.deployment_id IS NOT NULL OR applied.service_id IS NOT NULL OR applied.public_url_id IS NOT NULL OR NOT EXISTS (
+       AND (applied.deployment_id IS NOT NULL OR applied.service_id IS NOT NULL OR NOT EXISTS (
           SELECT 1 FROM control.local_project_services local
           WHERE local.team_id=applied.team_id AND local.project_key=applied.project_key AND local.service=applied.service))
     UNION ALL
-    SELECT local.service,'local'::text AS deployment,local.worktree_key,local.service_id,local.public_url_id
+    SELECT local.service,'local'::text AS deployment,local.worktree_key,local.service_id
     FROM control.local_project_services local
     WHERE local.team_id=$2 AND local.project_key=$3
 ), publications AS (
-    SELECT resource.service,resource.deployment,resource.worktree_key,resource.service_id,resource.public_url_id,
-        COALESCE(service.certificate_hostname,url.canonical_hostname,'')::text AS hostname,
-        COALESCE(service.service_port,CASE WHEN url.id IS NOT NULL THEN 443 ELSE 0 END)::integer AS port,
-        COALESCE(service.enabled AND service.deleted_at IS NULL,url.lifecycle_state='enabled',false)::boolean AS enabled,
-        COALESCE(url.dns_state,'')::text AS dns_state,
-        COALESCE(public_run.id,private_run.id,'')::text AS run_id,
-        COALESCE(public_run.publish_run_number,private_run.run_number,0)::bigint AS run_number,
-        COALESCE(public_run.state,private_run.state,'')::text AS publication_state,
-        COALESCE(public_run.publisher_expires_at,private_run.publisher_expires_at) AS publisher_expires_at,
-        COALESCE(public_run.certificate_not_after,private_run.certificate_expires_at) AS certificate_expires_at,
-        COALESCE(private_run.healthy,true)::boolean AS healthy,
-        COALESCE(public_run.ready_at,private_run.ready_at) AS ready_at
+    SELECT resource.service,resource.deployment,resource.worktree_key,resource.service_id,
+        COALESCE(service.certificate_hostname,'')::text AS hostname,
+        COALESCE(service.service_port,0)::integer AS port,
+        COALESCE(service.enabled AND service.deleted_at IS NULL,false)::boolean AS enabled,
+        COALESCE(endpoint.public,false)::boolean AS public,
+        COALESCE(endpoint.dns_state,'unmanaged')::text AS dns_state,
+        COALESCE(run.id,'')::text AS run_id,
+        COALESCE(run.run_number,0)::bigint AS run_number,
+        COALESCE(run.state,'')::text AS publication_state,
+        run.publisher_expires_at,
+        run.certificate_expires_at,
+        COALESCE(run.healthy,false)::boolean AS healthy,
+        run.ready_at
     FROM resources resource
     LEFT JOIN control.services service ON service.id=resource.service_id
-    LEFT JOIN control.public_urls url ON url.id=resource.public_url_id
-    LEFT JOIN control.publish_runs public_run ON public_run.public_url_id=resource.public_url_id AND public_run.closed_at IS NULL
-    LEFT JOIN control.service_runs private_run ON private_run.service_id=resource.service_id AND private_run.closed_at IS NULL
+    LEFT JOIN control.service_endpoints endpoint ON endpoint.service_id=service.id AND endpoint.hostname=service.certificate_hostname AND endpoint.retired_at IS NULL
+    LEFT JOIN control.service_runs run ON run.service_id=resource.service_id AND run.closed_at IS NULL
 ), keyed AS (
-    SELECT service, deployment, worktree_key, service_id, public_url_id, hostname, port, enabled, dns_state, run_id, run_number, publication_state, publisher_expires_at, certificate_expires_at, healthy, ready_at,(deployment||'/'||service||'/'||encode(convert_to(worktree_key,'UTF8'),'hex')||'/'||run_id)::text AS cursor_key FROM publications
+    SELECT service, deployment, worktree_key, service_id, hostname, port, enabled, public, dns_state, run_id, run_number, publication_state, publisher_expires_at, certificate_expires_at, healthy, ready_at,(deployment||'/'||service||'/'||encode(convert_to(worktree_key,'UTF8'),'hex')||'/'||run_id)::text AS cursor_key FROM publications
 )
-SELECT service, deployment, worktree_key, service_id, public_url_id, hostname, port, enabled, dns_state, run_id, run_number, publication_state, publisher_expires_at, certificate_expires_at, healthy, ready_at, cursor_key FROM keyed WHERE cursor_key COLLATE "C">$1::text COLLATE "C"
+SELECT service, deployment, worktree_key, service_id, hostname, port, enabled, public, dns_state, run_id, run_number, publication_state, publisher_expires_at, certificate_expires_at, healthy, ready_at, cursor_key FROM keyed WHERE cursor_key COLLATE "C">$1::text COLLATE "C"
 ORDER BY cursor_key COLLATE "C" LIMIT 101
 `
 
@@ -88,10 +88,10 @@ type ListProjectPublicationsRow struct {
 	Deployment           string
 	WorktreeKey          string
 	ServiceID            pgtype.Text
-	PublicURLID          pgtype.Text
 	Hostname             string
 	Port                 int32
 	Enabled              bool
+	Public               bool
 	DnsState             string
 	RunID                string
 	RunNumber            int64
@@ -119,10 +119,10 @@ func (q *Queries) ListProjectPublications(ctx context.Context, arg ListProjectPu
 			&i.Deployment,
 			&i.WorktreeKey,
 			&i.ServiceID,
-			&i.PublicURLID,
 			&i.Hostname,
 			&i.Port,
 			&i.Enabled,
+			&i.Public,
 			&i.DnsState,
 			&i.RunID,
 			&i.RunNumber,

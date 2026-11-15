@@ -6,100 +6,98 @@ import (
 )
 
 func TestIntegrationPreviewGroupsOnlyAuthorizedPublicURLs(t *testing.T) {
-	database, now := newControlStateIntegrationDatabase(t, "previews")
-	routeRequest := oidcRouteRequest(t, database, now)
-	publicURL := createTestPublicURL(t, database, routeRequest, now)
-	group, err := database.CreatePreview(t.Context(), publicURL.TeamID, routeRequest.ActingIdentityID, "project-worktree", now)
-	if err != nil || group.ID == "" || len(group.PublicURLIDs) != 0 {
+	f := newServiceHTTPFixture(t)
+	database, now, service := f.database, f.now, f.service
+	group, err := database.CreatePreview(t.Context(), service.TeamID, f.project.ActorID, "project-worktree", now)
+	if err != nil || group.ID == "" || len(group.ServiceIDs) != 0 {
 		t.Fatalf("create preview = %+v, %v", group, err)
 	}
-	retry, err := database.CreatePreview(t.Context(), publicURL.TeamID, routeRequest.ActingIdentityID, "project-worktree", now)
+	retry, err := database.CreatePreview(t.Context(), service.TeamID, f.project.ActorID, "project-worktree", now)
 	if err != nil || retry.ID != group.ID {
 		t.Fatalf("idempotent preview = %+v, %v", retry, err)
 	}
-	attach := AddPreviewPublicURLRequest{
-		PreviewID: group.ID, PublicURLID: publicURL.ID, TeamID: publicURL.TeamID,
-		IdentityID: routeRequest.ActingIdentityID, PolicyRevision: uint64(publicURL.PolicyRevision),
-		ExpectedMutationRevision: publicURL.MutationRevision,
+	attach := AddPreviewServiceRequest{
+		PreviewID: group.ID, ServiceID: service.ID, TeamID: service.TeamID, IdentityID: f.project.ActorID,
 	}
-	if _, err := database.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{
-		PreviewID: group.ID, PublicURLID: publicURL.ID, TeamID: publicURL.TeamID,
-		IdentityID: "someone-else", PolicyRevision: uint64(publicURL.PolicyRevision),
-		ExpectedMutationRevision: publicURL.MutationRevision,
-	}, now); !errors.Is(err, ErrPreviewAccess) {
+	if _, err := database.AddPreviewService(t.Context(), AddPreviewServiceRequest{
+		PreviewID: group.ID, ServiceID: service.ID, TeamID: service.TeamID, IdentityID: "someone-else",
+	}, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("another identity attached to preview: %v", err)
 	}
-	attach.ExpectedMutationRevision++
-	if _, err := database.AddPreviewPublicURL(t.Context(), attach, now); !errors.Is(err, ErrPreviewStale) {
-		t.Fatalf("stale public URL revision attached: %v", err)
+	// service attachment checks current transactional facts, not an external
+	// public URL mutation receipt. a stale enabled observation cannot attach.
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.services SET enabled=false WHERE id=$1`, service.ID); err != nil {
+		t.Fatal(err)
 	}
-	attach.ExpectedMutationRevision--
-	group, err = database.AddPreviewPublicURL(t.Context(), attach, now)
-	if err != nil || len(group.PublicURLIDs) != 1 || group.PublicURLIDs[0] != publicURL.ID {
-		t.Fatalf("attached public URL = %+v, %v", group, err)
+	if _, err := database.AddPreviewService(t.Context(), attach, now); !errors.Is(err, ErrPreviewStale) {
+		t.Fatalf("disabled service attached: %v", err)
 	}
-	group, err = database.AddPreviewPublicURL(t.Context(), attach, now)
-	if err != nil || len(group.PublicURLIDs) != 1 {
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.services SET enabled=true WHERE id=$1`, service.ID); err != nil {
+		t.Fatal(err)
+	}
+	group, err = database.AddPreviewService(t.Context(), attach, now)
+	if err != nil || len(group.ServiceIDs) != 1 || group.ServiceIDs[0] != service.ID {
+		t.Fatalf("attached service = %+v, %v", group, err)
+	}
+	group, err = database.AddPreviewService(t.Context(), attach, now)
+	if err != nil || len(group.ServiceIDs) != 1 {
 		t.Fatalf("idempotent attachment = %+v, %v", group, err)
 	}
 }
 
 func TestIntegrationTeamAccessStaysInOnePreviewAndCanBeRevoked(t *testing.T) {
-	database, now := newControlStateIntegrationDatabase(t, "team-preview-access")
-	routeRequest := oidcRouteRequest(t, database, now)
-	publicURL := createTestPublicURL(t, database, routeRequest, now)
-	preview, err := database.CreatePreview(t.Context(), publicURL.TeamID, routeRequest.ActingIdentityID, "team-access", now)
+	f := newServiceHTTPFixture(t)
+	database, now, service := f.database, f.now, f.service
+	preview, err := database.CreatePreview(t.Context(), service.TeamID, f.project.ActorID, "team-access", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	attach := AddPreviewPublicURLRequest{
-		PreviewID: preview.ID, PublicURLID: publicURL.ID, TeamID: publicURL.TeamID,
-		IdentityID: routeRequest.ActingIdentityID, PolicyRevision: uint64(publicURL.PolicyRevision),
-		ExpectedMutationRevision: publicURL.MutationRevision,
+	attach := AddPreviewServiceRequest{
+		PreviewID: preview.ID, ServiceID: service.ID, TeamID: service.TeamID, IdentityID: f.project.ActorID,
 	}
-	if _, err := database.AddPreviewPublicURL(t.Context(), attach, now); err != nil {
+	if _, err := database.AddPreviewService(t.Context(), attach, now); err != nil {
 		t.Fatal(err)
 	}
 	request := SetPreviewTeamAccessRequest{
-		PreviewID: preview.ID, TeamID: publicURL.TeamID, IdentityID: routeRequest.ActingIdentityID,
-		PolicyRevision: uint64(publicURL.PolicyRevision), Enabled: true,
-		PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: publicURL.ID, ExpectedMutationRevision: publicURL.MutationRevision}},
+		PreviewID: preview.ID, TeamID: service.TeamID, IdentityID: f.project.ActorID, Enabled: true,
 	}
-	other, err := database.CreatePreview(t.Context(), publicURL.TeamID, routeRequest.ActingIdentityID, "other-team-access", now)
+	other, err := database.CreatePreview(t.Context(), service.TeamID, f.project.ActorID, "other-team-access", now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	otherAttach := attach
 	otherAttach.PreviewID = other.ID
-	if _, err := database.AddPreviewPublicURL(t.Context(), otherAttach, now); err != nil {
+	if _, err := database.AddPreviewService(t.Context(), otherAttach, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.SetPreviewTeamAccess(t.Context(), request, now); !errors.Is(err, ErrPreviewStale) {
 		t.Fatalf("shared URL granted team access through one preview: %v", err)
 	}
-	if _, err := database.pool.Exec(t.Context(), "DELETE FROM control.preview_public_urls WHERE preview_id = $1", other.ID); err != nil {
+	if _, err := database.pool.Exec(t.Context(), "DELETE FROM control.preview_services WHERE preview_id = $1", other.ID); err != nil {
 		t.Fatal(err)
 	}
-	request.PublicURLs[0].ExpectedMutationRevision++
-	if _, err := database.SetPreviewTeamAccess(t.Context(), request, now); !errors.Is(err, ErrPreviewStale) {
-		t.Fatalf("stale revision enabled team access: %v", err)
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.services SET enabled=false WHERE id=$1`, service.ID); err != nil {
+		t.Fatal(err)
 	}
-	request.PublicURLs[0].ExpectedMutationRevision--
+	if _, err := database.SetPreviewTeamAccess(t.Context(), request, now); !errors.Is(err, ErrPreviewStale) {
+		t.Fatalf("stale service eligibility enabled team access: %v", err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.services SET enabled=true WHERE id=$1`, service.ID); err != nil {
+		t.Fatal(err)
+	}
 	enabled, err := database.SetPreviewTeamAccess(t.Context(), request, now)
 	if err != nil || !enabled.TeamAccessEnabled {
 		t.Fatalf("enable team access = %+v, %v", enabled, err)
 	}
-	if _, err := database.AddPreviewPublicURL(t.Context(), otherAttach, now); !errors.Is(err, ErrPreviewStale) {
+	if _, err := database.AddPreviewService(t.Context(), otherAttach, now); !errors.Is(err, ErrPreviewStale) {
 		t.Fatalf("shared URL attached after team access was enabled: %v", err)
 	}
 	request.Enabled = false
-	request.PublicURLs = nil
-	request.PolicyRevision = 0
 	disabled, err := database.SetPreviewTeamAccess(t.Context(), request, now)
 	if err != nil || disabled.TeamAccessEnabled {
 		t.Fatalf("revoke team access = %+v, %v", disabled, err)
 	}
-	if _, err := database.AddPreviewPublicURL(t.Context(), otherAttach, now); err != nil {
+	if _, err := database.AddPreviewService(t.Context(), otherAttach, now); err != nil {
 		t.Fatalf("other preview after revoke: %v", err)
 	}
 }

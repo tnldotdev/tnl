@@ -64,7 +64,10 @@ func TestRoute53ProviderRejectsConflictsBeforeMutation(t *testing.T) {
 			delete(c.recordSets, dnsName(addressOwnerName(r.CanonicalHostname)))
 		}},
 		{"foreign_owner", func(c *route53Stub, r AddressRecord) {
-			c.recordSets[dnsName(addressOwnerName(r.CanonicalHostname))][0].ResourceRecords[0].Value = aws.String(`"tnl-public-url:foreign"`)
+			c.recordSets[dnsName(addressOwnerName(r.CanonicalHostname))][0].ResourceRecords[0].Value = aws.String(`"tnl-service:foreign"`)
+		}},
+		{"retired_public_url_owner", func(c *route53Stub, r AddressRecord) {
+			c.recordSets[dnsName(addressOwnerName(r.CanonicalHostname))][0].ResourceRecords[0].Value = aws.String(`"tnl-public-url:old"`)
 		}},
 		{"CNAME", func(c *route53Stub, r AddressRecord) {
 			c.recordSets[dnsName(r.CanonicalHostname)] = []types.ResourceRecordSet{*simpleRecordSet(r.CanonicalHostname, types.RRTypeCname, []string{"foreign.example.test."})}
@@ -85,7 +88,7 @@ func TestRoute53ProviderRejectsConflictsBeforeMutation(t *testing.T) {
 		for _, operation := range []string{"publish", "remove"} {
 			t.Run(test.name+"/"+operation, func(t *testing.T) {
 				client, provider := route53TestProvider(t, "tunnels.example.test")
-				record := route53TestPublicURL(client)
+				record := route53TestService(client)
 				test.change(client, record)
 				var err error
 				if operation == "publish" {
@@ -127,7 +130,7 @@ func TestRoute53ProviderChecksCustomZoneIdentityAndTags(t *testing.T) {
 						}
 					}
 				}
-				record := AddressRecord{ZoneID: "Z123", ZoneDomain: work.CanonicalDomain, CustomZone: true, AuthorityReference: work.Reference, TeamID: work.TeamID, DomainID: work.DomainID, Owner: PublicURLOwner("public_url_1"), CanonicalHostname: "api." + work.CanonicalDomain, IngressIPv4Addresses: []string{"192.0.2.10"}}
+				record := AddressRecord{ZoneID: "Z123", ZoneDomain: work.CanonicalDomain, CustomZone: true, AuthorityReference: work.Reference, TeamID: work.TeamID, DomainID: work.DomainID, Owner: ServiceOwner("svc_1"), CanonicalHostname: "api." + work.CanonicalDomain, IngressIPv4Addresses: []string{"192.0.2.10"}}
 				var err error
 				switch operation {
 				case "publish":
@@ -200,7 +203,7 @@ func TestRoute53ProviderRemovesAddressFamilyAndSupportsAAAAOnly(t *testing.T) {
 	for _, family := range []types.RRType{types.RRTypeA, types.RRTypeAaaa} {
 		t.Run(string(family), func(t *testing.T) {
 			client, provider := route53TestProvider(t, "tunnels.example.test")
-			record := route53TestPublicURL(client)
+			record := route53TestService(client)
 			client.recordSets[dnsName(record.CanonicalHostname)] = append(client.recordSets[dnsName(record.CanonicalHostname)], *simpleRecordSet(record.CanonicalHostname, types.RRTypeAaaa, []string{"2001:db8::10"}))
 			if family == types.RRTypeA {
 				record.IngressIPv4Addresses = nil
@@ -234,7 +237,7 @@ func TestRoute53ProviderRemovesAddressFamilyAndSupportsAAAAOnly(t *testing.T) {
 		})
 	}
 	client, provider := route53TestProvider(t, "tunnels.example.test")
-	record := route53TestPublicURL(client)
+	record := route53TestService(client)
 	client.recordSets = map[string][]types.ResourceRecordSet{}
 	record.IngressIPv4Addresses, record.IngressIPv6Addresses = nil, []string{"2001:db8::10"}
 	if _, err := provider.PublishAddress(t.Context(), record); err != nil {

@@ -13,7 +13,6 @@ import (
 )
 
 type localProjectVisitorStore struct {
-	PublicURLStore
 	LocalProjectStore
 	request controlstate.GetLocalProjectServiceRequest
 	err     error

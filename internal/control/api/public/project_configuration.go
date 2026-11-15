@@ -81,9 +81,9 @@ func projectConfigurationProblem(ctx context.Context, w http.ResponseWriter, ope
 		writeProblem(w, 409, controlv1.Conflict, "project key is bound to another source")
 	case errors.Is(err, controlstate.ErrServicePortsExhausted):
 		writeProblem(w, 503, controlv1.PlacementUnavailable, "ingress pool has no available service port; ask the operator to extend its service port inventory")
-	case errors.Is(err, controlstate.ErrServiceConflict), errors.Is(err, controlstate.ErrPublicURLConflict):
+	case errors.Is(err, controlstate.ErrServiceConflict):
 		writeProblem(w, 409, controlv1.Conflict, "a declared service name or public hostname is already in use")
-	case errors.Is(err, controlstate.ErrServiceAccess), errors.Is(err, controlstate.ErrPublicURLAccess):
+	case errors.Is(err, controlstate.ErrServiceAccess):
 		writeProblem(w, 403, controlv1.Forbidden, "project configuration requires current team manager access")
 	case errors.Is(err, controlstate.ErrDeploymentPublisher):
 		writeBearerProblem(w)

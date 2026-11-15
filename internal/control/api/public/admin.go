@@ -19,7 +19,7 @@ func (h *handler) GetAdminServerStatus(response http.ResponseWriter, request *ht
 		return
 	}
 	now := time.Now().UTC()
-	if h.store == nil {
+	if h.admin == nil {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "control unavailable")
 		return
 	}
@@ -30,8 +30,8 @@ func (h *handler) GetAdminServerStatus(response http.ResponseWriter, request *ht
 		return
 	}
 	values := []int64{
-		counts.EnabledPublicURLs, counts.SuspendedPublicURLs, counts.StartingPublishRuns,
-		counts.ReadyPublishRuns, counts.IngressLeases, counts.RelayLeases,
+		counts.EnabledServices, counts.SuspendedServices, counts.StartingServiceRuns,
+		counts.ReadyServiceRuns, counts.IngressLeases, counts.RelayLeases,
 	}
 	converted := make([]int, len(values))
 	for index, value := range values {
@@ -43,8 +43,8 @@ func (h *handler) GetAdminServerStatus(response http.ResponseWriter, request *ht
 	}
 	writeJSON(response, http.StatusOK, controlv1.AdminServerStatus{
 		Role: h.config.Role, StartedAt: h.config.StartedAt,
-		CurrentTime: now, EnabledPublicUrls: converted[0], SuspendedPublicUrls: converted[1],
-		StartingPublishRuns: converted[2], ReadyPublishRuns: converted[3],
+		CurrentTime: now, EnabledServices: converted[0], SuspendedServices: converted[1],
+		StartingServiceRuns: converted[2], ReadyServiceRuns: converted[3],
 		IngressLeases: converted[4], RelayLeases: converted[5],
 	})
 }
@@ -57,7 +57,7 @@ func (h *handler) ListAdminRelays(
 	if _, ok := h.authorizeAdministrator(response, request); !ok {
 		return
 	}
-	if h.store == nil {
+	if h.admin == nil {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "control unavailable")
 		return
 	}
@@ -96,7 +96,7 @@ func (h *handler) DrainAdminRelay(response http.ResponseWriter, request *http.Re
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
-	if h.store == nil {
+	if h.admin == nil {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "control unavailable")
 		return
 	}
@@ -115,7 +115,7 @@ func (h *handler) ListMaintenanceControls(response http.ResponseWriter, request 
 	if _, ok := h.authorizeAdministrator(response, request); !ok {
 		return
 	}
-	if h.store == nil {
+	if h.admin == nil {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "control unavailable")
 		return
 	}
@@ -145,7 +145,7 @@ func (h *handler) SetMaintenanceControl(
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
-	if h.store == nil {
+	if h.admin == nil {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "control unavailable")
 		return
 	}

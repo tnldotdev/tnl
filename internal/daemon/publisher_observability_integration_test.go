@@ -177,13 +177,14 @@ func TestIntegrationPublisherObservabilityPublic(t *testing.T) {
 			} else {
 				quic = privateDisabledConnector()
 			}
-			config := fixture.identity.publisherConfig(target.URL, quic, tcp)
-			if config.AccessMode != "anonymous" || config.AdmitVisitor != nil || config.PromoteVisitor != nil {
+			saved, config := fixture.identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{})
+			declaration, _, err := fixture.identity.routes.GetServiceConfiguration(t.Context(), saved.Id)
+			if err != nil || declaration == nil || declaration.Http == nil || declaration.Http.Access == nil || declaration.Http.Access.Mode == nil || *declaration.Http.Access.Mode != controlv1.Anonymous || config.AdmitRequest != nil {
 				t.Fatal("public authorization fixture must use default anonymous permission without admission hooks")
 			}
 			handle := startOwnedIntegrationPublisherContext(t, collector.process(t, "publisher"), fixture.owner, config, nil)
 			ready := fixture.waitReady(t, handle)
-			response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/observed", nil)
+			response, body, err := fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(ready)+"/observed", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -191,11 +192,11 @@ func TestIntegrationPublisherObservabilityPublic(t *testing.T) {
 				t.Fatalf("response: %s %q", response.Status, body)
 			}
 			fixture.visitor.transport.CloseIdleConnections()
-			collector.assertChain(t, "ingress.open_visitor_stream", "ingress.relay_attempt", "relay.open_visitor_stream", "publisher.visitor", "publisher.visitor_tls")
-			collector.assertChain(t, "ingress.open_visitor_stream", "ingress.relay_attempt", "relay.open_visitor_stream", "publisher.visitor", "publisher.http", "publisher.target_connect")
-			chain := []string{"ingress.open_visitor_stream", "ingress.relay_attempt", "relay.open_visitor_stream", "publisher.visitor", "publisher.http", "publisher.visitor_authorization", "publisher.authorization"}
+			collector.assertChain(t, "ingress.public_service_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.visitor_tls")
+			collector.assertChain(t, "ingress.public_service_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.http", "publisher.target_connect")
+			chain := []string{"ingress.public_service_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.http", "publisher.visitor_authorization", "publisher.authorization"}
 			collector.assertChainState(t, "admitted", chain...)
-			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ready.PublicURL+"/denied", nil)
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, serviceHTTPAddress(ready)+"/denied", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -228,7 +229,7 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.authority, enrollment.EnrollmentKey)
+			native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, publisheridentity.NativeControl{Services: f.identity.routes}, f.identity.authority, enrollment.EnrollmentKey)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -7,30 +7,37 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/state/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 type AliasPublishRun struct {
-	Selection   AliasSelection
-	Owner       string
-	Receiver    TunnelInfo
-	PublicURLID string
-	Number      uint64
+	Selection AliasSelection
+	Owner     string
+	Receiver  TunnelInfo
+	ServiceID string
+	Number    uint64
 }
 
 func (d *Database) MarkAliasRunReady(ctx context.Context, run AliasPublishRun) error {
 	number, err := databaseVersion(run.Number)
-	if err != nil || run.Number == 0 || run.Owner == "" || run.PublicURLID == "" {
-		return errors.New("invalid alias publish run")
+	if err != nil || run.Number == 0 || run.Owner == "" || !opaqueid.Valid(run.ServiceID, opaqueid.ServicePrefix) ||
+		!opaqueid.Valid(run.Receiver.ServiceID, opaqueid.ServicePrefix) {
+		return errors.New("invalid alias service run")
 	}
 	targetNumber, err := databaseVersion(run.Receiver.PublishRunNumber)
-	if err != nil {
+	if err != nil || targetNumber == 0 {
+		return errors.New("invalid alias receiver run number")
+	}
+	if err := run.Receiver.IntegrationScope.Validate(); err != nil {
 		return err
 	}
 	count, err := d.queries.MarkAliasRunReady(ctx, clientstatedb.MarkAliasRunReadyParams{
 		AliasID: run.Selection.ID, Owner: run.Owner, TunnelID: run.Receiver.ID,
-		SelectionRevision: int64(run.Selection.Revision), PublicURLID: run.PublicURLID, PublishRunNumber: number,
-		TargetPublicURLID:      sql.NullString{String: run.Receiver.PublicURLID, Valid: true},
-		TargetPublishRunNumber: sql.NullInt64{Int64: targetNumber, Valid: true}, Now: d.now().UTC().UnixNano(),
+		SelectionRevision: int64(run.Selection.Revision), ServiceID: run.ServiceID, RunNumber: number,
+		TargetServiceID:      sql.NullString{String: run.Receiver.ServiceID, Valid: true},
+		TargetRunNumber:      sql.NullInt64{Int64: targetNumber, Valid: true},
+		PrimaryProjectRoot:   run.Receiver.IntegrationScope.primaryProjectRoot(),
+		IntegrationNamespace: run.Receiver.IntegrationScope.namespace(), Now: d.now().UTC().UnixNano(),
 	})
 	if err != nil {
 		return err

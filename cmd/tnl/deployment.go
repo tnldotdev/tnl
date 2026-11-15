@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -286,18 +287,11 @@ func validDeploymentService(service controlv1.DeploymentService) bool {
 	if !service.Protocol.Valid() || service.TrustRevision < 1 {
 		return false
 	}
-	if service.PublicUrl != nil {
-		hostname, err := naming.ParseExactPublicURL(*service.PublicUrl)
-		return err == nil && *service.PublicUrl == "https://"+hostname &&
-			opaqueid.Valid(service.Id, opaqueid.PublicURLPrefix) &&
-			service.Protocol == controlv1.ServiceProtocolHTTP && service.Endpoint == nil
-	}
 	if !opaqueid.Valid(service.Id, opaqueid.ServicePrefix) {
 		return false
 	}
 	if endpoint := service.Endpoint; endpoint != nil {
-		hostname, err := naming.CanonicalizeHostname(endpoint.Hostname)
-		return err == nil && hostname == endpoint.Hostname && endpoint.Port >= 1024 && endpoint.Port <= 65535
+		return serviceendpoint.Valid(string(service.Protocol), endpoint.Hostname, endpoint.Port, endpoint.Public)
 	}
 	return true
 }

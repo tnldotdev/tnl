@@ -49,7 +49,7 @@ type Profile struct {
 	Namespace         string                   `json:"namespace,omitempty"`
 }
 
-func serviceConnectionProfile(service controlv1.Service, listen string) (Profile, error) {
+func serviceConnectionProfile(service controlv1.ServiceSummary, listen string) (Profile, error) {
 	profile := Profile{Schema: 1, ServiceID: service.Id, Protocol: config.ProtocolName(service.Protocol)}
 	if err := ValidateService(service); err != nil {
 		return profile, err
@@ -128,7 +128,7 @@ func nativeMySQLRoots() (string, error) {
 }
 
 // ValidateService checks the approved managed endpoint before local preparation.
-func ValidateService(service controlv1.Service) error {
+func ValidateService(service controlv1.ServiceSummary) error {
 	if !opaqueid.Valid(service.Id, opaqueid.ServicePrefix) || !config.ProtocolName(service.Protocol).Valid() || service.Endpoint == nil || !service.Enabled {
 		return publisherCLIError("service has no managed TLS endpoint; refresh its applied configuration")
 	}

@@ -22,8 +22,37 @@ WHERE share.id=sqlc.arg(share_id) AND share.created_by_identity_id=sqlc.arg(iden
             AND included.team_id=share.team_id AND included.service_id=service.id)))
 RETURNING service_id;
 
--- guest share writes require the paused guest service ownership seam.
--- no URL ownership or creator-based substitute authorizes those writes.
+-- name: FindGuestShareRequest :one
+SELECT * FROM control.shares WHERE guest_id=sqlc.arg(guest_id) AND idempotency_key=sqlc.arg(idempotency_key);
+
+-- name: CreateGuestShare :one
+-- caller holds the trial and exact service and verifies the trial credential
+-- and observed source. publication permission alone never authorizes sharing.
+INSERT INTO control.shares(id,guest_id,scope,label,entry_service_id,idempotency_key,
+    request_digest,secret_digest,created_at,expires_at)
+SELECT sqlc.arg(id)::text AS id,guest.id AS guest_id,'guest'::text AS scope,
+    sqlc.arg(label)::text AS label,service.id AS entry_service_id,sqlc.arg(idempotency_key)::text AS idempotency_key,
+    sqlc.arg(request_digest)::bytea AS request_digest,sqlc.arg(secret_digest)::bytea AS secret_digest,
+    sqlc.arg(now)::timestamptz AS created_at,LEAST(guest.expires_at,sqlc.arg(expires_at)::timestamptz) AS expires_at
+FROM control.guest_trials guest JOIN control.services service ON service.guest_id=guest.id
+WHERE guest.id=sqlc.arg(guest_id) AND service.id=sqlc.arg(service_id)
+    AND service.enabled AND service.deleted_at IS NULL AND service.protocol='http'
+    AND control.guest_share_live(guest.id,sqlc.arg(now))
+    AND LEAST(guest.expires_at,sqlc.arg(expires_at))>sqlc.arg(now)
+RETURNING *;
+
+-- name: AddGuestShareService :execrows
+INSERT INTO control.share_services(share_id,guest_id,service_id)
+SELECT share.id,share.guest_id,service.id FROM control.shares share
+JOIN control.services service ON service.id=share.entry_service_id AND service.guest_id=share.guest_id
+WHERE share.id=sqlc.arg(share_id) AND share.guest_id=sqlc.arg(guest_id)
+    AND share.scope='guest' AND service.enabled AND service.deleted_at IS NULL AND service.protocol='http';
+
+-- name: RevokeGuestShare :one
+UPDATE control.shares SET revoked_at=COALESCE(revoked_at,sqlc.arg(now)::timestamptz),
+    revoked_by_guest_id=COALESCE(revoked_by_guest_id,guest_id)
+WHERE id=sqlc.arg(share_id) AND guest_id=sqlc.arg(guest_id)
+RETURNING *;
 
 -- name: GetShare :one
 SELECT * FROM control.shares WHERE id=$1;

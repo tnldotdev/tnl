@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
@@ -17,8 +16,8 @@ import (
 const (
 	Version         = 1
 	MaxControlBytes = 64 << 10
-	// seven 256-byte identifiers may each need six JSON bytes per input byte.
-	// include the fixed keys, uint64 counters, timestamps and bounded traceparent.
+	// connector peer entries include bounded identifiers, signatures and
+	// telemetry; service forwarding has a separate, smaller cap.
 	MaxHeaderBytes   = 16 << 10
 	MaxCredentialLen = 4096
 )
@@ -65,19 +64,7 @@ const (
 	Internal                     ErrorCode = "internal"
 )
 
-// PublisherConnectionRef identifies one assigned publisher connection.
-type PublisherConnectionRef struct {
-	PublishRunID                 string `json:"publish_run_id"`
-	PublicURLID                  string `json:"public_url_id"`
-	PublishRunNumber             uint64 `json:"publish_run_number"`
-	PublisherConnectionID        string `json:"publisher_connection_id"`
-	ConnectionSlot               uint8  `json:"connection_slot"`
-	ConnectionAssignmentRevision uint64 `json:"connection_assignment_revision"`
-	RelayServiceID               string `json:"relay_service_id"`
-}
-
-// ServicePublisherConnectionRef identifies one private run assignment without
-// creating or referring to a public URL.
+// ServicePublisherConnectionRef identifies one service run assignment.
 type ServicePublisherConnectionRef struct {
 	ServiceID                    string `json:"service_id"`
 	ServiceRunID                 string `json:"service_run_id"`
@@ -93,7 +80,7 @@ func (r ServicePublisherConnectionRef) Validate() error {
 		!opaqueid.Valid(r.ServiceRunID, opaqueid.ServiceRunPrefix) || r.RunNumber == 0 ||
 		!opaqueid.Valid(r.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) || r.ConnectionSlot > 1 ||
 		r.ConnectionAssignmentRevision == 0 || !validIdentifier(r.RelayServiceID) {
-		return errors.New("tunnelv1: invalid private publisher connection reference")
+		return errors.New("tunnelv1: invalid service publisher connection reference")
 	}
 	return nil
 }
@@ -105,7 +92,6 @@ type Message struct {
 	RequestID                string                         `json:"request_id,omitempty"`
 	Role                     PeerRole                       `json:"role,omitempty"`
 	Credential               string                         `json:"credential,omitempty"`
-	PublisherConnection      *PublisherConnectionRef        `json:"publisher_connection,omitempty"`
 	ServiceConnection        *ServicePublisherConnectionRef `json:"service_connection,omitempty"`
 	ConnectorPairLegProof    *ConnectorPairLegProof         `json:"connector_pair_leg_proof,omitempty"`
 	ConnectorPairLegAccepted *ConnectorPairLegAccepted      `json:"connector_pair_leg_accepted,omitempty"`
@@ -116,49 +102,8 @@ type Message struct {
 type StreamKind string
 
 const (
-	VisitorStream            StreamKind = "visitor"
-	InternalForwardingStream StreamKind = "internal_forward"
-	ServiceForwardingStream  StreamKind = "service_forward"
+	ServiceForwardingStream StreamKind = "service_forward"
 )
-
-// VisitorStreamHeader identifies one visitor stream opened on a publisher connection.
-type VisitorStreamHeader struct {
-	TraceContext                 TraceContext `json:"trace_context,omitzero"`
-	ProtocolVersion              uint32       `json:"protocol_version"`
-	Kind                         StreamKind   `json:"kind"`
-	VisitorConnectionID          string       `json:"visitor_connection_id"`
-	PublicURLID                  string       `json:"public_url_id"`
-	PublishRunID                 string       `json:"publish_run_id"`
-	PublishRunNumber             uint64       `json:"publish_run_number"`
-	PublisherConnectionID        string       `json:"publisher_connection_id"`
-	ConnectionAssignmentRevision uint64       `json:"connection_assignment_revision"`
-	// AccessPending is trusted ingress state: this visitor has only bounded
-	// pending authorization capacity until an authenticated promotion is accepted.
-	AccessPending      bool `json:"access_pending,omitempty"`
-	ConfirmBeforeBytes bool `json:"confirm_before_bytes,omitempty"`
-}
-
-// InternalForwardingHeader identifies one visitor connection sent from ingress to a connected relay.
-type InternalForwardingHeader struct {
-	TraceContext                 TraceContext `json:"trace_context,omitzero"`
-	ProtocolVersion              uint32       `json:"protocol_version"`
-	Kind                         StreamKind   `json:"kind"`
-	VisitorConnectionID          string       `json:"visitor_connection_id"`
-	PublicURLID                  string       `json:"public_url_id"`
-	PublishRunID                 string       `json:"publish_run_id"`
-	PublishRunNumber             uint64       `json:"publish_run_number"`
-	PublisherConnectionID        string       `json:"publisher_connection_id"`
-	ConnectionSlot               uint8        `json:"connection_slot"`
-	ConnectionAssignmentRevision uint64       `json:"connection_assignment_revision"`
-	RelayServiceID               string       `json:"relay_service_id"`
-	RelayID                      string       `json:"relay_id"`
-	RelayRunID                   string       `json:"relay_run_id"`
-	RelayLeaseRevision           uint64       `json:"relay_lease_revision"`
-	PublicUrlExpiresAt           time.Time    `json:"public_url_expires_at"`
-	LeaseExpiresAt               time.Time    `json:"lease_expires_at"`
-	AccessPending                bool         `json:"access_pending,omitempty"`
-	ConfirmBeforeBytes           bool         `json:"confirm_before_bytes,omitempty"`
-}
 
 type StreamResponseType string
 
@@ -213,7 +158,7 @@ func ReadControl(reader io.Reader) (Message, error) {
 		}
 	}
 	if role == Connector {
-		for _, name := range []string{"credential", "publisher_connection", "service_connection"} {
+		for _, name := range []string{"credential", "service_connection"} {
 			if _, present := fields[name]; present {
 				return Message{}, errors.New("tunnelv1: invalid connector fields")
 			}
@@ -262,50 +207,9 @@ func ReadControl(reader io.Reader) (Message, error) {
 	return message, nil
 }
 
-func WriteVisitorStreamHeader(writer io.Writer, header VisitorStreamHeader) error {
-	if err := header.Validate(); err != nil {
-		return err
-	}
-	return writeJSONFrame(writer, header, MaxHeaderBytes)
-}
-
-func ReadVisitorStreamHeader(reader io.Reader) (VisitorStreamHeader, error) {
-	var header VisitorStreamHeader
-	if err := readJSONFrame(reader, &header, MaxHeaderBytes); err != nil {
-		return VisitorStreamHeader{}, err
-	}
-	if err := header.Validate(); err != nil {
-		return VisitorStreamHeader{}, err
-	}
-	return header, nil
-}
-
-func WriteInternalForwardingHeader(writer io.Writer, header InternalForwardingHeader) error {
-	if err := header.Validate(); err != nil {
-		return err
-	}
-	return writeJSONFrame(writer, header, MaxHeaderBytes)
-}
-
-func ReadInternalForwardingHeader(reader io.Reader) (InternalForwardingHeader, error) {
-	var header InternalForwardingHeader
-	if err := readJSONFrame(reader, &header, MaxHeaderBytes); err != nil {
-		return InternalForwardingHeader{}, err
-	}
-	if err := header.Validate(); err != nil {
-		return InternalForwardingHeader{}, err
-	}
-	return header, nil
-}
-
 func (m Message) Validate() error {
 	if m.ProtocolVersion != Version {
 		return errors.New("tunnelv1: invalid protocol version")
-	}
-	if m.PublisherConnection != nil {
-		if err := m.PublisherConnection.Validate(); err != nil {
-			return err
-		}
 	}
 	if m.ServiceConnection != nil {
 		if err := m.ServiceConnection.Validate(); err != nil {
@@ -324,83 +228,48 @@ func (m Message) Validate() error {
 		if m.Type == ConnectorLegActivated {
 			expectedRole = ""
 		}
-		if !validIdentifier(m.RequestID) || m.Role != expectedRole || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || m.ConnectorPairLegProof != nil || m.ConnectorPairLegAccepted != nil || m.Code != "" || m.ConnectorLegBinding == nil || m.ConnectorLegBinding.Validate() != nil {
+		if !validIdentifier(m.RequestID) || m.Role != expectedRole || m.Credential != "" || m.ServiceConnection != nil || m.ConnectorPairLegProof != nil || m.ConnectorPairLegAccepted != nil || m.Code != "" || m.ConnectorLegBinding == nil || m.ConnectorLegBinding.Validate() != nil {
 			return ErrConnectorLegBinding
 		}
 	case Hello:
 		if m.ConnectorPairLegAccepted != nil {
 			return errors.New("tunnelv1: connector receipt on hello")
 		}
-		publisherHello := m.Role == Publisher && validCredential(m.Credential) && (m.PublisherConnection != nil) != (m.ServiceConnection != nil) && m.ConnectorPairLegProof == nil
-		ingressHello := m.Role == Ingress && validCredential(m.Credential) && m.PublisherConnection == nil && m.ServiceConnection == nil && m.ConnectorPairLegProof == nil
-		connectorHello := m.Role == Connector && m.Credential == "" && m.PublisherConnection == nil && m.ServiceConnection == nil && m.ConnectorPairLegProof != nil
+		publisherHello := m.Role == Publisher && validCredential(m.Credential) && m.ServiceConnection != nil && m.ConnectorPairLegProof == nil
+		ingressHello := m.Role == Ingress && validCredential(m.Credential) && m.ServiceConnection == nil && m.ConnectorPairLegProof == nil
+		connectorHello := m.Role == Connector && m.Credential == "" && m.ServiceConnection == nil && m.ConnectorPairLegProof != nil
 		if connectorHello && m.ConnectorPairLegProof.Validate() != nil || (!publisherHello && !ingressHello && !connectorHello) || m.RequestID != "" || m.Code != "" {
 			return errors.New("tunnelv1: invalid hello")
 		}
 	case HelloAccepted:
-		if m.RequestID != "" || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || m.ConnectorPairLegProof != nil || m.Code != "" ||
+		if m.RequestID != "" || m.Role != "" || m.Credential != "" || m.ServiceConnection != nil || m.ConnectorPairLegProof != nil || m.Code != "" ||
 			(m.ConnectorPairLegAccepted != nil && m.ConnectorPairLegAccepted.Validate() != nil) {
 			return errors.New("tunnelv1: invalid hello_accepted")
 		}
 	case ConnectorLegRenew:
-		if !validIdentifier(m.RequestID) || m.Role != Connector || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil ||
+		if !validIdentifier(m.RequestID) || m.Role != Connector || m.Credential != "" || m.ServiceConnection != nil ||
 			m.ConnectorPairLegProof == nil || m.ConnectorPairLegProof.Validate() != nil || m.ConnectorPairLegAccepted != nil || m.Code != "" {
 			return errors.New("tunnelv1: invalid connector leg renewal")
 		}
 	case ConnectorLegRenewed:
-		if !validIdentifier(m.RequestID) || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil ||
+		if !validIdentifier(m.RequestID) || m.Role != "" || m.Credential != "" || m.ServiceConnection != nil ||
 			m.ConnectorPairLegProof != nil || m.ConnectorPairLegAccepted == nil || m.ConnectorPairLegAccepted.Validate() != nil || m.Code != "" {
 			return errors.New("tunnelv1: invalid connector leg renewal receipt")
 		}
 	case Ping, Pong, Drain, Draining, Drained:
-		if !validIdentifier(m.RequestID) || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || m.ConnectorPairLegProof != nil || m.ConnectorPairLegAccepted != nil || m.Code != "" {
+		if !validIdentifier(m.RequestID) || m.Role != "" || m.Credential != "" || m.ServiceConnection != nil || m.ConnectorPairLegProof != nil || m.ConnectorPairLegAccepted != nil || m.Code != "" {
 			return fmt.Errorf("tunnelv1: invalid %s", m.Type)
 		}
 	case GoAway:
-		if m.RequestID != "" || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || m.ConnectorPairLegProof != nil || m.ConnectorPairLegAccepted != nil || !validErrorCode(m.Code) {
+		if m.RequestID != "" || m.Role != "" || m.Credential != "" || m.ServiceConnection != nil || m.ConnectorPairLegProof != nil || m.ConnectorPairLegAccepted != nil || !validErrorCode(m.Code) {
 			return errors.New("tunnelv1: invalid goaway")
 		}
 	case Error:
-		if m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || m.ConnectorPairLegProof != nil || m.ConnectorPairLegAccepted != nil || !validErrorCode(m.Code) {
+		if m.Role != "" || m.Credential != "" || m.ServiceConnection != nil || m.ConnectorPairLegProof != nil || m.ConnectorPairLegAccepted != nil || !validErrorCode(m.Code) {
 			return errors.New("tunnelv1: invalid error")
 		}
 	default:
 		return errors.New("tunnelv1: unknown message type")
-	}
-	return nil
-}
-
-func (r PublisherConnectionRef) Validate() error {
-	if !validIdentifier(r.PublishRunID) || !validIdentifier(r.PublicURLID) || r.PublishRunNumber == 0 ||
-		!validIdentifier(r.PublisherConnectionID) || r.ConnectionSlot > 1 ||
-		r.ConnectionAssignmentRevision == 0 || !validIdentifier(r.RelayServiceID) {
-		return errors.New("tunnelv1: invalid publisher connection reference")
-	}
-	return nil
-}
-
-func (h VisitorStreamHeader) Validate() error {
-	if err := h.TraceContext.Validate(); err != nil {
-		return err
-	}
-	if h.ProtocolVersion != Version || h.Kind != VisitorStream || !validIdentifier(h.VisitorConnectionID) ||
-		!validIdentifier(h.PublicURLID) || !validIdentifier(h.PublishRunID) || h.PublishRunNumber == 0 ||
-		!validIdentifier(h.PublisherConnectionID) || h.ConnectionAssignmentRevision == 0 {
-		return errors.New("tunnelv1: invalid visitor stream header")
-	}
-	return nil
-}
-
-func (h InternalForwardingHeader) Validate() error {
-	if err := h.TraceContext.Validate(); err != nil {
-		return err
-	}
-	if h.ProtocolVersion != Version || h.Kind != InternalForwardingStream || !validIdentifier(h.VisitorConnectionID) ||
-		!validIdentifier(h.PublicURLID) || !validIdentifier(h.PublishRunID) || h.PublishRunNumber == 0 ||
-		!validIdentifier(h.PublisherConnectionID) || h.ConnectionSlot > 1 || h.ConnectionAssignmentRevision == 0 ||
-		!validIdentifier(h.RelayServiceID) || !validIdentifier(h.RelayID) || !validIdentifier(h.RelayRunID) ||
-		h.RelayLeaseRevision == 0 || h.PublicUrlExpiresAt.IsZero() || h.LeaseExpiresAt.IsZero() {
-		return errors.New("tunnelv1: invalid internal forwarding header")
 	}
 	return nil
 }

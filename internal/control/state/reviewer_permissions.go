@@ -2,92 +2,142 @@ package state
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"errors"
-	"time"
+	"net/netip"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
 
-// feedback may combine a verified browser author with URL-scoped share access.
-// HTTP visitor selection remains exclusive at its own request boundary.
-func (d *Database) currentReviewer(ctx context.Context, q *controlstatedb.Queries, url controlstatedb.ControlPublicUrl, previewID string, actor FeedbackActor, now time.Time) (authorizedFeedbackActor, error) {
-	if actor.Kind != "reviewer" || url.ServiceProtocol != "http" {
+// feedback may combine a verified browser author with service-scoped share
+// permission. submitted identity and visit booleans are never authority.
+func (d *Database) currentReviewer(ctx context.Context, tx pgx.Tx, service controlstatedb.ControlService, actor FeedbackActor, clock authorizationClock) (authorizedFeedbackActor, error) {
+	now := clock.current()
+	if actor.Kind != "reviewer" || service.Protocol != "http" || actor.ServiceRun == nil ||
+		!actor.ServiceRun.valid() || actor.ServiceRun.Subject.ID != service.ID {
 		return authorizedFeedbackActor{}, ErrFeedbackAccess
 	}
-	if len(actor.BrowserCookieSecret) != 0 && len(actor.BrowserCookieSecret) != 32 || len(actor.BrowserCookieSecret) == 0 && actor.IdentityID != "" {
-		return authorizedFeedbackActor{}, ErrVisitorSignIn
+	explicitShare := actor.ShareID != "" || len(actor.ShareSecret) != 0 || len(actor.CookieSecret) != 0
+	if actor.VisitProof != nil && explicitShare ||
+		explicitShare && (actor.ShareID == "" ||
+			!(len(actor.ShareSecret) == 32 && len(actor.CookieSecret) == 0 ||
+				len(actor.CookieSecret) == 32 && len(actor.ShareSecret) == 0)) {
+		return authorizedFeedbackActor{}, ErrFeedbackAccess
 	}
-	token := ""
-	if len(actor.BrowserCookieSecret) != 0 {
-		token = base64.RawURLEncoding.EncodeToString(actor.BrowserCookieSecret)
+	if service.GuestID.Valid {
+		trial, err := controlstatedb.New(tx).GetGuestTrialByID(ctx, service.GuestID.String)
+		if err != nil {
+			return authorizedFeedbackActor{}, publisherLookupError(err, ErrFeedbackAccess)
+		}
+		if service.TeamID.Valid || !guestPublicationEligible(trial, now) ||
+			trial.ActiveServiceRunID.String != actor.ServiceRun.RunID {
+			return authorizedFeedbackActor{}, ErrFeedbackAccess
+		}
 	}
-	identity, err := d.reviewerVisitPermission(ctx, q, url, actor, token, now)
+	q := controlstatedb.New(tx)
+	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: actor.ServiceRun.RunID, ServiceID: service.ID})
+	if err != nil {
+		return authorizedFeedbackActor{}, publisherLookupError(err, ErrFeedbackAccess)
+	}
+	until := minTime(run.PublisherExpiresAt.Time, run.CertificateExpiresAt.Time)
+	publisherUntil, err := serviceRunPublisherPermission(ctx, tx, run, clock.current())
 	if err != nil {
 		return authorizedFeedbackActor{}, err
 	}
-	reference := identity.Reason
-	if identity.Reason == "anonymous_share" {
-		reference = actor.ShareID
+	if publisherUntil.Valid && publisherUntil.InfinityModifier == 0 {
+		until = minTime(until, publisherUntil.Time)
 	}
-	if !identity.VisitAllowed {
+	if service.ExpiresAt.Valid {
+		until = minTime(until, service.ExpiresAt.Time)
+	}
+	if service.GuestID.Valid {
+		deadline, err := q.GuestServiceServingDeadline(ctx, controlstatedb.GuestServiceServingDeadlineParams{ServiceID: service.ID, Now: timestamptz(clock.current())})
+		if err != nil {
+			return authorizedFeedbackActor{}, publisherLookupError(err, ErrFeedbackAccess)
+		}
+		if !deadline.Valid {
+			return authorizedFeedbackActor{}, ErrFeedbackAccess
+		}
+		until = minTime(until, deadline.Time)
+	}
+	source, err := netip.ParseAddr(actor.SourceIP)
+	if err != nil || source.Zone() != "" || source.IsUnspecified() {
 		return authorizedFeedbackActor{}, ErrFeedbackAccess
 	}
-	if identity.IdentityID != "" {
-		reference = "identity:" + identity.IdentityID
+	mode, err := d.serviceHTTPSourcePolicy(ctx, controlstatedb.New(tx), service.ID, source)
+	if err != nil {
+		if errors.Is(err, ErrServiceAccess) {
+			err = errors.Join(ErrFeedbackAccess, err)
+		}
+		return authorizedFeedbackActor{}, err
 	}
-	return authorizedFeedbackActor{kind: feedbackReviewer, identityID: identity.IdentityID, displayName: identity.DisplayName, reference: reference, permissions: reviewerFeedbackPermissions}, nil
-}
-
-func (d *Database) reviewerVisitPermission(ctx context.Context, q *controlstatedb.Queries, url controlstatedb.ControlPublicUrl, actor FeedbackActor, browser string, now time.Time) (VisitorPermission, error) {
-	result := VisitorPermission{}
-	ip, ipExpires, err := d.visitorIPAllowed(ctx, q, url, actor.SourceIP, now)
-	if err != nil || !ip {
-		return result, err
+	if len(actor.BrowserCookieSecret) != 0 && len(actor.BrowserCookieSecret) != 32 ||
+		len(actor.BrowserCookieSecret) == 0 && actor.IdentityID != "" {
+		return authorizedFeedbackActor{}, ErrVisitorSignIn
 	}
-	result.ExpiresAt = ipExpires
-	if browser != "" {
-		result, err = d.browserPermission(ctx, q, url.ID, browser, now)
+	permission := VisitorPermission{}
+	if len(actor.BrowserCookieSecret) != 0 {
+		digest, _ := browserDigest(base64.RawURLEncoding.EncodeToString(actor.BrowserCookieSecret))
+		permission, err = d.serviceBrowserPermission(ctx, tx, service.ID, actor.ServiceRun.RunID, digest, clock.current())
 		if err != nil {
-			return result, err
+			return authorizedFeedbackActor{}, err
 		}
-		if ipExpires != nil {
-			result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, *ipExpires)
+		if permission.ExpiresAt != nil {
+			until = minTime(until, *permission.ExpiresAt)
 		}
 	}
-	if result.VisitAllowed {
-		return result, nil
-	}
-	if len(actor.ShareSecret) == 32 {
-		share, err := q.GetActiveShareForPublicURL(ctx, controlstatedb.GetActiveShareForPublicURLParams{ShareID: actor.ShareID, PublicURLID: url.ID, Now: timestamptz(now)})
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return result, err
+	reference := permission.Reason
+	sharePermission := false
+	if actor.VisitProof != nil {
+		visit, err := d.verifyFeedbackVisitProof(ctx, tx, *actor.ServiceRun, actor.VisitProof, source, clock)
+		if err != nil {
+			return authorizedFeedbackActor{}, err
 		}
-		if err == nil {
-			digest := sha256.Sum256(actor.ShareSecret)
-			if subtle.ConstantTimeCompare(digest[:], share.SecretDigest) == 1 {
-				result.VisitAllowed, result.Reason = true, "anonymous_share"
-				result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, share.ExpiresAt.Time)
-				return result, nil
+		until = minTime(until, visit.ExpiresAt)
+		switch subject := visit.Subject.(type) {
+		case visitortoken.Share:
+			sharePermission, reference = true, subject.ShareID
+		case visitortoken.Grant:
+			reference = subject.GrantID
+		case visitortoken.Browser:
+			reference = "browser:" + subject.SessionID
+		case visitortoken.Device:
+			reference = subject.DeviceID
+		case visitortoken.Workload:
+			reference = subject.SessionID
+		case visitortoken.RegisteredKey:
+			reference = subject.AuthorityID()
+		}
+		permission.VisitAllowed = true
+	} else if explicitShare {
+		raw := actor.ShareSecret
+		cookie := len(actor.CookieSecret) == 32
+		if cookie {
+			raw = actor.CookieSecret
+		}
+		shareUntil, err := d.shareVisitorPermission(ctx, tx, service.ID, actor.ServiceRun.RunID, actor.ShareID,
+			base64.RawURLEncoding.EncodeToString(raw), cookie, clock.current())
+		if err != nil {
+			if errors.Is(err, ErrVisitorPermission) {
+				err = errors.Join(ErrFeedbackAccess, err)
 			}
+			return authorizedFeedbackActor{}, err
 		}
+		until = minTime(until, shareUntil)
+		permission.VisitAllowed, sharePermission, reference = true, true, actor.ShareID
+	} else if mode == VisitorAccessAnonymous {
+		permission.VisitAllowed, reference = true, "anonymous"
 	}
-	if len(actor.CookieSecret) == 32 {
-		digest := sha256.Sum256(actor.CookieSecret)
-		expires, err := q.ReviewerShareCookieValid(ctx, controlstatedb.ReviewerShareCookieValidParams{ShareID: actor.ShareID, PublicURLID: url.ID, TokenDigest: digest[:], Now: timestamptz(now)})
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return result, err
-		}
-		if err == nil {
-			result.VisitAllowed, result.Reason = true, "anonymous_share"
-			result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, expires.Time)
-		}
+	// guest publication still requires its actual current share. neither a
+	// token grant, device nor verified browser author becomes a guest manager.
+	if !permission.VisitAllowed || service.GuestID.Valid && !sharePermission || !until.After(clock.current()) {
+		return authorizedFeedbackActor{}, ErrFeedbackAccess
 	}
-	if actor.ShareID == "" && len(actor.ShareSecret) == 0 && len(actor.CookieSecret) == 0 && (browser == "" || result.Authenticated) && url.AccessMode == string(VisitorAccessAnonymous) {
-		result.VisitAllowed, result.Reason = true, "anonymous"
+	if permission.IdentityID != "" {
+		reference = "identity:" + permission.IdentityID
 	}
-	return result, nil
+	return authorizedFeedbackActor{kind: feedbackReviewer, identityID: permission.IdentityID,
+		displayName: permission.DisplayName, reference: reference, permissions: reviewerFeedbackPermissions, expiresAt: until}, nil
 }

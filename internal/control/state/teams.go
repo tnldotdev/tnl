@@ -266,7 +266,6 @@ func (d *Database) SetMembershipRole(
 	}
 	defer rollback(ctx, tx, "set membership role", &retErr)()
 	queries := controlstatedb.New(tx)
-	pendingEvents := pendingIngressRoutingTableEvents{}
 	actor, err := lockTeamActor(ctx, queries, identityID, teamID)
 	if err != nil {
 		return Membership{}, err
@@ -310,7 +309,7 @@ func (d *Database) SetMembershipRole(
 	}); err != nil || updated != 1 {
 		return Membership{}, authorityRowsError("set membership role: update membership", updated, err)
 	}
-	if err := closeMembershipPublishRuns(ctx, queries, &pendingEvents, teamID, membershipID, false, now, "authority_policy_changed"); err != nil {
+	if err := closeMembershipServiceRuns(ctx, tx, queries, teamID, membershipID, now); err != nil {
 		return Membership{}, err
 	}
 	row, err := queries.GetTeamMembershipContext(ctx, controlstatedb.GetTeamMembershipContextParams{
@@ -318,9 +317,6 @@ func (d *Database) SetMembershipRole(
 	})
 	if err != nil {
 		return Membership{}, fmt.Errorf("controlstate: set membership role: read result: %w", err)
-	}
-	if err := pendingEvents.publish(ctx, queries); err != nil {
-		return Membership{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Membership{}, fmt.Errorf("controlstate: set membership role: commit: %w", err)
@@ -349,7 +345,6 @@ func (d *Database) RemoveMembership(
 	}
 	defer rollback(ctx, tx, "remove membership", &retErr)()
 	queries := controlstatedb.New(tx)
-	pendingEvents := pendingIngressRoutingTableEvents{}
 	actor, err := lockTeamActor(ctx, queries, identityID, teamID)
 	if err != nil {
 		return err
@@ -397,13 +392,10 @@ func (d *Database) RemoveMembership(
 	}); err != nil || updated != 1 {
 		return authorityRowsError("remove membership: quarantine slug", updated, err)
 	}
-	if err := closeMembershipPublishRuns(ctx, queries, &pendingEvents, teamID, membershipID, true, now, "membership_removed"); err != nil {
+	if err := closeMembershipServiceRuns(ctx, tx, queries, teamID, membershipID, now); err != nil {
 		return err
 	}
 	if err := closeInactiveCompanySubjects(ctx, tx, queries, teamID, now); err != nil {
-		return err
-	}
-	if err := pendingEvents.publish(ctx, queries); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -477,54 +469,6 @@ func lockTeamActor(
 		return controlstatedb.LockTeamActorContextRow{}, err
 	}
 	return row, nil
-}
-
-func closeMembershipPublishRuns(
-	ctx context.Context,
-	queries *controlstatedb.Queries,
-	pendingEvents *pendingIngressRoutingTableEvents,
-	teamID, membershipID string,
-	suspendMemberPublicURLs bool,
-	now time.Time,
-	reason string,
-) error {
-	routes, err := queries.LockMembershipPublicURLs(ctx, controlstatedb.LockMembershipPublicURLsParams{
-		TeamID: teamID, MembershipID: text(membershipID),
-	})
-	if err != nil {
-		return fmt.Errorf("controlstate: update membership public_urls: lock public_urls: %w", err)
-	}
-	for _, route := range routes {
-		sessions, err := queries.ListOpenPublishRuns(ctx, route.ID)
-		if err != nil {
-			return err
-		}
-		for _, session := range sessions {
-			if route.MembershipID.String == membershipID || session.MembershipID.String == membershipID {
-				// a shared team-owned publisher has no mutable human subject.
-				if session.PublisherIdentityID.Valid {
-					p, err := queries.LockPublisherIdentity(ctx, session.PublisherIdentityID.String)
-					if err != nil {
-						return err
-					}
-					if p.Ownership == "team" && route.PublicURLScope == "shared" {
-						continue
-					}
-				}
-				if err := closePublishRun(ctx, queries, pendingEvents, route, session, PublishRunClosed, now, reason); err != nil {
-					return err
-				}
-			}
-		}
-		if suspendMemberPublicURLs && route.MembershipID.Valid && route.MembershipID.String == membershipID {
-			if updated, err := queries.SuspendAuthorityPublicURL(ctx, controlstatedb.SuspendAuthorityPublicURLParams{
-				SuspensionReason: text(reason), SuspendedAt: timestamptz(now), PublicURLID: route.ID,
-			}); err != nil || updated != 1 {
-				return authorityRowsError("update membership public_urls: suspend route", updated, err)
-			}
-		}
-	}
-	return nil
 }
 
 func membershipFromRow(

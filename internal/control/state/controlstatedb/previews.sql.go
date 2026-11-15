@@ -30,7 +30,7 @@ type AddPreviewServiceParams struct {
 	AddedAt    pgtype.Timestamptz
 	ServiceID  string
 	PreviewID  string
-	IdentityID string
+	IdentityID pgtype.Text
 }
 
 func (q *Queries) AddPreviewService(ctx context.Context, arg AddPreviewServiceParams) (string, error) {
@@ -51,13 +51,13 @@ INSERT INTO control.previews (
 ) VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (team_id, created_by_identity_id, idempotency_key)
 DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
-RETURNING id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled
+RETURNING id, schema_version, team_id, guest_id, created_by_identity_id, created_at, team_access_enabled
 `
 
 type CreatePreviewParams struct {
 	ID                  string
-	TeamID              string
-	CreatedByIdentityID string
+	TeamID              pgtype.Text
+	CreatedByIdentityID pgtype.Text
 	IdempotencyKey      string
 	CreatedAt           pgtype.Timestamptz
 }
@@ -65,8 +65,9 @@ type CreatePreviewParams struct {
 type CreatePreviewRow struct {
 	ID                  string
 	SchemaVersion       int16
-	TeamID              string
-	CreatedByIdentityID string
+	TeamID              pgtype.Text
+	GuestID             pgtype.Text
+	CreatedByIdentityID pgtype.Text
 	CreatedAt           pgtype.Timestamptz
 	TeamAccessEnabled   bool
 }
@@ -84,6 +85,7 @@ func (q *Queries) CreatePreview(ctx context.Context, arg CreatePreviewParams) (C
 		&i.ID,
 		&i.SchemaVersion,
 		&i.TeamID,
+		&i.GuestID,
 		&i.CreatedByIdentityID,
 		&i.CreatedAt,
 		&i.TeamAccessEnabled,
@@ -92,15 +94,16 @@ func (q *Queries) CreatePreview(ctx context.Context, arg CreatePreviewParams) (C
 }
 
 const getPreview = `-- name: GetPreview :one
-SELECT id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled, demo_service_run_id
+SELECT id, schema_version, team_id, guest_id, created_by_identity_id, created_at, team_access_enabled, demo_service_run_id
 FROM control.previews WHERE id = $1
 `
 
 type GetPreviewRow struct {
 	ID                  string
 	SchemaVersion       int16
-	TeamID              string
-	CreatedByIdentityID string
+	TeamID              pgtype.Text
+	GuestID             pgtype.Text
+	CreatedByIdentityID pgtype.Text
 	CreatedAt           pgtype.Timestamptz
 	TeamAccessEnabled   bool
 	DemoServiceRunID    pgtype.Text
@@ -113,6 +116,7 @@ func (q *Queries) GetPreview(ctx context.Context, id string) (GetPreviewRow, err
 		&i.ID,
 		&i.SchemaVersion,
 		&i.TeamID,
+		&i.GuestID,
 		&i.CreatedByIdentityID,
 		&i.CreatedAt,
 		&i.TeamAccessEnabled,
@@ -147,14 +151,15 @@ func (q *Queries) ListPreviewServices(ctx context.Context, previewID string) ([]
 }
 
 const lockPreviewForTeamAccess = `-- name: LockPreviewForTeamAccess :one
-SELECT id, team_id, created_by_identity_id, team_access_enabled, demo_service_run_id
+SELECT id, team_id, guest_id, created_by_identity_id, team_access_enabled, demo_service_run_id
 FROM control.previews WHERE id = $1 FOR NO KEY UPDATE
 `
 
 type LockPreviewForTeamAccessRow struct {
 	ID                  string
-	TeamID              string
-	CreatedByIdentityID string
+	TeamID              pgtype.Text
+	GuestID             pgtype.Text
+	CreatedByIdentityID pgtype.Text
 	TeamAccessEnabled   bool
 	DemoServiceRunID    pgtype.Text
 }
@@ -165,6 +170,7 @@ func (q *Queries) LockPreviewForTeamAccess(ctx context.Context, id string) (Lock
 	err := row.Scan(
 		&i.ID,
 		&i.TeamID,
+		&i.GuestID,
 		&i.CreatedByIdentityID,
 		&i.TeamAccessEnabled,
 		&i.DemoServiceRunID,

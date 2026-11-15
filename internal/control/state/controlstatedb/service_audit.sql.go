@@ -32,41 +32,20 @@ func (q *Queries) CleanupServiceAuditEvents(ctx context.Context, arg CleanupServ
 	return result.RowsAffected(), nil
 }
 
-const cleanupServiceManagementAudit = `-- name: CleanupServiceManagementAudit :execrows
-DELETE FROM control.admin_audit_events WHERE id IN (
-    SELECT expired.id FROM control.admin_audit_events AS expired
-    WHERE expired.occurred_at<$1
-        AND expired.operation IN ('public_url.create','public_url.update','public_url.delete','publish_run.create','certificate_issuance.create')
-    ORDER BY expired.occurred_at,expired.id LIMIT $2 FOR UPDATE SKIP LOCKED
-)
-`
-
-type CleanupServiceManagementAuditParams struct {
-	BeforeTime pgtype.Timestamptz
-	BatchSize  int32
-}
-
-func (q *Queries) CleanupServiceManagementAudit(ctx context.Context, arg CleanupServiceManagementAuditParams) (int64, error) {
-	result, err := q.db.Exec(ctx, cleanupServiceManagementAudit, arg.BeforeTime, arg.BatchSize)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const insertServiceAuditEvent = `-- name: InsertServiceAuditEvent :execrows
-INSERT INTO control.service_audit_events(id,team_id,service_id,service_kind,event_type,occurred_at,received_at,
+INSERT INTO control.service_audit_events(id,team_id,guest_id,service_id,event_type,occurred_at,received_at,
     actor_identity_id,device_id,publisher_identity_id,run_id,visitor_connection_id,source_ip,outcome,reason,configuration_revision)
-VALUES($1,$2,$3,$4,$5,$6,$7,
-    $8,$9,$10,$11,$12,$13,$14,$15,$16)
+VALUES($1,$2,
+    (SELECT service.guest_id FROM control.services service WHERE service.id=$3),
+    $3,$4,$5,$6,
+    $7,$8,$9,$10,$11,$12,$13,$14,$15)
 ON CONFLICT(id) DO NOTHING
 `
 
 type InsertServiceAuditEventParams struct {
 	ID                    string
-	TeamID                string
+	TeamID                pgtype.Text
 	ServiceID             string
-	ServiceKind           string
 	EventType             string
 	OccurredAt            pgtype.Timestamptz
 	ReceivedAt            pgtype.Timestamptz
@@ -86,7 +65,6 @@ func (q *Queries) InsertServiceAuditEvent(ctx context.Context, arg InsertService
 		arg.ID,
 		arg.TeamID,
 		arg.ServiceID,
-		arg.ServiceKind,
 		arg.EventType,
 		arg.OccurredAt,
 		arg.ReceivedAt,
@@ -107,7 +85,7 @@ func (q *Queries) InsertServiceAuditEvent(ctx context.Context, arg InsertService
 }
 
 const listServiceAuditEvents = `-- name: ListServiceAuditEvents :many
-SELECT cursor, id, team_id, service_id, service_kind, event_type, occurred_at, received_at, actor_identity_id, device_id, publisher_identity_id, run_id, visitor_connection_id, source_ip, outcome, reason, configuration_revision FROM control.service_audit_events
+SELECT cursor, id, team_id, guest_id, service_id, event_type, occurred_at, received_at, actor_identity_id, device_id, publisher_identity_id, run_id, visitor_connection_id, source_ip, outcome, reason, configuration_revision FROM control.service_audit_events
 WHERE team_id=$1 AND cursor>$2
     AND received_at >= $3
     AND ($4::timestamptz IS NULL OR occurred_at>=$4)
@@ -116,7 +94,7 @@ ORDER BY cursor LIMIT $6
 `
 
 type ListServiceAuditEventsParams struct {
-	TeamID        string
+	TeamID        pgtype.Text
 	AfterCursor   int64
 	RetainedAfter pgtype.Timestamptz
 	Since         pgtype.Timestamptz
@@ -144,8 +122,8 @@ func (q *Queries) ListServiceAuditEvents(ctx context.Context, arg ListServiceAud
 			&i.Cursor,
 			&i.ID,
 			&i.TeamID,
+			&i.GuestID,
 			&i.ServiceID,
-			&i.ServiceKind,
 			&i.EventType,
 			&i.OccurredAt,
 			&i.ReceivedAt,
@@ -170,10 +148,16 @@ func (q *Queries) ListServiceAuditEvents(ctx context.Context, arg ListServiceAud
 }
 
 const lockServiceAuditClock = `-- name: LockServiceAuditClock :exec
-SELECT pg_advisory_xact_lock(hashtextextended('tnl:service-audit:' || $1::text,0))
+SELECT pg_advisory_xact_lock(hashtextextended('tnl:service-audit:' ||
+    COALESCE($1::text,'guest/'||$2::text),0))
 `
 
-func (q *Queries) LockServiceAuditClock(ctx context.Context, teamID string) error {
-	_, err := q.db.Exec(ctx, lockServiceAuditClock, teamID)
+type LockServiceAuditClockParams struct {
+	TeamID  pgtype.Text
+	GuestID pgtype.Text
+}
+
+func (q *Queries) LockServiceAuditClock(ctx context.Context, arg LockServiceAuditClockParams) error {
+	_, err := q.db.Exec(ctx, lockServiceAuditClock, arg.TeamID, arg.GuestID)
 	return err
 }

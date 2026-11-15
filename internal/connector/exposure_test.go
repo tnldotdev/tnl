@@ -7,7 +7,7 @@ import (
 )
 
 func TestPreparedConnectorIgnoresIngressReservationButKeepsTrust(t *testing.T) {
-	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: controlv1.Postgres, TrustRevision: 4,
+	service := controlv1.ServiceSummary{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: controlv1.Postgres, TrustRevision: 4,
 		Endpoint: &controlv1.ServiceEndpoint{Hostname: "db.example.test"}}
 	prepared := &servicePreparation{service: service}
 	for _, port := range []int{0, 25443, 0, 35443} {

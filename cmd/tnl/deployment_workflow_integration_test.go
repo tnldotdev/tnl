@@ -975,14 +975,12 @@ func (f *cliWorkflow) relay(t *testing.T, database *controlstate.Database, id st
 	}
 	f.workers.Go(func() { _ = controller.Run(f.ctx) })
 	workflowWait(t, 5*time.Second, func() bool { return controller.Lease().RelayLeaseRevision > 0 })
-	registry, private := relay.NewRegistry(), relay.NewServiceRegistry()
-	t.Cleanup(func() { _ = registry.Close(); _ = private.Close() })
-	native := &relay.ConnectorAcceptor{CurrentLease: controller.Lease, SigningKey: signingKey, Claim: client, Publishers: private}
-	acceptor, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{Select: func(service string) (relay.PublisherConnectionController, *relay.Registry, bool) {
-		return controller, registry, service == id
-	}, Connector: func(service string) (*relay.ConnectorAcceptor, bool) { return native, service == id }, Private: &relay.ServicePublisherAcceptor{Select: func(service string) (relay.ServicePublisherTarget, bool) {
-		return relay.ServicePublisherTarget{Control: controller, Registry: private}, service == id
-	}}})
+	registry := relay.NewServiceRegistry()
+	t.Cleanup(func() { _ = registry.Close() })
+	native := &relay.ConnectorAcceptor{CurrentLease: controller.Lease, SigningKey: signingKey, Claim: client, Publishers: registry}
+	acceptor, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{Select: func(service string) (relay.ServicePublisherTarget, bool) {
+		return relay.ServicePublisherTarget{Control: controller, Registry: registry}, service == id
+	}, Connector: func(service string) (*relay.ConnectorAcceptor, bool) { return native, service == id }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -990,7 +988,7 @@ func (f *cliWorkflow) relay(t *testing.T, database *controlstate.Database, id st
 	if err != nil {
 		t.Fatal(err)
 	}
-	forward, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{Registry: registry, ServiceRegistry: private, CurrentLease: controller.Lease, ClusterSecrets: secrets, StreamCapacity: 128})
+	forward, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{ServiceRegistry: registry, CurrentLease: controller.Lease, ClusterSecrets: secrets, StreamCapacity: 128})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1025,7 +1023,7 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 	for index := range ports {
 		ports[index] = 20000 + index
 	}
-	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, RoutingTable: routing, Registration: ingressv1.IngressRegistration{Region: "local", ProtocolVersion: 1, IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", ServicePorts: ports, ConnectionCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond, RoutingWait: time.Second})
+	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, RoutingTable: routing, Registration: ingressv1.IngressRegistration{Region: "local", ProtocolVersion: 1, IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", Https: true, ServicePorts: ports, ConnectionCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond, RoutingWait: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1041,6 +1039,7 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 		f.publicAddress = publicListener.Addr().String()
 	}
 	publicServer, err := ingress.New(publicListener, ingress.Config{Control: client, Forwarder: forwarder, CurrentLease: controller.Lease,
+		IngressPoolID:      "ingress-a",
 		RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
 		MaxConnections: 128, Lookup: func(host string) ([]ingress.PublicURL, ingress.LookupReason) {
 			entries, reason := controller.Lookup(host, time.Now())

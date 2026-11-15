@@ -2,11 +2,10 @@ paths:
   /__tnl/access:
     get:
       operationId: getBrowserAccessStatus
-      summary: Check whether this browser can visit the current public URL
+      summary: Check whether this browser can visit the current service run
       description: >-
-        Uses the same IP, share cookie, and team session decision as forwarding
+        Uses the same prepared visitor permission, anonymous policy, and IP filter as forwarding
         on this hostname. The response contains no share or session secrets.
-        Denied visitors have only the bounded denied-connection budget.
         This endpoint does not reach the local service.
       responses:
         "200":
@@ -16,7 +15,7 @@ paths:
               schema:
                 $ref: "../openapi.yaml#/components/schemas/BrowserAccessStatus"
         "403":
-          description: This browser cannot currently visit the public URL
+          description: This browser cannot currently visit the service
           content:
             application/json:
               schema:

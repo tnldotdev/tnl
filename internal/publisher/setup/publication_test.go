@@ -29,7 +29,7 @@ type publicationControl struct {
 func (*publicationControl) ControlURL() string { return "https://control.example" }
 
 func (c *publicationControl) CreatePublisherEnrollment(_ context.Context, request controlv1.CreatePublisherEnrollmentRequest) (controlv1.PublisherEnrollment, error) {
-	if request.ServiceId == nil || *request.ServiceId != c.service.Id || request.PublicUrlId != nil || request.DomainId != nil || request.TeamId != c.service.TeamId {
+	if request.ServiceId == nil || *request.ServiceId != c.service.Id || request.DomainId != nil || request.TeamId != c.service.TeamId {
 		c.t.Error("setup broadened the exact service grant")
 		return controlv1.PublisherEnrollment{}, publisheridentity.ErrScope
 	}
@@ -108,7 +108,7 @@ func TestPublicationSetupRetainsExactServiceGrantAndOriginalKey(t *testing.T) {
 					t.Fatal(err)
 				}
 				identity, private, err := file.Validate()
-				if err != nil || identity.Kind != authorityv1.Service || identity.ServiceId == nil || *identity.ServiceId != control.service.Id || identity.PublicUrlId != nil {
+				if err != nil || identity.Kind != authorityv1.Service || identity.ServiceId == nil || *identity.ServiceId != control.service.Id {
 					t.Fatal("setup did not return the exact service grant", err)
 				}
 				if original != nil && !bytes.Equal(original, private) {

@@ -33,13 +33,14 @@ UPDATE project_aliases SET hostname = sqlc.arg(hostname), service = sqlc.arg(ser
 WHERE id = sqlc.arg(alias_id) AND selection_revision < 9223372036854775807;
 
 -- name: RegisterAliasDeclaration :execrows
-INSERT INTO alias_declarations (alias_id, tunnel_id, fingerprint)
-SELECT sqlc.arg(alias_id), t.id, sqlc.arg(fingerprint) FROM local_tunnels t
+INSERT INTO alias_declarations (alias_id, tunnel_id, fingerprint, integration_namespace)
+SELECT sqlc.arg(alias_id), t.id, sqlc.arg(fingerprint), t.integration_namespace FROM local_tunnels t
 WHERE t.id = sqlc.arg(tunnel_id) AND t.server_origin = sqlc.arg(server_origin)
     AND t.service = sqlc.arg(service) AND t.primary_project_root = sqlc.arg(primary_project_root)
     AND t.integration_namespace = sqlc.arg(integration_namespace)
     AND t.stopped_at IS NULL AND t.lease_expires_at > sqlc.arg(now)
-ON CONFLICT(alias_id, tunnel_id) DO UPDATE SET fingerprint = excluded.fingerprint;
+ON CONFLICT(alias_id, tunnel_id) DO UPDATE SET fingerprint = excluded.fingerprint,
+    integration_namespace = excluded.integration_namespace;
 
 -- name: LockAliasSelection :one
 UPDATE project_aliases SET selection_revision = selection_revision
@@ -53,8 +54,10 @@ SELECT t.* FROM alias_declarations declaration
 JOIN project_aliases alias ON alias.id = declaration.alias_id
 JOIN local_tunnels t ON t.id = declaration.tunnel_id
 WHERE alias.id = sqlc.arg(alias_id) AND t.project_root = sqlc.arg(project_root)
+    AND t.server_origin = alias.server_origin AND t.primary_project_root = alias.primary_project_root
+    AND t.integration_namespace = declaration.integration_namespace
     AND declaration.fingerprint = alias.fingerprint AND t.service = alias.service
-    AND t.state = 'ready' AND t.public_url_id <> '' AND t.publish_run_number > 0
+    AND t.state = 'ready' AND t.service_id IS NOT NULL AND t.publish_run_number > 0
     AND t.stopped_at IS NULL AND t.lease_expires_at > sqlc.arg(now)
 ORDER BY t.started_at DESC, t.id DESC LIMIT 1;
 
@@ -63,6 +66,8 @@ SELECT count(*) FROM alias_declarations declaration
 JOIN project_aliases alias ON alias.id = declaration.alias_id
 JOIN local_tunnels t ON t.id = declaration.tunnel_id
 WHERE alias.id = sqlc.arg(alias_id) AND t.project_root = alias.selected_project_root
+    AND t.server_origin = alias.server_origin AND t.primary_project_root = alias.primary_project_root
+    AND t.integration_namespace = declaration.integration_namespace
     AND declaration.fingerprint = alias.fingerprint AND t.service = alias.service
     AND t.stopped_at IS NULL AND t.lease_expires_at > sqlc.arg(now);
 

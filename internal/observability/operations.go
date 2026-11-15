@@ -4,9 +4,9 @@ package observability
 type ServerOperation uint8
 
 const (
-	OpCreatePublishRun ServerOperation = iota + 1
-	OpHeartbeatPublishRun
-	OpClosePublishRun
+	OpCreateServiceRun ServerOperation = iota + 1
+	OpHeartbeatServiceRun
+	OpCloseServiceRun
 	OpReadIngressRoutingTableSnapshot
 	OpReadIngressRoutingTableEvents
 	OpRefreshPortPoolMetrics
@@ -46,7 +46,7 @@ const (
 )
 
 var serverOperations = []operationName{
-	"", "CreatePublishRun", "HeartbeatPublishRun", "ClosePublishRun",
+	"", "CreateServiceRun", "HeartbeatServiceRun", "CloseServiceRun",
 	"ReadIngressRoutingTableSnapshot", "ReadIngressRoutingTableEvents", "RefreshPortPoolMetrics",
 	"AdvanceIngressRoutingRetention", "PruneIngressRoutingHistory", "RenewIngress",
 	"ClaimPublisherConnection", "MarkPublisherConnectionReady", "company.authorize_session",

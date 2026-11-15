@@ -20,13 +20,13 @@ func TestIngressLeaseMutationContracts(t *testing.T) {
 	lease := controlstate.IngressLease{
 		Region:               "gcp:us-west1",
 		IngressLeaseIdentity: controlstate.IngressLeaseIdentity{IngressID: "ingress-result", IngressRunID: "run-result", IngressLeaseRevision: 9},
-		ProtocolVersion:      1, ConnectionCapacity: 100, ReportedConnections: 11, RoutingTableRevision: 19,
+		ProtocolVersion:      1, ConnectionCapacity: 100, ReportedConnections: 11,
 		RegisteredAt: now.Add(-time.Minute), RenewedAt: now, LeaseExpiresAt: now.Add(30 * time.Second), Draining: true, DrainDeadline: &deadline,
 	}
 	wantLease := ingressv1.IngressLease{
 		Region:    "gcp:us-west1",
 		IngressId: "ingress-result", IngressRunId: "run-result", IngressLeaseRevision: 9, ProtocolVersion: 1,
-		ConnectionCapacity: 100, ReportedConnections: 11, RoutingTableRevision: 19,
+		ConnectionCapacity: 100, ReportedConnections: 11,
 		RegisteredAt: now.Add(-time.Minute), RenewedAt: now, LeaseExpiresAt: now.Add(30 * time.Second), Draining: true, DrainDeadline: &deadline,
 	}
 	for _, operation := range []string{"renew", "drain"} {
@@ -56,9 +56,7 @@ func TestIngressLeaseMutationContracts(t *testing.T) {
 				var result *ingressv1.IngressLease
 				var status int
 				if operation == "renew" {
-					body := ingressv1.IngressRenewal{IngressId: "ingress-1", IngressRunId: "run-1", IngressLeaseRevision: 7, ReportedConnections: 3, RoutingTableRevision: 17}
-					observations := []ingressv1.IngressPublicRunObservation{{PublishRunId: "publish-run", PublishRunNumber: 3, EntryRevision: 4, ValidUntil: deadline}}
-					body.PreparedPublicRuns = &observations
+					body := ingressv1.IngressRenewal{IngressId: "ingress-1", IngressRunId: "run-1", IngressLeaseRevision: 7, ReportedConnections: 3}
 					if transport == "direct" {
 						lease, directErr := client.RenewIngress(t.Context(), "ingress-1", body)
 						err = directErr
@@ -72,9 +70,7 @@ func TestIngressLeaseMutationContracts(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if !reflect.DeepEqual(renewal, controlstate.IngressRenewal{IngressLeaseIdentity: wantIdentity, ReportedConnections: 3, RoutingTableRevision: 17,
-						PreparedPublicRuns: []controlstate.IngressPublicRunObservation{{PublishRunID: "publish-run", PublishRunNumber: 3, EntryRevision: 4, ValidUntil: deadline}},
-					}) || duration != 30*time.Second {
+					if !reflect.DeepEqual(renewal, controlstate.IngressRenewal{IngressLeaseIdentity: wantIdentity, ReportedConnections: 3}) || duration != 30*time.Second {
 						t.Fatalf("renewal = %#v, duration %v", renewal, duration)
 					}
 				} else {

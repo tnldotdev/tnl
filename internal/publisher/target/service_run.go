@@ -3,17 +3,19 @@ package target
 import (
 	"context"
 	"errors"
+	"net/http"
 	"reflect"
 	"time"
 
+	serviceconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 )
 
 // PublishPrivate resolves captured project discovery settings before each run.
-// replacement or disappearance closes that run before a new target can receive
-// streams; the next run gets a new TLS key and assignment identities.
+// native target replacement closes that run before accepting another stream.
+// HTTP captures targets per request; in-flight requests retain their selection.
 type TargetHooks struct {
 	Resolver TargetResolver
 	Capture  func(TargetSnapshot) error
@@ -38,15 +40,18 @@ func PublishPrivate(ctx context.Context, plan TargetPlan, config publisherservic
 	}
 	if config.Healthy == nil {
 		config.Healthy = func(ctx context.Context) bool {
-			return PreflightPrivate(ctx, plan) == nil
+			current := plan
+			if plan.Project != nil && plan.Protocol == serviceconfig.ProtocolHTTP {
+				selected, err := ResolveTargetSnapshot(ctx, *plan.Project, plan.ProjectService, hook.Resolver)
+				if err != nil {
+					return false
+				}
+				current.Target = selected.Address
+			}
+			return PreflightPrivate(ctx, current) == nil
 		}
 	}
-	if plan.Project == nil {
-		if hook.Capture != nil {
-			if err := hook.Capture(TargetSnapshot{Address: plan.Target, Identity: plan.Target}); err != nil {
-				return err
-			}
-		}
+	publish := func(ctx context.Context, plan TargetPlan) error {
 		target, close, err := ServiceTarget(ctx, plan)
 		if err != nil {
 			return err
@@ -57,6 +62,33 @@ func PublishPrivate(ctx context.Context, plan TargetPlan, config publisherservic
 			return err
 		}
 		return publisherservice.Publish(ctx, config)
+	}
+	if plan.Project == nil {
+		if hook.Capture != nil {
+			if err := hook.Capture(TargetSnapshot{Address: plan.Target, Identity: plan.Target}); err != nil {
+				return err
+			}
+		}
+		return publish(ctx, plan)
+	}
+	if plan.Protocol == serviceconfig.ProtocolHTTP {
+		initial, err := ResolveTargetSnapshot(ctx, *plan.Project, plan.ProjectService, hook.Resolver)
+		if err != nil {
+			return err
+		}
+		if hook.Capture != nil {
+			if err := hook.Capture(initial); err != nil {
+				return err
+			}
+		}
+		if config.ResolveHTTPTarget == nil {
+			config.ResolveHTTPTarget = func(request *http.Request) (string, string, error) {
+				selected, err := ResolveTargetSnapshot(request.Context(), *plan.Project, plan.ProjectService, hook.Resolver)
+				return selected.Address, selected.Identity, err
+			}
+		}
+		plan.Target = initial.Address
+		return publish(ctx, plan)
 	}
 	for ctx.Err() == nil {
 		initial, err := ResolveTargetSnapshot(ctx, *plan.Project, plan.ProjectService, hook.Resolver)
@@ -90,19 +122,8 @@ func PublishPrivate(ctx context.Context, plan TargetPlan, config publisherservic
 			}
 		}()
 		plan.Target = initial.Address
-		target, close, err := ServiceTarget(worker, plan)
-		if err != nil {
-			cancel()
-			<-done
-			return err
-		}
-		config.Target = target
-		err = PreflightPrivate(worker, plan)
-		if err == nil {
-			err = publisherservice.Publish(worker, config)
-		}
+		err = publish(worker, plan)
 		cancel()
-		close()
 		<-done
 		if ctx.Err() != nil {
 			if context.Cause(ctx) == context.Canceled && (err == nil || failure.Only(err, context.Canceled)) {

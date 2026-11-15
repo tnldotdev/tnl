@@ -29,12 +29,16 @@ WHERE included.share_id=sqlc.arg(share_id) AND service.enabled AND service.delet
     AND service.protocol='http' AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
     AND run.publisher_expires_at>sqlc.arg(now) AND run.certificate_expires_at>sqlc.arg(now)
     AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,
-        run.publisher_grant_id,service.id,sqlc.arg(now)))
+        run.publisher_grant_id,service.id,sqlc.arg(now)) permission
+        JOIN control.publisher_grants grant_record ON grant_record.id=run.publisher_grant_id
+        JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id
+            AND signing.publisher_identity_id=run.publisher_identity_id
+            AND (grant_record.kind='service' OR signing.retired_at IS NULL))
 GROUP BY service.id,service.certificate_hostname ORDER BY service.id;
 
 -- name: InsertShareCookie :one
-INSERT INTO control.share_cookies(token_digest,share_id,service_id,team_id,run_ids,created_at,expires_at)
-SELECT sqlc.arg(token_digest),share.id,included.service_id,share.team_id,sqlc.arg(run_ids)::text[],
+INSERT INTO control.share_cookies(token_digest,share_id,service_id,run_ids,created_at,expires_at)
+SELECT sqlc.arg(token_digest),share.id,included.service_id,sqlc.arg(run_ids)::text[],
     sqlc.arg(created_at),LEAST(share.expires_at,sqlc.arg(expires_at)::timestamptz)
 FROM control.shares share
 JOIN control.share_services included ON included.share_id=share.id AND included.service_id=sqlc.arg(service_id)
@@ -43,8 +47,8 @@ WHERE share.id=sqlc.arg(share_id) AND share.revoked_at IS NULL AND share.expires
 RETURNING token_digest;
 
 -- name: InsertShareHandoff :one
-INSERT INTO control.share_handoffs(token_digest,share_id,service_id,team_id,run_ids,redirect_url,bridge,created_at,expires_at)
-SELECT sqlc.arg(token_digest),share.id,included.service_id,share.team_id,sqlc.arg(run_ids)::text[],
+INSERT INTO control.share_handoffs(token_digest,share_id,service_id,run_ids,redirect_url,bridge,created_at,expires_at)
+SELECT sqlc.arg(token_digest),share.id,included.service_id,sqlc.arg(run_ids)::text[],
     sqlc.arg(next_url),sqlc.arg(bridge),sqlc.arg(created_at),sqlc.arg(expires_at)
 FROM control.shares share
 JOIN control.share_services included ON included.share_id=share.id AND included.service_id=sqlc.arg(service_id)

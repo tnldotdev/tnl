@@ -4,14 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
-	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -44,7 +41,7 @@ func TestIngressRetryBoundary(t *testing.T) {
 					t.Fatal("fallback not opened exactly once")
 				}
 			}
-			if first.opens.Load() != 1 || !strings.HasPrefix(first.visitorConnectionID(), visitorConnectionIDPrefix) {
+			if first.opens.Load() != 1 || !opaqueid.Valid(first.visitorConnectionID(), opaqueid.VisitorConnectionPrefix) {
 				t.Fatalf("first opens=%d, ID=%q", first.opens.Load(), first.visitorConnectionID())
 			}
 		})
@@ -175,36 +172,6 @@ func TestIngressBothBackendsUnavailable(t *testing.T) {
 	}
 	ingressAwait(t, first)
 	ingressAwait(t, second)
-}
-
-type failAfterProxyBackend struct {
-	connection net.Conn
-	opens      atomic.Int32
-	mu         sync.Mutex
-	visitorID  string
-}
-
-func (*failAfterProxyBackend) ConnectionSlot() uint8 { return 0 }
-
-func newFailAfterProxyBackend(t *testing.T, visitorBytes int) *failAfterProxyBackend {
-	t.Helper()
-	a, b := net.Pipe()
-	ownIngressConn(t, a)
-	ownIngressConn(t, b)
-	ingressWorker(t, func() { _ = a.Close(); _ = b.Close() }, func() error { defer b.Close(); _, _ = io.Copy(io.Discard, b); return nil })
-	return &failAfterProxyBackend{connection: &failAfterProxyConn{Conn: a, visitorBytes: visitorBytes}}
-}
-func (b *failAfterProxyBackend) Start(ctx context.Context, id string, _ bool, proxy, initial []byte) (net.Conn, error) {
-	b.opens.Add(1)
-	b.mu.Lock()
-	b.visitorID = id
-	b.mu.Unlock()
-	return startTestBackend(ctx, b.connection, proxy, initial)
-}
-func (b *failAfterProxyBackend) visitorConnectionID() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.visitorID
 }
 
 type failAfterProxyConn struct {

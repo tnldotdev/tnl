@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
@@ -34,7 +35,7 @@ import (
 
 // each dial traverses the real relay acceptor and its claim/readiness/cleanup
 // path. a failed HTTP claim must not require restarting the relay process.
-func dialPrivateClaim(t *testing.T, acceptor *PublisherAcceptor, hello tunnelv1.Message) (*tunnel.Session, <-chan error, error) {
+func dialPrivateClaim(t *testing.T, accept func(context.Context, muxsession.Session) error, hello tunnelv1.Message) (*tunnel.Session, <-chan error, error) {
 	t.Helper()
 	certificate := httptest.NewTLSServer(nil)
 	t.Cleanup(certificate.Close)
@@ -56,7 +57,7 @@ func dialPrivateClaim(t *testing.T, acceptor *PublisherAcceptor, hello tunnelv1.
 		if err != nil {
 			return err
 		}
-		return acceptor.Accept(ctx, transport)
+		return accept(ctx, transport)
 	})
 	transport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{RootCAs: roots}}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "example.com"})
 	if err != nil {
@@ -219,7 +220,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 				{lease.RelayLeaseIdentity, wrongCredential.String(), slot.Revision},
 				{lease.RelayLeaseIdentity, slot.Credential, slot.Revision + 1},
 			} {
-				if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, bad.revision, bad.credential, bad.lease, now); err == nil {
+				if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, bad.revision, bad.credential, netip.MustParseAddr("127.0.0.1"), bad.lease, now); err == nil {
 					t.Fatal("different relay/process/credential/revision stole existing connection")
 				}
 			}
@@ -233,9 +234,9 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 		controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{RelayServiceId: lease.RelayServiceID, RelayId: lease.RelayID, RelayRunId: lease.RelayRunID,
 			RelayLeaseRevision: int64(lease.RelayLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt, ConnectionCapacity: 1}}
 		registry := NewServiceRegistry()
-		acceptor, err := NewPublisherAcceptor(PublisherAcceptorConfig{Control: controller, Registry: NewRegistry(), Private: &ServicePublisherAcceptor{Select: func(string) (ServicePublisherTarget, bool) {
+		acceptor, err := NewPublisherAcceptor(PublisherAcceptorConfig{Select: func(string) (ServicePublisherTarget, bool) {
 			return ServicePublisherTarget{Control: controller, Registry: registry}, true
-		}}})
+		}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -243,7 +244,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 			ConnectionSlot: uint8(slot.ConnectionSlot), ConnectionAssignmentRevision: uint64(slot.Revision), RelayServiceID: slot.RelayServiceID}
 		hello := tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: 1, Role: tunnelv1.Publisher, Credential: slot.Credential, ServiceConnection: &ref}
 		for attempt := range 2 {
-			if _, done, err := dialPrivateClaim(t, acceptor, hello); err == nil {
+			if _, done, err := dialPrivateClaim(t, acceptor.Accept, hello); err == nil {
 				t.Fatal("committed claim response was not lost")
 			} else {
 				_ = relayAwait(t, done)
@@ -257,7 +258,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		session, _, err := dialPrivateClaim(t, acceptor, hello)
+		session, _, err := dialPrivateClaim(t, acceptor.Accept, hello)
 		if err != nil {
 			t.Fatalf("exact committed claim could not recover through relay: %v", err)
 		}
@@ -275,7 +276,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 			}
 			time.Sleep(time.Millisecond)
 		}
-		if _, done, err := dialPrivateClaim(t, acceptor, hello); err == nil {
+		if _, done, err := dialPrivateClaim(t, acceptor.Accept, hello); err == nil {
 			t.Fatal("duplicate relay handshake stole the owner")
 		} else {
 			_ = relayAwait(t, done)

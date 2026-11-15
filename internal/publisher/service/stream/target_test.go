@@ -2,6 +2,7 @@ package stream_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -19,6 +20,74 @@ import (
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 )
+
+func TestManagedHTTPBaseTargetPreservesTLSMinimum(t *testing.T) {
+	certificates := serviceCertificates(t)
+	const hostname = "web.production.storefront.example.test"
+	const targetHostname = "backend.production.storefront.example.test"
+	for _, test := range []struct {
+		name    string
+		version uint16
+	}{
+		{"tls12-rejected", tls.VersionTLS12},
+		{"tls13-client-certificate", tls.VersionTLS13},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var requests atomic.Int32
+			target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.TLS == nil || r.TLS.Version != tls.VersionTLS13 || r.TLS.ServerName != targetHostname {
+					t.Error("base target lost its configured TLS minimum or server identity")
+				}
+				if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 || !bytes.Equal(r.TLS.PeerCertificates[0].Raw, certificates.client.Certificate[0]) {
+					t.Error("base target lost its supplied client certificate")
+				}
+				_, _ = io.WriteString(w, "target TLS preserved")
+			}))
+			target.TLS = &tls.Config{Certificates: []tls.Certificate{certificates.server}, MinVersion: test.version, MaxVersion: test.version}
+			if test.version == tls.VersionTLS13 {
+				target.TLS.ClientAuth, target.TLS.ClientCAs = tls.RequireAndVerifyClientCert, certificates.roots
+			}
+			target.StartTLS()
+			defer target.Close()
+			server := servicestream.Stream{
+				Protocol: config.ProtocolHTTP, Hostname: hostname, Target: target.Listener.Addr().String(),
+				TLS: &tls.Config{Certificates: []tls.Certificate{certificates.server}},
+				TargetTLS: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: certificates.roots, ServerName: targetHostname,
+					Certificates: []tls.Certificate{certificates.client}},
+				Visitor: servicestream.ConnectorVisitor{Admission: servicestream.AdmissionFixture{Check: func(context.Context) (servicestream.Decision, error) {
+					return servicestream.Decision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
+				}}},
+			}
+			address := managedPublisherListener(t, server)
+			transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: certificates.roots, ServerName: hostname}}
+			defer transport.CloseIdleConnections()
+			client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://"+address+"/", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := client.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			body, err := io.ReadAll(response.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.version == tls.VersionTLS12 {
+				if response.StatusCode != http.StatusBadGateway || requests.Load() != 0 {
+					t.Fatal("TLS-1.2-only backend bypassed the supplied TLS 1.3 minimum", response.Status, requests.Load())
+				}
+				return
+			}
+			if response.StatusCode != http.StatusOK || string(body) != "target TLS preserved" || requests.Load() != 1 {
+				t.Fatal("same certificate could not serve TLS 1.3 with the supplied client identity", response.Status, string(body), requests.Load())
+			}
+		})
+	}
+}
 
 func TestManagedVisitorTLSWithPlaintextHTTPTarget(t *testing.T) {
 	for _, h2 := range []bool{false, true} {

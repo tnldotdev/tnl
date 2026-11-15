@@ -38,12 +38,11 @@ func (s *subjectChallengeStoreStub) WithDNSRecordLock(ctx context.Context, recor
 
 func TestDNSChallengeSubjectBoundary(t *testing.T) {
 	for _, subject := range []controlstate.CertificateSubject{
-		{Kind: controlstate.CertificateSubjectPublicURL, ID: "svc_misleading-public-id", RunID: "public-run", RunNumber: 3},
 		{Kind: controlstate.CertificateSubjectService, ID: "opaque-managed-id", RunID: "service-run", RunNumber: 5},
 	} {
 		for _, stale := range []bool{false, true} {
 			t.Run(string(subject.Kind)+map[bool]string{false: "/current", true: "/stale-under-lock"}[stale], func(t *testing.T) {
-				store := &subjectChallengeStoreStub{stale: stale, challengeStoreStub: challengeStoreStub{challenge: controlstate.DNSChallengeContext{Identifier: "app.example.test", State: controlstate.ACMEAuthorizationPresenting}}}
+				store := &subjectChallengeStoreStub{stale: stale, challengeStoreStub: challengeStoreStub{challenge: controlstate.DNSChallengeContext{CanonicalDomain: "example.test", Identifier: "app.example.test", State: controlstate.ACMEAuthorizationPresenting}}}
 				provider := &challengeProviderStub{}
 				manager, err := NewChallengeManager(store, provider, &challengeVerifierStub{}, Config{ManagedDomain: "example.test", ManagedZoneID: "zone"})
 				if err != nil {

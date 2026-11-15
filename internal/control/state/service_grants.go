@@ -49,7 +49,7 @@ func (d *Database) CreateServiceGrant(ctx context.Context, serviceID, actorID, k
 	var existing controlstatedb.ControlVisitorGrant
 	// sqlc's create source has an exact active grant constraint; query the retry key before inserting.
 	var oldID string
-	err = tx.QueryRow(ctx, `SELECT id FROM control.visitor_grants WHERE resource_kind='service' AND created_by_identity_id=$1 AND kind=$2 AND idempotency_key=$3`, actorID, kind, key).Scan(&oldID)
+	err = tx.QueryRow(ctx, `SELECT id FROM control.visitor_grants WHERE created_by_identity_id=$1 AND kind=$2 AND idempotency_key=$3`, actorID, kind, key).Scan(&oldID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
 	}
@@ -71,7 +71,7 @@ func (d *Database) CreateServiceGrant(ctx context.Context, serviceID, actorID, k
 		return privateGrantRecord(existing), nil
 	}
 	row, err := controlstatedb.New(tx).InsertServiceGrant(ctx, controlstatedb.InsertServiceGrantParams{
-		ID: id, ServiceID: text(serviceID), TeamID: service.TeamID, Kind: kind, IdentityID: nullableText(identityID),
+		ID: id, ServiceID: text(serviceID), TeamID: service.TeamID.String, Kind: kind, IdentityID: nullableText(identityID),
 		CreatedByIdentityID: actorID, IdempotencyKey: key, RequestDigest: digest[:], Now: timestamptz(now), ExpiresAt: nullableTime(expires),
 	})
 	var pgErr *pgconn.PgError
@@ -99,7 +99,7 @@ func (d *Database) ListServiceGrants(ctx context.Context, serviceID, actorID, af
 		return nil, "", err
 	}
 	defer rollback(ctx, tx, "list service grants", &retErr)()
-	if _, err = lockService(ctx, tx, serviceID, actorID); err != nil {
+	if _, err = lockManagedService(ctx, tx, serviceID, actorID); err != nil {
 		return nil, "", err
 	}
 	rows, err := controlstatedb.New(tx).ListServiceGrants(ctx, controlstatedb.ListServiceGrantsParams{ServiceID: text(serviceID), AfterID: after})
@@ -128,7 +128,7 @@ func (d *Database) RevokeServiceGrant(ctx context.Context, serviceID, actorID, g
 		return err
 	}
 	defer rollback(ctx, tx, "revoke service grant", &retErr)()
-	if _, err = lockService(ctx, tx, serviceID, actorID); err != nil {
+	if _, err = lockManagedService(ctx, tx, serviceID, actorID); err != nil {
 		return err
 	}
 	if err = rejectProjectManagedGrant(ctx, tx, grantID); err != nil {

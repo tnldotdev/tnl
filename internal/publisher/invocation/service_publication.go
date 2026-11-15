@@ -7,6 +7,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -364,15 +365,41 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		}
 		return output.Installed(jobs, job.ID)
 	}
-	if output.Starting != nil {
-		output.Starting()
+	root := flags.ProjectRoot
+	if root == "" {
+		root, err = currentProjectRoot(ctx)
+		if err != nil {
+			return err
+		}
 	}
-	emit := func(state string) error {
-		return output.Event(ServiceEvent{State: state, ServiceID: job.ServiceID, Name: name, Target: target, Hostname: approved.Endpoint.Hostname, Port: approved.Endpoint.Port, Protocol: string(approved.Protocol), Public: approved.Endpoint.Public})
-	}
-	if err := emit("starting"); err != nil {
+	tunnel, err := database.BeginTunnel(ctx, clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish,
+		Server: server, Project: root, Service: flags.Service, Target: target, ServiceProtocol: approved.Protocol, ServiceID: approved.Id})
+	if err != nil {
 		return err
 	}
+	ctx = tunnel.Context()
+	defer func() {
+		finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		result = errors.Join(result, tunnel.Finish(finish, result))
+	}()
+	presentation := servicePresentation(output, approved, target)
+	if err := presentation.starting(tunnel.ID(), target); err != nil {
+		return err
+	}
+	settings := flags.Inspection
+	if flags.InspectionMode != "" {
+		settings = config.MergeInspection(settings, &config.Inspection{Mode: &flags.InspectionMode})
+	}
+	policy, err := config.ResolveInspection(settings, string(protocol))
+	if err != nil {
+		return err
+	}
+	recorder, err := NewInspectionRecorder(ctx, tunnel, root, flags.Service, config.InspectionMode(policy.Mode), settings)
+	if err != nil {
+		return err
+	}
+	defer recorder.Close()
 	if selected != 0 {
 		stopRuntime, err := startDeployedPublisher(ctx, native, server)
 		if err != nil {
@@ -380,18 +407,17 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		}
 		defer func() { result = errors.Join(result, stopRuntime()) }()
 	}
-	err = targetplan.PublishPrivate(ctx, job.TargetPlan(), publisherservice.RunConfig{Telemetry: flags.Telemetry, Control: native, State: profile, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: job.ServiceID, Target: target, Metadata: publisheridentity.ServiceMetadata(approved), StreamCapacity: job.StreamCapacity,
-		PreferredRegions: job.PreferredRegions,
-		Ready: func() error {
-			if output.Ready != nil {
-				output.Ready()
-			}
-			return emit("ready")
-		}})
-	if err != nil && !(context.Cause(ctx) == context.Canceled && failure.Only(err, context.Canceled)) {
-		return failure.Wrap("publish service", failure.TunnelUnavailable, errors.Join(err, context.Cause(ctx)))
+	cfg := publisherservice.RunConfig{Telemetry: flags.Telemetry, Control: native, State: profile, Access: native.Access,
+		PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId,
+		ServiceID: job.ServiceID, Target: target, Metadata: publisheridentity.ServiceMetadata(approved), StreamCapacity: job.StreamCapacity,
+		PreferredRegions: job.PreferredRegions, InspectionMode: policy.Mode, ObserveSummary: SummaryObservation(recorder),
+		ProjectRoot: root, ProjectService: flags.Service}
+	if flags.TelemetryDisabled {
+		cfg.Telemetry = nil
 	}
-	return emit("stopped")
+	return RunServiceCLI(ctx, tunnel, approved, cfg, presentation, func(ctx context.Context, cfg publisherservice.RunConfig) error {
+		return targetplan.PublishPrivate(ctx, job.TargetPlan(), cfg)
+	})
 }
 
 func CaptureServiceTargetTrust(ctx context.Context, flags ServiceOptions, protocol controlv1.ServiceProtocol, target string) (*targettrust.Snapshot, error) {

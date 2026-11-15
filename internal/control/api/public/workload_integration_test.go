@@ -111,7 +111,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	if hint == nil || hint.Provider != controlv1.KubernetesEKS || hint.Cluster != "production" || hint.Region != "us-east-1" {
 		t.Fatal("missing approved native Kubernetes auth hint")
 	}
-	humanServices, err := owner.ListAvailableServices(ctx)
+	humanServices, err := owner.ListAvailableServices(ctx, "connector")
 	if err != nil || len(humanServices) != 1 || humanServices[0].KubernetesAuth == nil || *humanServices[0].KubernetesAuth != *hint {
 		t.Fatal("human inventory lost approved auth hint", err)
 	}

@@ -12,21 +12,14 @@ import (
 
 // the team mutation guard fences new grants and runs while this set is read.
 // lock every affected parent before the publisher: heartbeats already own their
-// URL/run when they recheck it. closures may then take audit and routing clocks
+// service/run when they recheck it. closures may then take audit records
 // without waiting for another service parent. unrelated services stay unlocked.
 func lockPublisherPublications(ctx context.Context, tx pgx.Tx, team, publisher, grant string) error {
-	if _, err := tx.Exec(ctx, `SELECT service.id FROM control.services service
+	_, err := tx.Exec(ctx, `SELECT service.id FROM control.services service
 		WHERE service.team_id=$1 AND service.id IN (
 			SELECT service_id FROM control.service_runs
 			WHERE publisher_identity_id=$2 AND ($3='' OR publisher_grant_id=$3) AND closed_at IS NULL)
-		ORDER BY service.id FOR UPDATE OF service`, team, publisher, grant); err != nil {
-		return err
-	}
-	_, err := tx.Exec(ctx, `SELECT service.id FROM control.public_urls service
-		WHERE service.team_id=$1 AND service.id IN (
-			SELECT run.public_url_id FROM control.publish_runs run
-			WHERE run.publisher_identity_id=$2 AND ($3='' OR run.publisher_grant_id=$3) AND run.closed_at IS NULL)
-		ORDER BY service.id FOR NO KEY UPDATE OF service`, team, publisher, grant)
+		ORDER BY service.id FOR UPDATE OF service`, team, publisher, grant)
 	return err
 }
 
@@ -52,9 +45,11 @@ func closeRevokedPrivatePublication(ctx context.Context, tx pgx.Tx, q *controlst
 	if err != nil {
 		return err
 	}
-	if _, err = q.CloseServiceRun(ctx, controlstatedb.CloseServiceRunParams{
-		ID: runID, ServiceID: serviceID, RunNumber: number, Now: timestamptz(now),
-	}); err != nil {
+	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: runID, ServiceID: serviceID})
+	if err != nil || run.RunNumber != number {
+		return errors.Join(ErrServiceAccess, err)
+	}
+	if _, err = closeServiceRun(ctx, q, run, now); err != nil {
 		return err
 	}
 	return nil
@@ -90,9 +85,16 @@ func closePublisherServiceRuns(ctx context.Context, tx pgx.Tx, q *controlstatedb
 	return nil
 }
 
-func closeRevokedPublicPublications(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, publisherIdentityID, grantID string, now time.Time) error {
-	rows, err := tx.Query(ctx, `SELECT DISTINCT run.public_url_id FROM control.publish_runs run
-	    WHERE run.publisher_identity_id=$1 AND ($2='' OR run.publisher_grant_id=$2) AND run.closed_at IS NULL ORDER BY run.public_url_id`, publisherIdentityID, grantID)
+// callers hold the team mutation guard. close runs bound to the member's
+// publisher identity or namespace grant before returning the policy mutation.
+func closeMembershipServiceRuns(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, team, member string, now time.Time) error {
+	rows, err := tx.Query(ctx, `SELECT DISTINCT run.service_id FROM control.service_runs run
+		JOIN control.services service ON service.id=run.service_id
+		JOIN control.publisher_identities publisher ON publisher.id=run.publisher_identity_id
+		JOIN control.publisher_grants grant ON grant.id=run.publisher_grant_id
+		WHERE service.team_id=$1 AND run.closed_at IS NULL
+		  AND (publisher.owner_membership_id=$2 OR grant.membership_id=$2)
+		ORDER BY run.service_id`, team, member)
 	if err != nil {
 		return err
 	}
@@ -105,29 +107,18 @@ func closeRevokedPublicPublications(ctx context.Context, tx pgx.Tx, q *controlst
 		}
 		services = append(services, id)
 	}
-	if err = rows.Err(); err != nil {
-		rows.Close()
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
 		return err
 	}
-	rows.Close()
-	pending := pendingIngressRoutingTableEvents{}
 	for _, id := range services {
-		service, err := q.LockPublicURLForRun(ctx, id)
-		if err != nil {
+		if _, err = q.LockService(ctx, id); err != nil {
 			return err
 		}
-		runs, err := q.ListOpenPublishRuns(ctx, id)
-		if err != nil {
+		if err = closeServiceRuns(ctx, tx, id, now); err != nil {
 			return err
-		}
-		for _, run := range runs {
-			if run.PublisherIdentityID.String != publisherIdentityID || grantID != "" && run.PublisherGrantID.String != grantID {
-				continue
-			}
-			if err = closePublishRun(ctx, q, &pending, service, run, PublishRunClosed, now, "publisher_revoked"); err != nil {
-				return err
-			}
 		}
 	}
-	return pending.publish(ctx, q)
+	return nil
 }

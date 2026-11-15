@@ -32,7 +32,7 @@ type serviceKubeconfig struct {
 }
 
 type servicePreparation struct {
-	service controlv1.Service
+	service controlv1.ServiceSummary
 	cancel  context.CancelFunc
 	done    chan struct{}
 	state   servicePreparationState // protected by the backend's mu.
@@ -80,7 +80,7 @@ func (p *servicePreparation) result() (*servingService, error) {
 	}
 }
 
-func (p *servicePreparation) matches(service controlv1.Service) bool {
+func (p *servicePreparation) matches(service controlv1.ServiceSummary) bool {
 	return p != nil && service.Id == p.service.Id && service.Protocol == p.service.Protocol && service.TrustRevision == p.service.TrustRevision &&
 		service.Endpoint != nil && p.service.Endpoint != nil && service.Endpoint.Hostname == p.service.Endpoint.Hostname
 }
@@ -107,7 +107,7 @@ func (serving *servingService) sessionLease(client *workload.Client, serviceID s
 	return session.LeaseExpiresAt, true
 }
 
-func (owner *ownedServiceListener) serving(service controlv1.Service, client *workload.Client) *servingService {
+func (owner *ownedServiceListener) serving(service controlv1.ServiceSummary, client *workload.Client) *servingService {
 	if owner == nil || !owner.attempt.matches(service) {
 		return nil
 	}
@@ -128,7 +128,7 @@ func (owner *ownedServiceListener) kubeconfig() (serviceKubeconfig, bool) {
 
 // preparation is incremental and failure is local to the requested service.
 // the exchanged service-ID snapshot is independent of this listener map.
-func (b *connectorConnectionBackend) prepareService(ctx context.Context, name string, previous *ownedServiceListener, service controlv1.Service, client *workload.Client) (*servicePreparation, error) {
+func (b *connectorConnectionBackend) prepareService(ctx context.Context, name string, previous *ownedServiceListener, service controlv1.ServiceSummary, client *workload.Client) (*servicePreparation, error) {
 	if !slices.Contains(b.scope.Services, name) {
 		return nil, connectorruntime.ErrUnavailable
 	}
@@ -156,7 +156,7 @@ func (b *connectorConnectionBackend) prepareService(ctx context.Context, name st
 	return b.prepareListener(ctx, name, previous, service, client, control, identity)
 }
 
-func (b *connectorConnectionBackend) prepareListener(ctx context.Context, name string, previous *ownedServiceListener, service controlv1.Service, client *workload.Client, control connectorstream.Control, identity string) (_ *servicePreparation, result error) {
+func (b *connectorConnectionBackend) prepareListener(ctx context.Context, name string, previous *ownedServiceListener, service controlv1.ServiceSummary, client *workload.Client, control connectorstream.Control, identity string) (_ *servicePreparation, result error) {
 	// until Serve takes ownership, every exit closes this adapter here.
 	defer func() {
 		if control != nil {

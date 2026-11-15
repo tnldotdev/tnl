@@ -75,7 +75,7 @@ func TestIntegrationPublishRunExpiryAndGatedReplay(t *testing.T) {
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state = 'ready', ready_at = $2, publisher_expires_at = $3 WHERE id = $1`, setup.PublishRunID, now, closedAt); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.maintenance_controls SET allowed = false, revision = revision + 1, updated_at = $1, updated_by = 'test' WHERE operation = 'publish_run_creation'`, now); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.maintenance_controls SET allowed = false, revision = revision + 1, updated_at = $1, updated_by = 'test' WHERE operation = 'service_run_creation'`, now); err != nil {
 		t.Fatal(err)
 	}
 	retry, err := database.CreatePublishRun(t.Context(), request, now.Add(7*time.Second), 30*time.Second, time.Minute)
@@ -99,10 +99,10 @@ func TestIntegrationPublishRunExpiryAndGatedReplay(t *testing.T) {
 		t.Fatalf("gated replay routing event = %q, %v", eventKind, err)
 	}
 	request.IdempotencyKey, request.RequestDigest, request.ExpectedMutationRevision = "replacement", sha256.Sum256([]byte("replacement")), 2
-	if _, err := database.CreatePublishRun(t.Context(), request, now.Add(8*time.Second), 30*time.Second, time.Minute); !errors.Is(err, ErrPublishRunCreationGated) {
+	if _, err := database.CreatePublishRun(t.Context(), request, now.Add(8*time.Second), 30*time.Second, time.Minute); !errors.Is(err, ErrServiceRunCreationGated) {
 		t.Fatalf("gated creation: %v", err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.maintenance_controls SET allowed = true, revision = revision + 1, updated_at = $1, updated_by = 'test' WHERE operation = 'publish_run_creation'`, now); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.maintenance_controls SET allowed = true, revision = revision + 1, updated_at = $1, updated_by = 'test' WHERE operation = 'service_run_creation'`, now); err != nil {
 		t.Fatal(err)
 	}
 	replacement, err := database.CreatePublishRun(t.Context(), request, now.Add(9*time.Second), 30*time.Second, time.Minute)

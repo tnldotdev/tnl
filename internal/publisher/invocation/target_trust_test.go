@@ -16,19 +16,20 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func TestConfiguredPublicTrustUsesPortablePEMAndVerifiedHostname(t *testing.T) {
+func TestConfiguredServiceTrustUsesPortablePEMAndVerifiedHostname(t *testing.T) {
 	ca, certificate := testutil.TLSCertificate(t, []string{"target.internal"}, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
 	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ready") }))
 	target.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}}
 	target.StartTLS()
 	t.Cleanup(target.Close)
 	project := clientproject.Project{Root: t.TempDir(), Config: config.TNL{Services: config.Services{
-		"web": {Tunnel: &config.Tunnel{}, Target: &config.ServiceTarget{Type: "address", Address: new(config.Target(target.URL)), TLS: &config.TargetTLS{Hostname: new("target.internal"), CA: new(string(ca))}}},
+		"web": {Target: &config.ServiceTarget{Type: "address", Address: new(config.Target(target.URL)), TLS: &config.TargetTLS{Hostname: new("target.internal"), CA: new(string(ca))}}},
 	}}}
 	flags := PublicOptions{Project: project, Service: "web"}
-	options, err := publicTargetOptions(t.Context(), flags, target.URL)
+	options, err := configuredTargetOptions(t.Context(), flags.Project, flags.Service, target.URL)
 	if err != nil || options.ServerName != "target.internal" || options.RootCAs == nil {
 		t.Fatal("configured trust was lost", options, err)
 	}
@@ -57,19 +58,27 @@ func TestConfiguredPublicTrustUsesPortablePEMAndVerifiedHostname(t *testing.T) {
 	if err := os.WriteFile(file, ca, 0600); err != nil {
 		t.Fatal(err)
 	}
-	options, err = publicTargetOptions(t.Context(), PublicOptions{TargetCAFile: file, TargetTLSName: "target.internal"}, target.URL)
+	trust, err := CaptureServiceTargetTrust(t.Context(), ServiceOptions{PublicOptions: PublicOptions{
+		TargetCAFile: file, TargetTLSName: "target.internal",
+	}}, controlv1.ServiceProtocolHTTP, target.URL)
+	if err != nil || trust == nil {
+		t.Fatal(err)
+	}
+	verifier, err := trust.Verifier()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := publisherproxy.PreflightWithOptions(t.Context(), target.URL, options); err != nil {
-		t.Fatal("ad-hoc CA-file support was lost", err)
+	conn, err := (&tls.Dialer{Config: verifier}).DialContext(t.Context(), "tcp", target.Listener.Addr().String())
+	if err != nil {
+		t.Fatal("service target capture lost ad-hoc CA-file support", err)
 	}
+	_ = conn.Close()
 }
 
 func TestAppMountTrustCanBeCapturedBeforeItsListenerExists(t *testing.T) {
 	ca, _ := testutil.TLSCertificate(t, []string{"api.internal"}, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
 	project := clientproject.Project{Config: config.TNL{Services: config.Services{
-		"web": {Tunnel: &config.Tunnel{}, HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api"}}}},
+		"web": {HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api"}}}},
 		"api": {Target: &config.ServiceTarget{Type: "app", TLS: &config.TargetTLS{Hostname: new("api.internal"), CA: new(string(ca))}}},
 	}}}
 	address := ""

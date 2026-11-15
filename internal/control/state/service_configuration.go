@@ -3,18 +3,93 @@ package state
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"reflect"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
+
+// declarations come from serviceConfiguration or normalizeServiceConfiguration,
+// never ciphertext or an unnormalized caller value. json.Marshal orders map keys.
+func serviceConfigurationDigest(declaration *ProjectServiceConfiguration) (string, error) {
+	data, err := json.Marshal(declaration)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(append([]byte("tnl/service-configuration/v1\x00"), data...))
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func ValidServiceConfigurationDigest(digest string) bool {
+	if len(digest) != 71 || !strings.HasPrefix(digest, "sha256:") {
+		return false
+	}
+	for _, c := range digest[7:] {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func (d *Database) GetServiceConfiguration(ctx context.Context, serviceID, actorID string) (_ *ProjectServiceConfiguration, _ string, retErr error) {
+	if !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) {
+		return nil, "", ErrServiceAccess
+	}
+	tx, err := d.beginServiceAccess(ctx, serviceReadOptions(ctx))
+	if err != nil {
+		return nil, "", err
+	}
+	defer rollback(ctx, tx, "get service configuration", &retErr)()
+	row, err := serviceForManagement(ctx, tx, serviceID, actorID)
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := checkedServiceMetadata(row); err != nil {
+		return nil, "", err
+	}
+	declaration, err := d.serviceConfiguration(ctx, controlstatedb.New(tx), serviceID)
+	if err != nil {
+		return nil, "", err
+	}
+	digest, err := serviceConfigurationDigest(declaration)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, "", err
+	}
+	return declaration, digest, nil
+}
 
 func serviceConfigurationContext(service string) string {
 	return "service-configuration/" + service
+}
+
+func normalizeServiceConfiguration(name string, value *ProjectServiceConfiguration) (*ProjectServiceConfiguration, error) {
+	data, err := json.Marshal(value)
+	if err != nil || len(data) > 512<<10 {
+		return nil, ErrProjectConfigurationInvalid
+	}
+	var normalized ProjectServiceConfiguration
+	if err := json.Unmarshal(data, &normalized); err != nil {
+		return nil, ErrProjectConfigurationInvalid
+	}
+	if err := normalizeAppliedProjectService(name, &normalized, true); err != nil {
+		return nil, err
+	}
+	if normalized.Name != name {
+		return nil, ErrProjectConfigurationInvalid
+	}
+	return &normalized, nil
 }
 
 // service-owned declarations need no project or worktree. applied remote services

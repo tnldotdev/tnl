@@ -400,6 +400,10 @@ func (a *connectorAdmission) CheckUse(ctx context.Context) (time.Time, error) {
 	b := a.peer.bound
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	return a.checkUseLocked(ctx)
+}
+
+func (a *connectorAdmission) checkUseLocked(ctx context.Context) (time.Time, error) {
 	if a.retiringLocked() || !a.admittedLocked() || !a.readyLocked() && !time.Now().Before(a.setupUntil) || a.ctx.Err() != nil || a.caller.Err() != nil || ctx.Err() != nil || !a.peer.currentLocked() {
 		return time.Time{}, ErrPrivateStream
 	}
@@ -593,7 +597,7 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 		return err
 	}
 	visitorCtx := observability.WithVisitor(observability.ExtractWireTrace(a.ctx, entry.TraceContext), entry.VisitorConnectionID)
-	return b.forwardManaged(visitorCtx, owned, servicestream.ConnectorVisitor{Admission: a}, "")
+	return b.forwardManaged(visitorCtx, owned, servicestream.ConnectorVisitor{Admission: a, HTTPProof: a}, "")
 }
 
 // dispatch never waits for policy installation or application IO. at most one
@@ -649,7 +653,11 @@ func (a *connectorAdmission) renewPermissions() {
 			entry := renewal.entry
 			entry.DeliveryGeneration = renewal.update.DeliveryGeneration
 			entry.Permission = renewal.update.Permission
-			err := a.renewPermission(entry, a.permission)
+			b := a.peer.bound
+			b.mu.Lock()
+			original := a.permission
+			b.mu.Unlock()
+			err := a.renewPermission(entry, original)
 			if errors.Is(err, tunnel.ErrConnectorPermissionStale) {
 				if ackErr := renewal.responder.RespondStale(renewal.update); ackErr != nil {
 					a.stopAndClose()
@@ -715,6 +723,9 @@ func (a *connectorAdmission) renewPermission(entry tunnelv1.ConnectorPeerVisitor
 			entry.DeliveryGeneration == a.peer.network.generation && !a.peer.deliveryCurrentLocked()
 		if current {
 			err = a.guard.Renew(next)
+			if err == nil {
+				a.entry, a.permission = entry, next
+			}
 		}
 		b.mu.Unlock()
 		if !current && !pending {

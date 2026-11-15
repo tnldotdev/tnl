@@ -13,7 +13,7 @@ func TestLeaseAuditBindingPrecedesVisibilityAndDoesNotRepeatOnRenewal(t *testing
 	calls := 0
 	var controller *Controller
 	var err error
-	controller, err = NewController(ControllerConfig{Client: leaseTestClient{}, RoutingTable: new(RoutingTable), Registration: ingressv1.IngressRegistration{IngressId: "ingress", IngressRunId: "run", ProtocolVersion: 1, ConnectionCapacity: 10}, RenewalInterval: time.Second, RetryInterval: time.Second, RoutingWait: time.Second,
+	controller, err = NewController(ControllerConfig{Client: leaseTestClient{}, Registration: ingressv1.IngressRegistration{IngressId: "ingress", IngressRunId: "run", ProtocolVersion: 1, ConnectionCapacity: 10}, RenewalInterval: time.Second, RetryInterval: time.Second,
 		LeaseEstablished: func(lease ingressv1.IngressLease) error {
 			calls++
 			if controller.lease.IngressLeaseRevision != 0 || lease.IngressLeaseRevision != 1 {

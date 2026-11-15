@@ -87,14 +87,14 @@ func (v *AuthoritativeVerifier) Verify(ctx context.Context, domain string, expec
 	return true, nil
 }
 
-func (v *AuthoritativeVerifier) VerifyPublicURL(
+func (v *AuthoritativeVerifier) VerifyAddress(
 	ctx context.Context,
 	hostname string,
 	expectedIPv4, expectedIPv6, nameservers []string,
 ) (bool, error) {
 	nameservers = normalizeDNSNames(nameservers)
 	if len(nameservers) < 2 {
-		return false, errors.New("dnscontroller: route nameserver set is incomplete")
+		return false, errors.New("dnscontroller: address nameserver set is incomplete")
 	}
 	expected := map[uint16][]string{dns.TypeA: slices.Clone(expectedIPv4), dns.TypeAAAA: slices.Clone(expectedIPv6)}
 	for recordType := range expected {
@@ -103,7 +103,7 @@ func (v *AuthoritativeVerifier) VerifyPublicURL(
 	for _, nameserver := range nameservers {
 		addresses, err := v.resolver.LookupIPAddr(ctx, nameserver)
 		if err != nil {
-			return false, fmt.Errorf("dnscontroller: resolve route nameserver %q: %w", nameserver, err)
+			return false, fmt.Errorf("dnscontroller: resolve address nameserver %q: %w", nameserver, err)
 		}
 		verified := false
 		var queryErr error
@@ -129,7 +129,7 @@ func (v *AuthoritativeVerifier) VerifyPublicURL(
 		}
 		if !verified {
 			if queryErr != nil {
-				return false, fmt.Errorf("dnscontroller: query route nameserver %q: %w", nameserver, queryErr)
+				return false, fmt.Errorf("dnscontroller: query address nameserver %q: %w", nameserver, queryErr)
 			}
 			return false, nil
 		}

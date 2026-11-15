@@ -270,6 +270,16 @@ func TestSignedServiceFixtureAllocationRetryKeepsOriginalNamespaceGrant(t *testi
 	if service.ExpiresAt == nil || again.ExpiresAt == nil || !service.ExpiresAt.Equal(deadline) || !again.ExpiresAt.Equal(deadline) {
 		t.Fatal("allocation retry lost or extended its fixed expiration")
 	}
+	*again.ExpiresAt = deadline.Add(time.Hour)
+	scoped, err := native.SavedService(t.Context())
+	if err != nil || scoped.ExpiresAt == nil || !scoped.ExpiresAt.Equal(deadline) {
+		t.Fatal("scoped service read lost the captured allocation deadline or aliased a caller snapshot", err)
+	}
+	changedDeadline := request
+	changedDeadline.ExpiresAt = new(deadline.Add(time.Hour))
+	if _, err := native.AllocateService(t.Context(), changedDeadline); err == nil || f.Allocations.Load() != 1 {
+		t.Fatal("allocation retry extended its original fixed deadline")
+	}
 	changed := request
 	changed.Configuration.Target = "http://127.0.0.1:3001"
 	if _, err := native.AllocateService(t.Context(), changed); err == nil || f.Allocations.Load() != 1 {
@@ -289,7 +299,8 @@ func TestSignedServiceFixtureAllocationRetryKeepsOriginalNamespaceGrant(t *testi
 		t.Fatal(err)
 	}
 	retry, err := native.PrepareServiceRun(t.Context(), service.Id, key, access, declared)
-	if err != nil || retry.ServiceRunId != preparation.ServiceRunId || retry.PublisherGrantId != identity.GrantId || retry.PublisherKeyId != identity.KeyId || f.Runs.Load() != 1 {
+	if err != nil || retry.ServiceRunId != preparation.ServiceRunId || retry.PublisherGrantId != identity.GrantId || retry.PublisherKeyId != identity.KeyId ||
+		!retry.ExpiresAt.Equal(deadline) || f.Runs.Load() != 1 {
 		t.Fatal("run retry changed exact identities", err)
 	}
 	if preparation.Traffic.Connections != 7 || preparation.Traffic.TotalDownloadBytes == nil || *preparation.Traffic.TotalDownloadBytes != 4096 {
@@ -307,6 +318,17 @@ func TestSignedServiceFixtureAllocationRetryKeepsOriginalNamespaceGrant(t *testi
 		t.Fatal("uncertain start replaced the run token", err)
 	}
 	runToken := credentials.ServiceRunToken(setup.RunToken)
+	for range 2 {
+		state, err := native.HeartbeatServiceRun(t.Context(), service.Id, setup.ServiceRunId, runToken, controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 7})
+		if err != nil || state.ServiceId != service.Id || state.ServiceRunId != setup.ServiceRunId || state.RunNumber != setup.RunNumber ||
+			!state.PublisherExpiresAt.Equal(deadline) {
+			t.Fatal("service renewal lost or extended the allocation's fixed deadline", err)
+		}
+		scoped, err := native.SavedService(t.Context())
+		if err != nil || scoped.ExpiresAt == nil || !scoped.ExpiresAt.Equal(deadline) {
+			t.Fatal("service renewal changed the deadline returned by a scoped service read", err)
+		}
+	}
 	visitor, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
 	if err != nil {
 		t.Fatal(err)

@@ -8,6 +8,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/region"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
@@ -15,19 +16,15 @@ import (
 )
 
 type service struct {
-	store               Store
-	leaseDuration       time.Duration
-	routingPollInterval time.Duration
-	now                 func() time.Time
-	report              func(error)
+	store         Store
+	leaseDuration time.Duration
+	now           func() time.Time
+	report        func(error)
 }
 
 func newService(config DirectConfig) (*service, error) {
 	if config.Store == nil || config.LeaseDuration <= 0 {
 		return nil, errors.New("ingressapi: store and lease duration are required")
-	}
-	if config.RoutingPollInterval <= 0 {
-		config.RoutingPollInterval = 250 * time.Millisecond
 	}
 	if config.Now == nil {
 		config.Now = time.Now
@@ -37,7 +34,7 @@ func newService(config DirectConfig) (*service, error) {
 	}
 	return &service{
 		store: config.Store, leaseDuration: config.LeaseDuration,
-		routingPollInterval: config.RoutingPollInterval, now: config.Now, report: config.Report,
+		now: config.Now, report: config.Report,
 	}, nil
 }
 
@@ -95,45 +92,18 @@ func (s *service) RenewIngress(
 	}
 	identity, ok := ingressLeaseIdentity(body.IngressId, body.IngressRunId, body.IngressLeaseRevision)
 	reportedConnections, connectionsOK := serverhttp.Nonnegative(body.ReportedConnections)
-	routingRevision, revisionOK := serverhttp.Nonnegative(body.RoutingTableRevision)
-	if !ok || !connectionsOK || !revisionOK {
+	if !ok || !connectionsOK {
 		return ingressv1.IngressLease{}, serverhttp.NewProblemError(
 			http.StatusBadRequest, "invalid_request", "Ingress renewal identity or counters are invalid",
 		)
 	}
-	if body.PreparedPublicRuns != nil {
-		if len(*body.PreparedPublicRuns) > 1000 {
-			return ingressv1.IngressLease{}, serverhttp.NewProblemError(http.StatusBadRequest, "invalid_request", "Too many public run observations")
-		}
-		for _, observation := range *body.PreparedPublicRuns {
-			if !serverhttp.ValidIdentifiers(observation.PublishRunId) || observation.PublishRunNumber <= 0 || observation.EntryRevision <= 0 || observation.ValidUntil.IsZero() {
-				return ingressv1.IngressLease{}, serverhttp.NewProblemError(http.StatusBadRequest, "invalid_request", "Public run observation is invalid")
-			}
-		}
-	}
 	lease, err := s.store.RenewIngress(ctx, controlstate.IngressRenewal{
 		IngressLeaseIdentity: identity, ReportedConnections: reportedConnections,
-		RoutingTableRevision: routingRevision,
-		PreparedPublicRuns:   publicRunObservations(body.PreparedPublicRuns),
 	}, s.now(), s.leaseDuration)
 	if err != nil {
 		return ingressv1.IngressLease{}, s.storeError(ctx, err)
 	}
 	return ingressLease(lease), nil
-}
-
-func publicRunObservations(observations *[]ingressv1.IngressPublicRunObservation) []controlstate.IngressPublicRunObservation {
-	if observations == nil {
-		return nil
-	}
-	result := make([]controlstate.IngressPublicRunObservation, len(*observations))
-	for index, observation := range *observations {
-		result[index] = controlstate.IngressPublicRunObservation{
-			PublishRunID: observation.PublishRunId, PublishRunNumber: observation.PublishRunNumber,
-			EntryRevision: observation.EntryRevision, ValidUntil: observation.ValidUntil,
-		}
-	}
-	return result
 }
 
 func (s *service) DrainIngress(
@@ -157,115 +127,33 @@ func (s *service) DrainIngress(
 	return ingressLease(lease), nil
 }
 
-func (s *service) GetIngressRoutingTableSnapshot(
-	ctx context.Context,
-	ingressID ingressv1.IngressID,
-	params ingressv1.GetIngressRoutingTableSnapshotParams,
-) (ingressv1.IngressRoutingTableSnapshot, error) {
-	identity, ok := ingressLeaseIdentity(ingressID, params.IngressRunId, params.IngressLeaseRevision)
-	if !ok {
-		return ingressv1.IngressRoutingTableSnapshot{}, serverhttp.NewProblemError(
-			http.StatusBadRequest, "invalid_request", "Ingress lease identity is invalid",
-		)
-	}
-	snapshot, err := s.store.ReadIngressRoutingTableSnapshot(ctx, identity, s.now())
-	if err != nil {
-		return ingressv1.IngressRoutingTableSnapshot{}, s.storeError(ctx, err)
-	}
-	return routingTableSnapshot(snapshot), nil
-}
-
-func (s *service) GetIngressRoutingTableEvents(
-	ctx context.Context,
-	ingressID ingressv1.IngressID,
-	params ingressv1.GetIngressRoutingTableEventsParams,
-) (ingressv1.IngressRoutingTablePage, error) {
-	identity, ok := ingressLeaseIdentity(ingressID, params.IngressRunId, params.IngressLeaseRevision)
-	after, afterOK := serverhttp.Nonnegative(params.After)
-	if !afterOK {
-		return ingressv1.IngressRoutingTablePage{}, serverhttp.NewProblemError(
-			http.StatusBadRequest, "invalid_request", "after must be a non-negative routing-table revision",
-		)
-	}
-	limit := defaultRoutingTablePageSize
-	if params.Limit != nil {
-		limit = *params.Limit
-	}
-	if limit < 1 || limit > controlstate.MaximumIngressRoutingTablePageSize {
-		return ingressv1.IngressRoutingTablePage{}, serverhttp.NewProblemError(
-			http.StatusBadRequest, "invalid_request", "limit must be between 1 and 1000",
-		)
-	}
-	wait := defaultRoutingTableWait
-	if params.Wait != nil {
-		var err error
-		wait, err = time.ParseDuration(*params.Wait)
-		if err != nil || wait < 0 || wait > defaultRoutingTableWait || wait%time.Second != 0 {
-			return ingressv1.IngressRoutingTablePage{}, serverhttp.NewProblemError(
-				http.StatusBadRequest, "invalid_request", "wait must be a whole-second duration between 0s and 25s",
-			)
-		}
-	}
-	if !ok {
-		return ingressv1.IngressRoutingTablePage{}, serverhttp.NewProblemError(
-			http.StatusBadRequest, "invalid_request", "Ingress lease identity is invalid",
-		)
-	}
-	deadline := time.Now().Add(wait)
-	for {
-		page, err := s.store.ReadIngressRoutingTableEvents(ctx, identity, after, limit, s.now())
-		if err != nil {
-			return ingressv1.IngressRoutingTablePage{}, s.storeError(ctx, err)
-		}
-		if page.ResnapshotRequired {
-			return ingressv1.IngressRoutingTablePage{}, serverhttp.NewProblemError(
-				http.StatusConflict, "routing_table_resnapshot_required",
-				"The routing-table revision was compacted; load a new snapshot",
-			)
-		}
-		if len(page.Events) != 0 || page.More || wait == 0 || !time.Now().Before(deadline) {
-			return routingTablePage(page), nil
-		}
-		poll := s.routingPollInterval
-		if remaining := time.Until(deadline); poll > remaining {
-			poll = remaining
-		}
-		timer := time.NewTimer(poll)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ingressv1.IngressRoutingTablePage{}, context.Cause(ctx)
-		case <-timer.C:
-		}
-	}
-}
-
-func (s *service) ObservePublicURLRecovery(
+func (s *service) ObserveServiceRecovery(
 	ctx context.Context,
 	ingressID ingressv1.IngressID,
 	recoveryEpisodeID int64,
-	body ingressv1.PublicURLRecoveryObservationRequest,
-) (ingressv1.PublicURLRecoveryObservation, error) {
+	body ingressv1.ServiceRecoveryObservationRequest,
+) (ingressv1.ServiceRecoveryObservation, error) {
 	if ingressID != body.IngressId {
-		return ingressv1.PublicURLRecoveryObservation{}, pathMismatchError()
+		return ingressv1.ServiceRecoveryObservation{}, pathMismatchError()
 	}
 	identity, ok := ingressLeaseIdentity(body.IngressId, body.IngressRunId, body.IngressLeaseRevision)
-	publishRunNumber, routeOK := serverhttp.Positive(body.PublishRunNumber)
 	episode, episodeOK := serverhttp.Positive(recoveryEpisodeID)
-	if !ok || !routeOK || !episodeOK || !serverhttp.ValidIdentifiers(body.PublicUrlId) || body.ObservedAt.IsZero() {
-		return ingressv1.PublicURLRecoveryObservation{}, serverhttp.NewProblemError(
+	if !ok || !episodeOK || body.RunNumber <= 0 || !opaqueid.Valid(body.ServiceId, opaqueid.ServicePrefix) ||
+		!opaqueid.Valid(body.ServiceRunId, opaqueid.ServiceRunPrefix) || !opaqueid.Valid(body.VisitorConnectionId, opaqueid.VisitorConnectionPrefix) || body.ObservedAt.IsZero() {
+		return ingressv1.ServiceRecoveryObservation{}, serverhttp.NewProblemError(
 			http.StatusBadRequest, "invalid_request", "Recovery observation identity is invalid",
 		)
 	}
-	observation, err := s.store.ObservePublicURLRecovery(
-		ctx, identity, body.PublicUrlId, publishRunNumber, episode, body.ObservedAt,
+	observation, err := s.store.ObserveServiceRecovery(
+		ctx, identity, controlstate.ServiceRunReference{ServiceID: body.ServiceId, RunID: body.ServiceRunId, RunNumber: body.RunNumber},
+		body.VisitorConnectionId, episode, body.ObservedAt, s.now(),
 	)
 	if err != nil {
-		return ingressv1.PublicURLRecoveryObservation{}, s.storeError(ctx, err)
+		return ingressv1.ServiceRecoveryObservation{}, s.storeError(ctx, err)
 	}
-	return ingressv1.PublicURLRecoveryObservation{
-		RecoveryEpisodeId: int64(observation.RecoveryEpisodeID), PublicUrlId: observation.PublicURLID,
-		PublishRunNumber: int64(observation.PublishRunNumber), OpenedAt: observation.OpenedAt,
+	return ingressv1.ServiceRecoveryObservation{
+		RecoveryEpisodeId: int64(observation.RecoveryEpisodeID), ServiceId: observation.ServiceID, ServiceRunId: observation.RunID,
+		RunNumber: observation.RunNumber, OpenedAt: observation.OpenedAt,
 		ObservedAt: observation.ObservedAt, ObservedSeconds: observation.ObservedSeconds,
 	}, nil
 }

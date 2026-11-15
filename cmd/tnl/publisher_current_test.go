@@ -51,3 +51,34 @@ func TestPublisherCurrentShowsFileScopeWithoutItsSigningKey(t *testing.T) {
 		t.Fatalf("empty publisher file selected a fallback identity: %v", err)
 	}
 }
+
+func TestPublisherCurrentShowsExactServiceFileWithoutSelectingANamespace(t *testing.T) {
+	id, _ := opaqueid.New(opaqueid.PublisherIdentityPrefix)
+	keyID, _ := opaqueid.New(opaqueid.PublisherIdentityKeyPrefix)
+	grant, _ := opaqueid.New(opaqueid.PublisherGrantPrefix)
+	service, _ := opaqueid.New(opaqueid.ServicePrefix)
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := credentialfile.New("https://control.example.test", authorityv1.PublisherEnrollmentResult{
+		ClientId: id, KeyId: keyID, GrantId: grant, TeamId: "team", Kind: "service", ServiceId: &service,
+	}, private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "publisher.json")
+	if err := credentialfile.Write(path, file); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TNL_PUBLISHER_CREDENTIAL_FILE", path)
+	var output bytes.Buffer
+	if err := runPublisherCurrent(t.Context(), publisherCurrentCommand{Output: statusOutputJSON}, &output); err != nil {
+		t.Fatal(err)
+	}
+	var result publisherCurrentResult
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil || result.Scope != service || result.GrantID != grant ||
+		strings.Contains(output.String(), file.PrivateKey) || strings.Contains(output.String(), "private_key") {
+		t.Fatal("current publisher lost or exposed its exact-service credential", err)
+	}
+}

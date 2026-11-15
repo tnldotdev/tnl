@@ -62,14 +62,10 @@ schemas:
     properties:
       id:
         $ref: "../openapi.yaml#/components/schemas/ResourceID"
-        description: The bound saved service or public URL ID.
+        description: The bound service ID.
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       trust_revision: { type: integer, format: int64, minimum: 1 }
       endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
-      public_url:
-        type: string
-        format: uri
-        description: The saved HTTP public URL when this binding uses one rather than a private service endpoint.
   Deployment:
     type: object
     additionalProperties: false

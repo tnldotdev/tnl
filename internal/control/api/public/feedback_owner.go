@@ -13,70 +13,48 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func (h *handler) ownerFeedbackDecision(ctx context.Context, token string, principal publicURLReadPrincipal, thread controlstate.FeedbackThread) (authorization.Decision, uint64, error) {
+func (h *handler) ownerFeedbackDecision(ctx context.Context, principal publicURLReadPrincipal, thread controlstate.FeedbackThread) error {
 	if _, member := principal.teamIDs[thread.TeamID]; !member {
-		return authorization.Decision{}, 0, authorization.ErrForbidden
+		return authorization.ErrForbidden
 	}
-	publicURL, err := h.store.GetPublicURLForFeedbackAuthorization(ctx, thread.PublicURLID)
-	if err != nil || publicURL.TeamID != thread.TeamID {
-		return authorization.Decision{}, 0, authorization.ErrForbidden
-	}
-	prefixes := make([]string, len(publicURL.AllowedIPPrefixes))
-	for index, prefix := range publicURL.AllowedIPPrefixes {
-		prefixes[index] = prefix.String()
-	}
-	decision, err := h.authorizer.Authorize(ctx, authorization.Request{
-		AccessToken: token, Operation: authorization.OperationFeedbackManage,
-		TeamID: publicURL.TeamID, PublicURLMembershipID: publicURL.MembershipID, DomainID: publicURL.DomainID,
-		CanonicalHostname: publicURL.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(publicURL.PublicURLScope),
-		Target: publicURL.Target, AllowedIPPrefixes: prefixes, Ephemeral: publicURL.Ephemeral,
-		PublicURLID: publicURL.ID, PublicURLMutationRevision: publicURL.MutationRevision,
-	})
-	if err != nil || decision.IdentityID != principal.identityID || decision.TeamID != thread.TeamID {
-		if err != nil {
-			return authorization.Decision{}, 0, err
-		}
-		return authorization.Decision{}, 0, authorization.ErrUnavailable
-	}
-	return decision, publicURL.MutationRevision, nil
+	return h.feedback.AuthorizeFeedbackService(ctx, thread.ServiceID, principal.identityID, time.Now())
 }
 
 func feedbackOwnerFailure(response http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, authorization.ErrUnauthenticated):
 		writeBearerProblem(response)
-	case errors.Is(err, authorization.ErrForbidden):
+	case errors.Is(err, authorization.ErrForbidden), errors.Is(err, controlstate.ErrFeedbackAccess), errors.Is(err, controlstate.ErrServiceAccess):
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
 	default:
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "feedback authorization is unavailable")
 	}
 }
 
-func (h *handler) getOwnerFeedback(response http.ResponseWriter, request *http.Request, id string) (controlstate.FeedbackThread, authorization.Decision, uint64, bool) {
+func (h *handler) getOwnerFeedback(response http.ResponseWriter, request *http.Request, id string) (controlstate.FeedbackThread, string, bool) {
 	principal, ok := h.authorizeReads(response, request)
 	if !ok {
-		return controlstate.FeedbackThread{}, authorization.Decision{}, 0, false
+		return controlstate.FeedbackThread{}, "", false
 	}
 	if h.feedback == nil {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "feedback is unavailable")
-		return controlstate.FeedbackThread{}, authorization.Decision{}, 0, false
+		return controlstate.FeedbackThread{}, "", false
 	}
 	thread, err := h.feedback.GetFeedback(request.Context(), id)
 	if err != nil {
 		writeControlStateProblem(request.Context(), response, "read feedback thread", err)
-		return controlstate.FeedbackThread{}, authorization.Decision{}, 0, false
+		return controlstate.FeedbackThread{}, "", false
 	}
-	token, _ := requestBearerToken(request)
-	decision, revision, err := h.ownerFeedbackDecision(request.Context(), token, principal, thread)
+	err = h.ownerFeedbackDecision(request.Context(), principal, thread)
 	if err != nil {
 		feedbackOwnerFailure(response, err)
-		return controlstate.FeedbackThread{}, authorization.Decision{}, 0, false
+		return controlstate.FeedbackThread{}, "", false
 	}
-	return thread, decision, revision, true
+	return thread, principal.identityID, true
 }
 
 func (h *handler) GetFeedbackThread(response http.ResponseWriter, request *http.Request, feedbackID controlv1.FeedbackID) {
-	thread, _, _, ok := h.getOwnerFeedback(response, request, feedbackID)
+	thread, _, ok := h.getOwnerFeedback(response, request, feedbackID)
 	if !ok {
 		return
 	}
@@ -107,12 +85,11 @@ func (h *handler) ListFeedbackThreads(response http.ResponseWriter, request *htt
 		writeControlStateProblem(request.Context(), response, "list feedback threads", err)
 		return
 	}
-	token, _ := requestBearerToken(request)
 	manageable := make([]controlstate.FeedbackThread, 0, len(page.Threads))
 	for _, thread := range page.Threads {
-		if _, _, err := h.ownerFeedbackDecision(request.Context(), token, principal, thread); err == nil {
+		if err := h.ownerFeedbackDecision(request.Context(), principal, thread); err == nil {
 			manageable = append(manageable, thread)
-		} else if !errors.Is(err, authorization.ErrForbidden) {
+		} else if !errors.Is(err, authorization.ErrForbidden) && !errors.Is(err, controlstate.ErrServiceAccess) && !errors.Is(err, controlstate.ErrFeedbackAccess) {
 			feedbackOwnerFailure(response, err)
 			return
 		}
@@ -132,7 +109,7 @@ func (h *handler) AppendFeedbackEvent(response http.ResponseWriter, request *htt
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid feedback event")
 		return
 	}
-	thread, decision, revision, ok := h.getOwnerFeedback(response, request, feedbackID)
+	thread, identity, ok := h.getOwnerFeedback(response, request, feedbackID)
 	if !ok {
 		return
 	}
@@ -143,19 +120,8 @@ func (h *handler) AppendFeedbackEvent(response http.ResponseWriter, request *htt
 	}
 	write.FeedbackID = thread.ID
 	write.IdempotencyKey = request.Header.Get("Idempotency-Key")
-	token, _ := requestBearerToken(request)
-	principal, err := h.authorizer.AuthorizePublicURLReads(request.Context(), token)
-	if err != nil || principal.identityID != decision.IdentityID {
-		if err == nil {
-			err = authorization.ErrUnauthenticated
-		}
-		feedbackOwnerFailure(response, err)
-		return
-	}
 	write.Actor = controlstate.FeedbackActor{
-		Kind: "implementer", IdentityID: decision.IdentityID, DisplayName: principal.displayName,
-		PolicyRevision:           decision.PolicyRevision,
-		ExpectedMutationRevision: revision,
+		Kind: "implementer", IdentityID: identity,
 	}
 	event, err := h.feedback.AppendFeedback(request.Context(), write, time.Now())
 	if err != nil {
@@ -171,7 +137,7 @@ func (h *handler) AppendFeedbackEvent(response http.ResponseWriter, request *htt
 }
 
 func (h *handler) ListFeedbackThreadEvents(response http.ResponseWriter, request *http.Request, feedbackID controlv1.FeedbackID, _ controlv1.ListFeedbackThreadEventsParams) {
-	thread, _, _, ok := h.getOwnerFeedback(response, request, feedbackID)
+	thread, _, ok := h.getOwnerFeedback(response, request, feedbackID)
 	if !ok {
 		return
 	}
@@ -217,7 +183,6 @@ func (h *handler) ListFeedbackEvents(response http.ResponseWriter, request *http
 		writeControlStateProblem(request.Context(), response, "watch feedback events", err)
 		return
 	}
-	token, _ := requestBearerToken(request)
 	visible := make([]controlstate.FeedbackEvent, 0, len(page.Events))
 	for _, event := range page.Events {
 		thread, err := h.feedback.GetFeedback(request.Context(), event.FeedbackID)
@@ -225,9 +190,9 @@ func (h *handler) ListFeedbackEvents(response http.ResponseWriter, request *http
 			writeControlStateProblem(request.Context(), response, "read watched feedback", err)
 			return
 		}
-		if _, _, err := h.ownerFeedbackDecision(request.Context(), token, principal, thread); err == nil {
+		if err := h.ownerFeedbackDecision(request.Context(), principal, thread); err == nil {
 			visible = append(visible, event)
-		} else if !errors.Is(err, authorization.ErrForbidden) {
+		} else if !errors.Is(err, authorization.ErrForbidden) && !errors.Is(err, controlstate.ErrServiceAccess) && !errors.Is(err, controlstate.ErrFeedbackAccess) {
 			feedbackOwnerFailure(response, err)
 			return
 		}

@@ -175,11 +175,11 @@ func TestIntegrationLocalServiceExposureFencesDNSWork(t *testing.T) {
 	if err != nil || !public.Metadata.Endpoint.Public || public.Metadata.Endpoint.Port != 443 {
 		t.Fatal("public startup did not use shared HTTPS", public, err)
 	}
-	if err := d.ValidateServiceEndpointDNSWork(ctx, private, request.Now); !errors.Is(err, ErrDNSPublicURLWorkStale) {
+	if err := d.ValidateServiceEndpointDNSWork(ctx, private, request.Now); !errors.Is(err, ErrServiceEndpointDNSWorkStale) {
 		t.Fatal("old loopback worker retained provider authority", err)
 	}
-	private.State = PublicURLDNSPublished
-	if _, err := d.SaveServiceEndpointDNSWork(ctx, private, request.Now); !errors.Is(err, ErrDNSPublicURLWorkStale) {
+	private.State = ServiceEndpointDNSPublished
+	if _, err := d.SaveServiceEndpointDNSWork(ctx, private, request.Now); !errors.Is(err, ErrServiceEndpointDNSWorkStale) {
 		t.Fatal("old DNS worker completed the new public revision", err)
 	}
 	if _, found, err := d.ClaimServiceEndpointDNSWork(ctx, "public-worker", request.Now, time.Minute); err != nil || found {
@@ -200,7 +200,7 @@ func TestIntegrationLocalServiceExposureFencesDNSWork(t *testing.T) {
 	if err := d.ValidateServiceEndpointDNSWork(ctx, current, request.Now); err != nil {
 		t.Fatal("idempotent startup invalidated current DNS work", err)
 	}
-	current.State, current.AvailableAt = PublicURLDNSPublished, time.Time{}
+	current.State, current.AvailableAt = ServiceEndpointDNSPublished, time.Time{}
 	if _, err := d.SaveServiceEndpointDNSWork(ctx, current, request.Now); err != nil {
 		t.Fatal(err)
 	}

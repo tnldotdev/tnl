@@ -24,11 +24,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/localapi"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 )
 
@@ -39,7 +39,7 @@ type Options struct {
 	Publications      bool
 	Snapshot          io.Reader
 	TargetResolver    target.TargetResolver
-	AttachPublication func(context.Context, publisherapp.Service, *publisher.Config) error
+	AttachPublication func(context.Context, publisherapp.Service, *publisherservice.RunConfig) error
 }
 
 func ResolveProject(ctx context.Context, options Options) (clientproject.Project, string, error) {
@@ -253,7 +253,7 @@ type appRuntime struct {
 	prepared       map[string]appPreparation
 	// visitor and admission integration is attached before worker fencing wraps
 	// callbacks. this applies equally to SDK, named CLI and invocation workers.
-	AttachPublication func(context.Context, publisherapp.Service, *publisher.Config) error
+	AttachPublication func(context.Context, publisherapp.Service, *publisherservice.RunConfig) error
 }
 
 type appPreparationGate struct {
@@ -500,26 +500,22 @@ func (a *appRuntime) acquire(ctx context.Context, request publisherprotocol.Leas
 	return registration, nil
 }
 
-func (a *appRuntime) workerConfiguration(ctx context.Context, service publisherapp.Service) (configuration publisherapp.Configuration, result error) {
+func (a *appRuntime) workerConfiguration(ctx context.Context, service publisherapp.Service) (publisherapp.Configuration, error) {
 	a.mu.Lock()
 	preparation, found := a.prepared[service.RegistrationID]
 	a.mu.Unlock()
 	if !found {
 		return publisherapp.Configuration{}, publisherapp.ErrRegistrationStale
 	}
+	if preparation.configuration.Service != nil {
+		return preparation.configuration, nil
+	}
 	operations := a.operations(preparation.project)
 	operations.Telemetry = a.Telemetry
 	if preparation.telemetryDisabled {
 		operations.Telemetry = nil
 	}
-	defer func() { configuration.Publisher.Telemetry = operations.Telemetry }()
-	if definition, configured := preparation.project.Config.Services[service.Name]; configured && !config.IsPublicService(definition) {
-		return operations.ServiceConfiguration(ctx, service)
-	}
-	if preparation.configuration.Publisher.Control != nil {
-		return preparation.configuration, nil
-	}
-	return operations.PublicConfiguration(ctx, service)
+	return operations.ServiceConfiguration(ctx, service)
 }
 
 func (a *appRuntime) operations(project clientproject.Project) *invocation.ProjectRuntime {

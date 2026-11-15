@@ -30,7 +30,7 @@ func (p *Server) observeBackend(ctx context.Context, connection net.Conn) (net.C
 	p.mu.Lock()
 	if p.closing {
 		p.mu.Unlock()
-		return nil, errors.Join(errBackendTrackingClosed, connection.Close())
+		return nil, errors.Join(net.ErrClosed, connection.Close())
 	}
 	p.backends[owned] = struct{}{}
 	p.reportStreamsLocked()

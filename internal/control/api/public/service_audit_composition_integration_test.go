@@ -154,7 +154,7 @@ func newAuditCompositionRun(t *testing.T, d *controlstate.Database, inspect *pgx
 	managedcert.Install(t, d, prepared, run, now)
 	for _, slot := range run.Connections {
 		r := relays[slot.RelayServiceID]
-		if _, err = d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, r.RelayLeaseIdentity, now); err != nil {
+		if _, err = d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), r.RelayLeaseIdentity, now); err != nil {
 			t.Fatal(err)
 		}
 		if _, err = d.ReadyServicePublisherConnection(ctx, slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, r.RelayLeaseIdentity, now); err != nil {

@@ -90,6 +90,33 @@ func InstallEnrolled(ctx context.Context, flags BackgroundOptions, selection Enr
 		}
 		flags.ServerURL = f.ControlURL
 	}
+	// a fully specified fixed target needs no credential or local store to prove
+	// availability. saved service trust is still checked after exact selection.
+	protocol := controlv1.ServiceProtocol(flags.Protocol)
+	fixed := flags.Service == ""
+	if flags.Service != "" {
+		if definition, found := flags.Project.Config.Services[flags.Service]; found {
+			protocol = controlv1.ServiceProtocol(config.Protocol(definition))
+			fixed = config.TargetType(definition) == "address"
+		}
+	}
+	if fixed && protocol.Valid() {
+		selected := flags.ServiceOptions
+		if strings.HasPrefix(flags.Target, "https://") && selected.TargetTLS == nil {
+			selected.TargetTLS = new(true)
+		}
+		trust, err := CaptureServiceTargetTrust(ctx, selected, protocol, flags.Target)
+		if err != nil {
+			return err
+		}
+		plan := targetplan.TargetPlan{Protocol: config.ProtocolName(protocol), Target: flags.Target, Trust: trust}
+		if err := plan.Normalize(); err != nil {
+			return err
+		}
+		if err := targetplan.PreflightPrivate(ctx, plan); err != nil {
+			return err
+		}
+	}
 	if flags.Service != "" && flags.ServerURL == "" && !background.System {
 		server, state, err := resolveServer(ctx, flags.StateDir, "")
 		if err != nil {
@@ -367,7 +394,7 @@ func SelectConfiguredPublisherCandidates(ctx context.Context, server string, pro
 			continue
 		}
 		var identity authorityv1.PublisherEnrollmentResult
-		if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != saved.ID || identity.ServiceId == nil || *identity.ServiceId != id || identity.Kind != authorityv1.Service || identity.PublicUrlId != nil {
+		if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != saved.ID || identity.ServiceId == nil || *identity.ServiceId != id || identity.Kind != authorityv1.Service {
 			return nil, selected, nil, savedService, installedjobs.ErrScope
 		}
 		native, err := publisheridentity.NewNative(control, authority, identity, saved.SigningKey)

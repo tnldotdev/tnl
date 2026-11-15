@@ -27,7 +27,9 @@ schemas:
     type: object
     additionalProperties: false
     required: [protocol, publisher_pool, expected_trust_revision]
-    description: "Replacement service settings. Copy trust_revision into expected_trust_revision; a stale revision is rejected. Omit target_tls to remove it. Endpoint and placement are not writable here."
+    dependentRequired:
+      expected_configuration_digest: [configuration]
+    description: "Replacement service settings. Copy trust_revision into expected_trust_revision; a stale revision is rejected independently of the declaration digest and pool condition. Omit target_tls to remove it. Optional configuration replaces a standalone service's full declaration on the same service ID; protocol and target_tls must agree with it. For read/modify/write, send the observed publisher_pool as expected_publisher_pool and the unquoted ETag token from getServiceConfiguration as expected_configuration_digest; either mismatch conflicts before any service write. Conditions describe observed state, not desired settings. Full desired-intent replacements may omit these optional conditions. Omit configuration to retain the saved declaration, which must still agree with the metadata. Allocated and project-managed declarations cannot be changed here."
     properties:
       expected_trust_revision:
         {
@@ -39,6 +41,16 @@ schemas:
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }
       publisher_pool: { type: boolean }
+      expected_publisher_pool:
+        type: boolean
+        description: Observed publisher_pool value, not the desired setting. A mismatch with the locked service conflicts independently of trust and declaration conditions. Omit for an unconditional pool replacement; null is invalid.
+      configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceConfiguration" }
+      expected_configuration_digest:
+        type: string
+        minLength: 71
+        maxLength: 71
+        pattern: "^sha256:[0-9a-f]{64}$"
+        description: Opaque canonical declaration digest, without ETag quotes. Requires configuration; also covers the absence of a saved declaration.
   ServiceInvitationCredential:
     type: object
     additionalProperties: false
@@ -163,7 +175,6 @@ schemas:
     required:
       [
         id,
-        team_id,
         name,
         enabled,
         created_at,
@@ -179,7 +190,16 @@ schemas:
       run_number: [service_run_id]
     properties:
       id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
-      team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
+      team_id:
+        {
+          $ref: "../openapi.yaml#/components/schemas/TeamID",
+          x-go-type-skip-optional-pointer: true,
+        }
+      guest_id:
+        {
+          $ref: "../openapi.yaml#/components/schemas/GuestID",
+          x-go-type-skip-optional-pointer: true,
+        }
       domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
       placement: { $ref: "../openapi.yaml#/components/schemas/ServicePlacement" }
       source: { $ref: "../openapi.yaml#/components/schemas/LocalServiceSource" }
@@ -226,21 +246,60 @@ schemas:
           x-go-type: int64,
           x-oapi-codegen-extra-tags: { json: "run_number,omitempty,string" },
         }
+    not:
+      anyOf:
+        - required: [team_id, guest_id]
+        - not:
+            anyOf:
+              - required: [team_id]
+              - required: [guest_id]
+  ServiceAccessPath:
+    type: string
+    enum: [connector, public_endpoint]
+    x-enum-varnames: [ServiceAccessPathConnector, ServiceAccessPathPublicEndpoint]
+    default: connector
+  SetServiceEnabledRequest:
+    type: object
+    additionalProperties: false
+    required: [enabled]
+    properties:
+      enabled:
+        type: boolean
+        x-go-type: "*bool"
+        description: False suspends publication; true allows new runs after current authorization checks.
   ServiceSummary:
     type: object
     additionalProperties: false
     description: "Service identity, placement, and an optional run. Omits target trust, target addresses, credentials, and publisher HTTP limits."
-    required: [id, team_id, name, enabled, created_at, protocol, publisher_pool, trust_revision]
+    required: [id, name, enabled, created_at, protocol, publisher_pool, trust_revision]
     dependentRequired:
       service_run_id: [run_number]
       run_number: [service_run_id]
     properties:
       id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
-      team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
+      team_id:
+        {
+          $ref: "../openapi.yaml#/components/schemas/TeamID",
+          x-go-type-skip-optional-pointer: true,
+        }
+      guest_id:
+        {
+          $ref: "../openapi.yaml#/components/schemas/GuestID",
+          x-go-type-skip-optional-pointer: true,
+        }
       domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
       placement: { $ref: "../openapi.yaml#/components/schemas/ServicePlacement" }
       source: { $ref: "../openapi.yaml#/components/schemas/LocalServiceSource" }
       name: { $ref: "../openapi.yaml#/components/schemas/ServiceName" }
+      team_name:
+        type: string
+        description: Actual stored team name. Present in signed-in visitor inventory; omitted in management inventory.
+        x-go-type-skip-optional-pointer: true
+      visitor_access:
+        type: string
+        enum: [owner, team_grant, identity_grant, preview_team]
+        description: Current identity permission reason for the requested access path. Present in visitor inventory only; listing is not traffic authorization.
+        x-go-type-skip-optional-pointer: true
       enabled: { type: boolean }
       endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
@@ -262,6 +321,13 @@ schemas:
           x-go-type: int64,
           x-oapi-codegen-extra-tags: { json: "run_number,omitempty,string" },
         }
+    not:
+      anyOf:
+        - required: [team_id, guest_id]
+        - not:
+            anyOf:
+              - required: [team_id]
+              - required: [guest_id]
   ServicePage:
     type: object
     additionalProperties: false
@@ -347,7 +413,6 @@ schemas:
     additionalProperties: false
     required:
       [
-        team_id,
         service_id,
         service_run_id,
         run_number,
@@ -362,7 +427,16 @@ schemas:
         require_post_quantum,
       ]
     properties:
-      team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
+      team_id:
+        {
+          $ref: "../openapi.yaml#/components/schemas/TeamID",
+          x-go-type-skip-optional-pointer: true,
+        }
+      guest_id:
+        {
+          $ref: "../openapi.yaml#/components/schemas/GuestID",
+          x-go-type-skip-optional-pointer: true,
+        }
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
       run_number:
@@ -382,6 +456,13 @@ schemas:
       domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
       traffic: { $ref: "../openapi.yaml#/components/schemas/TrafficLimits" }
       require_post_quantum: { type: boolean }
+    not:
+      anyOf:
+        - required: [team_id, guest_id]
+        - not:
+            anyOf:
+              - required: [team_id]
+              - required: [guest_id]
   ServiceRunSetup:
     type: object
     additionalProperties: false

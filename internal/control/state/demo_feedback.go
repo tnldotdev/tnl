@@ -21,7 +21,7 @@ func (d *Database) CreateServiceRunPreview(ctx context.Context, auth ServiceHTTP
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	run, err := serviceRunAuthorization(ctx, tx, q, auth.Subject.ID, auth.RunID, auth.Token.String(), now)
+	run, err := d.serviceRunAuthorization(ctx, tx, q, auth.Subject.ID, auth.RunID, auth.Token.String(), now)
 	if err != nil {
 		return result, err
 	}

@@ -1,26 +1,24 @@
 package identity
 
 import (
-	"context"
-	"crypto/ed25519"
 	"errors"
+	"path/filepath"
 	"reflect"
 	"testing"
 
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
-	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/publishingtest"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/testutil"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-type trafficControlStub struct {
-	unusedControl
-	url, retry, token, proof string
-	selection                *trafficlimits.Selection
-}
-
 func TestNativeTrafficClonePreservesOptionalValues(t *testing.T) {
 	selection := &trafficlimits.Selection{Connections: new(48), Rate: new(3), RatePer: new("1m"), Burst: new(4), UploadBytes: new(int64(1 << 20)), DownloadBytes: new(int64(2 << 20)), TotalConnections: new(int64(0)), TotalUploadBytes: new(int64(7)), TotalDownloadBytes: new(int64(8))}
-	n := &Native{NativeControl: NativeControl{PublicURLControl: &trafficControlStub{}}}
+	n := &Native{NativeControl: NativeControl{Services: &unusedControl{}}}
 	selected, err := n.WithTraffic(selection)
 	if err != nil || !reflect.DeepEqual(selection, selected.traffic) {
 		t.Fatal("typed copy changed explicit traffic values", err)
@@ -37,13 +35,28 @@ func TestNativeTrafficClonePreservesOptionalValues(t *testing.T) {
 	}
 }
 
-func (s *trafficControlStub) CreatePublisherRun(_ context.Context, id, retry, token, proof string, selection *trafficlimits.Selection, _ ...string) (controlv1.PublishRunSetup, error) {
-	s.url, s.retry, s.token, s.proof, s.selection = id, retry, token, proof, selection
-	return controlv1.PublishRunSetup{}, nil
-}
-
 func TestNativeTrafficSelectionKeepsSignedRunBoundary(t *testing.T) {
-	private := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+	if !testutil.IsolatedPublishingTest(t) {
+		return
+	}
+	f := publishingtest.New(t, testutil.PublishingHooks{})
+	control, err := f.Owner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := clientauthority.New(f.URL, f.HTTP, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	profile, err := database.Server(t.Context(), f.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, test := range []struct {
 		name      string
 		selection *trafficlimits.Selection
@@ -52,42 +65,75 @@ func TestNativeTrafficSelectionKeepsSignedRunBoundary(t *testing.T) {
 		{name: "explicit", selection: &trafficlimits.Selection{Connections: new(48)}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			control := &trafficControlStub{}
-			n := &Native{NativeControl: NativeControl{PublicURLControl: control}, authority: &lostEnrollmentResponse{}, private: private, publicURL: controlv1.PublicURL{Id: "url"}}
+			service, err := f.SavedService(t.Context(), test.name, controlv1.ProjectServiceConfiguration{Target: "app", Public: new(true)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			n, identity, err := EnsureServiceOwner(t.Context(), profile, control, authority, service)
+			if err != nil {
+				t.Fatal(err)
+			}
 			selected, err := n.WithTraffic(test.selection)
 			if err != nil {
 				t.Fatal(err)
 			}
-			for range 2 {
-				if _, err := selected.CreatePublishRun(t.Context(), "url", "retry"); err != nil {
-					t.Fatal(err)
-				}
-				if control.url != "url" || control.retry != "retry" || control.token != "access" || !reflect.DeepEqual(control.selection, test.selection) || n.traffic != nil {
-					t.Fatal("traffic selection or scoped authentication changed")
-				}
-				public := private.Public().(ed25519.PublicKey)
-				if _, err := publisherproof.VerifyRun(public, control.proof, "url", "retry"); err != nil {
-					t.Fatal(err)
-				}
-				if _, err := publisherproof.VerifyRun(public, control.proof, "other", "retry"); err == nil {
-					t.Fatal("proof authorized another public URL")
-				}
-				if _, err := publisherproof.VerifyRun(public, control.proof, "url", "other"); err == nil {
-					t.Fatal("proof authorized another attempt")
-				}
-				if control.selection != nil {
-					*control.selection.Connections = 1
-				}
+			key, err := opaqueid.New(opaqueid.IdempotencyPrefix)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if _, err := selected.CreatePublishRun(t.Context(), "other", "retry"); !errors.Is(err, ErrScope) {
+			access, err := selected.Access(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var prepared controlv1.ServiceRunPreparation
+			for attempt := range 2 {
+				run, err := selected.PrepareServiceRun(t.Context(), service.Id, key, access, ServiceDeclaration(service))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if run.ServiceId != service.Id || run.IdempotencyKey != key || run.PublisherIdentityId != identity.ClientId ||
+					run.PublisherGrantId != identity.GrantId || run.PublisherKeyId != identity.KeyId || n.traffic != nil ||
+					!reflect.DeepEqual(selected.traffic, test.selection) {
+					t.Fatal("traffic selection, exact service, retry key, or original signed grant changed")
+				}
+				if test.selection != nil && run.Traffic.Connections != *test.selection.Connections {
+					t.Fatal("explicit worker traffic was not retained in the service run")
+				}
+				if attempt != 0 && (run.ServiceRunId != prepared.ServiceRunId || run.RunNumber != prepared.RunNumber) {
+					t.Fatal("retry replaced an already prepared service run")
+				}
+				prepared = run
+			}
+			other, err := f.SavedService(t.Context(), "other-"+test.name, controlv1.ProjectServiceConfiguration{Target: "app", Public: new(true)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := selected.PrepareServiceRun(t.Context(), other.Id, key, access, ServiceDeclaration(other)); !errors.Is(err, ErrScope) {
 				t.Fatalf("unscoped run: %v", err)
+			}
+			if _, err := control.PrepareServiceRun(t.Context(), other.Id, key, access, ServiceDeclaration(other)); err == nil {
+				t.Fatal("the original signed access authorized another service at the control boundary")
+			}
+			next, err := opaqueid.New(opaqueid.IdempotencyPrefix)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := control.PrepareServiceRun(t.Context(), service.Id, next, access, ServiceDeclaration(service)); err == nil {
+				t.Fatal("a different attempt replaced the current service run")
+			}
+			setup, err := selected.StartServiceRun(t.Context(), service.Id, prepared.ServiceRunId, access, prepared.RunNumber)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := selected.CloseServiceRun(t.Context(), service.Id, setup.ServiceRunId, credentials.ServiceRunToken(setup.RunToken)); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
 }
 
 func TestNativeTrafficSelectionsAreIndependent(t *testing.T) {
-	n := &Native{NativeControl: NativeControl{PublicURLControl: &unusedControl{}}}
+	n := &Native{NativeControl: NativeControl{Services: &unusedControl{}}}
 	selection := &trafficlimits.Selection{Connections: new(48)}
 	first, err := n.WithTraffic(selection)
 	if err != nil {

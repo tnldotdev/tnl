@@ -20,7 +20,7 @@ func TestConnectListenRejectsNonLoopbackAndInvalidPorts(t *testing.T) {
 }
 
 func TestConnectSelectionRequiresExactIdentityInventoryAndTeam(t *testing.T) {
-	services := []controlv1.Service{{Id: "first", Name: "orders", TeamId: "one"}, {Id: "second", Name: "orders", TeamId: "two"}}
+	services := []controlv1.ServiceSummary{{Id: "first", Name: "orders", TeamId: "one"}, {Id: "second", Name: "orders", TeamId: "two"}}
 	if _, err := SelectService(services, "orders", ""); err == nil {
 		t.Fatal("ambiguous name accepted")
 	}

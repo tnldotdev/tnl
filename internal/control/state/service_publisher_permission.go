@@ -13,7 +13,8 @@ import (
 // servicePublisherSelectionMatches validates the request's identity shape. only
 // the database permission decision proves that its actual grant covers a service.
 func servicePublisherSelectionMatches(p PublisherIdentity, service string) bool {
-	return opaqueid.Valid(service, opaqueid.ServicePrefix) && p.Kind != "guest" &&
+	return opaqueid.Valid(service, opaqueid.ServicePrefix) &&
+		(p.Kind != "guest" || p.Scope.Kind == "service" && p.Scope.ServiceID == service && p.GuestID != "" && p.Scope.GuestID == p.GuestID && p.Scope.TeamID == "") &&
 		(p.Scope.Kind == "service" && p.Scope.ServiceID == service || p.Scope.Kind == DeploymentCredentialGrant || p.Scope.Kind == "namespace") &&
 		opaqueid.Valid(p.ID, opaqueid.PublisherIdentityPrefix) &&
 		opaqueid.Valid(p.GrantID, opaqueid.PublisherGrantPrefix) &&
@@ -38,6 +39,25 @@ func publisherServicePermission(ctx context.Context, tx pgx.Tx, publisher, grant
 // serviceRunPublisherPermission checks the exact persisted publisher tuple. a
 // run token or an earlier selection never replaces current service permission.
 func serviceRunPublisherPermission(ctx context.Context, tx pgx.Tx, run controlstatedb.ControlServiceRun, now time.Time) (pgtype.Timestamptz, error) {
+	clock := newAuthorizationClock(now)
+	if run.GuestID.Valid {
+		// guest callers already hold trial -> service -> run. identities and
+		// grants are the final locks, never a way to acquire the trial later.
+		q := controlstatedb.New(tx)
+		identity, err := q.LockPublisherIdentity(ctx, run.PublisherIdentityID)
+		if err != nil {
+			return pgtype.Timestamptz{}, publisherLookupError(err, ErrServiceAccess)
+		}
+		grant, err := q.GetPublisherGrant(ctx, controlstatedb.GetPublisherGrantParams{ID: run.PublisherGrantID, PublisherIdentityID: identity.ID})
+		if err != nil {
+			return pgtype.Timestamptz{}, publisherLookupError(err, ErrServiceAccess)
+		}
+		if identity.GuestID != run.GuestID || grant.GuestID != run.GuestID || grant.ServiceID.String != run.ServiceID ||
+			identity.TeamID.Valid || grant.TeamID.Valid {
+			return pgtype.Timestamptz{}, ErrServiceAccess
+		}
+	}
+	now = clock.current()
 	state := serviceRunLifecycleState(run.State)
 	if run.ClosedAt.Valid || !run.PublisherExpiresAt.Time.After(now) ||
 		!state.active() && state != serviceRunPrepared ||

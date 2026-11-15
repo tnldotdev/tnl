@@ -7,7 +7,8 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
+	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	"github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
@@ -41,10 +43,13 @@ type Stream struct {
 	Authority         string
 	Target            string
 	Handler           http.Handler
+	Mounts            []proxy.Mount
+	ResolveHTTPTarget func(*http.Request) (address, identity string, err error)
 	InspectionMode    inspection.Mode
 	ObserveSummary    inspection.Observer
 	AdmitRequest      func(*http.Request) error
 	HTTPResponseHooks httpstream.ResponseHooks
+	ConnectorHTTP     ConnectorHTTPFrontend
 	TLS               *tls.Config
 	TargetTLS         *tls.Config
 	Visitor           Authentication
@@ -59,8 +64,10 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		fields.Exposure = "public"
 	}
 	var connector ConnectorAdmission
+	var httpProof ConnectorHTTPProof
 	if v, ok := s.Visitor.(ConnectorVisitor); ok {
 		connector = v.Admission
+		httpProof = v.HTTPProof
 		fields.AccessPath = "connector"
 	}
 	if _, ok := s.Visitor.(HTTPVisitor); ok {
@@ -74,7 +81,8 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	canonical, nameErr := naming.CanonicalizeHostname(s.Hostname)
 	transport := targettransport.Transport{Protocol: s.Protocol, TLS: s.TargetTLS}
 	inline := s.Protocol == config.ProtocolHTTP && s.Handler != nil && s.Target == "" && s.TargetTLS == nil
-	if transport.Validate() != nil || nameErr != nil || canonical != s.Hostname || s.Target == "" && !inline || s.Handler != nil && !inline || s.TLS == nil || s.TLS.GetConfigForClient != nil || !valid {
+	if transport.Validate() != nil || nameErr != nil || canonical != s.Hostname || s.Target == "" && !inline || s.Handler != nil && !inline || s.TLS == nil || s.TLS.GetConfigForClient != nil || !valid ||
+		(len(s.Mounts) != 0 || s.ResolveHTTPTarget != nil) && (s.Protocol != config.ProtocolHTTP || inline) {
 		return ErrEndpoint
 	}
 	if _, ok := s.Visitor.(HTTPVisitor); ok && s.Protocol != config.ProtocolHTTP {
@@ -87,14 +95,12 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		visitor = &connectorServiceConn{conn: visitor, ctx: ctx, admission: connector}
 	}
 	// target dials can outlive their requesting HTTP handlers, which httpstream
-	// joins separately. keep entered target work until connector cleanup finishes.
+	// joins separately. keep entered target work until physical cleanup finishes.
 	var targetWorkMu sync.Mutex
 	var targetWork sync.WaitGroup
 	acceptTargetWork := true
 	life, cancelLife := context.WithCancel(ctx)
-	if connector != nil {
-		ctx = life
-	}
+	ctx = life
 	defer cancelLife()
 	setupUntil := time.Now().Add(10 * time.Second)
 	if connector != nil && connector.SetupDeadline().Before(setupUntil) {
@@ -103,25 +109,25 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	setup, cancelSetup := context.WithDeadline(ctx, setupUntil)
 	defer cancelSetup()
 	promoted := false
-	defer func() {
-		if !promoted && setup.Err() != nil {
-			result = context.Cause(setup)
-		}
-	}()
 	deadline, _ := setup.Deadline()
 	if err := visitor.SetDeadline(deadline); err != nil {
 		return err
 	}
-	// keep the raw target socket separately from TLS wrappers. cancellation may
+	// keep raw target sockets separately from TLS wrappers. cancellation may
 	// race with dialing or block in a connector read that does not accept a context.
 	var socketsMu sync.Mutex
-	var targetSocket net.Conn
+	targetSockets := make(map[*targetSocket]struct{})
+	socketsClosed := false
 	closeSockets := func() {
 		socketsMu.Lock()
-		target := targetSocket
+		socketsClosed = true
+		targets := make([]*targetSocket, 0, len(targetSockets))
+		for target := range targetSockets {
+			targets = append(targets, target)
+		}
 		socketsMu.Unlock()
 		_ = visitor.Close()
-		if target != nil {
+		for _, target := range targets {
 			_ = target.Close()
 		}
 	}
@@ -139,30 +145,41 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 			<-callbackDone
 		}
 	}()
-	trackTarget := func(conn net.Conn) {
+	trackTarget := func(conn net.Conn) net.Conn {
+		tracked := &targetSocket{Conn: conn}
+		tracked.remove = func() {
+			socketsMu.Lock()
+			delete(targetSockets, tracked)
+			socketsMu.Unlock()
+		}
 		socketsMu.Lock()
-		targetSocket = conn
-		canceled := setup.Err() != nil || connector != nil && life.Err() != nil
+		targetSockets[tracked] = struct{}{}
+		canceled := socketsClosed || !promoted && setup.Err() != nil || life.Err() != nil
 		socketsMu.Unlock()
 		if canceled {
-			_ = conn.Close()
+			_ = tracked.Close()
 		}
+		return tracked
 	}
-	if connector != nil {
-		defer func() {
+	defer func() {
+		if connector != nil {
 			connector.Stop()
-			targetWorkMu.Lock()
-			acceptTargetWork = false
-			targetWorkMu.Unlock()
-			cancelLife()
-			closeSockets()
-			targetWork.Wait()
-		}()
-	}
-	enterConnectorWork := func() (func(), bool) {
-		if connector == nil {
-			return func() {}, true
 		}
+		targetWorkMu.Lock()
+		acceptTargetWork = false
+		targetWorkMu.Unlock()
+		cancelLife()
+		closeSockets()
+		targetWork.Wait()
+	}()
+	defer func() {
+		// preserve setup failures before owned cleanup cancels its context.
+		// cancellation must not replace an independent authorization failure.
+		if !promoted && setup.Err() != nil {
+			result = errors.Join(result, context.Cause(setup))
+		}
+	}()
+	enterTargetWork := func() (func(), bool) {
 		targetWorkMu.Lock()
 		defer targetWorkMu.Unlock()
 		if !acceptTargetWork {
@@ -191,7 +208,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		if err != nil {
 			return nil, err
 		}
-		trackTarget(conn)
+		conn = trackTarget(conn)
 		if connector != nil {
 			if err := connectorCheck(call, connector); err != nil {
 				_ = conn.Close()
@@ -238,7 +255,6 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		if err != nil {
 			return err
 		}
-		trackTarget(backend)
 		if err = backend.SetDeadline(deadline); err != nil {
 			return err
 		}
@@ -254,6 +270,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	frontTLS.ClientAuth = s.Visitor.clientAuth()
 	frontTLS.NextProtos = nil
 	if s.Protocol == config.ProtocolHTTP {
+		frontTLS.MinVersion = max(frontTLS.MinVersion, tls.VersionTLS13)
 		frontTLS.NextProtos = []string{"h2", "http/1.1"}
 	}
 	frontTLS.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
@@ -285,7 +302,9 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 			return err
 		}
 		admissionDone(nil)
-		return httpVisitor.Frontend.Forward(ctx, secured, HTTPTarget{Address: s.Target, Handler: s.Handler, Transport: transport, Drain: s.HTTPDrain})
+		return httpVisitor.Frontend.Forward(ctx, secured, HTTPTarget{Address: s.Target, Handler: s.Handler, Transport: transport, Drain: s.HTTPDrain,
+			Mounts: s.Mounts, ResolveTarget: s.ResolveHTTPTarget,
+			lifetime: ctx, track: trackTarget, enter: enterTargetWork})
 	}
 	authCtx, authDone := observability.PublisherOperation(setup, "visitor_authorization")
 	decision, err := s.Visitor.authorize(authCtx, secured.ConnectionState())
@@ -305,7 +324,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 			return err
 		}
 		admissionDone(nil)
-		return s.forwardKubernetes(ctx, client, secured.ConnectionState(), HTTPTarget{Address: s.Target, Transport: transport, connector: connector, lifetime: ctx, track: trackTarget, enter: enterConnectorWork}, decision, wrapHandler)
+		return s.forwardKubernetes(ctx, client, secured.ConnectionState(), HTTPTarget{Address: s.Target, Transport: transport, connector: connector, lifetime: ctx, track: trackTarget, enter: enterTargetWork}, decision, wrapHandler)
 	}
 	if s.Protocol == config.ProtocolHTTP {
 		admissionDone(nil)
@@ -320,13 +339,20 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		done := make(chan struct{})
 		go func() { defer close(done); s.guardVisitor(live, client, nil, secured.ConnectionState(), decision) }()
 		defer func() { cancel(); <-done }()
-		scheme := "http"
-		if s.TargetTLS != nil {
-			scheme = "https"
-		}
-		target := HTTPTarget{Address: s.Target, Transport: transport, connector: connector, lifetime: ctx, track: trackTarget, enter: enterConnectorWork}
+		target := HTTPTarget{Address: s.Target, Mounts: s.Mounts, ResolveTarget: s.ResolveHTTPTarget, Transport: transport, connector: connector, lifetime: ctx, track: trackTarget, enter: enterTargetWork}
 		wrap := func(next http.Handler) http.Handler {
 			return wrapHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var authorization ConnectorHTTPAuthorization
+				if httpProof != nil {
+					var err error
+					authorization, err = httpProof.HTTPAuthorization(r.Context())
+					if err != nil {
+						DenyHTTP(w, HTTPDecisionStatus(err))
+						return
+					}
+					// only the checked admission snapshot supplies the source.
+					r.RemoteAddr = netip.AddrPortFrom(authorization.Source.Unmap(), 1).String()
+				}
 				w, r, finishInspection := inspection.BeginHTTP(w, r, s.InspectionMode, s.ObserveSummary)
 				defer finishInspection()
 				// a connector request is not an owner readiness proof.
@@ -343,6 +369,18 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 					DenyHTTP(w, HTTPDecisionStatus(err))
 					return
 				}
+				if strings.HasPrefix(r.URL.Path, "/__tnl/") {
+					if httpProof == nil || s.ConnectorHTTP == nil {
+						DenyHTTP(w, http.StatusForbidden)
+						return
+					}
+					// reserved work spends no application budget and never opens
+					// a target. the service frontend owns browser/feedback dispatch.
+					if !s.ConnectorHTTP.ConnectorReserved(w, r, authorization) {
+						http.NotFound(w, r)
+					}
+					return
+				}
 				if s.AdmitRequest != nil {
 					if err := s.AdmitRequest(r); err != nil {
 						DenyHTTP(w, http.StatusServiceUnavailable)
@@ -354,23 +392,23 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 					return
 				}
 				defer release()
+				if s.ConnectorHTTP != nil && httpProof != nil {
+					r = s.ConnectorHTTP.ConnectorApplication(w, r)
+				}
 				next.ServeHTTP(w, httpstream.WithVisitorHost(r, s.Hostname))
 			}))
 		}
 		// the underlying visitor and target sockets remain connector-gated.
 		// preserve *tls.Conn here so net/http can serve the negotiated HTTP/2;
 		// every handler also rechecks admission before application work.
-		if inline {
-			return httpstream.ServeHandler(live, secured, wrap(s.Handler), s.HTTPDrain)
-		}
-		return httpstream.Serve(live, secured, &url.URL{Scheme: scheme, Host: s.Target}, target.Dial, wrap, s.HTTPResponseHooks, s.HTTPDrain)
+		target.Handler, target.Drain = s.Handler, s.HTTPDrain
+		return target.Serve(live, secured, s.Hostname, wrap, s.HTTPResponseHooks)
 	}
 	if backend == nil {
 		backend, err = dial(setup)
 		if err != nil {
 			return err
 		}
-		trackTarget(backend)
 		if err = backend.SetDeadline(deadline); err != nil {
 			return err
 		}
@@ -385,7 +423,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	if err != nil {
 		return err
 	}
-	if connector != nil {
+	if connector != nil && s.TargetTLS != nil {
 		backend = &connectorServiceConn{conn: backend, ctx: ctx, admission: connector}
 	}
 	if s.Protocol == config.ProtocolPostgres {

@@ -31,6 +31,9 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 	if err != nil {
 		return result, err
 	}
+	if err = d.guestServiceSource(ctx, q, endpoint.GuestID.String, publisherRequestSource(ctx), clock.current()); err != nil {
+		return result, err
+	}
 	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: id, ServiceID: service})
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
@@ -73,6 +76,9 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 		if err != nil || key.RetiredAt.Valid || !run.PreparationExpiresAt.Time.After(clock.current()) {
 			return result, errors.Join(ErrServiceAccess, err)
 		}
+		if err := requireNewServiceWork(ctx, q, MaintenanceControlServiceRunCreation); err != nil {
+			return result, err
+		}
 		placements, err := selectRelayServicePlacements(ctx, q, clock.current(), run.PreferredRegions...)
 		if err != nil {
 			return result, err
@@ -87,6 +93,12 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 	if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET run_token_digest=$2,publisher_expires_at=$3,state=$4,started_at=COALESCE(started_at,$5) WHERE id=$1`, id, digest[:], until, run.State, now); err != nil {
 		return result, err
 	}
+	run.PublisherExpiresAt = timestamptz(until)
+	run, err = boundGuestServingAuthority(ctx, q, run, clock.current())
+	if err != nil {
+		return result, err
+	}
+	until = run.PublisherExpiresAt.Time
 	connections, err := privateAssignments(ctx, q, seed, run)
 	if err != nil {
 		return result, err
@@ -95,6 +107,9 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 		return result, err
 	}
 	if _, err = serviceRunPublisherPermission(ctx, tx, run, clock.current()); err != nil {
+		return result, err
+	}
+	if err = d.guestServiceSource(ctx, q, run.GuestID.String, publisherRequestSource(ctx), clock.current()); err != nil {
 		return result, err
 	}
 	if !until.After(clock.current()) || !run.PublisherExpiresAt.Time.After(clock.current()) || prepared && !run.PreparationExpiresAt.Time.After(clock.current()) {

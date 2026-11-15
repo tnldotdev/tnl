@@ -69,7 +69,7 @@ func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, se
 			return err
 		}
 	}
-	facts, err := serviceHostnameAuthority(ctx, tx, row.TeamID, actor, domainID, now)
+	facts, err := serviceHostnameAuthority(ctx, tx, row.TeamID.String, actor, domainID, now)
 	if err != nil {
 		return err
 	}
@@ -88,30 +88,9 @@ func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, se
 	}
 	if placement.Hostname != "" {
 		hostname = placement.Hostname
-		actorNamespace, direct := naming.PublicURLNamespace(naming.NamespaceFacts{
-			Domain: facts.CanonicalDomain, Managed: facts.DomainKind == "managed", Mode: d.managedURLMode,
-			Personal: facts.TeamKind == "personal", TeamName: facts.TeamDisplayName,
-			MemberSlug: facts.ActorMemberSlug, ManagedLabel: facts.ActorManagedLabel,
-		})
-		scope, membership := "shared", ""
-		if !direct && hostname != actorNamespace && hostnameWithin(hostname, actorNamespace) {
-			scope, membership = "member", facts.ActorMembershipID
-		}
-		labels, err := controlstatedb.New(tx).ListTeamNamespaceLabels(ctx, row.TeamID)
-		if err != nil {
+		if err := d.authorizeLocalServiceHostname(ctx, tx, facts, row.TeamID.String, hostname); err != nil {
 			return err
 		}
-		if err := authorizeServiceHostname(facts, labels, row.TeamID, membership, hostname, scope, d.managedURLMode); err != nil {
-			return err
-		}
-	}
-	if row.CertificateHostname != "" {
-		if placement.Hostname != "" && row.CertificateHostname != placement.Hostname ||
-			placement.Hostname == "" && !strings.HasSuffix(row.CertificateHostname, "."+owner) ||
-			row.DomainID.String != domainID || row.PlacementWorktreeKey != placement.WorktreeKey || row.PlacementWorktreeLabel != label {
-			return ErrServiceConflict
-		}
-		return d.setLocalServiceExposure(ctx, tx, service, public, now)
 	}
 	sourceKey := placement.SourceKey
 	if sourceKey == "" {
@@ -119,16 +98,19 @@ func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, se
 	}
 	digest := sha256.Sum256([]byte(facts.ActorMembershipID + "\x00" + sourceKey))
 	sourceKey = fmt.Sprintf("%x", digest[:])
-	var conflict bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.public_urls WHERE canonical_hostname=$1 AND lifecycle_state<>'deleted') OR EXISTS(SELECT 1 FROM control.service_namespace_claims WHERE ($1=namespace OR right($1,length(namespace)+1)='.'||namespace) AND (local_source_key<>$2 OR membership_id IS DISTINCT FROM $3))`, hostname, sourceKey, facts.ActorMembershipID).Scan(&conflict); err != nil {
+	if row.CertificateHostname != "" {
+		if placement.Hostname != "" && row.CertificateHostname != placement.Hostname ||
+			placement.Hostname == "" && !strings.HasSuffix(row.CertificateHostname, "."+owner) ||
+			row.DomainID.String != domainID || row.PlacementWorktreeKey != placement.WorktreeKey || row.PlacementWorktreeLabel != label {
+			return ErrServiceConflict
+		}
+		if err = claimLocalServiceHostname(ctx, tx, row.CertificateHostname, sourceKey, facts.ActorMembershipID, domainID, now); err != nil {
+			return err
+		}
+		return d.setLocalServiceExposure(ctx, tx, service, public, now)
+	}
+	if err = claimLocalServiceHostname(ctx, tx, hostname, sourceKey, facts.ActorMembershipID, domainID, now); err != nil {
 		return err
-	}
-	if conflict {
-		return ErrServiceConflict
-	}
-	var claimed string
-	if err = tx.QueryRow(ctx, `INSERT INTO control.service_namespace_claims(namespace,local_source_key,membership_id,domain_id,created_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(namespace) DO UPDATE SET local_source_key=EXCLUDED.local_source_key WHERE control.service_namespace_claims.local_source_key=EXCLUDED.local_source_key AND control.service_namespace_claims.membership_id=EXCLUDED.membership_id AND control.service_namespace_claims.domain_id=EXCLUDED.domain_id AND control.service_namespace_claims.retired_at IS NULL RETURNING namespace`, hostname, sourceKey, facts.ActorMembershipID, domainID, now).Scan(&claimed); err != nil {
-		return publisherLookupError(err, ErrServiceConflict)
 	}
 	port, err := allocateServicePort(ctx, tx, service, facts.IngressPoolID, public, now)
 	if err != nil {
@@ -140,6 +122,97 @@ func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, se
 		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE control.services SET certificate_hostname=$2,certificate_scope=$2,domain_id=$3,service_port=$4,ingress_pool_id=$5,placement_worktree_key=$6,placement_worktree_label=$7,public=$8 WHERE id=$1`, service, hostname, domainID, port, facts.IngressPoolID, placement.WorktreeKey, label, public)
+	return projectConstraintError(err)
+}
+
+func (d *Database) authorizeLocalServiceHostname(ctx context.Context, tx pgx.Tx, facts serviceHostnameFacts, team, hostname string) error {
+	actorNamespace, direct := naming.PublicURLNamespace(naming.NamespaceFacts{
+		Domain: facts.CanonicalDomain, Managed: facts.DomainKind == "managed", Mode: d.managedURLMode,
+		Personal: facts.TeamKind == "personal", TeamName: facts.TeamDisplayName,
+		MemberSlug: facts.ActorMemberSlug, ManagedLabel: facts.ActorManagedLabel,
+	})
+	scope, membership := "shared", ""
+	if !direct && hostname != actorNamespace && hostnameWithin(hostname, actorNamespace) {
+		scope, membership = "member", facts.ActorMembershipID
+	}
+	if scope == "shared" && facts.TeamKind != "personal" {
+		return ErrServiceAccess
+	}
+	labels, err := controlstatedb.New(tx).ListTeamNamespaceLabels(ctx, team)
+	if err != nil {
+		return err
+	}
+	return authorizeServiceHostname(facts, labels, team, membership, hostname, scope, d.managedURLMode)
+}
+
+func claimLocalServiceHostname(ctx context.Context, tx pgx.Tx, hostname, sourceKey, membership, domainID string, now time.Time) error {
+	var conflict bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.service_namespace_claims WHERE ($1=namespace OR right($1,length(namespace)+1)='.'||namespace) AND (local_source_key<>$2 OR membership_id IS DISTINCT FROM $3))`, hostname, sourceKey, membership).Scan(&conflict); err != nil {
+		return err
+	}
+	if conflict {
+		return ErrServiceConflict
+	}
+	var claimed string
+	if err := tx.QueryRow(ctx, `INSERT INTO control.service_namespace_claims(namespace,local_source_key,membership_id,domain_id,created_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(namespace) DO UPDATE SET local_source_key=EXCLUDED.local_source_key WHERE control.service_namespace_claims.local_source_key=EXCLUDED.local_source_key AND control.service_namespace_claims.membership_id=EXCLUDED.membership_id AND control.service_namespace_claims.domain_id=EXCLUDED.domain_id AND control.service_namespace_claims.retired_at IS NULL RETURNING namespace`, hostname, sourceKey, membership, domainID, now).Scan(&claimed); err != nil {
+		return publisherLookupError(err, ErrServiceConflict)
+	}
+	return nil
+}
+
+// configure keeps captured placement unless the declaration explicitly selects
+// another hostname or domain. claims and DNS use the same owners as creation;
+// endpoint changes never close runs or replace connector authority.
+func (d *Database) configureStandaloneServiceEndpoint(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlService, actor string, declaration ProjectServiceConfiguration, now time.Time) error {
+	var endpoint serviceEndpoint
+	err := tx.QueryRow(ctx, `SELECT service_id,local_source_key,domain_id,hostname,namespace,ingress_pool_id,public,dns_automation
+	    FROM control.service_endpoints WHERE service_id=$1 AND hostname=$2 AND retired_at IS NULL AND deployment_id IS NULL`,
+		row.ID, row.CertificateHostname).Scan(&endpoint.ServiceID, &endpoint.LocalSourceKey, &endpoint.DomainID, &endpoint.Hostname, &endpoint.Namespace, &endpoint.PoolID, &endpoint.Public, &endpoint.Automation)
+	if err != nil {
+		return err
+	}
+	if endpoint.LocalSourceKey == "" {
+		return ErrServiceAccess
+	}
+	desired := endpoint
+	if declaration.DomainID != "" {
+		desired.DomainID = declaration.DomainID
+	}
+	facts, err := serviceHostnameAuthority(ctx, tx, row.TeamID.String, actor, desired.DomainID, now)
+	if err != nil {
+		return err
+	}
+	if declaration.Hostname != "" {
+		desired.Hostname = declaration.Hostname
+	} else if desired.DomainID != endpoint.DomainID {
+		namespace := naming.MemberNamespace(facts.CanonicalDomain, facts.DomainKind == "managed", facts.ActorManagedLabel, facts.ActorMemberSlug)
+		if row.PlacementWorktreeLabel != "" {
+			namespace = row.PlacementWorktreeLabel + "." + namespace
+		}
+		desired.Hostname = row.Name + "." + namespace
+	}
+	desired.Namespace, desired.PoolID, desired.Public = desired.Hostname, facts.IngressPoolID, projectServicePublic(declaration)
+	if desired == endpoint {
+		return nil
+	}
+	if desired.Hostname != endpoint.Hostname || desired.DomainID != endpoint.DomainID {
+		if err = d.authorizeLocalServiceHostname(ctx, tx, facts, row.TeamID.String, desired.Hostname); err != nil {
+			return err
+		}
+		if err = claimLocalServiceHostname(ctx, tx, desired.Hostname, desired.LocalSourceKey, facts.ActorMembershipID, desired.DomainID, now); err != nil {
+			return err
+		}
+	}
+	port, err := allocateServicePort(ctx, tx, row.ID, desired.PoolID, desired.Public, now)
+	if err != nil {
+		return err
+	}
+	if err = reconcileServiceEndpoint(ctx, tx, desired, now); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `UPDATE control.services SET certificate_hostname=$2,certificate_scope=$2,domain_id=$3,service_port=$4,ingress_pool_id=$5,
+	    endpoint_revision=endpoint_revision+CASE WHEN public<>$6 THEN 1 ELSE 0 END,public=$6 WHERE id=$1`,
+		row.ID, desired.Hostname, desired.DomainID, port, desired.PoolID, desired.Public)
 	return projectConstraintError(err)
 }
 
@@ -155,7 +228,7 @@ func (d *Database) setLocalServiceExposure(ctx context.Context, tx pgx.Tx, servi
 	}
 	var endpoint serviceEndpoint
 	var automated bool
-	err = tx.QueryRow(ctx, `SELECT service_id,local_source_key,domain_id,hostname,namespace,ingress_pool_id,dns_state<>'unmanaged'
+	err = tx.QueryRow(ctx, `SELECT service_id,local_source_key,domain_id,hostname,namespace,ingress_pool_id,dns_automation
 	    FROM control.service_endpoints WHERE service_id=$1 AND hostname=$2 AND retired_at IS NULL AND deployment_id IS NULL`,
 		service, row.CertificateHostname).Scan(&endpoint.ServiceID, &endpoint.LocalSourceKey, &endpoint.DomainID, &endpoint.Hostname, &endpoint.Namespace, &endpoint.PoolID, &automated)
 	if err != nil {

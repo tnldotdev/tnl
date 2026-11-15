@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http/httptest"
-	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -337,31 +336,19 @@ func TestIntegrationPublicReadinessObservationDoesNotLockRunUnderIngress(t *test
 	}
 }
 
-func TestIntegrationPublicServingReadinessStartsGuestClockAndMetricTogether(t *testing.T) {
-	d, now, request, leases := newPublishRunPrerequisites(t)
-	guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.CreateGuestTrial(t.Context(), guest, "tunnels.example.test", now); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.pool.Exec(t.Context(), `INSERT INTO control.guest_public_urls(public_url_id,guest_id,created_at) VALUES($1,$2,$3)`, request.PublicURLID, guest.ID, now); err != nil {
-		t.Fatal(err)
-	}
-	setup, err := d.CreatePublishRun(t.Context(), request, now, 30*time.Second, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f := publishRunFixture{d, now, request, setup, leases}
+func TestIntegrationServiceReadinessStartsGuestClockAndMetricTogether(t *testing.T) {
+	f, guest := guestAuthorityFixture(t, false)
+	d, now := f.database, f.now
 	metrics := observability.New("control")
 	t.Cleanup(func() { _ = metrics.Shutdown(t.Context()) })
 	d.Instrument(metrics)
-	prepareServingPublisher(t, f)
-	servingPreparationPending(t, f, now)
-	servingPreparationPending(t, f, now.Add(2*time.Second))
+	for _, at := range []time.Time{now, now.Add(2 * time.Second)} {
+		if _, err := f.heartbeat(at); err != nil {
+			t.Fatal(err)
+		}
+	}
 	var premature bool
-	if err := d.pool.QueryRow(t.Context(), `SELECT run.ready_at IS NOT NULL OR guest.active_ready_at IS NOT NULL OR guest.first_ready_at IS NOT NULL OR guest.used_ready_ns<>0 FROM control.publish_runs run CROSS JOIN control.guest_trials guest WHERE run.id=$1 AND guest.id=$2`, setup.PublishRunID, guest.ID).Scan(&premature); err != nil || premature {
+	if err := d.pool.QueryRow(t.Context(), `SELECT run.ready_at IS NOT NULL OR guest.active_ready_at IS NOT NULL OR guest.first_ready_at IS NOT NULL OR guest.used_ready_ns<>0 FROM control.service_runs run JOIN control.guest_trials guest ON guest.id=run.guest_id WHERE run.id=$1 AND guest.id=$2`, f.run.RunID, guest.ID).Scan(&premature); err != nil || premature {
 		t.Fatal("preparation consumed guest ready time", premature, err)
 	}
 	metricText := func() string {
@@ -369,24 +356,24 @@ func TestIntegrationPublicServingReadinessStartsGuestClockAndMetricTogether(t *t
 		metrics.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
 		return w.Body.String()
 	}
-	if strings.Contains(metricText(), "tnl_control_publish_runs_ready_total{") {
+	if strings.Contains(metricText(), "tnl_control_service_runs_ready_total ") {
 		t.Fatal("preparation emitted ready metric")
 	}
-	owner := registerServingIngress(t, f, "guest-receiver", now)
-	observeServingIngress(t, f, owner, now)
 	final := now.Add(3 * time.Second)
-	if _, err := d.MarkPublishRunReady(t.Context(), f.authentication(), final); err != nil {
-		t.Fatal(err)
-	}
+	f.ready(t, final)
 	var together bool
-	if err := d.pool.QueryRow(t.Context(), `SELECT run.ready_at=$3 AND guest.active_ready_at=$3 AND guest.first_ready_at=$3 AND guest.used_ready_ns=0 FROM control.publish_runs run CROSS JOIN control.guest_trials guest WHERE run.id=$1 AND guest.id=$2`, setup.PublishRunID, guest.ID, final).Scan(&together); err != nil || !together {
+	if err := d.pool.QueryRow(t.Context(), `SELECT run.ready_at IS NOT NULL AND run.ready_at=guest.active_ready_at
+	    AND run.ready_at=guest.first_ready_at AND run.ready_at>=$3 AND guest.used_ready_ns=0
+	    FROM control.service_runs run JOIN control.guest_trials guest ON guest.id=run.guest_id
+	    WHERE run.id=$1 AND guest.id=$2`, f.run.RunID, guest.ID, final).Scan(&together); err != nil || !together {
 		t.Fatal("ready clocks differ", together, err)
 	}
-	observeServingIngress(t, f, owner, final)
-	if _, err := d.MarkPublishRunReady(t.Context(), f.authentication(), final); err != nil {
-		t.Fatal(err)
+	for range 2 {
+		if _, err := f.heartbeat(final.Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if !strings.Contains(metricText(), "tnl_control_publish_runs_ready_total{tnl_public_url_purpose=\"app\"} 1") {
+	if !strings.Contains(metricText(), "tnl_control_service_runs_ready_total 1\n") {
 		t.Fatal("ready metric counted more than first transition")
 	}
 }

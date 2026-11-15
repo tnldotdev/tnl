@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,47 +136,51 @@ func TestIntegrationCompanyDevicePublicServiceAdmissionAndReauthentication(t *te
 	if err != nil || cert.CertificatePEM == "" {
 		t.Fatal("company certificate issuance", err)
 	}
-	domains, err := d.ListTeamDomains(companyCtx, p.IdentityID, team.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var member authorityv1.Membership
 	for _, m := range combined.Identity.Memberships {
 		if m.TeamId == team.ID {
 			member = m
 		}
 	}
-	u, err := d.CreatePublicURL(companyCtx, controlstate.CreatePublicURLRequest{TeamID: team.ID, DomainID: domains[0].ID, MembershipID: member.Id, ActingIdentityID: p.IdentityID, IdempotencyKey: "app", CanonicalHostname: "app." + member.ManagedLabel + ".example.test", Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp, DNSState: controlstate.PublicURLDNSUnmanaged}, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"device-relay-a", "device-relay-b"} {
-		if _, err := d.RegisterRelay(ctx, controlstate.RelayRegistration{RelayServiceID: name, RelayID: name, RelayRunID: name + "-run", ProtocolVersion: 1, RelayAddress: name + ".example.test:443", TLSServerName: name + ".example.test", InternalRelayAddress: name + ".internal:9445", ConnectionCapacity: 10, StreamCapacity: 10}, time.Now(), time.Hour); err != nil {
-			t.Fatal(err)
+	var ownerMember authorityv1.Membership
+	for _, m := range companyOwner.Identity.Memberships {
+		if m.TeamId == team.ID {
+			ownerMember = m
 		}
 	}
-	run, err := d.CreatePublishRun(companyCtx, controlstate.PublishRunRequest{PublicURLID: u.ID, TeamID: team.ID, MembershipID: member.Id, ActingIdentityID: p.IdentityID, RetrySecret: p.RetrySecret[:], IdempotencyKey: "device-run", RequestDigest: sha256.Sum256([]byte("device-run")), PolicyRevision: uint64(u.PolicyRevision), ExpectedMutationRevision: u.MutationRevision, CertificateCacheKey: u.CanonicalHostname, CertificateScope: u.CanonicalHostname, CertificateIdentifiers: []string{u.CanonicalHostname}, CertificateChallenge: "dns-01"}, time.Now(), time.Hour, time.Hour)
+	// the owner publishes the service; the ordinary member has only an explicit
+	// visitor grant and must still prove current company authentication.
+	app, auth := publishBrowserService(t, f, ownerCtx, companyOwner.Identity.Identity.Id, team.ID, ownerMember.Id, "company-browser")
+	if _, err := d.CreateServiceGrant(ownerCtx, app.ID, companyOwner.Identity.Identity.Id, "browser-person-grant", "identity", p.IdentityID, nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	binding := []byte(strings.Repeat("b", 32))
+	pending, err := d.BeginServiceBrowserLogin(ctx, auth.Subject, "", "/", strings.Repeat("n", 32), strings.Repeat("v", 43), binding, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	// this test owns authentication, so mark the fixture publication ready rather
-	// than contacting an external CA or carrying application traffic.
-	if _, err := f.sql.Exec(ctx, `UPDATE control.publish_runs SET state='ready',ready_at=$2 WHERE id=$1`, run.PublishRunID, time.Now()); err != nil {
+	attempt, err := d.ConsumeBrowserLogin(ctx, pending, binding, time.Now())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := d.IssueControlBrowserHandoff(personalCtx, credentials.AccessToken(person.AccessToken), credentials.RefreshToken(person.RefreshToken), u.ID, time.Hour, 24*time.Hour, time.Now()); err == nil {
-		t.Fatal("personal public visitor handoff issued")
+	issue := func(session authorityv1.ControlSessionResponse) (controlstate.BrowserHandoff, error) {
+		return d.IssueBrowserHandoff(ctx, attempt, controlstate.BrowserAccessSession{
+			IdentityID: session.Identity.Identity.Id, AccessToken: session.AccessToken, RefreshToken: session.RefreshToken,
+			AccessExpiresAt: session.AccessExpiresAt, ExpiresAt: session.RefreshExpiresAt,
+		}, time.Now())
 	}
-	handoff, _, err := d.IssueControlBrowserHandoff(companyCtx, credentials.AccessToken(combined.AccessToken), credentials.RefreshToken(combined.RefreshToken), u.ID, time.Hour, 24*time.Hour, time.Now())
+	if _, err := issue(f.basic("person")); !errors.Is(err, controlstate.ErrVisitorSignIn) {
+		t.Fatal("personal browser sign-in bypassed company authentication", err)
+	}
+	handoff, err := issue(combined)
 	if err != nil {
 		t.Fatal("company public visitor handoff", err)
 	}
-	auth := controlstate.PublishRunAuthentication{PublicURLID: u.ID, PublishRunID: run.PublishRunID, PublishRunNumber: run.PublishRunNumber, PublishRunToken: run.PublishRunToken}
-	cookie, _, _, _, _, err := d.RedeemBrowserHandoff(ctx, auth, handoff.Token, time.Now())
+	cookie, err := d.RedeemServiceBrowserHandoff(ctx, auth, handoff.Token, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	permission, err := d.BrowserAuthorizationForRun(ctx, auth, cookie, time.Now())
+	permission, err := d.ServiceBrowserSession(ctx, auth, cookie.CookieSecret, false, time.Now())
 	if err != nil || !permission.VisitAllowed {
 		t.Fatal("company public visitor permission", permission, err)
 	}

@@ -60,16 +60,3 @@ func TestIntegrationPublicURLPurposeSurvivesReadAndIsNotRelabeledByRetry(t *test
 		t.Fatal("creation and retry were not counted once by public URL purpose")
 	}
 }
-
-func TestIntegrationPublicURLPurposeCountsOnlyFirstReadyTransition(t *testing.T) {
-	fixture := newPublishRunFixture(t)
-	metrics := observability.New("control")
-	fixture.database.Instrument(metrics)
-	readyTestSession(t, fixture)
-	readyTestServingRun(t, fixture, fixture.now.Add(time.Second))
-	metric := httptest.NewRecorder()
-	metrics.Handler().ServeHTTP(metric, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	if !strings.Contains(metric.Body.String(), `tnl_control_publish_runs_ready_total{tnl_public_url_purpose="app"} 1`) {
-		t.Fatal("ready run was not counted exactly once by saved purpose")
-	}
-}

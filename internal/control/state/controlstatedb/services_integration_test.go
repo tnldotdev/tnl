@@ -114,7 +114,7 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 		}
 		for _, slot := range run.Connections {
 			lease := relayLease(slot.RelayServiceID)
-			if _, err = d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+			if _, err = d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), lease, now); err != nil {
 				t.Fatal(err)
 			}
 			if _, err = d.ReadyServicePublisherConnection(ctx, slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {
@@ -132,7 +132,7 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 		runs = append(runs, run)
 	}
 	exec(`UPDATE control.publisher_grants SET expires_at=$2 WHERE id=$1`, publishers[1].GrantID, now.Add(time.Second))
-	if inventory, _, err := d.ListAvailableServices(ctx, person, "", now.Add(2*time.Second)); err != nil || len(inventory) != 1 || inventory[0].ServiceRunID != runs[0].RunID {
+	if inventory, _, err := d.ListAvailableServices(ctx, person, "", "connector", now.Add(2*time.Second)); err != nil || len(inventory) != 1 || inventory[0].ServiceRunID != runs[0].RunID {
 		t.Fatalf("newest expired grant hid healthy pool sibling: %+v %v", inventory, err)
 	}
 	exec(`UPDATE control.publisher_grants SET expires_at=NULL WHERE id=$1`, publishers[1].GrantID)
@@ -259,11 +259,11 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 		t.Fatalf("revoked publisher still read service metadata: %v", err)
 	}
 	var common, slots int
-	if err = conn.QueryRow(ctx, `SELECT count(*) FROM control.publisher_service_runs WHERE service_id=$1 AND closed_at IS NULL`, service.ID).Scan(&common); err != nil || common != 1 {
-		t.Fatalf("shared runtime runs=%d: %v", common, err)
+	if err = conn.QueryRow(ctx, `SELECT count(*) FROM control.service_runs WHERE service_id=$1 AND closed_at IS NULL`, service.ID).Scan(&common); err != nil || common != 1 {
+		t.Fatalf("active service runs=%d: %v", common, err)
 	}
-	if err = conn.QueryRow(ctx, `SELECT count(*) FROM control.publisher_service_connection_slots WHERE service_id=$1 AND session_open`, service.ID).Scan(&slots); err != nil || slots != 2 {
-		t.Fatalf("shared runtime slots=%d: %v", slots, err)
+	if err = conn.QueryRow(ctx, `SELECT count(*) FROM control.service_connection_slots WHERE service_id=$1 AND session_open`, service.ID).Scan(&slots); err != nil || slots != 2 {
+		t.Fatalf("active service connection slots=%d: %v", slots, err)
 	}
 	if state, err := d.HeartbeatServiceRun(ctx, service.ID, runs[1].RunID, runs[1].Token, now, controlstate.ServiceRunHealth{Healthy: false, StreamCapacity: 1}); err != nil || state.State != "starting" {
 		t.Fatalf("unhealthy publisher stayed ready: %+v %v", state, err)
@@ -283,14 +283,14 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	if _, err = d.PrepareServiceRun(ctx, service.ID, publishers[1], "wrong-trust", now, controlstate.ServiceRunRequest{Metadata: changed}); !errors.Is(err, controlstate.ErrServiceConflict) {
 		t.Fatalf("unapproved TLS identity joined pool: %v", err)
 	}
-	updated, err := d.ConfigureService(ctx, service.ID, person, changed, now)
+	updated, err := d.ConfigureService(ctx, service.ID, person, changed, nil, controlstate.ServiceUpdateConditions{}, now)
 	if err != nil || updated.TrustRevision != 2 {
 		t.Fatalf("immutable trust replacement: %+v %v", updated, err)
 	}
 	if _, err := d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, id(opaqueid.VisitorConnectionPrefix), "", port, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatal("trust replacement retained old run keys", err)
 	}
-	if _, err = d.ConfigureService(ctx, service.ID, person, metadata, now); !errors.Is(err, controlstate.ErrServiceConflict) {
+	if _, err = d.ConfigureService(ctx, service.ID, person, metadata, nil, controlstate.ServiceUpdateConditions{}, now); !errors.Is(err, controlstate.ErrServiceConflict) {
 		t.Fatalf("stale trust revision replaced approved trust: %v", err)
 	}
 	if _, err = d.PrepareServiceRun(ctx, service.ID, publishers[1], "old-trust", now, controlstate.ServiceRunRequest{Metadata: metadata}); !errors.Is(err, controlstate.ErrServiceConflict) {
@@ -300,10 +300,10 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count, err := d.ExpireSavedPublishRuns(ctx, now.Add(3*time.Minute)); err != nil || count != 1 {
-		t.Fatalf("shared expiration worker retained prepared private run %s: %d %v", prepared.RunID, count, err)
+	if count, err := d.ExpireServiceRuns(ctx, now.Add(3*time.Minute)); err != nil || count != 1 {
+		t.Fatalf("service expiration retained prepared run %s: %d %v", prepared.RunID, count, err)
 	}
-	if err = conn.QueryRow(ctx, `SELECT count(*) FROM control.publisher_service_connection_slots WHERE service_id=$1 AND session_open`, service.ID).Scan(&slots); err != nil || slots != 0 {
-		t.Fatalf("closed private runs retained relay reservations: %d %v", slots, err)
+	if err = conn.QueryRow(ctx, `SELECT count(*) FROM control.service_connection_slots WHERE service_id=$1 AND session_open`, service.ID).Scan(&slots); err != nil || slots != 0 {
+		t.Fatalf("closed service runs retained relay reservations: %d %v", slots, err)
 	}
 }

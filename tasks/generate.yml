@@ -28,8 +28,7 @@ tasks:
       - node scripts/generate/browser-api-schemas.ts
       - node scripts/generate/management-sdk.ts
       - node scripts/generate/python-management-sdk.ts
-      - sqlc generate -f internal/client/state/sqlc.yaml
-      - sqlc generate -f internal/control/state/sqlc.yaml
+      - node scripts/generate/sqlc.ts
       - go run ./scripts/installer/generate.go -root .
       - go run ./internal/config/cmd/configgen
       - node scripts/generate/config-types.ts
@@ -46,6 +45,13 @@ tasks:
       - task: generate
       - git diff --exit-code HEAD -- {{.GENERATED_PATHS}}
       - test -z "$(git ls-files --others --exclude-standard -- {{.GENERATED_PATHS}})"
+
+  generate:test:
+    desc: Test committed generation tooling
+    vars:
+      FILES: '{{default "scripts/generate" .FILES}}'
+    cmds:
+      - pnpm exec vitest run {{.FILES}}
 
   format:
     desc: Format all source files

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -287,24 +288,23 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 
 type benchmarkServiceAllocator interface {
 	AllocateService(context.Context, controlv1.AllocateServiceRequest) (controlv1.Service, error)
-	DeleteAllocatedService(context.Context, string) error
+	CleanupServiceAllocation(context.Context, controlv1.AllocateServiceRequest) error
 }
 
 func allocateBenchmarkService(ctx context.Context, native benchmarkServiceAllocator, request controlv1.AllocateServiceRequest) (controlv1.Service, func(context.Context) error, error) {
-	service, err := native.AllocateService(ctx, request)
+	// capture the wire request before allocation so later input changes cannot
+	// change the invocation, declaration, or fixed deadline passed to cleanup.
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		return controlv1.Service{}, nil, err
+	}
+	var original controlv1.AllocateServiceRequest
+	if err := json.Unmarshal(encoded, &original); err != nil {
+		return controlv1.Service{}, nil, err
+	}
+	service, err := native.AllocateService(ctx, original)
 	return service, func(cleanup context.Context) error {
-		id := service.Id
-		var recoveryErr error
-		if id == "" {
-			// an uncertain response authorizes no deletion. recover only this
-			// worker's original invocation before asking it to delete anything.
-			recovered, err := native.AllocateService(cleanup, request)
-			id, recoveryErr = recovered.Id, err
-			if id == "" {
-				return errors.Join(errors.New("benchmark allocation cleanup could not recover its exact service"), recoveryErr)
-			}
-		}
-		return errors.Join(recoveryErr, native.DeleteAllocatedService(cleanup, id))
+		return native.CleanupServiceAllocation(cleanup, original)
 	}, err
 }
 

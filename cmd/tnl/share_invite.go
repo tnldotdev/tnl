@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"time"
 
+	openapi_types "github.com/oapi-codegen/runtime/types"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -54,7 +56,7 @@ func runShareInviteCreate(ctx context.Context, f shareInviteCreateCommand, o, d 
 }
 
 func createShareInvitation(ctx context.Context, s *clientteam.Session, f shareInviteCreateCommand, duration time.Duration, o io.Writer) error {
-	item, err := resolveVisitorPublicURL(ctx, s, f.URL)
+	item, err := resolveManagedService(ctx, s, f.URL)
 	if err != nil {
 		return err
 	}
@@ -62,12 +64,13 @@ func createShareInvitation(ctx context.Context, s *clientteam.Session, f shareIn
 	if err != nil {
 		return err
 	}
-	invite, err := s.Authenticated().Control.CreateVisitorInvitation(ctx, item.Id, key, controlv1.CreateVisitorInvitationRequest{Email: f.Email, ExpiresAt: time.Now().Add(duration)})
+	at := time.Now().UTC().Add(duration).Truncate(time.Microsecond)
+	invite, err := s.Authenticated().Control.InviteServiceVisitor(ctx, item.Id, key, controlv1.CreateServiceInvitationRequest{Email: openapi_types.Email(f.Email), ExpiresAt: at})
 	if err != nil {
 		return err
 	}
-	if invite.Credential == "" || invite.Invitation.PublicUrlId != item.Id {
-		return failure.Wrap("create visitor invitation", failure.ServerResponseInvalid, errors.New("server returned an incomplete invitation or another public URL"))
+	if !privateInvitationSecret(invite.Credential, invite.Invitation.Id) || invite.Invitation.ServiceId != item.Id || !strings.EqualFold(string(invite.Invitation.Email), strings.TrimSpace(f.Email)) || !invite.Invitation.ExpiresAt.Equal(at) || invite.Invitation.AcceptedAt != nil || invite.Invitation.RevokedAt != nil {
+		return failure.Wrap("create visitor invitation", failure.ServerResponseInvalid, errors.New("server returned an incomplete invitation or another service"))
 	}
 	// one-time credentials are raw stdout values, never framed or logged.
 	_, err = io.WriteString(o, invite.Credential+"\n")
@@ -79,11 +82,15 @@ func runShareInviteAccept(ctx context.Context, f shareInviteAcceptCommand, o, d 
 		return err
 	}
 	defer s.Close()
-	grant, err := s.Authenticated().Control.AcceptVisitorInvitation(ctx, f.Secret)
+	grant, err := s.Authenticated().Control.AcceptServiceInvitation(ctx, f.Secret)
 	if err != nil {
 		return err
 	}
-	fields := []clioutput.Field{{Label: "public URL ID", Value: grant.PublicUrlId}, {Label: "grant ID", Value: grant.Id}}
+	invitationID, _, _ := strings.Cut(f.Secret, ".")
+	if !validServiceShareGrant(grant, grant.ServiceId) || grant.Kind != "identity" || grant.InvitationId == nil || *grant.InvitationId != invitationID || grant.IdentityId == nil || grant.ExpiresAt == nil || grant.RevokedAt != nil {
+		return serviceShareResponse()
+	}
+	fields := []clioutput.Field{{Label: "service ID", Value: grant.ServiceId}, {Label: "grant ID", Value: grant.Id}}
 	return writeHumanFrame(o, "tnl share invite accept", "accepted", "", clioutput.Fields(fields...))
 }
 func runShareInviteList(ctx context.Context, f shareInviteListCommand, o, d io.Writer) error {
@@ -92,11 +99,11 @@ func runShareInviteList(ctx context.Context, f shareInviteListCommand, o, d io.W
 		return err
 	}
 	defer s.Close()
-	item, err := resolveVisitorPublicURL(ctx, s, f.URL)
+	item, err := resolveManagedService(ctx, s, f.URL)
 	if err != nil {
 		return err
 	}
-	invites, err := s.Authenticated().Control.ListVisitorInvitations(ctx, item.Id)
+	invites, err := s.Authenticated().Control.ListServiceInvitations(ctx, item.Id)
 	if err != nil {
 		return err
 	}
@@ -105,7 +112,7 @@ func runShareInviteList(ctx context.Context, f shareInviteListCommand, o, d io.W
 	}
 	blocks := []clioutput.Block{}
 	for _, invite := range invites {
-		fields := []clioutput.Field{{Label: "email", Value: invite.Email}, {Label: "expires", Value: invite.ExpiresAt.UTC().Format(time.RFC3339)}}
+		fields := []clioutput.Field{{Label: "email", Value: string(invite.Email)}, {Label: "expires", Value: invite.ExpiresAt.UTC().Format(time.RFC3339)}}
 		blocks = append(blocks, clioutput.Section(invite.Id, clioutput.Fields(fields...)))
 	}
 	return writeHumanFrame(o, "tnl share invite list", countState(len(invites), "invitation", "invitations"), "", blocks...)
@@ -116,11 +123,11 @@ func runShareInviteRevoke(ctx context.Context, f shareInviteRevokeCommand, o, d 
 		return err
 	}
 	defer s.Close()
-	item, err := resolveVisitorPublicURL(ctx, s, f.URL)
+	item, err := resolveManagedService(ctx, s, f.URL)
 	if err != nil {
 		return err
 	}
-	if err = s.Authenticated().Control.RevokeVisitorInvitation(ctx, item.Id, f.InvitationID); err != nil {
+	if err = s.Authenticated().Control.RevokeServiceInvitation(ctx, item.Id, f.InvitationID); err != nil {
 		return err
 	}
 	return writeHumanFrame(o, "tnl share invite revoke", "revoked", "", clioutput.Fields(clioutput.Field{Label: "invitation ID", Value: f.InvitationID}))

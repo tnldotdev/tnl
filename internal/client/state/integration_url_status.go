@@ -140,7 +140,7 @@ func (d *Database) snapshotIntegrationURLs(ctx context.Context, tx *sql.Tx, tunn
 		if invalid {
 			conflicts[key] = true
 		}
-		if row.Service == row.TunnelService.String && row.State == string(TunnelStateReady) && row.AppHostname.Valid && row.PublicURLID.Valid && row.PublishRunNumber.Valid {
+		if row.Service == row.TunnelService.String && row.State == string(TunnelStateReady) && row.AppHostname.Valid && row.ServiceID.Valid && row.PublishRunNumber.Valid {
 			url.Endpoints[endpointIndex].ReadyReceivers = append(url.Endpoints[endpointIndex].ReadyReceivers, WebhookReceiverInfo{
 				TunnelID: row.TunnelID, Project: row.ProjectRoot, Service: row.TunnelService.String,
 				PublicURL: "https://" + row.AppHostname.String, State: row.State,

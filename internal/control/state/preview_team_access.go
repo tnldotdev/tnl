@@ -36,7 +36,7 @@ func (d *Database) SetPreviewTeamAccess(ctx context.Context, request SetPreviewT
 	if err != nil {
 		return result, publisherLookupError(err, ErrPreviewNotFound)
 	}
-	if preview.TeamID != request.TeamID || preview.CreatedByIdentityID != request.IdentityID || preview.DemoServiceRunID.Valid {
+	if preview.GuestID.Valid || preview.TeamID.String != request.TeamID || preview.CreatedByIdentityID.String != request.IdentityID || preview.DemoServiceRunID.Valid {
 		return result, ErrPreviewAccess
 	}
 	ids, err := q.ListPreviewServices(ctx, preview.ID)

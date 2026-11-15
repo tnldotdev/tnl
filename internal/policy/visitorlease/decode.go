@@ -22,7 +22,7 @@ func Decode(body controlv1.VisitorPolicyUpdate) (Update, error) {
 		ObservedAt: policy.ObservedAt, ValidUntil: policy.ValidUntil, MetadataRevision: policy.MetadataRevision},
 		KeyRevision: policy.KeyRevision, Enabled: policy.Enabled, Anonymous: policy.Anonymous, AfterRevision: body.AfterRevision, Events: body.Revisions, Snapshot: body.SnapshotRequired}
 	if policy.ConnectionDeadline != nil {
-		if scope.Kind != visitorscope.PublicURL || policy.ConnectionDeadline.IsZero() || policy.Enabled && policy.ValidUntil.After(*policy.ConnectionDeadline) {
+		if policy.ConnectionDeadline.IsZero() || policy.Enabled && policy.ValidUntil.After(*policy.ConnectionDeadline) {
 			return Update{}, ErrUpdate
 		}
 		update.BoundConnections = true

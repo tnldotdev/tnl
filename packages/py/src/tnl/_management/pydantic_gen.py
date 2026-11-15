@@ -236,14 +236,10 @@ class ResourceId(RootModel[str]):
 
 class DeploymentService(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    id: ResourceId = Field(..., description="The bound saved service or public URL ID.")
+    id: ResourceId = Field(..., description="The bound service ID.")
     protocol: ServiceProtocol
     trust_revision: Annotated[int, Field(ge=1)]
     endpoint: ServiceEndpoint | None = None
-    public_url: AnyUrl | None = Field(
-        default=None,
-        description="The saved HTTP public URL when this binding uses one rather than a private service endpoint.",
-    )
 
 
 class Deployment(BaseModel):
@@ -281,7 +277,6 @@ class ProblemCode(StrEnum):
     UNAVAILABLE = "unavailable"
     INTERNAL = "internal"
     NAME_UNAVAILABLE = "name_unavailable"
-    PUBLISH_RUN_OPEN = "publish_run_open"
     POLICY_REVISION_STALE = "policy_revision_stale"
     DNS_SETUP_PENDING = "dns_setup_pending"
     PLACEMENT_UNAVAILABLE = "placement_unavailable"

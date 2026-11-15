@@ -14,9 +14,9 @@ import (
 func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 	assertGoldenFrame(t, "control-hello", Message{
 		Type: Hello, ProtocolVersion: Version, Role: Publisher, Credential: "credential",
-		PublisherConnection: &PublisherConnectionRef{
-			PublishRunID: "publish_run_1", PublicURLID: "public_url_1", PublishRunNumber: 2,
-			PublisherConnectionID: "publisher_connection_1", ConnectionSlot: 1,
+		ServiceConnection: &ServicePublisherConnectionRef{
+			ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012", RunNumber: 2,
+			PublisherConnectionID: "pc_1234567890123456789012", ConnectionSlot: 1,
 			ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1",
 		},
 	}, WriteControl, ReadControl)
@@ -59,20 +59,19 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 	assertGoldenFrame(t, "control-accepted", Message{Type: HelloAccepted, ProtocolVersion: Version}, WriteControl, ReadControl)
 	assertGoldenFrame(t, "connector-peer-visitor-entry", peerOpeningFixture(), WriteConnectorPeerVisitorEntry, ReadConnectorPeerVisitorEntry)
 	assertGoldenFrame(t, "connector-peer-connectivity", connectorPeerConnectivityFixture(), WriteConnectorPeerConnectivity, ReadConnectorPeerConnectivity)
-	assertGoldenFrame(t, "visitor-stream-header", VisitorStreamHeader{
-		ProtocolVersion: Version, Kind: VisitorStream, VisitorConnectionID: "visitor_connection_1",
-		PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
-		PublisherConnectionID: "publisher_connection_1", ConnectionAssignmentRevision: 3,
-	}, WriteVisitorStreamHeader, ReadVisitorStreamHeader)
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
-	assertGoldenFrame(t, "internal-forwarding-header", InternalForwardingHeader{
-		ProtocolVersion: Version, Kind: InternalForwardingStream, VisitorConnectionID: "visitor_connection_1",
-		PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
-		PublisherConnectionID: "publisher_connection_1", ConnectionSlot: 1,
-		ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1", RelayID: "relay_1",
-		RelayRunID: "relay_run_1", RelayLeaseRevision: 4,
-		PublicUrlExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(time.Minute),
-	}, WriteInternalForwardingHeader, ReadInternalForwardingHeader)
+	assertGoldenFrame(t, "service-forwarding-header", ServiceForwardingHeader{
+		ServiceStreamHeader: ServiceStreamHeader{
+			ProtocolVersion: Version, Kind: ServiceForwardingStream,
+			ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012",
+			PublicService: &PublicServiceAdmission{IngressID: "ingress_1", IngressRunID: "ir_1234567890123456789012", IngressLeaseRevision: 4, DestinationPort: 443},
+			SourceIP:      "192.0.2.1", RunNumber: 2, VisitorConnectionID: "vc_1234567890123456789012",
+			PublisherConnectionID: "pc_1234567890123456789012", ConnectionAssignmentRevision: 3,
+			ExpiresAt: now.Add(time.Hour),
+		},
+		ConnectionSlot: 1, RelayServiceID: "relay_service_1", RelayID: "relay_1",
+		RelayRunID: "rr_1234567890123456789012", RelayLeaseRevision: 4, LeaseExpiresAt: now.Add(time.Minute),
+	}, WriteServiceForwardingHeader, ReadServiceForwardingHeader)
 }
 
 func TestInvalidFixtures(t *testing.T) {
@@ -91,7 +90,8 @@ func TestInvalidFixtures(t *testing.T) {
 		{"invalid-connector-activation-foreign-field", readControl},
 		{"invalid-connector-replacement-missing-revision", readControl},
 		{"invalid-connector-replacement-revision-overflow", readControl},
-		{"invalid-visitor-missing-field", readVisitor},
+		{"invalid-legacy-publisher-hello", readControl},
+		{"invalid-legacy-service-stream", readServiceForwarding},
 		{"invalid-connector-peer-unknown-field", readConnectorPeerVisitor},
 		{"invalid-connector-peer-missing-field", readConnectorPeerVisitor},
 		{"invalid-connector-peer-wrong-subject", readConnectorPeerVisitor},

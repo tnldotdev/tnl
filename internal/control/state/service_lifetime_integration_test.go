@@ -166,8 +166,8 @@ func TestIntegrationServiceExpirationCannotBeExtendedByPublisherRenewal(t *testi
 	if _, err := d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, deadline, health); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("publisher renewed after service expiration", err)
 	}
-	if closed, err := d.ExpireServiceRuns(ctx, deadline); err != nil || closed != 1 {
-		t.Fatal("expiration did not close the exact service run", closed, err)
+	if changed, err := d.ExpireServiceRuns(ctx, deadline); err != nil || changed != 2 {
+		t.Fatal("expiration did not close the run and delete the service", changed, err)
 	}
 	var retired bool
 	if err := d.pool.QueryRow(ctx, `SELECT deleted_at IS NOT NULL AND NOT enabled FROM control.services WHERE id=$1`, service.ID).Scan(&retired); err != nil || !retired {

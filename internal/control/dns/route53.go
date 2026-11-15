@@ -39,27 +39,24 @@ type route53API interface {
 
 func (p *Route53Provider) PublishAddress(ctx context.Context, record AddressRecord) (Zone, error) {
 	marker := record.Owner.marker()
-	if marker == "" || record.WildcardHostname != "" && record.Owner.kind != "public-url" {
+	if marker == "" {
 		return Zone{}, terminalf("DNS address record has an invalid owner")
 	}
-	zone, err := p.publicURLZone(ctx, record)
+	zone, err := p.addressZone(ctx, record)
 	if err != nil {
 		return Zone{}, err
 	}
-	if record.WildcardHostname != "" {
-		return p.publishMemberWildcard(ctx, zone, record)
-	}
-	addressRecords, owner, err := p.publicURLRecords(ctx, record)
+	addressRecords, owner, err := p.addressRecords(ctx, record)
 	if err != nil {
 		return Zone{}, err
 	}
 	ownerExists := owner != nil
 	if ownerExists && !plainRecordSet(owner) || ownerExists &&
 		(len(owner.ResourceRecords) != 1 || aws.ToString(owner.ResourceRecords[0].Value) != marker) {
-		return Zone{}, terminalf("public URL DNS ownership marker does not match")
+		return Zone{}, terminalf("service endpoint DNS ownership marker does not match")
 	}
 	if !ownerExists && len(addressRecords) != 0 {
-		return Zone{}, terminalf("public URL hostname already has unowned address records")
+		return Zone{}, terminalf("service endpoint hostname already has unowned address records")
 	}
 	if ownerExists && aws.ToInt64(owner.TTL) == 60 &&
 		addressRecordMatches(addressRecords[types.RRTypeA], record.IngressIPv4Addresses) &&
@@ -96,85 +93,7 @@ func (p *Route53Provider) PublishAddress(ctx context.Context, record AddressReco
 		HostedZoneId: aws.String(zone.ID),
 		ChangeBatch:  &types.ChangeBatch{Comment: aws.String("publish tnl " + record.Owner.kind + " " + record.Owner.id), Changes: changes},
 	}); err != nil {
-		return Zone{}, fmt.Errorf("dnscontroller: publish Route 53 route records: %w", err)
-	}
-	return zone, nil
-}
-
-func (p *Route53Provider) publishMemberWildcard(ctx context.Context, zone Zone, record AddressRecord) (Zone, error) {
-	if !naming.IsWithin(record.Namespace, record.ZoneDomain) ||
-		naming.PublicURLWildcard(record.CanonicalHostname, record.Namespace) != record.WildcardHostname {
-		return Zone{}, terminalf("member wildcard does not match its public URL")
-	}
-	ownerName := memberWildcardOwnerName(record.WildcardHostname)
-	owners, err := p.listRecordSets(ctx, zone.ID, ownerName)
-	if err != nil {
-		return Zone{}, err
-	}
-	var owner *types.ResourceRecordSet
-	for index := range owners {
-		if owners[index].Type == types.RRTypeTxt {
-			if owner != nil {
-				return Zone{}, terminalf("member wildcard has multiple ownership records")
-			}
-			owner = &owners[index]
-		}
-	}
-	if owner != nil && (!plainRecordSet(owner) || len(owner.ResourceRecords) != 1 ||
-		aws.ToString(owner.ResourceRecords[0].Value) != memberWildcardOwnerValue(record.DomainID)) {
-		return Zone{}, terminalf("member wildcard ownership marker does not match")
-	}
-	sets, err := p.listRecordSets(ctx, zone.ID, record.WildcardHostname)
-	if err != nil {
-		return Zone{}, err
-	}
-	if owner == nil && len(sets) != 0 {
-		return Zone{}, terminalf("member wildcard already has unowned records")
-	}
-	addressRecords := make(map[types.RRType]*types.ResourceRecordSet, 2)
-	for index := range sets {
-		set := &sets[index]
-		if set.Type == types.RRTypeCname {
-			return Zone{}, terminalf("member wildcard has a conflicting CNAME record")
-		}
-		if set.Type != types.RRTypeA && set.Type != types.RRTypeAaaa {
-			continue
-		}
-		if !plainRecordSet(set) || addressRecords[set.Type] != nil {
-			return Zone{}, terminalf("member wildcard has conflicting address records")
-		}
-		addressRecords[set.Type] = set
-	}
-	desired := map[types.RRType][]string{
-		types.RRTypeA: record.IngressIPv4Addresses, types.RRTypeAaaa: record.IngressIPv6Addresses,
-	}
-	var changes []types.Change
-	if owner == nil || aws.ToInt64(owner.TTL) != 60 {
-		changes = append(changes, types.Change{
-			Action:            types.ChangeActionUpsert,
-			ResourceRecordSet: simpleRecordSet(ownerName, types.RRTypeTxt, []string{memberWildcardOwnerValue(record.DomainID)}),
-		})
-	}
-	for _, recordType := range []types.RRType{types.RRTypeA, types.RRTypeAaaa} {
-		existing, values := addressRecords[recordType], desired[recordType]
-		if addressRecordMatches(existing, values) {
-			continue
-		}
-		if len(values) != 0 {
-			changes = append(changes, types.Change{Action: types.ChangeActionUpsert,
-				ResourceRecordSet: simpleRecordSet(record.WildcardHostname, recordType, values)})
-		} else if existing != nil {
-			changes = append(changes, types.Change{Action: types.ChangeActionDelete, ResourceRecordSet: existing})
-		}
-	}
-	if len(changes) == 0 {
-		return zone, nil
-	}
-	if _, err := p.client.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
-		HostedZoneId: aws.String(zone.ID),
-		ChangeBatch:  &types.ChangeBatch{Comment: aws.String("publish tnl member wildcard " + record.WildcardHostname), Changes: changes},
-	}); err != nil {
-		return Zone{}, fmt.Errorf("dnscontroller: publish member wildcard: %w", err)
+		return Zone{}, fmt.Errorf("dnscontroller: publish Route 53 service address records: %w", err)
 	}
 	return zone, nil
 }
@@ -184,14 +103,11 @@ func (p *Route53Provider) RemoveAddress(ctx context.Context, record AddressRecor
 	if marker == "" {
 		return Zone{}, terminalf("DNS address record has an invalid owner")
 	}
-	if record.WildcardHostname != "" {
-		return Zone{}, terminalf("cannot remove a member wildcard with one public URL")
-	}
-	zone, err := p.publicURLZone(ctx, record)
+	zone, err := p.addressZone(ctx, record)
 	if err != nil {
 		return Zone{}, err
 	}
-	addressRecords, owner, err := p.publicURLRecords(ctx, record)
+	addressRecords, owner, err := p.addressRecords(ctx, record)
 	if err != nil {
 		return Zone{}, err
 	}
@@ -199,11 +115,11 @@ func (p *Route53Provider) RemoveAddress(ctx context.Context, record AddressRecor
 		if len(addressRecords) == 0 {
 			return zone, nil
 		}
-		return Zone{}, terminalf("public URL hostname has address records without an ownership marker")
+		return Zone{}, terminalf("service endpoint hostname has address records without an ownership marker")
 	}
 	if !plainRecordSet(owner) || len(owner.ResourceRecords) != 1 ||
 		aws.ToString(owner.ResourceRecords[0].Value) != marker {
-		return Zone{}, terminalf("public URL DNS ownership marker does not match")
+		return Zone{}, terminalf("service endpoint DNS ownership marker does not match")
 	}
 	changes := make([]types.Change, 0, len(addressRecords)+1)
 	for _, recordType := range []types.RRType{types.RRTypeA, types.RRTypeAaaa} {
@@ -216,7 +132,7 @@ func (p *Route53Provider) RemoveAddress(ctx context.Context, record AddressRecor
 		HostedZoneId: aws.String(zone.ID),
 		ChangeBatch:  &types.ChangeBatch{Comment: aws.String("remove tnl " + record.Owner.kind + " " + record.Owner.id), Changes: changes},
 	}); err != nil {
-		return Zone{}, fmt.Errorf("dnscontroller: remove Route 53 route records: %w", err)
+		return Zone{}, fmt.Errorf("dnscontroller: remove Route 53 service address records: %w", err)
 	}
 	return zone, nil
 }
@@ -237,7 +153,7 @@ func (p *Route53Provider) reconcileChallenge(ctx context.Context, record Challen
 		AuthorityReference: record.AuthorityReference, TeamID: record.TeamID, DomainID: record.DomainID,
 		CanonicalHostname: record.RecordName,
 	}
-	zone, err := p.publicURLZone(ctx, zoneRecord)
+	zone, err := p.addressZone(ctx, zoneRecord)
 	if err != nil {
 		return Zone{}, err
 	}
@@ -513,70 +429,9 @@ func (p *Route53Provider) ReleaseCustomZone(ctx context.Context, work controlsta
 	if !ownedTags(tags, work) && !(recovered && untagged) {
 		return terminalf("Route 53 hosted zone ownership tags do not match")
 	}
-	if err := p.removeCustomMemberWildcards(ctx, zoneID, work); err != nil {
-		return err
-	}
 	if _, err := p.client.DeleteHostedZone(ctx, &route53.DeleteHostedZoneInput{Id: aws.String(zoneID)}); err != nil &&
 		!isRoute53Error(err, "NoSuchHostedZone") {
 		return fmt.Errorf("dnscontroller: delete Route 53 hosted zone: %w", err)
-	}
-	return nil
-}
-
-func (p *Route53Provider) removeCustomMemberWildcards(ctx context.Context, zoneID string, work controlstate.DNSAuthorityWork) error {
-	input := &route53.ListResourceRecordSetsInput{HostedZoneId: aws.String(zoneID)}
-	type ownedWildcard struct {
-		owner    types.ResourceRecordSet
-		hostname string
-	}
-	var owners []ownedWildcard
-	for {
-		output, err := p.client.ListResourceRecordSets(ctx, input)
-		if err != nil {
-			return fmt.Errorf("dnscontroller: list custom-zone wildcard owners: %w", err)
-		}
-		for _, set := range output.ResourceRecordSets {
-			if set.Type != types.RRTypeTxt {
-				continue
-			}
-			name := strings.TrimSuffix(strings.ToLower(aws.ToString(set.Name)), ".")
-			namespace, found := strings.CutPrefix(name, "_tnl-wildcard.")
-			wildcard := naming.MemberNamespaceWildcard(namespace, work.CanonicalDomain)
-			if found && wildcard != "" &&
-				plainRecordSet(&set) && len(set.ResourceRecords) == 1 &&
-				aws.ToString(set.ResourceRecords[0].Value) == memberWildcardOwnerValue(work.DomainID) {
-				owners = append(owners, ownedWildcard{owner: set, hostname: wildcard})
-			}
-		}
-		if !output.IsTruncated {
-			break
-		}
-		if aws.ToString(output.NextRecordName) == "" {
-			return errors.New("dnscontroller: custom-zone record page has no cursor")
-		}
-		input.StartRecordName, input.StartRecordType, input.StartRecordIdentifier =
-			output.NextRecordName, output.NextRecordType, output.NextRecordIdentifier
-	}
-	for _, owned := range owners {
-		sets, err := p.listRecordSets(ctx, zoneID, owned.hostname)
-		if err != nil {
-			return err
-		}
-		changes := make([]types.Change, 0, 3)
-		for index := range sets {
-			set := &sets[index]
-			if set.Type != types.RRTypeA && set.Type != types.RRTypeAaaa || !plainRecordSet(set) {
-				return terminalf("custom member wildcard has conflicting records during release")
-			}
-			changes = append(changes, types.Change{Action: types.ChangeActionDelete, ResourceRecordSet: set})
-		}
-		changes = append(changes, types.Change{Action: types.ChangeActionDelete, ResourceRecordSet: &owned.owner})
-		if _, err := p.client.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
-			HostedZoneId: aws.String(zoneID),
-			ChangeBatch:  &types.ChangeBatch{Comment: aws.String("release tnl member wildcard " + owned.hostname), Changes: changes},
-		}); err != nil {
-			return fmt.Errorf("dnscontroller: release custom member wildcard: %w", err)
-		}
 	}
 	return nil
 }
@@ -605,23 +460,23 @@ func (p *Route53Provider) findCustomZone(ctx context.Context, work controlstate.
 	}
 }
 
-func (p *Route53Provider) publicURLZone(ctx context.Context, record AddressRecord) (Zone, error) {
+func (p *Route53Provider) addressZone(ctx context.Context, record AddressRecord) (Zone, error) {
 	zoneID := canonicalZoneID(record.ZoneID)
 	if zoneID == "" {
-		return Zone{}, terminalf("public URL DNS zone has no ID")
+		return Zone{}, terminalf("DNS zone has no ID")
 	}
 	output, err := p.client.GetHostedZone(ctx, &route53.GetHostedZoneInput{Id: aws.String(zoneID)})
 	if err != nil {
-		return Zone{}, fmt.Errorf("dnscontroller: read route Route 53 hosted zone: %w", err)
+		return Zone{}, fmt.Errorf("dnscontroller: read Route 53 hosted zone: %w", err)
 	}
 	if output.HostedZone == nil {
-		return Zone{}, terminalf("route Route 53 hosted zone is missing")
+		return Zone{}, terminalf("Route 53 hosted zone is missing")
 	}
 	zoneDomain := strings.TrimSuffix(strings.ToLower(aws.ToString(output.HostedZone.Name)), ".")
 	if output.HostedZone.LinkedService != nil ||
 		output.HostedZone.Config != nil && output.HostedZone.Config.PrivateZone || zoneDomain != record.ZoneDomain ||
 		record.CanonicalHostname != zoneDomain && !strings.HasSuffix(record.CanonicalHostname, "."+zoneDomain) {
-		return Zone{}, terminalf("route Route 53 hosted zone identity does not match")
+		return Zone{}, terminalf("Route 53 hosted zone identity does not match")
 	}
 	if record.CustomZone {
 		work := controlstate.DNSAuthorityWork{DNSAuthority: controlstate.DNSAuthority{
@@ -635,14 +490,14 @@ func (p *Route53Provider) publicURLZone(ctx context.Context, record AddressRecor
 			ResourceId: aws.String(zoneID), ResourceType: types.TagResourceTypeHostedzone,
 		})
 		if err != nil {
-			return Zone{}, fmt.Errorf("dnscontroller: read custom-domain public URL hosted-zone tags: %w", err)
+			return Zone{}, fmt.Errorf("dnscontroller: read custom-domain hosted-zone tags: %w", err)
 		}
 		if !ownedTags(tags, work) {
-			return Zone{}, terminalf("custom-domain public URL hosted-zone ownership tags do not match")
+			return Zone{}, terminalf("custom-domain hosted-zone ownership tags do not match")
 		}
 	}
 	if output.DelegationSet == nil {
-		return Zone{}, terminalf("route Route 53 hosted zone has no delegation set")
+		return Zone{}, terminalf("Route 53 hosted zone has no delegation set")
 	}
 	nameservers, err := canonicalNameservers(output.DelegationSet.NameServers)
 	if err != nil {
@@ -651,7 +506,7 @@ func (p *Route53Provider) publicURLZone(ctx context.Context, record AddressRecor
 	return Zone{ID: zoneID, Nameservers: nameservers}, nil
 }
 
-func (p *Route53Provider) publicURLRecords(
+func (p *Route53Provider) addressRecords(
 	ctx context.Context,
 	record AddressRecord,
 ) (map[types.RRType]*types.ResourceRecordSet, *types.ResourceRecordSet, error) {
@@ -663,14 +518,14 @@ func (p *Route53Provider) publicURLRecords(
 	for index := range addresses {
 		item := &addresses[index]
 		if item.Type == types.RRTypeCname {
-			return nil, nil, terminalf("public URL hostname has a conflicting CNAME record")
+			return nil, nil, terminalf("service endpoint hostname has a conflicting CNAME record")
 		}
 		if item.Type == types.RRTypeA || item.Type == types.RRTypeAaaa {
 			if !plainRecordSet(item) {
 				return nil, nil, terminalf("route address record uses an unsupported routing policy")
 			}
 			if result[item.Type] != nil {
-				return nil, nil, terminalf("public URL hostname has multiple address record sets")
+				return nil, nil, terminalf("service endpoint hostname has multiple address record sets")
 			}
 			result[item.Type] = item
 		}
@@ -685,7 +540,7 @@ func (p *Route53Provider) publicURLRecords(
 			continue
 		}
 		if owner != nil {
-			return nil, nil, terminalf("public URL hostname has multiple ownership record sets")
+			return nil, nil, terminalf("service endpoint hostname has multiple ownership record sets")
 		}
 		owner = &owners[index]
 	}
@@ -757,14 +612,6 @@ func plainRecordSet(record *types.ResourceRecordSet) bool {
 }
 
 func addressOwnerName(hostname string) string { return "_tnl-owner." + hostname }
-
-func memberWildcardOwnerName(hostname string) string {
-	return "_tnl-wildcard." + strings.TrimPrefix(hostname, "*.")
-}
-
-func memberWildcardOwnerValue(domainID string) string {
-	return strconv.Quote("tnl-member-wildcard:" + domainID)
-}
 
 func dnsName(value string) string { return strings.ToLower(strings.TrimSuffix(value, ".")) + "." }
 

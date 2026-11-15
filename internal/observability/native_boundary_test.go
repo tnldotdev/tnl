@@ -35,7 +35,7 @@ func TestNativeDisabledProviderIgnoresAmbientEnvironment(t *testing.T) {
 		}
 		_, finish := Start(ctx, "disabled.fixture")
 		finish(nil)
-		m.ObserveOperationContext(ctx, OpCreatePublishRun, nil, time.Millisecond)
+		m.ObserveOperationContext(ctx, OpCreateServiceRun, nil, time.Millisecond)
 		text := metricsText(t, m)
 		if strings.Contains(text, "tnl_") || !strings.Contains(text, "go_goroutines") {
 			t.Fatal("disabled owner must keep only passive runtime metrics")
@@ -97,7 +97,7 @@ func TestNativeOTLPExemplarsAndGaugeContract(t *testing.T) {
 			defer m.Shutdown(context.Background())
 			sc := trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1}, SpanID: trace.SpanID{2}, TraceFlags: trace.FlagsSampled})
 			ctx := trace.ContextWithSpanContext(t.Context(), sc)
-			dimensions := []attribute.KeyValue{Operation.Value("CreatePublishRun"), attribute.String("unapproved", "secret-attribute"), RequestID.String("secret-request"), ServiceID.String("secret-service"), attribute.Int(string(OutcomeKey.Key()), 42)}
+			dimensions := []attribute.KeyValue{Operation.Value("CreateServiceRun"), attribute.String("unapproved", "secret-attribute"), RequestID.String("secret-request"), ServiceID.String("secret-service"), attribute.Int(string(OutcomeKey.Key()), 42)}
 			// bypass semantic helpers with direct SDK recording, including a wrong
 			// value type and a valid key disallowed on this particular instrument.
 			m.controlOperations.instrument.Record(ctx, .25, metric.WithAttributes(dimensions...))

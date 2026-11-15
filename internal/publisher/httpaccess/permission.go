@@ -20,6 +20,18 @@ import (
 const VisitorTokenHeader = "Tnl-Visitor-Token"
 const VisitorTokenCookie = "__Host-tnl-visitor"
 
+// Authorization retains verified permission and the selected HTTP bearer proof.
+// certificate possession and anonymous access never expose a bearer credential.
+type Authorization struct {
+	permission visitortoken.VerifiedPermission
+	bearer     visitortoken.Token
+}
+
+func (a Authorization) Permission() visitortoken.VerifiedPermission { return a.permission }
+func (a Authorization) BearerToken() (visitortoken.Token, bool)     { return a.bearer, a.bearer != "" }
+func (Authorization) String() string                                { return "HTTP authorization" }
+func (Authorization) GoString() string                              { return "HTTP authorization" }
+
 // authorization observes local verification and guard binding. the request keeps
 // its HTTP parent and cancellation after this finite operation ends.
 func authorizeHTTPRequest(w http.ResponseWriter, r *http.Request, policy *visitorlease.Lease, tokens *Tokens) (permission httpPermission, guard *Guard, guarded *http.Request, err error) {
@@ -58,6 +70,7 @@ type httpPermission struct {
 	renewed    bool
 	source     netip.Addr
 	anonymous  bool
+	bearer     bool
 }
 
 // localHTTPPermission verifies exactly one supplied visitor credential. it has
@@ -122,11 +135,16 @@ func localHTTPPermission(request *http.Request, policy *visitorlease.Lease, rene
 		return result, nil
 	}
 	if len(supplied) == 0 {
-		if SuppliedCookieCount(request, BrowserCookieName) != 0 || SuppliedCookieCount(request, ShareCookieName) != 0 {
+		if !anonymous || SuppliedCookieCount(request, ShareCookieName) != 0 {
 			return httpPermission{}, visitortoken.ErrToken
 		}
-		if !anonymous {
-			return httpPermission{}, visitortoken.ErrToken
+		// sign-in identity is not visitor permission. a well-formed identity
+		// cookie does not block independent anonymous access. a supplied share
+		// still requires its visitor permission instead of anonymous fallback.
+		if SuppliedCookieCount(request, BrowserCookieName) != 0 {
+			if _, err := browserSessionSecret(request); err != nil {
+				return httpPermission{}, err
+			}
 		}
 		result.anonymous = true
 		return result, nil
@@ -151,6 +169,7 @@ func localHTTPPermission(request *http.Request, policy *visitorlease.Lease, rene
 	}
 	result.permission = permission
 	result.token = token
+	result.bearer = true
 	return result, nil
 }
 
@@ -161,19 +180,26 @@ func (p httpPermission) bind(policy *visitorlease.Lease, stop func()) (*visitorl
 	return policy.Bind(p.permission, p.source, stop)
 }
 
-// authorizeRequest binds local permission to this request and registers renewal
+// AuthorizeRequest binds local permission to this request and registers renewal
 // use only after verification succeeds. ordinary requests never fetch authority.
-func AuthorizeRequest(w http.ResponseWriter, r *http.Request, policy *visitorlease.Lease, tokens *Tokens) (visitortoken.VerifiedPermission, *Guard, *http.Request, error) {
+func AuthorizeRequest(w http.ResponseWriter, r *http.Request, policy *visitorlease.Lease, tokens *Tokens) (Authorization, *Guard, *http.Request, error) {
 	permission, guard, guarded, err := authorizeHTTPRequest(w, r, policy, tokens)
 	if err != nil {
-		return permission.permission, nil, nil, err
+		return Authorization{permission: permission.permission}, nil, nil, err
 	}
-	if tokens != nil && !permission.anonymous {
-		prepared, release, found := tokens.use(permission.token, guard.local)
-		guard.release = release
-		if found && (permission.renewed || prepared.VisitorToken != permission.token.Reveal()) {
-			_ = PermissionCookie(w, prepared)
+	result := Authorization{permission: permission.permission}
+	if permission.bearer {
+		result.bearer = permission.token
+		if tokens != nil {
+			prepared, accepted, release, found := tokens.use(permission.token, guard.local)
+			guard.release = release
+			if found {
+				result.permission, result.bearer = accepted, visitortoken.Token(prepared.VisitorToken)
+				if permission.renewed || prepared.VisitorToken != permission.token.Reveal() {
+					_ = PermissionCookie(w, prepared)
+				}
+			}
 		}
 	}
-	return permission.permission, guard, guarded, nil
+	return result, guard, guarded, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net"
@@ -51,7 +52,7 @@ func serviceHTTPApplicationFixture(t *testing.T, target http.Handler, h2, inline
 	})
 }
 
-func serviceHTTPConfiguredFixture(t *testing.T, target http.Handler, h2, inline bool, configure func(*HTTP)) (*http.Client, *visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
+func serviceHTTPConfiguredFixture(t *testing.T, target http.Handler, h2, inline bool, configure func(*HTTP), configureTarget ...func(*servicestream.HTTPTarget)) (*http.Client, *visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
 	t.Helper()
 	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}
 	policy, update, token := visitorfixture.ScopePolicy(t, scope, "preview.example.test", 443, false)
@@ -60,6 +61,9 @@ func serviceHTTPConfiguredFixture(t *testing.T, target http.Handler, h2, inline 
 		upstream := httptest.NewServer(target)
 		t.Cleanup(upstream.Close)
 		application = servicestream.HTTPTarget{Address: strings.TrimPrefix(upstream.URL, "http://"), Transport: targettransport.Transport{Protocol: config.ProtocolHTTP}}
+	}
+	for _, configure := range configureTarget {
+		configure(&application)
 	}
 	certificate := visitorfixture.Certificate(t, update.View.Hostname)
 	header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
@@ -96,9 +100,9 @@ func serviceHTTPConfiguredFixture(t *testing.T, target http.Handler, h2, inline 
 	return &http.Client{Transport: transport, Timeout: 5 * time.Second}, policy, update, token
 }
 
-type serviceHTTPGrantControl struct {
-	HTTPControl
-	client httpaccess.TokenClient
+type serviceHTTPShareControl struct {
+	serviceHTTPAdmissionControl
+	redeem func(context.Context, string, string, controlv1.RedeemServiceShareRequest, credentials.ServiceRunToken) (controlv1.ShareRedemption, error)
 }
 
 type serviceHTTPAdmissionControl struct {
@@ -113,8 +117,8 @@ func (c serviceHTTPAdmissionControl) AuthorizeServiceHTTPVisitor(ctx context.Con
 	return controlv1.ServiceClientCertificateDecision{Allowed: true, Admitted: true, ValidUntil: time.Now().Add(time.Minute)}, nil
 }
 
-func (c serviceHTTPGrantControl) IssueVisitorToken(ctx context.Context, request controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
-	return c.client.IssueVisitorToken(ctx, request)
+func (c serviceHTTPShareControl) RedeemServiceShare(ctx context.Context, service, run string, request controlv1.RedeemServiceShareRequest, token credentials.ServiceRunToken) (controlv1.ShareRedemption, error) {
+	return c.redeem(ctx, service, run, request, token)
 }
 
 func TestServiceHTTPShareRedemptionKeepsRenewingBeyondFirstPermission(t *testing.T) {
@@ -126,15 +130,18 @@ func TestServiceHTTPShareRedemptionKeepsRenewingBeyondFirstPermission(t *testing
 			t.Fatal(err)
 		}
 		defer policy.Close()
-		grantID := "shg_" + strings.Repeat("G", 22)
-		refresh := "vrf1." + grantID + "." + strings.Repeat("A", 43)
+		shareID := "shr_" + strings.Repeat("G", 22)
+		secret := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("s", 32)))
+		cookie := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("c", 32)))
+		runID := "srun_" + strings.Repeat("R", 22)
+		runToken := credentials.ServiceRunToken("service-run-secret")
 		issuer := &visitorfixture.TokenClient{Issue: func(_ context.Context, request controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
-			var source controlv1.VisitorTokenGrantSource
-			if request.Resource.Id != scope.ID || request.Resource.Kind != "service" || json.Unmarshal(request.Source, &source) != nil || source.Kind != "grant" || source.Credential != refresh {
+			var source controlv1.VisitorTokenShareSessionSource
+			if request.Resource.Id != scope.ID || request.Resource.Kind != "service" || json.Unmarshal(request.Source, &source) != nil || source.Kind != "share_session" || source.ShareId != shareID || source.Secret != cookie {
 				t.Fatal("share redemption or renewal lost its exact resource/source")
 			}
 			view, _, _ := policy.Lease().Current()
-			facts := visitortoken.Permission{Scope: scope, Hostname: view.Hostname, Port: view.Port, VisitorPolicyRevision: view.VisitorPolicyRevision, Subject: visitortoken.Grant{GrantID: grantID, Kind: "share"}, ExpiresAt: time.Now().Add(5 * time.Minute)}
+			facts := visitortoken.Permission{Scope: scope, Hostname: view.Hostname, Port: view.Port, VisitorPolicyRevision: view.VisitorPolicyRevision, Subject: visitortoken.Share{ShareID: shareID}, ExpiresAt: time.Now().Add(5 * time.Minute)}
 			token, err := visitortoken.Sign(view.Issuer, "test-key", key, facts, time.Now())
 			return controlv1.VisitorTokenResponse{Resource: request.Resource, Hostname: view.Hostname, Port: int(view.Port), VisitorToken: token.Reveal(), VisitorPolicyRevision: view.VisitorPolicyRevision, ExpiresAt: facts.ExpiresAt}, err
 		}}
@@ -143,9 +150,22 @@ func TestServiceHTTPShareRedemptionKeepsRenewingBeyondFirstPermission(t *testing
 			t.Fatal(err)
 		}
 		defer tokens.Close()
-		frontend := HTTP{Subject: scope, Control: serviceHTTPGrantControl{client: issuer}, browser: &httpaccess.Browser{Subject: scope, Policy: policy, Tokens: tokens}}
+		control := serviceHTTPShareControl{redeem: func(ctx context.Context, service, run string, request controlv1.RedeemServiceShareRequest, token credentials.ServiceRunToken) (controlv1.ShareRedemption, error) {
+			if service != scope.ID || run != runID || token != runToken || request.RunNumber != 1 || request.ShareId == nil ||
+				*request.ShareId != shareID || request.Secret == nil || *request.Secret != secret || request.HandoffToken != nil {
+				t.Fatal("share redemption lost its service run or original link")
+			}
+			source, err := json.Marshal(controlv1.VisitorTokenShareSessionSource{Kind: controlv1.VisitorTokenShareSession, ShareId: shareID, Secret: cookie})
+			if err != nil {
+				t.Fatal(err)
+			}
+			permission, err := issuer.IssueVisitorToken(ctx, controlv1.VisitorTokenRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: scope.ID}, Source: source})
+			return controlv1.ShareRedemption{ShareId: shareID, CookieSecret: cookie, ExpiresAt: time.Now().Add(time.Hour), NextUrl: "https://service.example/", Permission: permission}, err
+		}}
+		frontend := HTTP{Subject: scope, RunID: runID, Number: 1, Token: runToken, Control: control,
+			browser: &httpaccess.Browser{Subject: scope, Client: control, RunID: runID, Number: 1, Token: runToken, Policy: policy, Tokens: tokens}}
 		response := httptest.NewRecorder()
-		frontend.share(response, httptest.NewRequest(http.MethodGet, "/__tnl/share/"+refresh, nil))
+		frontend.share(response, httptest.NewRequest(http.MethodGet, "/__tnl/share/"+shareID+"."+secret, nil))
 		if response.Code != http.StatusSeeOther {
 			t.Fatal("share redemption failed", response.Code, response.Body.String())
 		}
@@ -200,7 +220,8 @@ func TestServiceHTTPCredentialPrecedenceFailsClosed(t *testing.T) {
 	var forwarded atomic.Int64
 	client, _, _, token := serviceHTTPFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		forwarded.Add(1)
-		if r.Header.Get(httpaccess.VisitorTokenHeader) != "" || r.Header.Get("Cookie") != "app=value" || r.Header.Get("Authorization") != "application-secret" || r.Header.Get("X-Forwarded-For") != "" {
+		if r.Header.Get(httpaccess.VisitorTokenHeader) != "" || r.Header.Get("Cookie") != "app=value" || r.Header.Get("Authorization") != "application-secret" ||
+			r.Header.Get("X-Forwarded-For") != "192.0.2.1" || r.Header.Get("Forwarded") != "" || r.Header.Get("X-Real-IP") != "" {
 			t.Error("visitor credentials or untrusted source reached the target")
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -314,6 +335,53 @@ func TestServiceHTTPAnonymousAccessKeepsPolicyAndCredentialFences(t *testing.T) 
 	request(nil, http.StatusServiceUnavailable)
 	if forwarded.Load() != 3 {
 		t.Fatalf("forwarded %d requests, want 3", forwarded.Load())
+	}
+}
+
+func TestServiceHTTPIdentityCookieDoesNotReplaceVisitorPolicy(t *testing.T) {
+	var forwarded atomic.Int32
+	client, policy, update, _ := serviceHTTPFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		if r.Header.Get("Cookie") != "" {
+			t.Error("identity-only browser cookie reached the application")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	apply := func(anonymous bool) {
+		t.Helper()
+		update.Anonymous = anonymous
+		update.View.VisitorPolicyRevision++
+		update.View.ObservedAt = time.Now()
+		update.View.ValidUntil = update.View.ObservedAt.Add(10 * time.Second)
+		if err := policy.Apply(policy.Begin(), update); err != nil {
+			t.Fatal(err)
+		}
+	}
+	visit := func(cookie string, want int) {
+		t.Helper()
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://preview.example.test/", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Cookie", cookie)
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		if _, err := io.Copy(io.Discard, response.Body); err != nil || response.StatusCode != want {
+			t.Fatal("identity cookie changed visitor policy", response.StatusCode, err)
+		}
+	}
+	cookie := httpaccess.BrowserCookieName + "=" + visitorfixture.BrowserCookie
+	apply(true)
+	visit(cookie, http.StatusNoContent)
+	visit(cookie+"; "+cookie, http.StatusForbidden)
+	visit(httpaccess.BrowserCookieName+"=invalid", http.StatusForbidden)
+	apply(false)
+	visit(cookie, http.StatusForbidden)
+	if forwarded.Load() != 1 {
+		t.Fatal("browser identity granted restricted access", forwarded.Load())
 	}
 }
 

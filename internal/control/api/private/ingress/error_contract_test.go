@@ -13,7 +13,7 @@ func TestIngressStoreProblemsUseDeclaredCodes(t *testing.T) {
 	for _, err := range []error{
 		controlstate.ErrIngressAlreadyRunning,
 		controlstate.ErrIngressLeaseStale,
-		controlstate.ErrPublicURLRecoveryEpisodeStale,
+		controlstate.ErrServiceRecoveryEpisodeStale,
 		errors.New("unexpected database error"),
 	} {
 		status, code, detail := storeProblem(err, func(error) {})

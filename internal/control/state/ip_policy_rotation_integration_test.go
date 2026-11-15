@@ -116,23 +116,17 @@ func checkLockedRotationCount(t *testing.T, d *Database, lock string) {
 
 func TestIntegrationStorageRotationBrowserSecrets(t *testing.T) {
 	d, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "rotation_browser_secrets")
-	r := oidcRouteRequest(t, d, now)
-	u := createTestPublicURL(t, d, r, now)
-	auth := browserTestAuthentication(t, d, u.ID, now)
+	_, _, _, leases := publishRunPrerequisitesInDatabase(t, d, now, nil)
+	f := serviceHTTPFixture{database: d, now: now, project: appliedProjectRequest(t, d, now), leases: leases}
+	f.service = f.local(t, "web", nil)
+	f.run = f.publish(t, f.service)
 	binding := bytes.Repeat([]byte{7}, 32)
 	verifier := strings.Repeat("v", 43)
-	state, err := d.BeginBrowserLogin(t.Context(), "", u.ID, "/settings", "nonce-at-least-sixteen", verifier, binding, nil, now)
+	state, err := d.BeginServiceBrowserLogin(t.Context(), f.auth().Subject, "", "/settings", "nonce-at-least-sixteen", verifier, binding, nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	issued := browserTestControlSession(t, d, r.ActingIdentityID, now)
-	handoff, err := d.IssueBrowserHandoff(t.Context(), BrowserLoginAttempt{PublicURLID: u.ID, PublishRunID: auth.PublishRunID, ReturnPath: "/settings"}, BrowserAccessSession{
-		IdentityID: r.ActingIdentityID, DisplayName: "Example user", AccessToken: issued.AccessToken.String(), RefreshToken: issued.RefreshToken.String(),
-		AccessExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(24 * time.Hour),
-	}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	handoff, issued := f.browser(t, "", f.project.ActorID)
 	d.Close()
 	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{6}, 32))
 	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey, naming.ManagedURLModeGenerated)
@@ -161,13 +155,23 @@ func TestIntegrationStorageRotationBrowserSecrets(t *testing.T) {
 	if err != nil || login.Verifier != verifier {
 		t.Fatal("browser verifier failed after key retirement", err)
 	}
-	cookie, _, _, _, _, err := reopened.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, now)
+	cookie, err := reopened.RedeemServiceBrowserHandoff(t.Context(), f.auth(), handoff.Token, now)
 	if err != nil {
 		t.Fatal("browser handoff failed after key retirement", err)
 	}
-	session, err := reopened.BrowserSession(t.Context(), u.ID, cookie, now)
-	if err != nil || session.AccessToken != issued.AccessToken.String() || session.RefreshToken != issued.RefreshToken.String() {
-		t.Fatal("browser access/refresh pair failed after key retirement", err)
+	session, err := reopened.ServiceBrowserSession(t.Context(), f.auth(), cookie.CookieSecret, false, now)
+	if err != nil || session.IdentityID != f.project.ActorID || !session.Authenticated {
+		t.Fatal("browser authentication failed after key retirement", err)
+	}
+	digest, _ := browserDigest(cookie.CookieSecret)
+	var ciphertext []byte
+	var keyID string
+	if err := reopened.pool.QueryRow(t.Context(), `SELECT refresh_ciphertext,storage_key_id FROM control.service_http_browser_sessions WHERE token_digest=$1`, digest).Scan(&ciphertext, &keyID); err != nil {
+		t.Fatal(err)
+	}
+	refresh, _, err := reopened.storageKey.Open(keyID, browserContext(digest), ciphertext)
+	if err != nil || string(refresh) != issued.RefreshToken.String() {
+		t.Fatal("browser refresh secret failed after key retirement", err)
 	}
 }
 
@@ -247,6 +251,7 @@ func TestIntegrationSignedInIPPolicySurvivesStorageKeyRotation(t *testing.T) {
 
 func TestIntegrationPreviousKeyStaysRequiredUntilGuestTrialExpires(t *testing.T) {
 	database, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "guest_key_retention")
+	enableGuestTestIngress(t, database)
 	guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
 	if err != nil {
 		t.Fatal(err)

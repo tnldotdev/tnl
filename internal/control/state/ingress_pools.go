@@ -14,6 +14,8 @@ import (
 
 const PrimaryIngressPoolID = string(ingresspool.PrimaryID)
 
+var ErrIngressPoolInvalid = errors.New("controlstate: invalid ingress pool")
+
 type IngressPoolState string
 
 const (
@@ -33,7 +35,7 @@ type IngressPool struct {
 // EnsurePrimaryIngressPool pins the public HTTP ingress address.
 func (d *Database) EnsurePrimaryIngressPool(ctx context.Context, ipv4, ipv6 string, now time.Time) (retErr error) {
 	if now.IsZero() {
-		return ErrPublicURLInvalid
+		return ErrIngressPoolInvalid
 	}
 	parse := func(value string, ipv4 bool) (*netip.Addr, error) {
 		if value == "" {
@@ -41,7 +43,7 @@ func (d *Database) EnsurePrimaryIngressPool(ctx context.Context, ipv4, ipv6 stri
 		}
 		address, err := netip.ParseAddr(value)
 		if err != nil || address.Zone() != "" || address.Is4() != ipv4 {
-			return nil, ErrPublicURLInvalid
+			return nil, ErrIngressPoolInvalid
 		}
 		return &address, nil
 	}
@@ -51,7 +53,7 @@ func (d *Database) EnsurePrimaryIngressPool(ctx context.Context, ipv4, ipv6 stri
 	}
 	v6, err := parse(ipv6, false)
 	if err != nil || v4 == nil && v6 == nil {
-		return ErrPublicURLInvalid
+		return ErrIngressPoolInvalid
 	}
 	if err := d.requireOpen(); err != nil {
 		return err
@@ -87,7 +89,7 @@ func sameIngressAddress(left, right *netip.Addr) bool {
 
 func (d *Database) GetIngressPool(ctx context.Context, id string) (IngressPool, error) {
 	if !validStateText(id) {
-		return IngressPool{}, ErrPublicURLInvalid
+		return IngressPool{}, ErrIngressPoolInvalid
 	}
 	if err := d.requireOpen(); err != nil {
 		return IngressPool{}, err

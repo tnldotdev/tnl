@@ -93,14 +93,14 @@ func TestRuntimeDeploymentRetainedAcrossLostReply(t *testing.T) {
 	if _, err := owner.Renew(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	parent := observability.ReplaceIdentity(t.Context(), observability.Identity{TeamID: "old-team", DeploymentID: "old-deployment", PublicURLID: "old-url"})
+	parent := observability.ReplaceIdentity(t.Context(), observability.Identity{TeamID: "old-team", DeploymentID: "old-deployment", ServiceID: "old-service"})
 	scoped := owner.ObservabilityContext(parent, "team", "scope")
 	if id := observability.IdentityFromContext(scoped); id != (observability.Identity{TeamID: "team", DeploymentID: "scope", PublisherIdentityID: "publisher", ReportedDeploymentID: expected.DeploymentId, ReplicaKey: expected.ReplicaKey}) {
 		t.Fatal("accepted immutable runtime deployment was not bound to a fresh identity", id)
 	}
 	service := observability.NarrowIdentity(scoped, observability.Identity{ServiceID: "service"})
-	if id := observability.IdentityFromContext(service); id.DeploymentID != "scope" || id.ReportedDeploymentID != expected.DeploymentId || id.ReplicaKey != expected.ReplicaKey || id.ServiceID != "service" || id.PublicURLID != "" {
-		t.Fatal("service scope lost deployment provenance or leaked prior public URL", id)
+	if id := observability.IdentityFromContext(service); id.DeploymentID != "scope" || id.ReportedDeploymentID != expected.DeploymentId || id.ReplicaKey != expected.ReplicaKey || id.ServiceID != "service" {
+		t.Fatal("service scope lost deployment provenance or retained a prior service", id)
 	}
 	if id := observability.IdentityFromContext(owner.ObservabilityContext(parent, "team", "different-deployment")); id != (observability.Identity{}) {
 		t.Fatal("runtime attributed a foreign deployment", id)

@@ -70,8 +70,7 @@ type Metrics struct {
 	apiDuration                 *histogram
 	apiInFlight                 *gauge
 	webhookProviderSources      *counter
-	publicURLsCreated           *counter
-	publishRunsReady            *counter
+	serviceRunsReady            *counter
 	readinessDuration           *histogram
 	readinessAge                *histogram
 	certificateDuration         *histogram
@@ -148,7 +147,7 @@ func (metrics *Metrics) initInstruments(role Role) {
 	metrics.relayStreamRejections = newCounter(m, "tnl_relay_visitor_stream_rejections_total", "Relay stream rejections other than capacity exhaustion, by fixed reason.", Reason)
 	metrics.capacityRejections = newCounter(m, "tnl_admission_rejections_total", "Admission rejected because a bounded resource was full.", CapacityResource)
 	metrics.drainingRejections = newCounter(m, "tnl_ingress_draining_rejections_total", "Connections rejected because ingress was draining.")
-	metrics.capacityLimits = newGauge(m, "tnl_admission_limit", "Resolved admission limit by fixed resource; per-URL and per-hostname resources are per key.", CapacityResource)
+	metrics.capacityLimits = newGauge(m, "tnl_admission_limit", "Resolved admission limit by fixed resource; keyed source and hostname limits report their configured per-key value.", CapacityResource)
 	metrics.inspectionFailures = newCounter(m, "tnl_ingress_inspection_failures_total", "Ingress connections rejected before classification by fixed failure stage.", Operation)
 	metrics.forwardedBytes = newCounter(m, "tnl_ingress_forwarded_bytes_total", "Bytes forwarded through ingress, recorded after a copy finishes.", Direction)
 	metrics.trafficAdmissions = newCounter(m, "tnl_ingress_traffic_admissions_total", "Process-local traffic decisions by fixed stage and result; excludes identities and network addresses.", Operation, OutcomeKey)
@@ -156,23 +155,22 @@ func (metrics *Metrics) initInstruments(role Role) {
 	metrics.apiDuration = newHistogram(m, "tnl_api_request_duration_seconds", "tnl API handler duration including long polls; count is the request total.", DurationBucketsSeconds(), Component, HTTPMethod, HTTPRoute, OutcomeKey)
 	metrics.apiInFlight = newGauge(m, "tnl_api_requests_in_flight", "tnl API requests currently executing by component.", Component)
 	metrics.webhookProviderSources = newCounter(m, "tnl_control_webhook_provider_source_requests_total", "Webhook sender-policy lookups by fixed provider and bounded outcome; not configured endpoints or webhook deliveries.", providerKey, OutcomeKey)
-	metrics.publicURLsCreated = newCounter(m, "tnl_control_public_urls_created_total", "New public URLs committed by client-declared purpose; excludes idempotent retries.", publicURLPurpose)
-	metrics.publishRunsReady = newCounter(m, "tnl_control_publish_runs_ready_total", "Publish runs first marked ready by their saved public URL purpose.", publicURLPurpose)
-	metrics.readinessDuration = newHistogram(m, "tnl_control_publish_run_readiness_duration_seconds", "Time spent checking and publishing publish run readiness; count is the number of attempts.", DurationBucketsSeconds(), State)
-	metrics.readinessAge = newHistogram(m, "tnl_control_publish_run_readiness_age_seconds", "Age of the publish run at a readiness decision; excludes other errors.", []float64{1, 5, 10, 30, 60, 120, 300, 600}, State)
+	metrics.serviceRunsReady = newCounter(m, "tnl_control_service_runs_ready_total", "Service runs first marked ready by this control process.")
+	metrics.readinessDuration = newHistogram(m, "tnl_control_service_run_readiness_duration_seconds", "Time spent checking and publishing service run readiness; count is the number of attempts.", DurationBucketsSeconds(), State)
+	metrics.readinessAge = newHistogram(m, "tnl_control_service_run_readiness_age_seconds", "Age of the service run at a readiness decision; excludes other errors.", []float64{1, 5, 10, 30, 60, 120, 300, 600}, State)
 	metrics.certificateDuration = newHistogram(m, "tnl_control_certificate_work_duration_seconds", "Certificate worker advance and save duration; count is the number of claimed iterations.", DurationBucketsSeconds(), CertificateKind, Operation, OutcomeKey)
 	metrics.certificateMilestone = newHistogram(m, "tnl_control_certificate_milestone_age_seconds", "Time from issuance creation to certificate availability or DNS cleanup; availability does not imply installation.", []float64{1, 5, 10, 20, 30, 45, 60, 90, 120, 300, 600}, CertificateKind, Event)
 	metrics.controlOperations = newHistogram(m, "tnl_control_operation_duration_seconds", "Completed control state operation duration by fixed operation and outcome.", DurationBucketsSeconds(), Operation, OutcomeKey)
 	metrics.publisherruntime = newHistogram(m, "tnl_control_publisher_runtime_duration_seconds", "Signed publisher runtime inspect/start/renew/stop decisions; identity dimensions attach only after proof verification.", DurationBucketsSeconds(), Operation, OutcomeKey, TeamID, DeploymentID, PublisherIdentityID, ReportedDeploymentID, ReplicaKey)
 	metrics.ingressOperations = newHistogram(m, "tnl_ingress_operation_duration_seconds", "Completed ingress operation duration by fixed operation and outcome.", DurationBucketsSeconds(), Operation, OutcomeKey)
 	metrics.relayOperations = newHistogram(m, "tnl_relay_operation_duration_seconds", "Completed relay operation duration by fixed operation and outcome.", DurationBucketsSeconds(), Operation, OutcomeKey)
-	metrics.relayBytes = newCounter(m, "tnl_relay_forwarded_bytes_total", "Wire bytes copied by relay, including preserved PROXY metadata; recorded at stream close.", ServiceKindKey, Direction)
-	metrics.relayCompletions = newCounter(m, "tnl_relay_visitor_stream_completions_total", "Opened visitor streams whose relay copy ended, not application request outcomes.", ServiceKindKey, OutcomeKey)
+	metrics.relayBytes = newCounter(m, "tnl_relay_forwarded_bytes_total", "Wire bytes copied by relay, including preserved PROXY metadata; recorded at stream close.", Direction)
+	metrics.relayCompletions = newCounter(m, "tnl_relay_visitor_stream_completions_total", "Opened visitor streams whose relay copy ended, not application request outcomes.", OutcomeKey)
 	metrics.databaseQueryDuration = newHistogram(m, "tnl_database_query_duration_seconds", "Completed request-pool SQL duration observed by the driver, excluding pool acquisition.", DurationBucketsSeconds(), Operation, OutcomeKey)
 	metrics.databaseGuardDuration = newHistogram(m, "tnl_database_guard_held_duration_seconds", "Driver-observed interval from successful guard query completion through transaction completion; not exact PostgreSQL lock time.", DurationBucketsSeconds(), Operation, OutcomeKey)
 	metrics.databaseAcquireDuration = newHistogram(m, "tnl_database_pool_acquire_duration_seconds", "Time to acquire a request-pool connection, including waits and failed acquisitions.", DurationBucketsSeconds(), OutcomeKey)
 	metrics.databaseFailures = newCounter(m, "tnl_database_failures_total", "Request-pool failures by fixed boundary and outcome; acquire has no SQL operation name.", Operation, OutcomeKey)
-	metrics.recoveryDuration = newHistogram(m, "tnl_control_public_url_recovery_duration_seconds", "Duration of newly committed public URL recovery observations on this control process.", DurationBucketsSeconds())
+	metrics.recoveryDuration = newHistogram(m, "tnl_control_service_recovery_duration_seconds", "Duration of newly committed service recovery observations on this control process.", DurationBucketsSeconds())
 	metrics.recoveryPending = newGauge(m, "tnl_ingress_recovery_observations_pending", "Recovery observations awaiting a successful or stale response.")
 	metrics.recoveryAttempts = newCounter(m, "tnl_ingress_recovery_observation_attempts_total", "Recovery reporting attempts by bounded outcome.", OutcomeKey)
 	metrics.certificateClaims = newCounter(m, "tnl_control_certificate_claims_total", "Certificate worker claims by certificate kind and outcome.", CertificateKind, OutcomeKey)
@@ -185,7 +183,7 @@ func (metrics *Metrics) initInstruments(role Role) {
 	metrics.cleanupLastSuccess = newGauge(m, "tnl_control_cleanup_last_success_timestamp_seconds", "Unix time of last successful cleanup by kind; zero before success.", CleanupKind)
 	metrics.registerPortInventory()
 	metrics.guestTrialStats = newGauge(m, "tnl_control_guest_trials_last_24h", "Service-wide trial counts from committed state over the last 24 hours; use max rather than sum across control replicas.", Event)
-	metrics.placementDecisions = newCounter(m, "tnl_control_placement_decisions_total", "Publish run placement decisions by action and bounded result.", Operation, OutcomeKey)
+	metrics.placementDecisions = newCounter(m, "tnl_control_placement_decisions_total", "Service run placement decisions by action and bounded result.", Operation, OutcomeKey)
 	metrics.assignmentReplacements = newCounter(m, "tnl_control_connection_assignments_replaced_total", "Committed replacement of connection assignments by fixed reason.", Reason)
 	for _, result := range []string{"queued", "delivered", "retry", "dropped", "accepted", "duplicate"} {
 		metrics.serviceAudit.With(eventDimension(result)).Add(0)
@@ -375,8 +373,8 @@ func (m *Metrics) observeAPIRequest(surface, method, route string, outcome APIRe
 	m.apiDuration.With(Component.Dimension(surface), HTTPMethod.Dimension(httpMethod(method)), HTTPRoute.Dimension(route), outcome.result().dimension()).Observe(duration.Seconds())
 }
 
-// outcomes and stages are closed sets, independent of public URL and order identity.
-func (m *Metrics) ObservePublishRunReadiness(outcome readiness.Outcome, duration, age time.Duration) {
+// outcomes and stages are closed sets, independent of service and order identity.
+func (m *Metrics) ObserveServiceRunReadiness(outcome readiness.Outcome, duration, age time.Duration) {
 	switch outcome {
 	case readiness.Ready, readiness.CertificateMissing, readiness.ConnectionsMissing,
 		readiness.CertificateAndConnectionsMissing, readiness.DNSPending, readiness.DNSFailed, readiness.Error:
@@ -390,7 +388,7 @@ func (m *Metrics) ObservePublishRunReadiness(outcome readiness.Outcome, duration
 }
 
 func (m *Metrics) ObserveCertificateIterationContext(ctx context.Context, kind, stage string, outcome CertificateWorkOutcome, duration time.Duration) {
-	if m == nil || kind != "public_url" && kind != "relay" && kind != "service" {
+	if m == nil || kind != "relay" && kind != "service" {
 		return
 	}
 	switch stage {
@@ -410,7 +408,7 @@ func (m *Metrics) ObserveCertificateIterationContext(ctx context.Context, kind, 
 }
 
 func (m *Metrics) ObserveCertificateMilestone(kind, milestone string, age time.Duration) {
-	if m == nil || kind != "public_url" && kind != "service" || milestone != "ready" && milestone != "cleanup" || age < 0 {
+	if m == nil || kind != "service" || milestone != "ready" && milestone != "cleanup" || age < 0 {
 		return
 	}
 	m.certificateMilestone.With(CertificateKind.Dimension(kind), eventDimension(milestone)).Observe(age.Seconds())

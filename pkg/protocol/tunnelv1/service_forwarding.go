@@ -9,7 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
-// private forwarding includes up to three configured 256-byte process IDs,
+// service forwarding includes up to three configured 256-byte process IDs,
 // each of which may expand sixfold in JSON, plus fixed opaque IDs and metadata.
 const MaxServiceHeaderBytes = 8 << 10
 
@@ -63,8 +63,8 @@ func validPrivateSourceIP(value string) bool {
 	return err == nil && addr.IsValid() && addr.Zone() == "" && addr.String() == value
 }
 
-// ServiceForwardingHeader carries the current relay lease and public service/run
-// admission. it never accepts public URL IDs or a connector admission.
+// ServiceForwardingHeader carries the current relay lease and service run
+// admission. it never accepts a connector admission.
 type ServiceForwardingHeader struct {
 	ServiceStreamHeader
 	ConnectionSlot     uint8     `json:"connection_slot"`

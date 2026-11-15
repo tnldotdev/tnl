@@ -11,7 +11,6 @@ import (
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/internal/region"
@@ -122,10 +121,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	if err := selectPublishInspection(&flags, protocol); err != nil {
-		return err
-	}
-	if protocol != controlv1.Http && flags.Demo {
+	if protocol != controlv1.ServiceProtocolHTTP && flags.Demo {
 		return failure.Wrap("validate TCP publish options", failure.InvalidTunnelFlags, errors.New("TCP publication cannot run the demo"))
 	}
 	if err := validateTCPPublishOptions(flags, protocol); err != nil {
@@ -136,7 +132,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		if err != nil {
 			return err
 		}
-		if protocol == controlv1.Http {
+		if protocol == controlv1.ServiceProtocolHTTP {
 			output.openURL = browserOpener(ctx, flags.Open, true)
 		}
 		return runNamedPublish(ctx, selected.resolvedNamedInvocation, flags.StateDir, output)
@@ -166,6 +162,7 @@ func publisherAuthentication(stderr io.Writer) func(context.Context, *clientstat
 func publicationPresentation(ctx context.Context, flags publishCommand, output *publishOutput) *invocation.Presentation {
 	return &invocation.Presentation{
 		Starting: output.starting, Provisioning: output.provisioning, Ready: output.ready, Stopped: output.stopped,
+		ProvisioningStalled: output.provisioningStalled, TransportFallback: output.transportFallback, TargetUnavailable: output.targetUnavailable,
 		Progress: func(p invocation.Progress) error { return output.integrationURLMessage(p.State, p.Hint, p.Details...) },
 		Warning: func(message string) error {
 			output.mu.Lock()
@@ -177,8 +174,5 @@ func publicationPresentation(ctx context.Context, flags publishCommand, output *
 		},
 		ConfigureBrowser: func(automated bool) { output.openURL = browserOpener(ctx, flags.Open, automated) },
 		Demo:             output.setDemo, GuestDemo: output.setGuestDemo, GuestShare: output.setGuestShare, DemoPing: output.demoPing, Logf: output.logf,
-		PublisherEvent: func(ctx context.Context, tunnel *clientstate.Tunnel, server string, event publisher.Event) error {
-			return handlePublisherEvent(ctx, tunnel, output, event)
-		},
 	}
 }

@@ -339,7 +339,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := readyAppliedServiceRun(t, d, access, replica.private, service, leases, now)
+	run := readyAppliedServiceRun(t, d, access, replica.private, service, netip.MustParseAddr("127.0.0.1"), leases, now)
 	exchange, key := workloadExchange(t, r, now)
 	session, err := d.ExchangeWorkload(ctx, exchange, now)
 	if err != nil {

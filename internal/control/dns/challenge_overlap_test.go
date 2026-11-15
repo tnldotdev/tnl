@@ -18,17 +18,17 @@ func TestChallengeManagerOverlappingReconciliations(t *testing.T) {
 	oldDigest, newDigest := sha256.Sum256([]byte("old")), sha256.Sum256([]byte("new"))
 	thirdDigest := sha256.Sum256([]byte("third"))
 	snapshot := controlstate.DNSChallengeContext{
-		PublicURLID: "public_url_old", TeamID: "team_1", DomainID: "domain_1", CanonicalDomain: "tunnels.example.test",
+		ServiceID: "svc_old", TeamID: "team_1", DomainID: "domain_1", CanonicalDomain: "tunnels.example.test",
 		AuthorizationID: "authorization_old", Identifier: "*.member.tunnels.example.test", State: "presenting",
 		PresentationReference: "presentation_old", ChallengeDigest: oldDigest,
 		Presentations: []controlstate.DNSChallengePresentation{{ChallengeDigest: oldDigest, Active: true}, {ChallengeDigest: newDigest, Active: true}},
 	}
 	var mu sync.Mutex
-	store := &challengeStoreStub{getContext: func(_ context.Context, publicURLID, authorizationID string) (controlstate.DNSChallengeContext, error) {
+	store := &challengeStoreStub{getContext: func(_ context.Context, serviceID, authorizationID string) (controlstate.DNSChallengeContext, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		copy := snapshot
-		copy.PublicURLID = publicURLID
+		copy.ServiceID = serviceID
 		copy.Presentations = slices.Clone(snapshot.Presentations)
 		if authorizationID == "authorization_new" {
 			copy.AuthorizationID, copy.PresentationReference = "authorization_new", "presentation_new"
@@ -64,7 +64,7 @@ func TestChallengeManagerOverlappingReconciliations(t *testing.T) {
 	var workers sync.WaitGroup
 	t.Cleanup(func() { release(); cancel(); workers.Wait() })
 	workers.Go(func() {
-		firstDone <- manager.PresentSubject(ctx, publicDNSSubject("public_url_new"), "authorization_new")
+		firstDone <- manager.PresentSubject(ctx, serviceDNSSubject("svc_new"), "authorization_new")
 	})
 	select {
 	case <-firstStarted:
@@ -78,7 +78,7 @@ func TestChallengeManagerOverlappingReconciliations(t *testing.T) {
 	lockRequested := make(chan struct{})
 	store.lockRequested = func() { close(lockRequested) }
 	workers.Go(func() {
-		secondDone <- otherManager.CleanupSubject(ctx, publicDNSSubject("public_url_old"), "authorization_old")
+		secondDone <- otherManager.CleanupSubject(ctx, serviceDNSSubject("svc_old"), "authorization_old")
 	})
 	select {
 	case <-lockRequested:

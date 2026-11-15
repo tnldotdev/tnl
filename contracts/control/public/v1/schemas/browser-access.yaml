@@ -4,15 +4,15 @@ schemas:
     additionalProperties: false
     required: [kind, id]
     properties:
-      kind: { type: string, enum: [public_url, service] }
+      kind: { type: string, enum: [service] }
       id: { type: string, maxLength: 64 }
-    description: An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
+    description: An exact service authorization scope.
   CreateVisitorCredentialRequest:
     type: object
     additionalProperties: false
     required: [kind, expires_at]
     properties:
-      kind: { type: string, enum: [token, share] }
+      kind: { type: string, enum: [token] }
       expires_at: { type: string, format: date-time }
   VisitorCredential:
     type: object
@@ -20,10 +20,9 @@ schemas:
     required: [grant_id, kind, permission, refresh_credential, expires_at]
     properties:
       grant_id: { type: string, pattern: "^shg_[A-Za-z0-9]{22}$" }
-      kind: { type: string, enum: [token, share] }
+      kind: { type: string, enum: [token] }
       permission: { $ref: "../openapi.yaml#/components/schemas/VisitorTokenResponse" }
       refresh_credential: { type: string, maxLength: 128 }
-      share_url: { type: string, format: uri }
       expires_at: { type: string, format: date-time }
   ServiceHTTPGrantSummary:
     type: object
@@ -32,7 +31,7 @@ schemas:
     properties:
       subject: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
       id: { type: string, pattern: "^shg_[A-Za-z0-9]{22}$" }
-      kind: { type: string, enum: [token, share] }
+      kind: { type: string, enum: [token] }
       expires_at: { type: string, format: date-time }
       revoked_at: { type: string, format: date-time }
   ServiceBrowserRequest:
@@ -48,125 +47,22 @@ schemas:
           x-oapi-codegen-extra-tags: { json: "run_number,string" },
         }
       secret: { type: string, maxLength: 256 }
-  ReplaceVisitorAccessRequest:
-    type: object
-    additionalProperties: false
-    required: [mode, ip, expected_revision]
-    properties:
-      mode: { $ref: "../openapi.yaml#/components/schemas/VisitorAccessMode" }
-      ip:
-        type: array
-        maxItems: 256
-        uniqueItems: true
-        items: { type: string, minLength: 1, maxLength: 64 }
-      expected_revision:
-        {
-          type: string,
-          pattern: "^[0-9]+$",
-          x-go-type: int64,
-          x-oapi-codegen-extra-tags: { json: "expected_revision,string" },
-        }
-  CreateTeamVisitorGrantRequest:
-    type: object
-    additionalProperties: false
-    properties:
-      expires_at: { type: string, format: date-time }
-  CreateIdentityVisitorGrantRequest:
-    type: object
-    additionalProperties: false
-    required: [identity_id]
-    properties:
-      identity_id: { $ref: "../openapi.yaml#/components/schemas/IdentityID" }
-      expires_at: { type: string, format: date-time }
-  VisitorGrant:
-    type: object
-    additionalProperties: false
-    required: [id, public_url_id, kind, created_at]
-    properties:
-      id: { type: string }
-      public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
-      kind: { type: string, enum: [team, identity] }
-      identity_id: { type: string }
-      created_at: { type: string, format: date-time }
-      expires_at: { type: string, format: date-time }
-      revoked_at: { type: string, format: date-time }
-  CreateVisitorInvitationRequest:
-    type: object
-    additionalProperties: false
-    required: [email, expires_at]
-    properties:
-      email: { type: string, maxLength: 320 }
-      expires_at: { type: string, format: date-time }
-  VisitorInvitationCreation:
-    type: object
-    additionalProperties: false
-    description: "Creation-only invitation metadata and credential. After signing in with the invited verified email, the recipient sends {secret: credential} to /v1/visitor-invitations/accept. Credentials cannot be recovered; an exact creation retry returns credential_delivery_unavailable with the invitation ID so you can revoke and reissue it."
-    required: [invitation, credential]
-    properties:
-      invitation: { $ref: "../openapi.yaml#/components/schemas/VisitorInvitation" }
-      credential: { type: string, minLength: 32, maxLength: 128 }
-  VisitorInvitation:
-    type: object
-    additionalProperties: false
-    required: [id, public_url_id, email, expires_at]
-    properties:
-      id: { type: string }
-      public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
-      email: { type: string }
-      expires_at: { type: string, format: date-time }
-      accepted_identity_id: { type: string }
-      revoked_at: { type: string, format: date-time }
-  AvailablePublicURLPage:
-    type: object
-    additionalProperties: false
-    required: [public_urls]
-    properties:
-      next_cursor: { type: string }
-      public_urls:
-        type: array
-        items:
-          $ref: "../openapi.yaml#/components/schemas/AvailablePublicURL"
-  AvailablePublicURL:
-    type: object
-    additionalProperties: false
-    required: [id, team_id, team_name, canonical_hostname, service_protocol, visitor_access]
-    properties:
-      id: { type: string }
-      team_id: { type: string }
-      team_name: { type: string }
-      canonical_hostname: { type: string }
-      service_protocol: { $ref: "../openapi.yaml#/components/schemas/PublicURLServiceProtocol" }
-      visitor_access: { type: string, enum: [owner, preview_team, team_grant, identity_grant] }
-  BrowserHandoffRequest:
-    type: object
-    additionalProperties: false
-    required: [publish_run_number, token]
-    properties:
-      publish_run_number:
-        {
-          type: string,
-          pattern: "^[0-9]+$",
-          x-go-type: int64,
-          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
-        }
-      token:
+      share_id: { $ref: "../openapi.yaml#/components/schemas/ShareID" }
+      share_cookie_secret:
         type: string
         pattern: "^[A-Za-z0-9_-]{43}$"
-      share_id:
-        $ref: "../openapi.yaml#/components/schemas/ShareID"
-      share_secret:
-        type: string
-        pattern: "^[A-Za-z0-9_-]{43}$"
+    description: The secret is a handoff ticket or browser session cookie. Optional share_id and share_cookie_secret must be supplied together; they prove visitor permission independently of browser identity.
   BrowserHandoffResponse:
     type: object
     additionalProperties: false
-    required: [cookie_secret, return_path, expires_at, permission]
+    required: [cookie_secret, return_path, expires_at]
     properties:
       cookie_secret:
         type: string
         pattern: "^[A-Za-z0-9_-]{43}$"
       permission:
         $ref: "../openapi.yaml#/components/schemas/VisitorTokenResponse"
+        description: Present only when current browser or supplied share permission allows visiting. Identity-only sign-in still returns the browser cookie.
       return_path:
         type: string
         pattern: "^/"
@@ -178,21 +74,6 @@ schemas:
       expires_at:
         type: string
         format: date-time
-  BrowserAccessRequest:
-    type: object
-    additionalProperties: false
-    required: [publish_run_number, cookie_secret]
-    properties:
-      publish_run_number:
-        {
-          type: string,
-          pattern: "^[0-9]+$",
-          x-go-type: int64,
-          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
-        }
-      cookie_secret:
-        type: string
-        pattern: "^[A-Za-z0-9_-]{43}$"
   BrowserAccessResponse:
     type: object
     additionalProperties: false

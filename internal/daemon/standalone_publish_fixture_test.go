@@ -10,10 +10,11 @@ import (
 	"testing"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"golang.org/x/net/websocket"
 )
 
@@ -35,14 +36,17 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart
 	databaseURL, inspect := standaloneTestDatabase(t)
 	owner := newRuntimeTopology(t)
 	publicListener := serviceRuntimeListener(t, owner)
+	publicFront := serviceRuntimeListener(t, owner)
 	relayUDP := integrationPacketListener(t, owner)
-	publicAddress, relayUDPAddress := publicListener.Addr().String(), relayUDP.LocalAddr().String()
+	publicAddress, relayUDPAddress := publicFront.Addr().String(), relayUDP.LocalAddr().String()
 	dns := newPrivateFixtureDNS(t, owner)
 	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dns.address, owner)
 	cfg, listeners := standalonePublishConfig(t, databaseURL, publicListener, relayUDP, pebble.directoryURL, owner)
+	cfg.RequireProxyHeader, cfg.IngressTrustedProxies = true, []string{"127.0.0.1/32"}
+	startSplitIngressProxy(t, owner, publicFront, publicListener.Addr().String())
 	ca := newIntegrationTestCA(t)
 	controlCertificate := ca.issueServer(t, cfg.ServerHostname(), owner)
-	// publication fixtures exercise public URL issuance. relay DNS-01 polling
+	// publication fixtures exercise service certificate issuance. relay DNS-01 polling
 	// belongs to the dedicated automatic relay certificate suite.
 	relayCertificate := ca.issueServer(t, cfg.StandaloneRelayHostname(), owner)
 	cfg.RelayTLSCertificateFile, cfg.RelayTLSPrivateKeyFile = relayCertificate.certificateFile, relayCertificate.privateKeyFile
@@ -100,8 +104,8 @@ func standalonePublishConfig(t *testing.T, databaseURL string, publicListener ne
 		ServerDomain: serverDomain, ManagedDomain: "routes." + serverDomain,
 		ManagedURLMode:   naming.ManagedURLModeGenerated,
 		ACMEDirectoryURL: directoryURL, ACMEEmail: "integration@example.test", ACMEAcceptTerms: true, ACMEProfile: "tlsserver",
-		PublicURLCertificateWorkers: 4,
-		OIDCIssuer:                  testOIDCIssuer, OIDCClientID: "server", StorageKey: testStorageKey, AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
+		ServiceCertificateWorkers: 4,
+		OIDCIssuer:                testOIDCIssuer, OIDCClientID: "server", StorageKey: testStorageKey, AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
 		VisitorConnectionLimit: 100, PublisherConnectionLimit: 10,
 		ClientHelloConnectionLimit:       1024,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
@@ -113,22 +117,23 @@ func standalonePublishConfig(t *testing.T, databaseURL string, publicListener ne
 }
 
 func (f *standalonePublishFixture) connectors() (muxsession.Connector, muxsession.Connector) {
-	return redirectIntegrationConnector(f.relayUDPAddress, muxsession.QUICConnector{TLSConfig: f.relayTLS, Dialer: f.relayTransport}),
+	return redirectIntegrationConnector(f.relayUDPAddress, muxsession.QUICConnector{TLSConfig: f.relayTLS, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}, Dialer: f.relayTransport}),
 		redirectIntegrationConnector(f.publicAddress, muxsession.TLSYamuxConnector{TLSConfig: f.relayTLS})
 }
 
 func (f *standalonePublishFixture) startPublisher(t *testing.T, target string, quicConnector, tcpConnector muxsession.Connector) *integrationPublisher {
 	t.Helper()
-	return startOwnedIntegrationPublisher(t, f.owner, f.identity.publisherConfig(target, quicConnector, tcpConnector), f.diagnostics)
+	_, cfg := f.identity.prepareService(t, target, quicConnector, tcpConnector, controlv1.ProjectServiceConfiguration{})
+	return startOwnedIntegrationPublisher(t, f.owner, cfg, f.diagnostics)
 }
 
-func (f *standalonePublishFixture) waitReady(t *testing.T, handle *integrationPublisher) publisher.Event {
+func (f *standalonePublishFixture) waitReady(t *testing.T, handle *integrationPublisher) controlv1.ServiceRunPreparation {
 	t.Helper()
 	ready := waitForPublisherReady(t, handle)
-	if ready.Hostname != f.identity.hostname || ready.PublicURL != "https://"+f.identity.hostname {
+	if ready.Hostname != f.identity.hostname {
 		t.Fatalf("publisher ready event = %#v", ready)
 	}
-	waitForReadyPublisherConnections(t, f.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
+	waitForReadyPublisherConnections(t, f.inspect, ready.ServiceId, ready.RunNumber, 2)
 	waitForIngressRoutingCurrent(t, f.inspect, 1)
 	return ready
 }

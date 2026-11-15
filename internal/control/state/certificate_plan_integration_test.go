@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
@@ -78,7 +79,7 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 					TeamID: membership.TeamID, DomainID: domains[0].ID, MembershipID: membership.ID,
 					ActingIdentityID: local.Identity.Identity.ID, IdempotencyKey: "route", RequestDigest: sha256.Sum256([]byte("route")),
 					CanonicalHostname: "api." + namespace, Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeApp,
-					DNSState: PublicURLDNSPending, DNSAuthorityReference: reference,
+					DNSState: ServiceEndpointDNSPending, DNSAuthorityReference: reference,
 				}, now)
 				if err != nil {
 					t.Fatal(err)
@@ -311,8 +312,9 @@ func startExternalPlanSession(t *testing.T, database *Database, now time.Time, p
 }
 
 type planIssuanceOptions struct {
-	privateRun *ServiceRunState
-	lifetime   time.Duration
+	privateRun      *ServiceRunState
+	publisherSource netip.Addr
+	lifetime        time.Duration
 }
 
 func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, authentication PublishRunAuthentication, plan CertificatePlan, complete bool, edit func(*ACMEOrderWork), options ...planIssuanceOptions) ACMEOrderWork {
@@ -347,7 +349,7 @@ func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, aut
 	var issuance CertificateIssuance
 	if option.privateRun != nil {
 		run := *option.privateRun
-		issuance, err = database.CreateServiceCertificateIssuance(t.Context(), run.ServiceID, run.RunID, run.Token, account.DirectoryURL, "issuance", run.RunNumber, csr, now)
+		issuance, err = database.CreateServiceCertificateIssuance(WithPublisherRequestSource(t.Context(), option.publisherSource), run.ServiceID, run.RunID, run.Token, account.DirectoryURL, "issuance", run.RunNumber, csr, now)
 	} else {
 		issuance, err = database.CreateCertificateIssuance(t.Context(), CreateCertificateIssuanceRequest{Authentication: authentication, DirectoryURL: account.DirectoryURL, IdempotencyKey: "issuance", RequestDigest: sha256.Sum256(csr), CSRDER: csr}, now)
 	}

@@ -3,7 +3,6 @@ package public
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"errors"
 	"net/http/httptest"
 	"net/netip"
@@ -17,7 +16,6 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -41,14 +39,6 @@ func TestIntegrationDrainingControlAuthenticatedRenewalAndCleanup(t *testing.T) 
 		t.Fatal(err)
 	}
 	m := session.Identity.Memberships[0]
-	domains, err := d.ListTeamDomains(ctx, session.Identity.Identity.ID, m.TeamID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	u, err := d.CreatePublicURL(ctx, controlstate.CreatePublicURLRequest{TeamID: m.TeamID, DomainID: domains[0].ID, MembershipID: m.ID, ActingIdentityID: session.Identity.Identity.ID, IdempotencyKey: "drain-url", RequestDigest: sha256.Sum256([]byte("drain-url")), CanonicalHostname: "drain." + m.ManagedLabel + ".example.test", Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp, DNSState: controlstate.PublicURLDNSUnmanaged}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, service := range []string{"drain-a", "drain-b"} {
 		_, err := d.RegisterRelay(ctx, controlstate.RelayRegistration{RelayServiceID: service, RelayID: service, RelayRunID: "run-" + service, ProtocolVersion: 1, RelayAddress: service + ".example.test:443", TLSServerName: service + ".example.test", InternalRelayAddress: service + ".internal:9443", InternalNetworks: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/24")}, ConnectionCapacity: 10, StreamCapacity: 100}, now, time.Hour)
 		if err != nil {
@@ -97,12 +87,16 @@ func TestIntegrationDrainingControlAuthenticatedRenewalAndCleanup(t *testing.T) 
 		}
 		return access, private
 	}
-	access, private := enroll(controlv1.CreatePublisherEnrollmentRequest{TeamId: m.TeamID, Name: "drain-public", Kind: "installed", PublicUrlId: &u.ID})
-	proof, err := publisherproof.SignRun(private, u.ID, "drain-run")
+	publicService, err := owner.CreateService(ctx, m.TeamID, "drain-web", "drain-web", controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP, TrustRevision: 1}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	publicRun, err := client.CreatePublisherRun(ctx, u.ID, "drain-run", access, proof, nil)
+	access, _ := enroll(controlv1.CreatePublisherEnrollmentRequest{TeamId: m.TeamID, Name: "drain-public", Kind: "installed", ServiceId: &publicService.Id})
+	publicPrepared, err := client.PrepareServiceRun(ctx, publicService.Id, "drain-run", access, controlv1.ServiceRunDeclaration{Protocol: controlv1.ServiceProtocolHTTP, TrustRevision: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicRun, err := client.StartServiceRun(ctx, publicService.Id, publicPrepared.ServiceRunId, access, publicPrepared.RunNumber)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,8 +114,8 @@ func TestIntegrationDrainingControlAuthenticatedRenewalAndCleanup(t *testing.T) 
 		t.Fatal(err)
 	}
 	draining.Store(true)
-	if _, err := client.CreatePublisherRun(ctx, u.ID, "drain-run", access, proof, nil); !errors.Is(err, clientcontrol.ErrUnavailable) {
-		t.Fatal("drain admitted public run", err)
+	if _, err := client.PrepareServiceRun(ctx, publicService.Id, "drain-run", access, controlv1.ServiceRunDeclaration{Protocol: controlv1.ServiceProtocolHTTP, TrustRevision: 1}); !errors.Is(err, clientcontrol.ErrUnavailable) {
+		t.Fatal("drain admitted HTTP service run", err)
 	}
 	if _, err := client.PrepareServiceRun(ctx, service.Id, "drain-private", managedAccess, controlv1.ServiceRunDeclaration{Protocol: controlv1.Postgres, TrustRevision: 1}); !errors.Is(err, clientcontrol.ErrUnavailable) {
 		t.Fatal("drain admitted managed preparation", err)
@@ -129,16 +123,16 @@ func TestIntegrationDrainingControlAuthenticatedRenewalAndCleanup(t *testing.T) 
 	if _, err := client.StartServiceRun(ctx, service.Id, prepared.ServiceRunId, managedAccess, prepared.RunNumber); !errors.Is(err, clientcontrol.ErrUnavailable) {
 		t.Fatal("drain admitted managed start", err)
 	}
-	publicToken := credentials.PublishRunToken(publicRun.PublishRunToken)
-	if _, err := client.HeartbeatPublishRun(ctx, publicRun.PublishRun.Id, uint64(publicRun.PublishRun.PublishRunNumber), publicToken); err != nil {
-		t.Fatal("drain blocked authenticated public renewal", err)
+	publicToken := credentials.ServiceRunToken(publicRun.RunToken)
+	if _, err := client.HeartbeatServiceRun(ctx, publicService.Id, publicPrepared.ServiceRunId, publicToken, controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 64}); err != nil {
+		t.Fatal("drain blocked authenticated HTTP renewal", err)
 	}
 	managedToken := credentials.ServiceRunToken(serviceRun.RunToken)
 	if _, err := client.HeartbeatServiceRun(ctx, service.Id, prepared.ServiceRunId, managedToken, controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 		t.Fatal("drain blocked authenticated managed renewal", err)
 	}
-	if err := client.ClosePublishRun(ctx, publicRun.PublishRun.Id, publicToken); err != nil {
-		t.Fatal("drain blocked authenticated public cleanup", err)
+	if err := client.CloseServiceRun(ctx, publicService.Id, publicPrepared.ServiceRunId, publicToken); err != nil {
+		t.Fatal("drain blocked authenticated HTTP cleanup", err)
 	}
 	if err := client.CloseServiceRun(ctx, service.Id, prepared.ServiceRunId, managedToken); err != nil {
 		t.Fatal("drain blocked authenticated managed cleanup", err)

@@ -67,7 +67,7 @@ func connectModeError(reason failure.Reason) error {
 	return failure.Wrap("select connection mode", reason, errors.New("connect mode validation failed"))
 }
 
-func ValidateServiceMode(flags StartOptions, service controlv1.Service) error {
+func ValidateServiceMode(flags StartOptions, service controlv1.ServiceSummary) error {
 	if err := ValidateService(service); err != nil {
 		return err
 	}
@@ -192,7 +192,7 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 	job.Endpoint = service.Endpoint
 	job.TelemetryDisabled = flags.TelemetryDisabled
 	writeReady := func(job installedjobs.Job, destination io.Writer) error {
-		profile, err := serviceConnectionProfile(controlv1.Service{Id: job.ServiceID, Protocol: controlv1.ServiceProtocol(job.Protocol), Enabled: true, Endpoint: job.Endpoint}, job.Target)
+		profile, err := serviceConnectionProfile(controlv1.ServiceSummary{Id: job.ServiceID, Protocol: controlv1.ServiceProtocol(job.Protocol), Enabled: true, Endpoint: job.Endpoint}, job.Target)
 		if err != nil {
 			return err
 		}
@@ -235,16 +235,16 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 	})
 }
 
-func selectSessionConnectService(ctx context.Context, session *Session, project projectConfiguration, name string, flags StartOptions) (controlv1.Service, error) {
+func selectSessionConnectService(ctx context.Context, session *Session, project projectConfiguration, name string, flags StartOptions) (controlv1.ServiceSummary, error) {
 	key, err := ConfiguredService(project.Project, name)
 	if err != nil {
-		return controlv1.Service{}, err
+		return controlv1.ServiceSummary{}, err
 	}
 	team := ""
 	if flags.Team != "" || flags.ProjectTeam != "" || key != "" {
 		membership, err := session.currentMembership(ctx)
 		if err != nil {
-			return controlv1.Service{}, err
+			return controlv1.ServiceSummary{}, err
 		}
 		team = membership.TeamId
 	}
@@ -287,7 +287,7 @@ func runConnectorLifecycle(ctx context.Context, listener net.Listener, job insta
 		if ctx.Err() != nil {
 			return nil
 		}
-		services, err := lifecycle.services.ListAvailableServices(ctx)
+		services, err := lifecycle.services.ListAvailableServices(ctx, controlv1.ServiceAccessPathConnector)
 		if err != nil {
 			return err
 		}
@@ -363,7 +363,7 @@ func (o Operations) RunInstalled(ctx context.Context, job installedjobs.Job, rea
 	if session.identity.Identity.Id != job.IdentityID {
 		return publisherCLIError("connector sign-in identity changed; remove and install it for the current identity")
 	}
-	services, err := session.authenticated.Control.ListAvailableServices(ctx)
+	services, err := session.authenticated.Control.ListAvailableServices(ctx, controlv1.ServiceAccessPathConnector)
 	if err != nil {
 		return err
 	}

@@ -58,25 +58,42 @@ func (r Certificates) Maintain(ctx context.Context) error {
 	var installed clientstate.Material
 	terminalRetried := false
 	for {
-		material, err := r.advance(ctx, installed.Certificate.Leaf == nil)
-		if err != nil {
-			if ctx.Err() != nil {
-				return context.Cause(ctx)
+		retriedTerminal := false
+		material, err := func() (clientstate.Material, error) {
+			attempt := ctx
+			stop := func() {}
+			if installed.Certificate.Leaf != nil {
+				// renewal cannot outlive the certificate currently serving visitors,
+				// including cache-lock waits, pending orders, and control requests.
+				attempt, stop = context.WithDeadlineCause(ctx, installed.Certificate.Leaf.NotAfter, errCertificateExpired)
 			}
-			if errors.Is(err, errManagedIssuanceFailed) && !terminalRetried {
-				terminalRetried = true
-				lock, lockErr := r.Cache.Lock(ctx)
+			defer stop()
+			material, err := r.advance(attempt, installed.Certificate.Leaf == nil)
+			if attempt.Err() == nil && errors.Is(err, errManagedIssuanceFailed) && !terminalRetried {
+				terminalRetried, retriedTerminal = true, true
+				lock, lockErr := r.Cache.Lock(attempt)
 				if lockErr != nil {
-					return lockErr
-				}
-				_, replaceErr := r.Cache.NewPending(ctx, r.Hostname)
-				_ = lock.Close()
-				if replaceErr != nil {
-					if !managedCertificateRetryable(replaceErr) {
-						return replaceErr
+					err = errors.Join(err, lockErr)
+					retriedTerminal = managedCertificateRetryable(lockErr)
+				} else {
+					_, replaceErr := r.Cache.NewPending(attempt, r.Hostname)
+					replaceErr = errors.Join(replaceErr, lock.Close())
+					if replaceErr != nil {
+						err = errors.Join(err, replaceErr)
+						retriedTerminal = managedCertificateRetryable(replaceErr)
 					}
 				}
-			} else if !managedCertificateRetryable(err) {
+			}
+			if attempt.Err() != nil {
+				return material, errors.Join(context.Cause(attempt), serviceWorkerError(err, attempt.Err()))
+			}
+			return material, err
+		}()
+		if err != nil {
+			if ctx.Err() != nil {
+				return errors.Join(context.Cause(ctx), serviceWorkerError(err, ctx.Err()))
+			}
+			if errors.Is(err, errCertificateExpired) || !retriedTerminal && !managedCertificateRetryable(err) {
 				return err
 			}
 			delay := time.Second
@@ -117,12 +134,22 @@ func managedCertificateRetryable(err error) bool {
 func (r Certificates) advance(ctx context.Context, initial bool) (_ clientstate.Material, result error) {
 	ctx, finish := observability.PublisherOperation(ctx, "certificate")
 	defer func() { finish(result) }()
+	// atomic current snapshots can be acknowledged by a new run while another
+	// worker holds the separate issuance lock for renewal.
+	current, found, err := r.Cache.Current(ctx, r.Hostname)
+	if err != nil && !errors.Is(err, clientstate.ErrCertificateExpired) {
+		return current, err
+	}
+	if err == nil && found && (initial || time.Now().Before(current.RenewAt)) {
+		err = r.Control.MarkServiceCertificateInstalled(ctx, r.ServiceID, r.RunID, r.RunNumber, current.IssuanceID, current.Certificate.Leaf.NotAfter, r.Token)
+		return current, err
+	}
 	lock, err := r.Cache.Lock(ctx)
 	if err != nil {
 		return clientstate.Material{}, err
 	}
-	defer lock.Close()
-	current, found, err := r.Cache.Current(ctx, r.Hostname)
+	defer func() { result = errors.Join(result, lock.Close()) }()
+	current, found, err = r.Cache.Current(ctx, r.Hostname)
 	if err != nil && !errors.Is(err, clientstate.ErrCertificateExpired) {
 		return current, err
 	}

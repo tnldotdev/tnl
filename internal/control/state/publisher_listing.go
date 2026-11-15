@@ -24,7 +24,7 @@ func (d *Database) PublisherIdentityRecord(ctx context.Context, team, id string)
 	if err != nil {
 		return PublisherRecord{}, err
 	}
-	if i.TeamID != team {
+	if i.GuestID.Valid || i.TeamID.String != team {
 		return PublisherRecord{}, ErrPublisherIdentity
 	}
 	g, err := q.ListPublisherGrants(ctx, id)
@@ -37,7 +37,7 @@ func (d *Database) PublisherIdentityRecord(ctx context.Context, team, id string)
 
 func (d *Database) ListPublisherIdentities(ctx context.Context, team, after string) (PublisherIdentityPage, error) {
 	q := controlstatedb.New(d.pool)
-	rows, err := q.ListPublisherIdentities(ctx, controlstatedb.ListPublisherIdentitiesParams{TeamID: team, AfterID: after})
+	rows, err := q.ListPublisherIdentities(ctx, controlstatedb.ListPublisherIdentitiesParams{TeamID: text(team), AfterID: after})
 	if err != nil {
 		return PublisherIdentityPage{}, err
 	}
@@ -76,7 +76,7 @@ func authorizePublisherManagement(ctx context.Context, q *controlstatedb.Queries
 		}
 		return err
 	}
-	m, err := q.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{TeamID: team, IdentityID: editor})
+	m, err := q.GetTeamActorContext(ctx, controlstatedb.GetTeamActorContextParams{TeamID: team, IdentityID: editor})
 	if err != nil {
 		return publisherLookupError(err, ErrPublisherIdentity)
 	}
@@ -84,7 +84,7 @@ func authorizePublisherManagement(ctx context.Context, q *controlstatedb.Queries
 	if err != nil {
 		return publisherLookupError(err, ErrPublisherIdentity)
 	}
-	if i.TeamID != team || (i.Ownership != "member" || i.OwnerMembershipID.String != m.ID) && m.Role != "owner" && m.Role != "admin" {
+	if i.GuestID.Valid || i.TeamID.String != team || (i.Ownership != "member" || i.OwnerMembershipID.String != m.ActorMembershipID) && m.ActorRole != "owner" && m.ActorRole != "admin" {
 		return ErrPublisherIdentity
 	}
 	return nil

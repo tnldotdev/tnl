@@ -1,9 +1,7 @@
 package tunnelv1
 
 import (
-	"bytes"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"io"
 )
@@ -15,34 +13,27 @@ type ReturnFrameKind byte
 const (
 	ReturnAccepted ReturnFrameKind = 1
 	ReturnRejected ReturnFrameKind = 2
-	ReturnPromoted ReturnFrameKind = 3
 	ReturnData     ReturnFrameKind = 4
 	ReturnEnded    ReturnFrameKind = 5
 )
 
 var ErrReturnFrame = errors.New("visitor return frame is invalid")
 
-// ReturnFrame is outer tunnel framing, never visitor TLS plaintext. promotion
-// is ordered with the response bytes it permits on this exact visitor stream.
+// ReturnFrame is outer tunnel framing, never visitor TLS plaintext.
 type ReturnFrame struct {
-	Kind      ReturnFrameKind
-	Code      ErrorCode
-	Promotion AdmissionHeader
-	Data      []byte
+	Kind ReturnFrameKind
+	Code ErrorCode
+	Data []byte
 }
 
 func (f ReturnFrame) Validate() error {
-	if f.Kind != ReturnRejected && f.Code != "" || f.Kind != ReturnPromoted && f.Promotion != (AdmissionHeader{}) || f.Kind != ReturnData && len(f.Data) != 0 {
+	if f.Kind != ReturnRejected && f.Code != "" || f.Kind != ReturnData && len(f.Data) != 0 {
 		return ErrReturnFrame
 	}
 	switch f.Kind {
 	case ReturnAccepted, ReturnEnded:
 	case ReturnRejected:
 		if !validErrorCode(f.Code) {
-			return ErrReturnFrame
-		}
-	case ReturnPromoted:
-		if f.Promotion.Validate() != nil {
 			return ErrReturnFrame
 		}
 	case ReturnData:
@@ -63,15 +54,6 @@ func WriteReturnFrame(w io.Writer, f ReturnFrame) error {
 	switch f.Kind {
 	case ReturnRejected:
 		payload = []byte(f.Code)
-	case ReturnPromoted:
-		var err error
-		payload, err = json.Marshal(f.Promotion)
-		if err != nil {
-			return err
-		}
-		if len(payload) > MaxHeaderBytes {
-			return ErrReturnFrame
-		}
 	case ReturnData:
 		payload = f.Data
 	}
@@ -102,10 +84,6 @@ func ReadReturnFrame(r io.Reader) (ReturnFrame, error) {
 		if length < 1 || length > 128 {
 			return f, ErrReturnFrame
 		}
-	case ReturnPromoted:
-		if length < 1 || length > MaxHeaderBytes {
-			return f, ErrReturnFrame
-		}
 	case ReturnData:
 		if length < 1 || length > MaxStreamDataBytes {
 			return f, ErrReturnFrame
@@ -120,15 +98,6 @@ func ReadReturnFrame(r io.Reader) (ReturnFrame, error) {
 	switch f.Kind {
 	case ReturnRejected:
 		f.Code = ErrorCode(payload)
-	case ReturnPromoted:
-		decoder := json.NewDecoder(bytes.NewReader(payload))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&f.Promotion); err != nil {
-			return f, err
-		}
-		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-			return f, ErrReturnFrame
-		}
 	case ReturnData:
 		f.Data = payload
 	}

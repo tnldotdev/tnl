@@ -16,7 +16,7 @@ func TestRetiredIssuanceRecoversUncertainCertificateLifetime(t *testing.T) {
 			api.order.Status, api.order.Certificate = "valid", "https://acme.example.test/certificate/1"
 			work.State, work.FinalizationPossible = state, true
 			work.CertificatePEM, work.NotBefore, work.NotAfter, work.RenewAt = nil, nil, nil, nil
-			worker := &PublicURLWorker{config: PublicURLConfig{DNSChallenges: &dnsChallengesStub{}}}
+			worker := &ServiceWorker{config: ServiceConfig{DNSChallenges: &dnsChallengesStub{}}}
 			if err := worker.advance(t.Context(), api, &work, now); err != nil || work.NotAfter == nil || !work.NotAfter.After(now) || work.State != controlstate.ACMEOrderWaitingForInstall || len(api.finalizations) != 0 {
 				t.Fatal("retirement lost an issued certificate's real lifetime", work, err)
 			}

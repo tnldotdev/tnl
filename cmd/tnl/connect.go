@@ -179,13 +179,13 @@ func runConnectAvailable(ctx context.Context, command connectAvailableCommand, o
 		return err
 	}
 	defer session.Close()
-	services, err := session.Authenticated().Control.ListAvailableServices(ctx)
+	services, err := session.Authenticated().Control.ListAvailableServices(ctx, controlv1.ServiceAccessPathConnector)
 	if err != nil {
 		return err
 	}
 	if command.Output == statusOutputJSON {
 		if services == nil {
-			services = []controlv1.Service{}
+			services = []controlv1.ServiceSummary{}
 		}
 		return json.NewEncoder(output).Encode(services)
 	}

@@ -32,7 +32,7 @@ func kindFixture(t *testing.T, kind Kind) (Job, authorityv1.PublisherEnrollmentR
 	case KindService, KindConnector:
 		job.ServiceID = id(opaqueid.ServicePrefix)
 		job.Protocol, job.Target, job.TrustRevision = config.ProtocolTCP, "127.0.0.1:5432", 1
-		identity.Kind, identity.PublicUrlId, identity.ServiceId = authorityv1.Service, nil, &job.ServiceID
+		identity.Kind, identity.ServiceId = authorityv1.Service, &job.ServiceID
 		if kind == KindConnector {
 			job.PublisherIdentityID, job.GrantID = "", ""
 			job.IdentityID, job.StateDir = id(opaqueid.IdentityPrefix), t.TempDir()
@@ -244,9 +244,6 @@ func TestPublisherInstallationRejectsMixedGrantMetadata(t *testing.T) {
 		for _, mutate := range []func(*authorityv1.PublisherEnrollmentResult){
 			func(i *authorityv1.PublisherEnrollmentResult) { i.Namespace = &other },
 			func(i *authorityv1.PublisherEnrollmentResult) { i.DomainId = &other },
-			func(i *authorityv1.PublisherEnrollmentResult) {
-				i.PublicUrlId = &other
-			},
 		} {
 			changed := identity
 			mutate(&changed)

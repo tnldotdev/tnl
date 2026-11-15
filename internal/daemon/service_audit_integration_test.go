@@ -16,9 +16,9 @@ import (
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/control/maintenance"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -26,7 +26,23 @@ import (
 
 type auditProjectRuntimeFixture interface {
 	connectors() (muxsession.Connector, muxsession.Connector)
-	waitReady(*testing.T, *integrationPublisher) publisher.Event
+	waitReady(*testing.T, *integrationPublisher) controlv1.ServiceRunPreparation
+}
+
+type auditServiceHTTPControl struct {
+	*publisheridentity.Native
+	visited chan<- string
+}
+
+func (c auditServiceHTTPControl) AuthorizeServiceHTTPVisitor(ctx context.Context, service, run string, token credentials.ServiceRunToken, body controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+	decision, err := c.Native.AuthorizeServiceHTTPVisitor(ctx, service, run, token, body)
+	if err == nil && decision.Allowed && decision.Admitted {
+		select {
+		case c.visited <- body.VisitorConnectionId:
+		default:
+		}
+	}
+	return decision, err
 }
 
 func TestIntegrationServiceAuditRuntimePublic(t *testing.T) {
@@ -52,20 +68,12 @@ func TestIntegrationServiceAuditRuntimePublic(t *testing.T) {
 			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "audit response") }))
 			cleanupIntegrationHTTPServer(t, target, owner)
 			quic, tcp := fixture.connectors()
-			config := identity.publisherConfig(target.URL, quic, tcp)
+			_, config := identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{})
 			visited := make(chan string, 1)
-			config.AdmitVisitor = func(_ context.Context, v publisher.Visitor) error {
-				if !v.Readiness {
-					select {
-					case visited <- v.Header.VisitorConnectionID:
-					default:
-					}
-				}
-				return nil
-			}
+			config.Control = auditServiceHTTPControl{Native: config.Control.(*publisheridentity.Native), visited: visited}
 			handle := startOwnedIntegrationPublisher(t, owner, config, func() string { return integrationPublisherDiagnostics(inspect, pebbleLog) })
 			ready := fixture.waitReady(t, handle)
-			r, _ := http.NewRequest(http.MethodGet, ready.PublicURL+"/never-audit-path?private-token=never-audit-query", nil)
+			r, _ := http.NewRequest(http.MethodGet, serviceHTTPAddress(ready)+"/never-audit-path?private-token=never-audit-query", nil)
 			response, body, err := visitor.request(r)
 			if err != nil || response.StatusCode != 200 || string(body) != "audit response" {
 				t.Fatalf("actual public visitor failed: %v", err)
@@ -85,7 +93,7 @@ func TestIntegrationServiceAuditRuntimePublic(t *testing.T) {
 		    ON closed.visitor_connection_id=opened.visitor_connection_id AND closed.service_id=opened.service_id AND closed.run_id=opened.run_id
 		    WHERE opened.service_id=$1 AND opened.event_type='connection.open' AND opened.outcome='forwarded'
 		    AND closed.event_type='connection.close' AND opened.source_ip='127.0.0.1' AND closed.source_ip=opened.source_ip
-		    AND opened.visitor_connection_id=$2`, ready.PublicURLID, visitorID).Scan(&pairs)
+		    AND opened.visitor_connection_id=$2 AND opened.run_id=$3`, ready.ServiceId, visitorID, ready.ServiceRunId).Scan(&pairs)
 			if err != nil || pairs < 1 {
 				t.Fatalf("real public producer not flushed into audit: %d %v", pairs, err)
 			}
@@ -107,7 +115,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.authority, e.EnrollmentKey)
+			native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, publisheridentity.NativeControl{Services: f.identity.routes}, f.identity.authority, e.EnrollmentKey)
 			if err != nil {
 				t.Fatal(err)
 			}

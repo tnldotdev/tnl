@@ -378,25 +378,25 @@ type Problem struct {
 
 // Publication defines model for Publication.
 type Publication struct {
-	Command          PublicationCommand            `json:"command"`
-	Failure          *string                       `json:"failure,omitempty"`
-	Framework        *string                       `json:"framework,omitempty"`
-	HeartbeatAt      time.Time                     `json:"heartbeat_at"`
-	Hostname         *string                       `json:"hostname,omitempty"`
-	LeaseExpiresAt   time.Time                     `json:"lease_expires_at"`
-	ProcessId        int                           `json:"process_id"`
-	Project          string                        `json:"project"`
-	PublicUrl        *string                       `json:"public_url,omitempty"`
-	PublicUrlId      *string                       `json:"public_url_id,omitempty"`
-	PublishRunNumber *int64                        `json:"publish_run_number,omitempty"`
-	Server           string                        `json:"server"`
-	Service          *string                       `json:"service,omitempty"`
-	ServiceProtocol  *externalRef0.ServiceProtocol `json:"service_protocol,omitempty"`
-	StartedAt        time.Time                     `json:"started_at"`
-	State            PublicationState              `json:"state"`
-	Target           *string                       `json:"target,omitempty"`
-	TunnelId         string                        `json:"tunnel_id"`
-	UpdatedAt        time.Time                     `json:"updated_at"`
+	Command         PublicationCommand            `json:"command"`
+	Failure         *string                       `json:"failure,omitempty"`
+	Framework       *string                       `json:"framework,omitempty"`
+	HeartbeatAt     time.Time                     `json:"heartbeat_at"`
+	Hostname        *string                       `json:"hostname,omitempty"`
+	LeaseExpiresAt  time.Time                     `json:"lease_expires_at"`
+	ProcessId       int                           `json:"process_id"`
+	Project         string                        `json:"project"`
+	PublicUrl       *string                       `json:"public_url,omitempty"`
+	RunNumber       *int64                        `json:"run_number,omitempty"`
+	Server          string                        `json:"server"`
+	Service         *string                       `json:"service,omitempty"`
+	ServiceId       *string                       `json:"service_id,omitempty"`
+	ServiceProtocol *externalRef0.ServiceProtocol `json:"service_protocol,omitempty"`
+	StartedAt       time.Time                     `json:"started_at"`
+	State           PublicationState              `json:"state"`
+	Target          *string                       `json:"target,omitempty"`
+	TunnelId        string                        `json:"tunnel_id"`
+	UpdatedAt       time.Time                     `json:"updated_at"`
 }
 
 // PublicationCommand defines model for Publication.Command.

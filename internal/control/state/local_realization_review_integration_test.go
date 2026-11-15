@@ -33,7 +33,7 @@ func TestIntegrationAppliedProjectPersonalSharedLocalRealization(t *testing.T) {
 	if err != nil || projection.SourceFingerprint != local.SourceFingerprint || len(projection.Services) != 1 || projection.Services[0].ServiceID != service.ServiceID {
 		t.Fatal("startup metadata before first apply lost the realized service", projection, err)
 	}
-	if _, err = d.ConfigureService(t.Context(), service.ServiceID, r.ActingIdentityID, *service.Metadata, now); !errors.Is(err, ErrProjectManaged) {
+	if _, err = d.ConfigureService(t.Context(), service.ServiceID, r.ActingIdentityID, *service.Metadata, nil, ServiceUpdateConditions{}, now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("shared realization lost definition ownership", err)
 	}
 	if err = d.DeleteService(t.Context(), service.ServiceID, r.ActingIdentityID, now); !errors.Is(err, ErrProjectManaged) {

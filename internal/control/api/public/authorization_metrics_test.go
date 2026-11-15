@@ -15,7 +15,6 @@ import (
 )
 
 type connectorDecisionStore struct {
-	PublicURLStore
 	ServiceClientCertificateStore
 	allowed  bool
 	admitted bool

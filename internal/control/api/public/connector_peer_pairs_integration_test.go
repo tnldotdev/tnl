@@ -129,7 +129,7 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 		}
 		return selected
 	}
-	if _, err := d.ClaimServicePublisherConnection(ctx, run.Connections[0].PublisherConnectionID, service.ID, run.RunID, run.RunNumber, run.Connections[0].Revision, run.Connections[0].Credential, leases[run.Connections[0].RelayServiceID].RelayLeaseIdentity, now); err != nil {
+	if _, err := d.ClaimServicePublisherConnection(ctx, run.Connections[0].PublisherConnectionID, service.ID, run.RunID, run.RunNumber, run.Connections[0].Revision, run.Connections[0].Credential, netip.MustParseAddr("127.0.0.1"), leases[run.Connections[0].RelayServiceID].RelayLeaseIdentity, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.ReadyServicePublisherConnection(ctx, run.Connections[0].PublisherConnectionID, run.RunID, run.RunNumber, run.Connections[0].Revision, leases[run.Connections[0].RelayServiceID].RelayLeaseIdentity, now); err != nil {
@@ -140,7 +140,7 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 		t.Fatal("one ready slot advertised a pair")
 	}
 	second := run.Connections[1]
-	if _, err := d.ClaimServicePublisherConnection(ctx, second.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, second.Revision, second.Credential, leases[second.RelayServiceID].RelayLeaseIdentity, now); err != nil {
+	if _, err := d.ClaimServicePublisherConnection(ctx, second.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, second.Revision, second.Credential, netip.MustParseAddr("127.0.0.1"), leases[second.RelayServiceID].RelayLeaseIdentity, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.ReadyServicePublisherConnection(ctx, second.PublisherConnectionID, run.RunID, run.RunNumber, second.Revision, leases[second.RelayServiceID].RelayLeaseIdentity, now); err != nil {
@@ -518,7 +518,7 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 	if w := call(path, owner.AccessToken.String(), request); w.Code != 409 {
 		t.Fatal("old delivery replay succeeded", w.Code)
 	}
-	if _, err := d.DisconnectServicePublisherConnection(ctx, second.PublisherConnectionID, run.RunID, run.RunNumber, second.Revision, leases[second.RelayServiceID].RelayLeaseIdentity, time.Now()); err != nil {
+	if _, err := d.DisconnectServicePublisherConnection(ctx, second.PublisherConnectionID, run.RunID, run.RunNumber, second.Revision, leases[second.RelayServiceID].RelayLeaseIdentity, time.Now(), true); err != nil {
 		t.Fatal(err)
 	}
 	if one := selectRun(); one.PairReady != nil {

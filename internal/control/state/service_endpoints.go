@@ -44,8 +44,7 @@ func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.service_namespace_claims
 		    WHERE ($1=namespace OR right($1,length(namespace)+1)='.'||namespace)
 		    AND deployment_id IS DISTINCT FROM $2::text
-		    AND (retired_at IS NULL OR NOT control.service_namespace_reusable(namespace,$3)))
-		    OR EXISTS(SELECT 1 FROM control.public_urls WHERE canonical_hostname=$1 AND lifecycle_state<>'deleted')`,
+		    AND (retired_at IS NULL OR NOT control.service_namespace_reusable(namespace,$3)))`,
 			hostname, deployment, now).Scan(&conflict); err != nil {
 			return err
 		}
