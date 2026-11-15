@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -46,6 +47,7 @@ type ServiceStreamDispatcher struct {
 	reading  []muxsession.Stream
 	wait     sync.WaitGroup
 	once     sync.Once
+	closeErr error
 }
 
 type queuedForward struct {
@@ -66,8 +68,8 @@ func (q *queuedForward) stop() bool {
 // control handshake. while it runs, no other caller may accept from that outer
 // session. close and join it before closing the peer owner and tunnel session.
 func NewServiceStreamDispatcher(parent context.Context, owner *Session, peer PeerStreamIntroduction) (*ServiceStreamDispatcher, error) {
-	if parent == nil || owner == nil || owner.transport == nil || owner.role != tunnelv1.Publisher || owner.serviceConnection == nil || peer == nil {
-		return nil, errors.New("service stream dispatcher needs a claimed service publisher session and peer acceptor")
+	if parent == nil || owner == nil || owner.transport == nil || owner.role != tunnelv1.Publisher || owner.serviceConnection == nil {
+		return nil, errors.New("service stream dispatcher needs a claimed service publisher session")
 	}
 	ctx, cancel := context.WithCancel(parent)
 	d := &ServiceStreamDispatcher{ctx: ctx, cancel: cancel, owner: owner, outer: owner.transport, peer: peer,
@@ -154,6 +156,9 @@ func (d *ServiceStreamDispatcher) classify(stream muxsession.Stream) {
 		return
 	}
 	if prefix[0] == tunnelv1.Version {
+		if d.peer == nil {
+			return
+		}
 		select {
 		case d.peers <- struct{}{}:
 			// a peer's full header and tagged first frame are checked by the
@@ -197,6 +202,20 @@ func (d *ServiceStreamDispatcher) readForwardingHeader(stream muxsession.Stream,
 	frame := make([]byte, 4+int(n))
 	copy(frame, prefix[:])
 	if _, err := io.ReadFull(stream, frame[4:]); err != nil {
+		return
+	}
+	var kind struct {
+		Kind tunnelv1.StreamKind `json:"kind"`
+	}
+	if json.Unmarshal(frame[4:], &kind) != nil {
+		return
+	}
+	if kind.Kind == tunnelv1.ServiceCapacityStream {
+		keep = true
+		err := d.owner.answerServiceCapacity(d.ctx, &prefixedStream{Stream: stream, prefix: bytes.NewReader(frame)})
+		d.mu.Lock()
+		d.closeErr = errors.Join(d.closeErr, err)
+		d.mu.Unlock()
 		return
 	}
 	if _, err := tunnelv1.ReadServiceForwardingHeader(bytes.NewReader(frame)); err != nil {
@@ -273,5 +292,5 @@ func (d *ServiceStreamDispatcher) Close() error {
 			}
 		}
 	})
-	return nil
+	return d.closeErr
 }

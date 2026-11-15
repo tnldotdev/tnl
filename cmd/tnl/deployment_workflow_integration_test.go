@@ -177,7 +177,8 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	}
 	public, err := meta.Parse(metadata)
 	if err != nil || len(public.Services) != 1 || public.Services["web"].URL == "" || bytes.Contains(metadata, []byte(target.URL)) {
-		t.Fatalf("browser metadata lost endpoint scope or leaked a target: %v", err)
+		t.Fatalf("browser metadata lost endpoint scope or leaked a target: services=%+v target_leaked=%t parse=%v",
+			public.Services, bytes.Contains(metadata, []byte(target.URL)), err)
 	}
 	if _, found := public.Services["internal"]; found {
 		t.Fatal("private app listener received browser metadata")

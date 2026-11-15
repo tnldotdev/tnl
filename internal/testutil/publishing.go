@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,7 +31,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -227,6 +230,93 @@ func (f *PublishingFixture) Connection(service string) (*tunnel.Session, tunnelv
 		}
 	}
 	return nil, tunnelv1.ServicePublisherConnectionRef{}, false
+}
+
+// OpenHTTPVisitor sends signed source metadata over the claimed relay session.
+// the returned connection owns its capacity callback until physical close.
+func (f *PublishingFixture) OpenHTTPVisitor(ctx context.Context, service string, source, destination netip.AddrPort) (_ net.Conn, result error) {
+	session, ref, found := f.Connection(service)
+	if !found {
+		return nil, errors.New("service publisher connection is not ready")
+	}
+	run, found := f.Run(ref.ServiceRunID)
+	if !found {
+		return nil, errors.New("service run has stopped")
+	}
+	now := time.Now()
+	slot := run.Setup.PublisherConnections[ref.ConnectionSlot]
+	header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{
+		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
+		ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber, PublisherConnectionID: ref.PublisherConnectionID,
+		ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, VisitorConnectionID: publishingID(f.t, opaqueid.VisitorConnectionPrefix),
+		SourceIP: source.Addr().String(), ExpiresAt: now.Add(10 * time.Second),
+		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "fixture-ingress", IngressRunID: publishingID(f.t, opaqueid.IngressRunPrefix),
+			IngressLeaseRevision: 1, DestinationPort: destination.Port()},
+	}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: slot.RelayServiceId, RelayID: "fixture-relay",
+		RelayRunID: publishingID(f.t, opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, LeaseExpiresAt: now.Add(time.Minute)}
+	unregister, err := session.RegisterServiceCapacity(ctx, header, func(context.Context) error { return nil })
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if result != nil {
+			unregister()
+		}
+	}()
+	stream, err := session.OpenServiceForwardingStream(ctx, header)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if result != nil {
+			result = errors.Join(result, stream.Close())
+		}
+	}()
+	if err := stream.SetDeadline(header.ExpiresAt); err != nil {
+		return nil, err
+	}
+	authority, key, err := visitortoken.IssueVisitorSourceAuthority([32]byte(run.Setup.VisitorSourceKey), tunnelv1.VisitorSourceAuthority{
+		ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber, EndpointRevision: run.Service.EndpointRevision,
+		IngressID: header.PublicService.IngressID, IngressRunID: header.PublicService.IngressRunID, IngressLeaseRevision: 1,
+		VisitorPolicyRevision: 1, ValidUntil: now.Add(visitortoken.PolicyLifetime).Unix(),
+	}, now)
+	if err != nil {
+		return nil, err
+	}
+	proof, err := visitortoken.SignVisitorSource(key, authority, 1, tunnelv1.VisitorSourceBinding{
+		ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber,
+		VisitorConnectionID: header.VisitorConnectionID, Source: source, Destination: destination,
+	}, now)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := proof.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := proxyproto.Encode(proxyproto.Header{Source: source, Destination: destination, VisitorSourceProof: string(encoded)})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := stream.Write(metadata); err != nil {
+		return nil, err
+	}
+	return &publishingVisitor{Conn: stream, unregister: unregister}, nil
+}
+
+type publishingVisitor struct {
+	net.Conn
+	unregister func()
+	once       sync.Once
+	err        error
+}
+
+func (c *publishingVisitor) Close() error {
+	c.once.Do(func() {
+		c.err = c.Conn.Close()
+		c.unregister()
+	})
+	return c.err
 }
 
 func publishingWrite(w http.ResponseWriter, status int, value any) {
@@ -430,6 +520,11 @@ func (f *PublishingFixture) prepare(w http.ResponseWriter, r *http.Request, serv
 		p.ExpiresAt = *saved.ExpiresAt
 	}
 	setup := controlv1.ServiceRunSetup{ServiceId: service, ServiceRunId: runID, RunNumber: number, RunToken: token.String()}
+	setup.VisitorSourceKey = make([]byte, 32)
+	if _, err := rand.Read(setup.VisitorSourceKey); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	for slot := range 2 {
 		setup.PublisherConnections = append(setup.PublisherConnections, controlv1.ConnectionAssignment{ConnectionSlot: slot,
 			PublisherConnectionId: publishingID(f.t, opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 1,
@@ -583,26 +678,6 @@ func (f *PublishingFixture) runOperation(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		publishingWrite(w, 200, controlv1.ServiceObservationResult{Accepted: len(body.Events)})
-	case operation == "authorize-http-visitor":
-		var body controlv1.AuthorizeServiceHTTPVisitorRequest
-		if !publishingDecode(r, &body) || body.RunNumber != snapshot.Setup.RunNumber || body.DestinationPort != 443 || !opaqueid.Valid(body.VisitorConnectionId, opaqueid.VisitorConnectionPrefix) {
-			w.WriteHeader(400)
-			return
-		}
-		f.mu.Lock()
-		connected := false
-		for _, connection := range f.connections {
-			if connection.ref.ServiceRunID == id {
-				connected = true
-				break
-			}
-		}
-		allowed := run.installed && run.notified && run.healthy && connected && !run.closed && f.services[service].Enabled
-		if deadline := f.services[service].ExpiresAt; deadline != nil && !deadline.After(time.Now()) {
-			allowed = false
-		}
-		f.mu.Unlock()
-		publishingWrite(w, 200, controlv1.ServiceClientCertificateDecision{Allowed: allowed, Admitted: allowed, ValidUntil: time.Now().Add(time.Minute)})
 	case len(path) == 0 && r.Method == http.MethodDelete:
 		if f.hooks.Close != nil {
 			if err := f.hooks.Close(snapshot); err != nil {
@@ -672,11 +747,14 @@ func publishingRelay(t *testing.T, tlsConfig *tls.Config, f *PublishingFixture) 
 				f.connections[ref.PublisherConnectionID] = publishingConnection{session, ref}
 				f.mu.Unlock()
 				defer func() { f.mu.Lock(); delete(f.connections, ref.PublisherConnectionID); f.mu.Unlock() }()
-				_ = session.HandlePublisherDrain(ctx, func(context.Context) error { return nil })
-				select {
-				case <-session.Done():
-				case <-ctx.Done():
-				}
+				drained := make(chan struct{})
+				go func() {
+					defer close(drained)
+					_ = session.HandlePublisherDrain(ctx, func(context.Context) error { return nil })
+				}()
+				_ = session.ServeServiceCapacity(ctx)
+				_ = session.Close()
+				<-drained
 			})
 		}
 	}()

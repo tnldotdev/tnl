@@ -19,6 +19,12 @@ schemas:
           observed_at:
             type: string
             format: date-time
+          source_evidence:
+            type: string
+            format: byte
+            maxLength: 2048
+            x-go-type-skip-optional-pointer: true
+            description: Exact ingress-created PROXY v2 header with its signed source proof, required for HTTP and absent for native certificate admission. Contains no application bytes. Evidence authenticates the original visitor and socket facts; it grants no access or renewal.
   ServiceRecoveryObservation:
     type: object
     additionalProperties: false

@@ -182,7 +182,11 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 			t.Fatal("forwarded bytes changed", err)
 		}
 	}
-	response = request(newClient("api", job), endpoint("api"), "/echo", payload, 200)
+	freshClient := newClient("api", job)
+	// promote each new visitor connection before sending a body larger than
+	// the bounded pending-authorization allowance; never retry the POST.
+	awaitServiceHTTPStatus(t, freshClient, endpoint("api"), "Authorization", "Bearer application-owned", 200)
+	response = request(freshClient, endpoint("api"), "/echo", payload, 200)
 	_, _ = io.Copy(io.Discard, response.Body)
 	response.Body.Close()
 	session, _ := job.Session()
@@ -194,7 +198,9 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 		t.Fatal("HTTP credential gained management rights", err)
 	}
 	// an application response loss cannot cause arbitrary POST-body replay.
-	response = request(newClient("api", job), endpoint("api"), "/once", payload, 502)
+	onceClient := newClient("api", job)
+	awaitServiceHTTPStatus(t, onceClient, endpoint("api"), "Authorization", "Bearer application-owned", 200)
+	response = request(onceClient, endpoint("api"), "/once", payload, 502)
 	response.Body.Close()
 	if once.Load() != 1 {
 		t.Fatal("application body was retried")

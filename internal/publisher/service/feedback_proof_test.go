@@ -44,7 +44,7 @@ func (c *feedbackProofControl) ListPreviewPageFeedback(_ context.Context, _, _ s
 
 func feedbackProofRuntime(t *testing.T, frontend *HTTP, control *feedbackProofControl) {
 	t.Helper()
-	frontend.Control = serviceHTTPAdmissionControl{HTTPControl: control}
+	frontend.Control = serviceHTTPControl{HTTPControl: control}
 	frontend.Feedback, frontend.PreviewID, frontend.ProjectService, frontend.Demo = true, "pv_0123456789abcdefghijkl", "web", true
 	runtime, err := newFeedbackRuntime(*frontend)
 	if err != nil {

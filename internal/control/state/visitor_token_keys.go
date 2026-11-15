@@ -108,7 +108,9 @@ func (d *Database) signVisitorPermission(ctx context.Context, tx pgx.Tx, issuer 
 	if err := ensureVisitorIssuer(ctx, q, issuer); err != nil {
 		return "", err
 	}
-	row, err := q.LockVisitorTokenSigningKey(ctx)
+	// the issuer excludes concurrent signing and rotation. lock the verification
+	// revision to reject stale key authority without conflicting with retention.
+	row, err := q.LockVisitorTokenSigningAuthority(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
 		row, err = d.createVisitorSigningKey(ctx, q, now)
 	}
@@ -135,8 +137,8 @@ func (d *Database) signVisitorPermission(ctx context.Context, tx pgx.Tx, issuer 
 	if err != nil {
 		return "", err
 	}
-	// the current key is locked through commit. sufficient retention needs no
-	// write; an extension must still update exactly that current, unrevoked key.
+	// key authority is held through commit. sufficient retention needs no write;
+	// an extension must still update exactly that current, unrevoked key.
 	if row.RetainUntil.Time.Before(permission.ExpiresAt) {
 		changed, err := q.RetainVisitorTokenSigningKey(ctx, controlstatedb.RetainVisitorTokenSigningKeyParams{ID: row.ID, ExpiresAt: timestamptz(permission.ExpiresAt)})
 		if err != nil {

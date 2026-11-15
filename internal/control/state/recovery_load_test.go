@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"reflect"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 // a database-state model of one relay restart, not a process-crash or visitor
@@ -21,6 +23,18 @@ func TestLoadRelayRecovery(t *testing.T) {
 		t.Fatal("relay recovery requires at least two services for affected and healthy work")
 	}
 	sessions := readySteadyLoadSessions(t, f)
+	// readiness includes elapsed authorization time. preserve each recorded
+	// first-readiness instant rather than assuming it equals the fixture clock.
+	readyAt := make([]time.Time, len(sessions))
+	for index, session := range sessions {
+		err := f.database.pool.QueryRow(t.Context(), `SELECT ready_at FROM control.service_runs
+			WHERE id=$1 AND service_id=$2 AND run_number=$3 AND state='ready' AND healthy
+			AND closed_at IS NULL`, session.run.RunID, session.service.ID, session.run.RunNumber).Scan(&readyAt[index])
+		if err != nil {
+			t.Fatalf("initial durable run readiness service=%s: %v", session.service.ID, err)
+		}
+	}
+	t.Logf("initial_ready_at=%s fixture_now=%s", readyAt[0].Format(time.RFC3339Nano), f.now.Format(time.RFC3339Nano))
 	failed := sessions[0].leases[sessions[0].run.Connections[0].RelayServiceID]
 	var affected, unaffected []int
 	current := make([]ServiceRunState, f.routes)
@@ -38,15 +52,19 @@ func TestLoadRelayRecovery(t *testing.T) {
 	var ingresses [2]IngressLease
 	for index := range ingresses {
 		lease, err := f.database.RegisterIngress(t.Context(), IngressRegistration{
-			IngressID: fmt.Sprintf("recovery-ingress-%d", index), IngressRunID: "load-run", ProtocolVersion: 1,
+			IngressID: fmt.Sprintf("recovery-ingress-%d", index), IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1,
 			HTTPS: true, IngressPoolID: PrimaryIngressPoolID, ConnectionCapacity: uint64(max(64, f.routes)),
 		}, f.now, time.Hour)
 		if err != nil {
 			t.Fatal(err)
 		}
 		ingresses[index] = lease
+		runs, err := readLoadServiceRuns(t.Context(), f.database, lease.IngressLeaseIdentity, f.now)
+		if err != nil {
+			t.Fatal("initial routing snapshot", err)
+		}
 		for _, session := range sessions {
-			if err := observeLoadService(t.Context(), f.database, lease.IngressLeaseIdentity, session, f.now); err != nil {
+			if err := observeLoadService(runs, session, f.now); err != nil {
 				t.Fatal("initial admission", err)
 			}
 		}
@@ -123,8 +141,22 @@ func TestLoadRelayRecovery(t *testing.T) {
 					stop()
 					if err != nil || run.ServiceID != session.service.ID || run.RunID != session.run.RunID ||
 						run.RunNumber != session.run.RunNumber || run.State != "ready" || !run.Healthy || !run.ExpiresAt.After(at) ||
-						!reflect.DeepEqual(run.Connections, session.run.Connections) {
-						fail(fmt.Errorf("healthy heartbeat changed service=%s: %v", session.service.ID, err))
+						!slices.EqualFunc(run.Connections, session.run.Connections, sameLoadAssignment) {
+						for slot, connection := range run.Connections {
+							if slot >= len(session.run.Connections) {
+								break
+							}
+							expected := session.run.Connections[slot]
+							t.Logf("healthy heartbeat slot=%d connection=%s/%s revision=%d/%d state=%s/%s credential_matches=%t expiry=%s/%s expiry_equal=%t location=%s/%s",
+								slot, connection.PublisherConnectionID, expected.PublisherConnectionID, connection.Revision, expected.Revision,
+								connection.State, expected.State, connection.Credential == expected.Credential,
+								connection.CredentialExpiresAt.Format(time.RFC3339Nano), expected.CredentialExpiresAt.Format(time.RFC3339Nano),
+								connection.CredentialExpiresAt.Equal(expected.CredentialExpiresAt), connection.CredentialExpiresAt.Location(), expected.CredentialExpiresAt.Location())
+						}
+						fail(fmt.Errorf("healthy heartbeat changed service=%s returned_service=%s run=%s/%s number=%d/%d state=%s healthy=%t capacity=%d active=%d expiry=%s connections=%d/%d: %v",
+							session.service.ID, run.ServiceID, run.RunID, session.run.RunID, run.RunNumber, session.run.RunNumber,
+							run.State, run.Healthy, run.StreamCapacity, run.ReportedStreams, run.ExpiresAt.Format(time.RFC3339Nano),
+							len(run.Connections), len(session.run.Connections), err))
 						return
 					}
 					if sweep == 0 {
@@ -188,21 +220,29 @@ func TestLoadRelayRecovery(t *testing.T) {
 	}
 	verificationStarted := time.Now()
 	verifyAt := now.Add(time.Since(started))
+	var routes [2]map[string]IngressServiceRun
+	for index, ingress := range ingresses {
+		var err error
+		routes[index], err = readLoadServiceRuns(ctx, f.database, ingress.IngressLeaseIdentity, verifyAt)
+		if err != nil {
+			t.Fatal("final recovery routing snapshot", err)
+		}
+	}
 	for index, session := range sessions {
 		session.run = current[index]
 		if session.leases[failed.RelayServiceID].RelayID == failed.RelayID {
 			session.leases = cloneLoadLeases(session.leases)
 			session.leases[failed.RelayServiceID] = restarted
 		}
-		for _, ingress := range ingresses {
-			if err := observeLoadService(ctx, f.database, ingress.IngressLeaseIdentity, session, verifyAt); err != nil {
+		for _, runs := range routes {
+			if err := observeLoadService(runs, session, verifyAt); err != nil {
 				t.Fatal("final current assignment admission", err)
 			}
 		}
 		var matches bool
 		err := f.database.pool.QueryRow(ctx, `SELECT service_id=$2 AND run_number=$3 AND state='ready' AND healthy
 			AND closed_at IS NULL AND publisher_expires_at>$4 AND ready_at=$5
-			FROM control.service_runs WHERE id=$1`, session.run.RunID, session.service.ID, session.run.RunNumber, verifyAt, f.now).Scan(&matches)
+			FROM control.service_runs WHERE id=$1`, session.run.RunID, session.service.ID, session.run.RunNumber, verifyAt, readyAt[index]).Scan(&matches)
 		if err != nil || !matches {
 			t.Fatalf("recovery changed durable run identity/readiness service=%s: %v", session.service.ID, err)
 		}
@@ -232,10 +272,14 @@ func observeRecoveryLoad(t *testing.T, ctx context.Context, control *Database, i
 			finished = true
 		default:
 		}
+		callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
+		runs, err := readLoadServiceRuns(callCtx, control, ingress, now)
+		stop()
+		if err != nil {
+			return err
+		}
 		for index, session := range sessions {
-			callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-			admission, err := readLoadAdmission(callCtx, control, ingress, session, now)
-			stop()
+			admission, err := loadServiceRun(runs, session, now)
 			if err != nil {
 				return err
 			}
@@ -312,7 +356,7 @@ func recoverLoadRelaySlot(ctx context.Context, control *Database, session servic
 	for slot, connection := range run.Connections {
 		before := session.run.Connections[slot]
 		if session.leases[before.RelayServiceID].RelayLeaseIdentity != failed.RelayLeaseIdentity {
-			if connection != before {
+			if !sameLoadAssignment(connection, before) {
 				return run, fmt.Errorf("replenishment changed surviving slot=%d", slot)
 			}
 			continue

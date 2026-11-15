@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/netip"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
@@ -24,6 +25,7 @@ type VisitorSourceAuthority struct {
 	ServiceID             string `json:"service_id"`
 	ServiceRunID          string `json:"service_run_id"`
 	RunNumber             uint64 `json:"run_number"`
+	EndpointRevision      int64  `json:"endpoint_revision"`
 	IngressID             string `json:"ingress_id"`
 	IngressRunID          string `json:"ingress_run_id"`
 	IngressLeaseRevision  uint64 `json:"ingress_lease_revision"`
@@ -36,7 +38,7 @@ func (a VisitorSourceAuthority) ValidBinding() bool {
 	return opaqueid.Valid(a.ServiceID, opaqueid.ServicePrefix) &&
 		opaqueid.Valid(a.ServiceRunID, opaqueid.ServiceRunPrefix) && a.RunNumber > 0 &&
 		validIdentifier(a.IngressID) && opaqueid.Valid(a.IngressRunID, opaqueid.IngressRunPrefix) &&
-		a.IngressLeaseRevision > 0 && a.VisitorPolicyRevision > 0 && a.ValidUntil > 0
+		a.EndpointRevision > 0 && a.IngressLeaseRevision > 0 && a.VisitorPolicyRevision > 0 && a.ValidUntil > 0
 }
 
 func (a VisitorSourceAuthority) SigningBytes() ([]byte, error) {
@@ -99,13 +101,15 @@ func (b VisitorSourceBinding) valid() bool {
 // VisitorSourceProof travels once in ingress-created PROXY v2 metadata. relays
 // preserve those bytes; it is independent of transport choice and capacity.
 type VisitorSourceProof struct {
-	Authority VisitorSourceAuthority `json:"authority"`
-	Sequence  uint64                 `json:"sequence"`
-	MAC       []byte                 `json:"mac,omitempty"`
+	Authority  VisitorSourceAuthority `json:"authority"`
+	Sequence   uint64                 `json:"sequence"`
+	ObservedAt int64                  `json:"observed_at_us"`
+	MAC        []byte                 `json:"mac,omitempty"`
 }
 
 func (p VisitorSourceProof) SigningBytes(binding VisitorSourceBinding) ([]byte, error) {
 	if !binding.valid() || !p.Authority.ValidBinding() || len(p.Authority.MAC) != 32 || p.Sequence == 0 ||
+		p.ObservedAt <= 0 || time.UnixMicro(p.ObservedAt).Unix() >= p.Authority.ValidUntil ||
 		p.Authority.ServiceID != binding.ServiceID || p.Authority.ServiceRunID != binding.ServiceRunID || p.Authority.RunNumber != binding.RunNumber {
 		return nil, ErrVisitorSourceProof
 	}
@@ -117,7 +121,8 @@ func (p VisitorSourceProof) SigningBytes(binding VisitorSourceBinding) ([]byte, 
 }
 
 func (p VisitorSourceProof) MarshalBinary() ([]byte, error) {
-	if !p.Authority.ValidBinding() || len(p.Authority.MAC) != 32 || len(p.MAC) != 32 || p.Sequence == 0 {
+	if !p.Authority.ValidBinding() || len(p.Authority.MAC) != 32 || len(p.MAC) != 32 || p.Sequence == 0 ||
+		p.ObservedAt <= 0 || time.UnixMicro(p.ObservedAt).Unix() >= p.Authority.ValidUntil {
 		return nil, ErrVisitorSourceProof
 	}
 	wire, err := json.Marshal(p)

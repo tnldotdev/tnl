@@ -45,6 +45,11 @@ func realTunnelTLS(t *testing.T) (*tls.Config, *tls.Config) {
 
 func realTunnelPair(t *testing.T, transport string) (*Session, *Session) {
 	t.Helper()
+	return realTunnelPairWithHello(t, transport, publisherHello())
+}
+
+func realTunnelPairWithHello(t *testing.T, transport string, hello tunnelv1.Message) (*Session, *Session) {
+	t.Helper()
 	serverTLS, clientTLS := realTunnelTLS(t)
 	ctx := tunnelContext(t)
 	var accept func() (muxsession.Session, error)
@@ -97,7 +102,7 @@ func realTunnelPair(t *testing.T, transport string) (*Session, *Session) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := Dial(ctx, connection, publisherHello())
+	client, err := Dial(ctx, connection, hello)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,6 @@ import (
 	"testing"
 	"testing/synctest"
 
-	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -38,25 +37,24 @@ func TestDrainDeadlineForcesBackendClosed(t *testing.T) {
 	ownIngressConn(t, a)
 	ownIngressConn(t, b)
 	opened := make(chan struct{})
+	capacity := make(chan func(context.Context) error, 1)
+	authorized := make(chan struct{})
 	backendDone := ingressWorker(t, func() { _ = a.Close(); _ = b.Close() }, func() error {
 		defer b.Close()
 		_, replay, err := proxyproto.Decode(b)
 		if err != nil {
 			return err
 		}
+		if err := (<-capacity)(ingressContext(t)); err != nil {
+			return err
+		}
+		close(authorized)
 		_, err = io.Copy(io.Discard, replay)
 		return err
 	})
-	config := serviceIngressConfig(t, func(context.Context, tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+	config := serviceIngressConfig(t, func(_ context.Context, _ tunnelv1.ServiceForwardingHeader, reserve func(context.Context) error) (net.Conn, error) {
+		capacity <- reserve
 		return &drainReadConn{Conn: a, reading: sync.OnceFunc(func() { close(opened) })}, nil
-	})
-	authorized := make(chan struct{})
-	allowed := sync.OnceFunc(func() { close(authorized) })
-	config.AuditSink = auditSinkFunc(func(event serviceaudit.Observation) bool {
-		if event.EventType == "connection.open" && event.Outcome == "allowed" {
-			allowed()
-		}
-		return true
 	})
 	draining := make(chan struct{})
 	server, address := startIngress(t, config, func(s *Server) {

@@ -93,66 +93,38 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	admit := func(auth ServiceHTTPRun) (string, int) {
-		t.Helper()
-		port := 0
-		hostname := ""
-		for _, s := range applied.Services {
-			if s.ServiceID == auth.Subject.ID {
-				port = s.Port
-				hostname = s.Hostname
-			}
-		}
-		visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-		if _, err := d.AdmitPublicServiceVisitor(t.Context(), lease.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, hostname, port, netip.MustParseAddr("192.0.2.10"), now); err != nil {
-			t.Fatal(err)
-		}
-		return visitor, port
+	routing, err := readIngressServiceRun(t.Context(), d, lease.IngressLeaseIdentity, a.Subject.ID, a.RunID, now)
+	if err != nil || routing.RunNumber != a.Number || routing.Port != 443 || routing.Hostname == "" || len(routing.Relays) != 2 {
+		t.Fatal("HTTP routing lost its exact ready run or shared endpoint", routing, err)
 	}
-	visitor, port := admit(a)
+	port := routing.Port
 	source := netip.MustParseAddr("192.0.2.10")
-	pending, err := d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
-	if err != nil || pending.State != PublicServiceVisitorPending {
-		t.Fatal("valid HTTP transport claimed request permission", pending, err)
+	retry, err := readIngressServiceRun(t.Context(), d, lease.IngressLeaseIdentity, a.Subject.ID, a.RunID, now)
+	if err != nil || !retry.ValidUntil.Equal(routing.ValidUntil) || retry.RunNumber != routing.RunNumber {
+		t.Fatal("repeated routing changed its exact run or observation deadline", retry, err)
 	}
-	retry, err := d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now.Add(time.Second))
-	if err != nil || retry.State != PublicServiceVisitorPending || !retry.ValidUntil.Equal(pending.ValidUntil) {
-		t.Fatal("pending status extended its original deadline", retry, err)
-	}
-	if err := d.PromotePublicServiceVisitor(t.Context(), lease.IngressLeaseIdentity, visitor, now); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("ingress promoted HTTP before request permission", err)
-	}
+	// run authentication remains at the policy boundary. exact visitor/source/
+	// destination proofs and fixed setup/replay bounds are enforced at the
+	// publisher and data-plane capacity owners, not by a control visitor row.
 	for _, test := range []struct {
 		name string
 		auth ServiceHTTPRun
-		ip   netip.Addr
-		port int
-		id   string
 	}{
-		{"other service", b, source, 443, visitor},
-		{"wrong run", ServiceHTTPRun{Subject: a.Subject, RunID: b.RunID, Number: a.Number, Token: a.Token}, source, 443, visitor},
-		{"wrong number", ServiceHTTPRun{Subject: a.Subject, RunID: a.RunID, Number: a.Number + 1, Token: a.Token}, source, 443, visitor},
-		{"wrong token", ServiceHTTPRun{Subject: a.Subject, RunID: a.RunID, Number: a.Number, Token: b.Token}, source, 443, visitor},
-		{"wrong source", a, netip.MustParseAddr("192.0.2.11"), 443, visitor},
-		{"wrong port", a, source, 25443, visitor},
-		{"unknown visitor", a, source, 443, mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)},
+		{"other service", ServiceHTTPRun{Subject: b.Subject, RunID: a.RunID, Number: a.Number, Token: a.Token}},
+		{"wrong run", ServiceHTTPRun{Subject: a.Subject, RunID: b.RunID, Number: a.Number, Token: a.Token}},
+		{"wrong number", ServiceHTTPRun{Subject: a.Subject, RunID: a.RunID, Number: a.Number + 1, Token: a.Token}},
+		{"wrong token", ServiceHTTPRun{Subject: a.Subject, RunID: a.RunID, Number: a.Number, Token: b.Token}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := d.AuthorizeServiceHTTPVisitor(t.Context(), test.auth, test.id, test.ip, test.port, now); !errors.Is(err, ErrServiceAccess) {
-				t.Fatal("HTTP authorization widened its forwarding identity", err)
+			auth := test.auth
+			if _, err := d.ReadPublisherVisitorPolicy(t.Context(), auth.Subject, auth.RunID, auth.Number, auth.Token.String(), 0, now); !errors.Is(err, ErrServiceAccess) {
+				t.Fatal("HTTP policy widened its publisher run identity", err)
 			}
 		})
 	}
-	if expired, err := d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, pending.ValidUntil); err != nil || expired.State != PublicServiceVisitorDenied {
-		t.Fatal("pending HTTP transport survived its fixed deadline", expired, err)
-	}
-	if _, err := d.AuthorizeServiceHTTPVisitor(t.Context(), a, visitor, source, 443, pending.ValidUntil); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("publisher revived an expired pending visitor", err)
-	}
-	for _, hostname := range []string{"", "unknown.example.test", "UPPER.example.test"} {
-		if _, err := d.AdmitPublicServiceVisitor(t.Context(), lease.IngressLeaseIdentity, PrimaryIngressPoolID, mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), hostname, 443, netip.MustParseAddr("192.0.2.10"), now); !errors.Is(err, ErrServiceAccess) {
-			t.Fatal("shared HTTPS selected a missing or invalid hostname", err)
-		}
+	var visitors int
+	if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.public_service_visitors WHERE service_id=ANY($1)`, []string{a.Subject.ID, b.Subject.ID}).Scan(&visitors); err != nil || visitors != 0 {
+		t.Fatal("HTTP preparation wrote visitor coordination rows", visitors, err)
 	}
 	grant, err := d.CreateServiceHTTPGrant(t.Context(), a.Subject.ID, r.ActorID, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: now.Add(time.Hour)}, now)
 	if err != nil {
@@ -198,36 +170,6 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		guard.Close()
 	}
 	check(a, GrantTokenSource{Credential: grant.RefreshCredential}, true)
-	decision, err := d.AuthorizeServiceHTTPVisitor(t.Context(), a, visitor, source, 443, now)
-	if err != nil || !decision.Allowed || decision.Admitted {
-		t.Fatal("publisher permission bypassed ingress acknowledgment", decision, err)
-	}
-	repeated, err := d.AuthorizeServiceHTTPVisitor(t.Context(), a, visitor, source, 443, now)
-	if err != nil || repeated != decision {
-		t.Fatal("repeated HTTP authorization was not idempotent", repeated, err)
-	}
-	status, err := d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
-	if err != nil || status.State != PublicServiceVisitorAuthenticated {
-		t.Fatal("transport bypassed promotion", status, err)
-	}
-	if err = d.PromotePublicServiceVisitor(t.Context(), lease.IngressLeaseIdentity, visitor, now); err != nil {
-		t.Fatal(err)
-	}
-	status, err = d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
-	if err != nil || status.State != PublicServiceVisitorAllowed {
-		t.Fatal(status, err)
-	}
-	decision, err = d.AuthorizeServiceHTTPVisitor(t.Context(), a, visitor, source, 443, now)
-	if err != nil || !decision.Allowed || !decision.Admitted {
-		t.Fatal("publisher did not observe ingress acknowledgment", decision, err)
-	}
-	closed, _ := admit(a)
-	if err := d.ClosePublicServiceVisitor(t.Context(), lease.IngressLeaseIdentity, closed, now); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.AuthorizeServiceHTTPVisitor(t.Context(), a, closed, source, 443, now); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("publisher revived a closed visitor", err)
-	}
 	wrongAuth := a
 	wrongAuth.Subject.Kind = "public_url"
 	check(wrongAuth, GrantTokenSource{Credential: grant.RefreshCredential}, false)
@@ -446,9 +388,9 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	}
 	check(a, BrowserSessionTokenSource{Secret: redemption.CookieSecret}, false)
 	check(a, GrantTokenSource{Credential: grant.RefreshCredential}, false)
-	status, err = d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
-	if err != nil || status.State != PublicServiceVisitorAllowed {
-		t.Fatal("HTTP authority changed its independent transport lease", status, err)
+	current, err := readIngressServiceRun(t.Context(), d, lease.IngressLeaseIdentity, a.Subject.ID, a.RunID, now)
+	if err != nil || current.RunNumber != a.Number || !current.ValidUntil.After(now) {
+		t.Fatal("visitor suspension changed independent service routing", current, err)
 	}
 	// restore the actor's membership before changing publication configuration.
 	if _, err = d.pool.Exec(t.Context(), `UPDATE control.team_memberships SET manual_suspended_at=NULL WHERE team_id=$1 AND identity_id=$2`, r.TeamID, r.ActorID); err != nil {
@@ -476,12 +418,11 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		    WHERE run.id=$1`, a.RunID).Scan(&retired); err != nil || !retired {
 			t.Fatal("changed HTTP configuration retained its previous run or publisher grant", retired, err)
 		}
-		if _, err := d.AuthorizeServiceHTTPVisitor(t.Context(), a, visitor, source, 443, now); !errors.Is(err, ErrServiceAccess) {
-			t.Fatal("retired publication retained HTTP visitor authorization", err)
+		if _, err := d.ReadPublisherVisitorPolicy(t.Context(), a.Subject, a.RunID, a.Number, a.Token.String(), 0, now); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("retired publication retained HTTP policy authority", err)
 		}
-		status, err := d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
-		if err != nil || status.State != PublicServiceVisitorDenied {
-			t.Fatal("retired publication retained its promoted HTTP transport", status, err)
+		if _, err := readIngressServiceRun(t.Context(), d, lease.IngressLeaseIdentity, a.Subject.ID, a.RunID, now); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("retired publication remained in HTTP routing", err)
 		}
 		r.ExpectedRevision = changed.Revision
 		service.HTTP = nil
@@ -492,12 +433,11 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		if _, err := d.serviceHTTPSourcePolicy(t.Context(), q, a.Subject.ID, source); err != nil {
 			t.Fatal("restored source policy rejected the original source", err)
 		}
-		if _, err := d.AuthorizeServiceHTTPVisitor(t.Context(), a, visitor, source, 443, now); !errors.Is(err, ErrServiceAccess) {
-			t.Fatal("restoring source policy revived the retired publication", err)
+		if _, err := d.ReadPublisherVisitorPolicy(t.Context(), a.Subject, a.RunID, a.Number, a.Token.String(), 0, now); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("restoring source policy revived the retired publication policy", err)
 		}
-		status, err = d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
-		if !errors.Is(err, ErrServiceAccess) || status.State != PublicServiceVisitorDenied {
-			t.Fatal("restoring source policy revived the retired visitor", status, err)
+		if _, err := readIngressServiceRun(t.Context(), d, lease.IngressLeaseIdentity, a.Subject.ID, a.RunID, now); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("restoring source policy revived retired routing", err)
 		}
 	})
 }

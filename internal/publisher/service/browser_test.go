@@ -148,9 +148,13 @@ func TestServiceBrowserAccessRequiresHTTPOwnerAndClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer closeRun()
+	defer func() {
+		if err := closeRun(); err != nil {
+			t.Error("close configured run", err)
+		}
+	}()
 	header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{PublicService: &tunnelv1.PublicServiceAdmission{DestinationPort: 25443}}}
-	if _, certificateOnly := prepared.managedVisitor(header).(servicestream.CertificateVisitor); !certificateOnly {
+	if _, certificateOnly := prepared.managedVisitor(header, func(context.Context) error { return nil }).(servicestream.CertificateVisitor); !certificateOnly {
 		t.Fatal("TCP service enabled the HTTP browser frontend")
 	}
 }
@@ -183,7 +187,7 @@ func TestServiceBrowserTeamAccessIsAdditiveAndStripsCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	control := &serviceBrowserControl{HTTPControl: serviceHTTPAdmissionControl{}, origin: "https://control.example.test", policy: policy, tokens: issuer,
+	control := &serviceBrowserControl{HTTPControl: serviceHTTPControl{}, origin: "https://control.example.test", policy: policy, tokens: issuer,
 		ip: &controlv1.VisitorPolicyIP{Key: ipKey[:], Prefixes: []controlv1.HashedIPPrefix{{
 			Family: controlv1.HashedIPPrefixFamily(allowedSource.Family), PrefixLength: allowedSource.Bits, Digest: allowedSource.Digest,
 		}}}}

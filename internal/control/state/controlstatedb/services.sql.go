@@ -929,6 +929,61 @@ func (q *Queries) ListAvailableServices(ctx context.Context, arg ListAvailableSe
 	return items, nil
 }
 
+const listServiceConfigurations = `-- name: ListServiceConfigurations :many
+SELECT service.id AS service_id,COALESCE(local.service,service.name)::text AS service,
+    service.configuration_ciphertext,service.storage_key_id,
+    (local.service_id IS NOT NULL)::boolean AS local_owned,
+    EXISTS(SELECT 1 FROM control.applied_project_services binding
+        WHERE binding.service_id=service.id) AS deployment_owned,
+    (allocation.service_id IS NOT NULL)::boolean AS allocation_owned,
+    COALESCE(allocation.required_temporary_approval,'')::text AS required_temporary_approval
+FROM control.services service
+LEFT JOIN control.local_project_services local ON local.service_id=service.id
+LEFT JOIN control.publisher_namespace_allocations allocation ON allocation.service_id=service.id
+WHERE service.id=ANY($1::text[])
+ORDER BY service.id
+`
+
+type ListServiceConfigurationsRow struct {
+	ServiceID                 string
+	Service                   string
+	ConfigurationCiphertext   []byte
+	StorageKeyID              pgtype.Text
+	LocalOwned                bool
+	DeploymentOwned           bool
+	AllocationOwned           bool
+	RequiredTemporaryApproval string
+}
+
+func (q *Queries) ListServiceConfigurations(ctx context.Context, serviceIds []string) ([]ListServiceConfigurationsRow, error) {
+	rows, err := q.db.Query(ctx, listServiceConfigurations, serviceIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListServiceConfigurationsRow
+	for rows.Next() {
+		var i ListServiceConfigurationsRow
+		if err := rows.Scan(
+			&i.ServiceID,
+			&i.Service,
+			&i.ConfigurationCiphertext,
+			&i.StorageKeyID,
+			&i.LocalOwned,
+			&i.DeploymentOwned,
+			&i.AllocationOwned,
+			&i.RequiredTemporaryApproval,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listServiceConnectionSlots = `-- name: ListServiceConnectionSlots :many
 SELECT service_run_id, service_id, run_number, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, credential_digest, credential_expires_at, relay_id, relay_run_id, relay_lease_revision, state, assigned_at, session_open FROM control.service_connection_slots WHERE service_run_id = $1
 ORDER BY connection_slot
@@ -1434,6 +1489,59 @@ func (q *Queries) LockServiceRunsForClose(ctx context.Context, serviceID string)
 		return nil, err
 	}
 	return items, nil
+}
+
+const observeServiceRun = `-- name: ObserveServiceRun :one
+SELECT preferred_regions, traffic_limits, id, service_id, team_id, guest_id, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, require_post_quantum, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, ready_at, closed_at, assignments_open FROM control.service_runs
+WHERE id = $1 AND service_id = $2 FOR SHARE
+`
+
+type ObserveServiceRunParams struct {
+	ID        string
+	ServiceID string
+}
+
+func (q *Queries) ObserveServiceRun(ctx context.Context, arg ObserveServiceRunParams) (ControlServiceRun, error) {
+	row := q.db.QueryRow(ctx, observeServiceRun, arg.ID, arg.ServiceID)
+	var i ControlServiceRun
+	err := row.Scan(
+		&i.PreferredRegions,
+		&i.TrafficLimits,
+		&i.ID,
+		&i.ServiceID,
+		&i.TeamID,
+		&i.GuestID,
+		&i.RunNumber,
+		&i.PublisherIdentityID,
+		&i.PublisherGrantID,
+		&i.PublisherKeyID,
+		&i.IdempotencyKey,
+		&i.RequestDigest,
+		&i.PreparationExpiresAt,
+		&i.AssignmentSeedCiphertext,
+		&i.AssignmentSeedStorageKeyID,
+		&i.RunTokenDigest,
+		&i.StartedAt,
+		&i.State,
+		&i.Healthy,
+		&i.StreamCapacity,
+		&i.ReportedStreams,
+		&i.CertificateCacheKey,
+		&i.CertificateScope,
+		&i.CertificateIdentifiers,
+		&i.CertificateDomainID,
+		&i.CertificateHostname,
+		&i.CertificateNamespace,
+		&i.RequirePostQuantum,
+		&i.CertificateIssuanceID,
+		&i.CertificateExpiresAt,
+		&i.CreatedAt,
+		&i.PublisherExpiresAt,
+		&i.ReadyAt,
+		&i.ClosedAt,
+		&i.AssignmentsOpen,
+	)
+	return i, err
 }
 
 const prepareServiceRun = `-- name: PrepareServiceRun :one

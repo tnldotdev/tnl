@@ -210,6 +210,11 @@ func (f *Forwarder) connect(ctx context.Context, key relaySessionKey, target rel
 		}
 		return
 	}
+	capacityErr := session.ServeServiceCapacity(f.context)
+	cleanupErr := session.Close()
+	f.mu.Lock()
+	f.closeErr = errors.Join(f.closeErr, capacityErr, cleanupErr)
+	f.mu.Unlock()
 	f.removeWhenDone(key, entry, session)
 }
 

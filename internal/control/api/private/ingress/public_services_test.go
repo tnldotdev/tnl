@@ -19,11 +19,11 @@ import (
 
 type publicAdmissionStore struct {
 	publicServiceStore
-	admit func(context.Context, controlstate.IngressLeaseIdentity, string, string, string, int, netip.Addr, time.Time, ...controlstate.ServiceRunReference) (controlstate.PublicServiceVisitorAdmission, error)
+	admit func(context.Context, controlstate.IngressLeaseIdentity, string, string, int, netip.Addr, time.Time, ...controlstate.ServiceRunReference) (controlstate.PublicServiceVisitorAdmission, error)
 }
 
-func (s publicAdmissionStore) AdmitPublicServiceVisitor(ctx context.Context, lease controlstate.IngressLeaseIdentity, pool, visitor, hostname string, port int, source netip.Addr, now time.Time, excluded ...controlstate.ServiceRunReference) (controlstate.PublicServiceVisitorAdmission, error) {
-	return s.admit(ctx, lease, pool, visitor, hostname, port, source, now, excluded...)
+func (s publicAdmissionStore) AdmitPublicServiceVisitor(ctx context.Context, lease controlstate.IngressLeaseIdentity, pool, visitor string, port int, source netip.Addr, now time.Time, excluded ...controlstate.ServiceRunReference) (controlstate.PublicServiceVisitorAdmission, error) {
+	return s.admit(ctx, lease, pool, visitor, port, source, now, excluded...)
 }
 
 func TestPublicServiceAdmissionExclusionsMatchDirectAndHTTP(t *testing.T) {
@@ -33,21 +33,20 @@ func TestPublicServiceAdmissionExclusionsMatchDirectAndHTTP(t *testing.T) {
 	for i := range excluded {
 		excluded[i] = ingressv1.ServiceRunReference{ServiceId: serviceID, ServiceRunId: "srun_" + strings.Repeat(string(rune('A'+i)), 22), RunNumber: int64(i + 1)}
 	}
-	hostname := "service.example"
 	base := ingressv1.PublicServiceVisitorClaim{
 		IngressRunId: "process", IngressLeaseRevision: 4, IngressPoolId: "pool",
-		DestinationPort: 443, ObservedSourceIp: "192.0.2.4", Hostname: &hostname,
+		DestinationPort: 25443, ObservedSourceIp: "192.0.2.4",
 		VisitorConnectionId: "vc_" + strings.Repeat("V", 22),
 	}
 	for _, transport := range []string{"direct", "HTTP"} {
 		t.Run(transport, func(t *testing.T) {
 			calls := 0
 			var got []controlstate.ServiceRunReference
-			store := &ingressStoreStub{publicServiceStore: publicAdmissionStore{admit: func(_ context.Context, lease controlstate.IngressLeaseIdentity, pool, visitor, host string, port int, source netip.Addr, at time.Time, runs ...controlstate.ServiceRunReference) (controlstate.PublicServiceVisitorAdmission, error) {
+			store := &ingressStoreStub{publicServiceStore: publicAdmissionStore{admit: func(_ context.Context, lease controlstate.IngressLeaseIdentity, pool, visitor string, port int, source netip.Addr, at time.Time, runs ...controlstate.ServiceRunReference) (controlstate.PublicServiceVisitorAdmission, error) {
 				calls++
 				got = append([]controlstate.ServiceRunReference(nil), runs...)
 				if lease.IngressID != "ingress" || lease.IngressRunID != base.IngressRunId || lease.IngressLeaseRevision != 4 ||
-					pool != base.IngressPoolId || visitor != base.VisitorConnectionId || host != hostname || port != 443 ||
+					pool != base.IngressPoolId || visitor != base.VisitorConnectionId || port != 25443 ||
 					source.String() != base.ObservedSourceIp || !at.Equal(now) {
 					t.Error("admission changed the lease, endpoint, source, visitor, or time")
 				}
@@ -96,8 +95,10 @@ func TestPublicServiceAdmissionExclusionsMatchDirectAndHTTP(t *testing.T) {
 				}
 			}
 			for name, change := range map[string]func(*ingressv1.PublicServiceVisitorClaim){
-				"too many":  func(b *ingressv1.PublicServiceVisitorClaim) { b.ExcludedRuns = append(b.ExcludedRuns, excluded[0]) },
-				"duplicate": func(b *ingressv1.PublicServiceVisitorClaim) { b.ExcludedRuns[1] = excluded[0] },
+				"shared HTTPS": func(b *ingressv1.PublicServiceVisitorClaim) { b.DestinationPort = 443 },
+				"source zone":  func(b *ingressv1.PublicServiceVisitorClaim) { b.ObservedSourceIp = "fe80::1%en0" },
+				"too many":     func(b *ingressv1.PublicServiceVisitorClaim) { b.ExcludedRuns = append(b.ExcludedRuns, excluded[0]) },
+				"duplicate":    func(b *ingressv1.PublicServiceVisitorClaim) { b.ExcludedRuns[1] = excluded[0] },
 				"duplicate ID": func(b *ingressv1.PublicServiceVisitorClaim) {
 					b.ExcludedRuns[1].ServiceRunId = excluded[0].ServiceRunId
 				},

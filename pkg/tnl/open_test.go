@@ -97,7 +97,7 @@ func TestOpenRealPublicationReusesIdentityAndCleansCanceledContext(t *testing.T)
 	}
 	deleted := f.DeletedIDs()
 	if f.Enrollments.Load() != 1 || f.Allocations.Load() != 2 || f.Runs.Load() != 2 || len(deleted) != 2 || deleted[0] == deleted[1] {
-		t.Fatalf("publisher reuse or invocation cleanup changed: enrollments=%d allocations=%d runs=%d visitor decisions=%d deleted=%v", f.Enrollments.Load(), f.Allocations.Load(), f.Runs.Load(), f.VisitorDecisions.Load(), deleted)
+		t.Fatalf("publisher reuse or invocation cleanup changed: enrollments=%d allocations=%d runs=%d deleted=%v", f.Enrollments.Load(), f.Allocations.Load(), f.Runs.Load(), deleted)
 	}
 }
 

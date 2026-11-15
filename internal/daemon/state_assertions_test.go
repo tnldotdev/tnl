@@ -3,7 +3,9 @@ package daemon
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
@@ -43,8 +46,8 @@ func waitForIngressRoutingCurrent(t *testing.T, database *sql.DB, expected int) 
 
 func waitForIngressRoutingCurrentWithin(t *testing.T, database *sql.DB, expected int, timeout time.Duration) {
 	t.Helper()
-	// public admission checks the current lease and connected relays at control.
-	// there is no asynchronous routing projection to acknowledge.
+	// this checks process leases only; service readiness also needs an applied
+	// routing snapshot after the relevant control state has committed.
 	waitForIntegrationCondition(t, timeout, func(ctx context.Context) (bool, error) {
 		var current int
 		err := database.QueryRowContext(ctx, `
@@ -52,6 +55,47 @@ func waitForIngressRoutingCurrentWithin(t *testing.T, database *sql.DB, expected
 			WHERE NOT draining AND lease_expires_at > now()
 		`).Scan(&current)
 		return err == nil && current == expected, err
+	})
+}
+
+func waitForAppliedServiceRouting(t *testing.T, database *sql.DB, runID string, metricsAddresses ...string) {
+	t.Helper()
+	var ready time.Time
+	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT ready_at FROM control.service_runs WHERE id=$1 AND state='ready'`, runID).Scan(&ready); err != nil {
+		t.Fatal(err)
+	}
+	waitForIngressServiceRoutingAfter(t, ready, metricsAddresses, 10*time.Second)
+}
+
+func waitForIngressServiceRoutingAfter(t *testing.T, at time.Time, metricsAddresses []string, timeout time.Duration) {
+	t.Helper()
+	client := &http.Client{Timeout: time.Second}
+	waitForIntegrationCondition(t, timeout, func(ctx context.Context) (bool, error) {
+		for _, address := range metricsAddresses {
+			response, err := integrationGET(ctx, client, "http://"+address+"/metrics")
+			if err != nil {
+				return false, err
+			}
+			families, parseErr := observability.ParseMetrics(response.Body)
+			if err := errors.Join(parseErr, response.Body.Close()); err != nil {
+				return false, err
+			}
+			if response.StatusCode != http.StatusOK {
+				return false, fmt.Errorf("ingress routing metrics status %d", response.StatusCode)
+			}
+			current := false
+			for _, family := range families {
+				if family.GetName() == "tnl_ingress_service_routing_observed_timestamp_seconds" && len(family.Metric) == 1 {
+					observed := family.Metric[0].GetGauge().GetValue()
+					required := float64(at.Unix()) + float64(at.Nanosecond())/float64(time.Second)
+					current = observed >= required
+				}
+			}
+			if !current {
+				return false, nil
+			}
+		}
+		return true, nil
 	})
 }
 

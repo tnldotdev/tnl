@@ -1695,7 +1695,7 @@ CREATE TABLE control.service_certificate_requests (
     PRIMARY KEY (service_run_id,idempotency_key)
 );
 
--- direct admission starts without an identity. TLS key possession and current
+-- native admission starts without an identity. TLS key possession and current
 -- service permission bind the identity before application bytes are forwarded.
 CREATE TABLE control.public_service_visitors (
     workload_session_id text REFERENCES control.workload_sessions(id),
@@ -1706,12 +1706,11 @@ CREATE TABLE control.public_service_visitors (
     ingress_id text NOT NULL,
     ingress_run_id text NOT NULL,
     ingress_lease_revision bigint NOT NULL CHECK (ingress_lease_revision>0),
-    destination_port integer NOT NULL CHECK (destination_port=443 OR destination_port BETWEEN 1024 AND 65535),
+    destination_port integer NOT NULL CHECK (destination_port BETWEEN 1024 AND 65535),
     source_ip inet NOT NULL,
     identity_id text,
     device_id text,
     certificate_digest bytea CHECK (certificate_digest IS NULL OR octet_length(certificate_digest)=32),
-    authorized_at timestamptz,
     promoted_at timestamptz,
     valid_until timestamptz NOT NULL,
     created_at timestamptz NOT NULL,

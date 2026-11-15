@@ -129,12 +129,17 @@ func (f *standalonePublishFixture) startPublisher(t *testing.T, target string, q
 
 func (f *standalonePublishFixture) waitReady(t *testing.T, handle *integrationPublisher) controlv1.ServiceRunPreparation {
 	t.Helper()
+	return f.waitReadyHostname(t, handle, f.identity.hostname)
+}
+
+func (f *standalonePublishFixture) waitReadyHostname(t *testing.T, handle *integrationPublisher, hostname string) controlv1.ServiceRunPreparation {
+	t.Helper()
 	ready := waitForPublisherReady(t, handle)
-	if ready.Hostname != f.identity.hostname {
+	if ready.Hostname != hostname {
 		t.Fatalf("publisher ready event = %#v", ready)
 	}
 	waitForReadyPublisherConnections(t, f.inspect, ready.ServiceId, ready.RunNumber, 2)
-	waitForIngressRoutingCurrent(t, f.inspect, 1)
+	waitForAppliedServiceRouting(t, f.inspect, ready.ServiceRunId, f.process.metricsAddress)
 	return ready
 }
 

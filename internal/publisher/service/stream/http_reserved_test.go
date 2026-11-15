@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 )
@@ -41,6 +42,10 @@ func (f connectorHTTPFrontendFixture) ConnectorApplication(w http.ResponseWriter
 }
 
 type connectorHTTPBudgetFixture struct{ entries atomic.Int64 }
+
+func (*connectorHTTPBudgetFixture) Limits() applicationlimits.Limits {
+	return applicationlimits.Limits{}.Defaults(false)
+}
 
 func (f *connectorHTTPBudgetFixture) Admit(http.ResponseWriter, *http.Request) (func(), bool) {
 	f.entries.Add(1)

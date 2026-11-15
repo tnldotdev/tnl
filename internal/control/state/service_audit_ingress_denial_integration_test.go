@@ -11,7 +11,7 @@ import (
 )
 
 func TestIntegrationIngressSelectionDenialAuditRequiresItsAdmissionReceipt(t *testing.T) {
-	d, now, request, _, service := serviceReleaseProject(t, "http", false)
+	d, now, request, _, service := serviceReleaseProject(t, "tcp", false)
 	ctx := t.Context()
 	publisher := serviceReleasePublisher(t, d, request, now)
 	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "denial-audit", now, ServiceRunRequest{Metadata: service.ServiceMetadata})
@@ -41,14 +41,14 @@ func TestIntegrationIngressSelectionDenialAuditRequiresItsAdmissionReceipt(t *te
 	}
 	ingress, err := d.RegisterIngress(ctx, IngressRegistration{
 		IngressID: "selection-denial-audit", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix),
-		ProtocolVersion: 1, HTTPS: true, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
+		ProtocolVersion: 1, ServicePorts: []int32{int32(service.Endpoint.Port)}, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
 	}, now, 10*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
 	if _, err := d.AdmitPublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, PrimaryIngressPoolID, visitor,
-		service.Endpoint.Hostname, 443, netip.MustParseAddr("192.0.2.10"), now); err != nil {
+		service.Endpoint.Port, netip.MustParseAddr("192.0.2.10"), now); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.ClosePublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, visitor, now); err != nil {
@@ -118,7 +118,7 @@ func TestIntegrationIngressSelectionDenialAuditRequiresItsAdmissionReceipt(t *te
 	}
 	other, err := d.RegisterIngress(ctx, IngressRegistration{
 		IngressID: "another-selection-denial-audit", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix),
-		ProtocolVersion: 1, HTTPS: true, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
+		ProtocolVersion: 1, ServicePorts: []int32{int32(service.Endpoint.Port)}, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
 	}, now, 10*time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -126,10 +126,23 @@ func TestIntegrationIngressSelectionDenialAuditRequiresItsAdmissionReceipt(t *te
 	if _, err := d.IngestIngressServiceObservations(ctx, other.IngressLeaseIdentity, batch, now); !errors.Is(err, ErrServiceAuditAccess) {
 		t.Fatal("a current sibling ingress lease adopted another process's receipt", err)
 	}
-	if _, err := d.pool.Exec(ctx, `UPDATE control.public_service_visitors SET authorized_at=$2 WHERE visitor_connection_id=$1`, visitor, now); err != nil {
+	// bind a fresh receipt to a real device and certificate. the original
+	// closed receipt must never be reopened or rebound.
+	f := servicePublicationFixture{database: d, now: now, service: service, run: run}
+	certificate := newServiceAdmissionCertificate(t, f)
+	authorizedVisitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
+	if _, err := d.AdmitPublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, PrimaryIngressPoolID, authorizedVisitor,
+		service.Endpoint.Port, netip.MustParseAddr("192.0.2.10"), now); err != nil {
 		t.Fatal(err)
 	}
-	observation.EventID = serviceaudit.NewID()
+	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, authorizedVisitor, run.RunNumber,
+		netip.MustParseAddr("192.0.2.10"), service.Endpoint.Port, certificate, now); err != nil || !decision.Allowed || decision.Admitted {
+		t.Fatal("native receipt did not acquire exact certificate authority", decision, err)
+	}
+	if err := d.ClosePublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, authorizedVisitor, now); err != nil {
+		t.Fatal(err)
+	}
+	observation.EventID, observation.VisitorConnectionID = serviceaudit.NewID(), authorizedVisitor
 	if _, err := d.IngestIngressServiceObservations(ctx, ingress.IngressLeaseIdentity, serviceaudit.Batch{Events: []serviceaudit.Observation{observation}}, now); !errors.Is(err, ErrServiceAuditAccess) {
 		t.Fatal("authorized visitor was reported as an unselected run-less denial", err)
 	}

@@ -2,6 +2,7 @@ package deployment_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -33,6 +34,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
@@ -145,16 +147,10 @@ func (f *assignmentServiceControl) ReadPublisherVisitorPolicy(_ context.Context,
 	now := time.Now()
 	return controlv1.VisitorPolicyUpdate{AfterRevision: request.AfterRevision, Revisions: []int64{}, SnapshotRequired: request.AfterRevision == 0,
 		Policy: controlv1.VisitorPolicySnapshot{Resource: request.Resource, Issuer: f.url, Hostname: f.preparation.Hostname, Port: 443,
-			Enabled: true, Anonymous: true, VisitorPolicyRevision: 1, MetadataRevision: f.service.TrustRevision, KeyRevision: 1,
+			PublicEndpoint: &controlv1.VisitorPublicEndpoint{Hostname: f.preparation.Hostname, Port: 443, EndpointRevision: f.service.EndpointRevision},
+			Enabled:        true, Anonymous: true, VisitorPolicyRevision: 1, MetadataRevision: f.service.TrustRevision, KeyRevision: 1,
 			ObservedAt: now, ValidUntil: now.Add(10 * time.Second),
 			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "deployment-fixture", PublicKey: f.caKey.Public().(ed25519.PublicKey)}}}}, nil
-}
-
-func (f *assignmentServiceControl) AuthorizeServiceHTTPVisitor(_ context.Context, service, run string, token credentials.ServiceRunToken, request controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
-	if service != f.service.Id || run != f.setup.ServiceRunId || token.String() != f.setup.RunToken || request.RunNumber != f.setup.RunNumber || request.DestinationPort != 443 {
-		return controlv1.ServiceClientCertificateDecision{}, errAssignmentFixture
-	}
-	return controlv1.ServiceClientCertificateDecision{Allowed: true, Admitted: true, ValidUntil: time.Now().Add(time.Minute)}, nil
 }
 
 func (f *assignmentServiceControl) ListConnectorPeerPairs(_ context.Context, service, run, after string, token credentials.ServiceRunToken) (controlv1.ConnectorPeerPairCandidates, error) {
@@ -209,14 +205,14 @@ func TestHTTPAssignmentUsesExistingSignedServiceRunAndRetainsSavedService(t *tes
 	traffic := &controlv1.TrafficSelection{Connections: new(7), TotalDownloadBytes: new(int64(4096))}
 	control := &assignmentServiceControl{ca: ca, caKey: caKey, traffic: traffic, installed: make(chan struct{}),
 		service: controlv1.Service{Id: serviceID, TeamId: member.TeamId, Name: "web", Protocol: controlv1.ServiceProtocolHTTP, Enabled: true,
-			TrustRevision: 1, RequirePostQuantum: true, HttpLimits: &controlv1.ProjectHTTPApplicationLimits{Total: new(1)},
+			TrustRevision: 1, EndpointRevision: 1, RequirePostQuantum: true, HttpLimits: &controlv1.ProjectHTTPApplicationLimits{Total: new(1)},
 			Endpoint: &controlv1.ServiceEndpoint{Hostname: hostname, Port: 443, Public: true}},
 		preparation: controlv1.ServiceRunPreparation{ServiceId: serviceID, ServiceRunId: runID, RunNumber: 1, TeamId: member.TeamId,
 			PublisherIdentityId: member.PublisherIdentityId, PublisherGrantId: grantID, PublisherKeyId: member.KeyId,
 			Hostname: hostname, DomainId: id(opaqueid.DomainPrefix), ExpiresAt: time.Now().Add(time.Minute), RequirePostQuantum: true,
 			CertificatePlan: &controlv1.CertificatePlan{CacheKey: "deployment-service", Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: controlv1.Dns01},
 			Traffic:         controlv1.TrafficLimits{Connections: 7, Rate: 20, RatePerNs: int64(time.Second), Burst: 40, UploadBytes: 8 << 20, DownloadBytes: 16 << 20, TotalDownloadBytes: new(int64(4096))}},
-		setup: controlv1.ServiceRunSetup{ServiceId: serviceID, ServiceRunId: runID, RunNumber: 1, RunToken: "service-run-token"},
+		setup: controlv1.ServiceRunSetup{ServiceId: serviceID, ServiceRunId: runID, RunNumber: 1, RunToken: "service-run-token", VisitorSourceKey: bytes.Repeat([]byte{1}, 32)},
 	}
 	var exchanges atomic.Int32
 	var proofMu sync.Mutex
@@ -290,11 +286,14 @@ func TestHTTPAssignmentUsesExistingSignedServiceRunAndRetainsSavedService(t *tes
 				}
 				defer session.Close()
 				accepted <- connectedRelay{session, *hello.ServiceConnection}
-				_ = session.HandlePublisherDrain(relayCtx, func(context.Context) error { return nil })
-				select {
-				case <-session.Done():
-				case <-relayCtx.Done():
-				}
+				drained := make(chan struct{})
+				go func() {
+					defer close(drained)
+					_ = session.HandlePublisherDrain(relayCtx, func(context.Context) error { return nil })
+				}()
+				_ = session.ServeServiceCapacity(relayCtx)
+				_ = session.Close()
+				<-drained
 			})
 		}
 	})
@@ -381,13 +380,38 @@ func TestHTTPAssignmentUsesExistingSignedServiceRunAndRetainsSavedService(t *tes
 			PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 443}},
 			ConnectionSlot: uint8(slot.ConnectionSlot), RelayServiceID: slot.RelayServiceId, RelayID: "relay-process",
 			RelayRunID: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}
+		unregister, err := relay.session.RegisterServiceCapacity(ctx, header, func(context.Context) error { return nil })
+		if err != nil {
+			return 0, "", err
+		}
+		defer unregister()
 		stream, err := relay.session.OpenServiceForwardingStream(ctx, header)
 		if err != nil {
 			return 0, "", err
 		}
 		defer stream.Close()
 		_ = stream.SetDeadline(time.Now().Add(5 * time.Second))
-		metadata, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:45123"), Destination: netip.MustParseAddrPort("203.0.113.1:443")})
+		now := time.Now()
+		authority, sourceKey, err := visitortoken.IssueVisitorSourceAuthority([32]byte(control.setup.VisitorSourceKey), tunnelv1.VisitorSourceAuthority{
+			ServiceID: serviceID, ServiceRunID: runID, RunNumber: 1, EndpointRevision: control.service.EndpointRevision,
+			IngressID: header.PublicService.IngressID, IngressRunID: header.PublicService.IngressRunID, IngressLeaseRevision: 1,
+			VisitorPolicyRevision: 1, ValidUntil: now.Add(visitortoken.PolicyLifetime).Unix(),
+		}, now)
+		if err != nil {
+			return 0, "", err
+		}
+		source, destination := netip.MustParseAddrPort("192.0.2.10:45123"), netip.MustParseAddrPort("203.0.113.1:443")
+		proof, err := visitortoken.SignVisitorSource(sourceKey, authority, 1, tunnelv1.VisitorSourceBinding{
+			ServiceID: serviceID, ServiceRunID: runID, RunNumber: 1, VisitorConnectionID: header.VisitorConnectionID, Source: source, Destination: destination,
+		}, now)
+		if err != nil {
+			return 0, "", err
+		}
+		encoded, err := proof.MarshalBinary()
+		if err != nil {
+			return 0, "", err
+		}
+		metadata, err := proxyproto.Encode(proxyproto.Header{Source: source, Destination: destination, VisitorSourceProof: string(encoded)})
 		if err != nil {
 			return 0, "", err
 		}

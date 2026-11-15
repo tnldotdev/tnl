@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 // profiles are explicitly selected with RUN=^TestProfile. they use the load
@@ -56,14 +57,14 @@ func TestProfileRoutingHistory(t *testing.T) {
 	}
 	sessions := readySteadyLoadSessions(t, f)
 	ingress, err := f.database.RegisterIngress(t.Context(), IngressRegistration{
-		IngressID: "profile-ingress", IngressRunID: "profile-run", ProtocolVersion: 1,
+		IngressID: "profile-ingress", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1,
 		HTTPS: true, IngressPoolID: PrimaryIngressPoolID, ConnectionCapacity: uint64(max(64, f.routes)),
 	}, f.now, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// retain the selector and 4/10/100 update stages, but measure current
-	// admission after real heartbeats rather than a retired history projection.
+	// routing after real heartbeats rather than a retired history projection.
 	previous := f.history
 	for _, perService := range []int{4, 10, 100} {
 		for _, session := range sessions {
@@ -80,10 +81,14 @@ func TestProfileRoutingHistory(t *testing.T) {
 			defer f.logStats(t)
 			for trial := range 3 {
 				started := time.Now()
+				ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+				runs, err := readLoadServiceRuns(ctx, f.controls[trial%2], ingress.IngressLeaseIdentity, f.now)
+				cancel()
+				if err != nil {
+					t.Fatal("profile routing snapshot", err)
+				}
 				for _, session := range sessions {
-					ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
-					err := observeLoadService(ctx, f.controls[trial%2], ingress.IngressLeaseIdentity, session, f.now)
-					cancel()
+					err := observeLoadService(runs, session, f.now)
 					if err != nil {
 						t.Fatal("profile current admission", err)
 					}
@@ -99,13 +104,27 @@ func TestProfileRoutingHistory(t *testing.T) {
 		p := &loadQueryPlan{DBTX: tx}
 		traced := &loadQueryTransaction{Tx: tx, plan: p}
 		session := sessions[0]
-		id, number, until, err := selectRoutableServiceRun(t.Context(), traced, session.service.ID, session.service.Endpoint.Hostname, f.now)
-		if err != nil || id != session.run.RunID || number != session.run.RunNumber || !until.After(f.now) {
+		runs, err := controlstatedb.New(traced).ListIngressServiceRuns(t.Context(), controlstatedb.ListIngressServiceRunsParams{
+			IngressPoolID: PrimaryIngressPoolID, Now: timestamptz(f.now),
+		})
+		if err != nil || len(runs) != len(sessions) {
 			_ = tx.Rollback(t.Context())
-			t.Fatal("profile selection lost the current run", err)
+			t.Fatal("profile routing lost current ready runs", err)
+		}
+		found := false
+		for _, run := range runs {
+			if run.ControlService.ID == session.service.ID && run.ControlServiceRun.ID == session.run.RunID &&
+				run.ControlServiceRun.RunNumber == session.run.RunNumber && run.ValidUntil.Time.After(f.now) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("profile routing lost the exact current run")
 		}
 		p.explain(t)
-		relays, _, err := privateConnectedRelays(t.Context(), traced, session.run.RunID, f.now)
+		relays, err := controlstatedb.New(traced).ListIngressServiceRelays(t.Context(), controlstatedb.ListIngressServiceRelaysParams{
+			ServiceRunIds: []string{session.run.RunID}, Now: timestamptz(f.now),
+		})
 		if err != nil || len(relays) != 2 {
 			_ = tx.Rollback(t.Context())
 			t.Fatal("profile current connected relays", err)

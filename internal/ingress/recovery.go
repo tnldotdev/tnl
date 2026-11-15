@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -12,7 +13,7 @@ import (
 )
 
 type recoveryControl interface {
-	ObserveRecovery(context.Context, ingressv1.ServiceRunReference, string, uint64, time.Time) (ingressv1.ServiceRecoveryObservation, error)
+	ObserveRecovery(context.Context, ingressv1.ServiceRunReference, string, uint64, time.Time, []byte) (ingressv1.ServiceRecoveryObservation, error)
 }
 
 type RecoveryObserver interface {
@@ -60,8 +61,8 @@ func NewRecoveryReporter(
 	}, nil
 }
 
-func (r *RecoveryReporter) Observe(run ingressv1.ServiceRunReference, visitor string, recoveryEpisodeID uint64, observedAt time.Time) {
-	if r == nil || r.control == nil || recoveryEpisodeID == 0 {
+func (r *RecoveryReporter) Observe(run ingressv1.ServiceRunReference, visitor string, recoveryEpisodeID uint64, observedAt time.Time, sourceEvidence []byte) {
+	if r == nil || r.control == nil || recoveryEpisodeID == 0 || len(sourceEvidence) > 2048 {
 		return
 	}
 	r.mu.Lock()
@@ -78,6 +79,7 @@ func (r *RecoveryReporter) Observe(run ingressv1.ServiceRunReference, visitor st
 		r.observer.AddRecoveryPending(1)
 	}
 	r.active.Add(1)
+	sourceEvidence = bytes.Clone(sourceEvidence)
 	r.mu.Unlock()
 	go func() {
 		defer r.active.Done()
@@ -90,7 +92,7 @@ func (r *RecoveryReporter) Observe(run ingressv1.ServiceRunReference, visitor st
 			r.mu.Unlock()
 		}()
 		for {
-			if _, err := r.control.ObserveRecovery(r.ctx, run, visitor, recoveryEpisodeID, observedAt); err == nil {
+			if _, err := r.control.ObserveRecovery(r.ctx, run, visitor, recoveryEpisodeID, observedAt, sourceEvidence); err == nil {
 				if r.observer != nil {
 					r.observer.ObserveRecoveryAttempt("success")
 				}

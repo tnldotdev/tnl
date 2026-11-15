@@ -133,7 +133,8 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	failures := make(chan error, 2)
 	var failureCalls, openingCalls atomic.Int32
 	relayHeaders := make(chan tunnelv1.ServiceForwardingHeader, 2)
-	config := serviceIngressConfig(t, func(ctx context.Context, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+	capacity := make(chan func(context.Context) error, 1)
+	config := serviceIngressConfig(t, func(ctx context.Context, header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) (net.Conn, error) {
 		if openingCalls.Add(1) != 1 {
 			return nil, errors.New("completion relay unexpectedly opened twice")
 		}
@@ -141,13 +142,13 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 			return nil, err
 		}
 		relayHeaders <- header
+		capacity <- reserveCapacity
 		return gate, nil
 	})
 	control := config.Control.(*httpsServiceControl)
-	control.pending = true
-	control.recheckStarted, control.recheckGate, control.promoteStarted = make(chan struct{}, 2), make(chan struct{}), make(chan struct{}, 2)
-	unblockRecheck := sync.OnceFunc(func() { close(control.recheckGate) })
-	t.Cleanup(unblockRecheck)
+	checking, allow, reserved := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	allowAccess := sync.OnceFunc(func() { close(allow) })
+	t.Cleanup(allowAccess)
 	config.Metrics, config.Observer = metrics, cleanup
 	config.OnError = func(err error) {
 		failureCalls.Add(1)
@@ -164,7 +165,7 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	// install every unblock and join before starting the peer or a TLS operation.
 	t.Cleanup(func() {
 		unblock()
-		unblockRecheck()
+		allowAccess()
 		_ = connection.Close()
 		_ = peer.Close()
 		ingressAwait(t, peerDone)
@@ -173,7 +174,19 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	})
 	go func() {
 		defer close(peerDone)
-		peerResult <- finishCompletionPeer(peer, certificate, headers)
+		peerResult <- finishCompletionPeer(peer, certificate, headers, func() error {
+			close(checking)
+			select {
+			case <-allow:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			if err := (<-capacity)(ctx); err != nil {
+				return err
+			}
+			close(reserved)
+			return nil
+		})
 	}()
 	visitor := ingressClient(t, address, "route.example", "192.0.2.4:42000")
 	if err := visitor.SetDeadline(deadline); err != nil {
@@ -190,16 +203,14 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	if header.Source != netip.MustParseAddrPort("192.0.2.4:42000") || header.Destination != netip.MustParseAddrPort("203.0.113.10:443") {
 		t.Fatal("completion PROXY endpoints changed")
 	}
-	claim, forwarding := completionAwait(t, ctx, control.claims), completionAwait(t, ctx, relayHeaders)
-	if claim.Hostname == nil || *claim.Hostname != "route.example" || claim.DestinationPort != 443 || claim.ObservedSourceIp != "192.0.2.4" ||
-		forwarding.ServiceID != control.service || forwarding.ServiceRunID != control.run || forwarding.RunNumber != 1 ||
-		forwarding.VisitorConnectionID != claim.VisitorConnectionId || forwarding.SourceIP != "192.0.2.4" ||
+	forwarding := completionAwait(t, ctx, relayHeaders)
+	if forwarding.ServiceID != control.service || forwarding.ServiceRunID != control.run || forwarding.RunNumber != 1 ||
+		forwarding.VisitorConnectionID == "" || forwarding.SourceIP != "192.0.2.4" || header.VisitorSourceProof == "" ||
 		forwarding.PublicService == nil || forwarding.PublicService.DestinationPort != 443 {
-		t.Fatal("completion lost its service admission or trusted source", claim, forwarding)
+		t.Fatal("completion lost its prepared service or trusted source", forwarding)
 	}
-	// the first recheck captured pending before its gate. allow the next check to
-	// authenticate only after the pending reservation and live stream are visible.
-	completionAwait(t, ctx, control.recheckStarted)
+	// the publisher waits for access before asking ingress for capacity.
+	completionAwait(t, ctx, checking)
 	p.mu.Lock()
 	sessions, streams := p.admitted[serviceConnection], len(p.backends)
 	p.mu.Unlock()
@@ -207,11 +218,8 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	if sessions != 1 || pending != 1 || active != 0 || streams != 1 || metrics.streams.Load() != 1 {
 		t.Fatalf("restricted service skipped pending capacity: sessions=%d pending=%d active=%d streams=%d", sessions, pending, active, streams)
 	}
-	control.mu.Lock()
-	control.pending, control.authenticated = false, true
-	control.mu.Unlock()
-	unblockRecheck()
-	completionAwait(t, ctx, control.promoteStarted)
+	allowAccess()
+	completionAwait(t, ctx, reserved)
 	p.mu.Lock()
 	sessions, streams = p.admitted[serviceConnection], len(p.backends)
 	p.mu.Unlock()
@@ -273,7 +281,7 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	if failureCalls.Load() != wantFailures {
 		t.Fatal("forwarding error callback was not exact-once")
 	}
-	if len(failures) != 0 || len(cleanup.result) != 0 || len(metrics.visitorOutcomes) != 0 || len(relayHeaders) != 0 || len(control.claims) != 0 || len(control.promoteStarted) != 0 {
+	if len(failures) != 0 || len(cleanup.result) != 0 || len(metrics.visitorOutcomes) != 0 || len(relayHeaders) != 0 || len(control.claims) != 0 {
 		t.Fatal("duplicate completion callback")
 	}
 	metrics.forwardedMu.Lock()
@@ -304,7 +312,7 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	if sessions != 0 || pending != 0 || active != 0 || streams != 0 || connections != 0 || !publicServiceCapacityReleased(p) || metrics.streams.Load() != 0 {
 		t.Fatalf("completion retained service ownership: sessions=%d pending=%d active=%d streams=%d connections=%d gauge=%d", sessions, pending, active, streams, connections, metrics.streams.Load())
 	}
-	if control.recheckActive.Load() != 0 || rechecks < 2 || closed != 1 {
+	if control.recheckActive.Load() != 0 || rechecks != 0 || closed != 0 {
 		t.Fatalf("completion missed a service lifecycle boundary: rechecks=%d active rechecks=%d closed=%d", rechecks, control.recheckActive.Load(), closed)
 	}
 	if err := visitor.Close(); err != nil {
@@ -320,7 +328,7 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	return restrictedCompletion{outcome: outcome, err: forwardErr, halfClose: halfClose}
 }
 
-func finishCompletionPeer(peer *net.TCPConn, certificate tls.Certificate, headers chan<- proxyproto.Header) error {
+func finishCompletionPeer(peer *net.TCPConn, certificate tls.Certificate, headers chan<- proxyproto.Header, reserveCapacity func() error) error {
 	header, replay, err := proxyproto.Decode(peer)
 	if err != nil {
 		return err
@@ -335,6 +343,9 @@ func finishCompletionPeer(peer *net.TCPConn, certificate tls.Certificate, header
 		return errors.New("completion ping changed")
 	}
 	if _, err := secured.Write([]byte("pong")); err != nil {
+		return err
+	}
+	if err := reserveCapacity(); err != nil {
 		return err
 	}
 	if err := secured.CloseWrite(); err != nil {

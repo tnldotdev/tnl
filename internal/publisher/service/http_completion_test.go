@@ -18,7 +18,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
-	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -38,12 +37,12 @@ func TestServiceHTTPFailedIngressRefundsApplicationReservation(t *testing.T) {
 				http.Error(w, "application failed", http.StatusInternalServerError)
 			}), h2, true, func(frontend *HTTP) {
 				frontend.Requests = budget
-				frontend.Control = serviceHTTPAdmissionControl{authorize: func(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+				frontend.ReserveCapacity = func(context.Context) error {
 					if ingress.Add(1) == 1 {
-						return controlv1.ServiceClientCertificateDecision{}, errors.New("ingress acknowledgment failed")
+						return errors.New("ingress acknowledgment failed")
 					}
-					return controlv1.ServiceClientCertificateDecision{Allowed: true, Admitted: true, ValidUntil: time.Now().Add(time.Minute)}, nil
-				}}
+					return nil
+				}
 			})
 			for _, step := range []struct {
 				path       string
@@ -122,9 +121,9 @@ func TestServiceHTTPSharedCompletionAcrossPublicConnectorAndBase(t *testing.T) {
 			defer policy.Close()
 			header := privateHeader(t, b.prepared.connectionRef(b.connections[0]))
 			header.PublicService.DestinationPort = 443
-			frontend := HTTP{Control: serviceHTTPAdmissionControl{}, Subject: scope, RunID: header.ServiceRunID,
+			frontend := HTTP{Control: serviceHTTPControl{}, Subject: scope, RunID: header.ServiceRunID,
 				Number: int64(header.RunNumber), Token: "run-token", Hostname: update.View.Hostname, Port: 443,
-				Header: header, Policy: policy, Requests: budget}
+				Header: header, Policy: policy, Requests: budget, ReserveCapacity: func(context.Context) error { return nil }}
 			certificate := b.prepared.certificate
 			// base HTTP uses certificate authorization; connector HTTP proves its
 			// signed opening through the real peer owner below.
@@ -160,7 +159,7 @@ func TestServiceHTTPSharedCompletionAcrossPublicConnectorAndBase(t *testing.T) {
 				<-peerDone
 				forwards.Wait()
 			}()
-			connectorControl(t, ctx, client)
+			control := connectorControl(t, ctx, client)
 			connectorTransport := &http.Transport{ForceAttemptHTTP2: h2, TLSClientConfig: trust.Clone(), DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				raw, err := client.OpenStream(ctx)
 				if err != nil {
@@ -204,6 +203,12 @@ func TestServiceHTTPSharedCompletionAcrossPublicConnectorAndBase(t *testing.T) {
 					if err != nil || string(body) != path || response.Trailer.Get("X-Final") != "complete" || response.ProtoMajor != protocol {
 						t.Error("shared completion cut off a final response", path, string(body), response.Trailer, response.Proto, err)
 					}
+					if path == "/connector" {
+						entry := opening("J")
+						if err := control.Complete(ctx, entry.VisitorConnectionID, entry.DeliveryGeneration); err != nil {
+							t.Error("acknowledge complete connector response", err)
+						}
+					}
 					replied <- path
 				}()
 			}
@@ -221,7 +226,9 @@ func TestServiceHTTPSharedCompletionAcrossPublicConnectorAndBase(t *testing.T) {
 			}
 			releases["/connector"]()
 			serviceHTTPAwait(t, budget.Completed())
-			b.startHTTPDrain(time.Now().Add(5 * time.Second))
+			if err := b.startHTTPDrain(time.Now().Add(5 * time.Second)); err != nil {
+				t.Fatal("HTTP drain failed to close a pending opening", err)
+			}
 			if err := b.joinHTTPDrain(); err != nil {
 				t.Fatal(err)
 			}

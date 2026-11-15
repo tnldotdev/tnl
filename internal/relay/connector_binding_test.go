@@ -48,7 +48,7 @@ func newConnectorBindingFixture(t *testing.T) *connectorBindingFixture {
 	proof := tunnelv1.ConnectorPairLegProof{PairID: "cpp_1234567890123456789012", DeliveryGeneration: 1, ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012", RunNumber: 1, PublisherIdentityID: "pub_1234567890123456789012", ConnectionSlot: 0, PublisherConnectionID: "pc_1234567890123456789012", AssignmentRevision: 1, RelayServiceID: lease.RelayServiceId, RelayID: lease.RelayId, RelayRunID: lease.RelayRunId, RelayLeaseRevision: 1, RequestedAt: time.Now(), Nonce: make([]byte, 32), Signature: make([]byte, 64)}
 	ref := tunnelv1.ServicePublisherConnectionRef{ServiceID: proof.ServiceID, ServiceRunID: proof.ServiceRunID, RunNumber: 1, PublisherConnectionID: proof.PublisherConnectionID, ConnectionSlot: 0, ConnectionAssignmentRevision: 1, RelayServiceID: lease.RelayServiceId}
 	outer := newForwardingTestSession()
-	packets, err := newConnectorPacketSession(t.Context(), outer)
+	packets, err := newConnectorPacketSession(t.Context(), outer, packetStreamReader)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"errors"
+	"io"
 	"net"
 	"net/netip"
 	"testing"
@@ -112,11 +113,15 @@ func publicServiceCapacityReleased(p *Server) bool {
 }
 
 func TestPublicServicePromotionWaitsForControlAcknowledgment(t *testing.T) {
-	p, c, f, _ := publicServiceTestSetup(t)
+	p, c, _, _ := publicServiceTestSetup(t)
 	c.authenticated, c.promoteErr, c.promoteStarted = true, errors.New("promotion unavailable"), make(chan struct{}, 1)
 	events := make(chan serviceaudit.Observation, 2)
 	p.config.AuditSink = auditSinkFunc(func(o serviceaudit.Observation) bool { events <- o; return true })
-	_, stop := publicServiceActiveStream(t, p, f)
+	visitor, _, stop := publicServiceTestConnect(t, p)
+	defer stop()
+	if _, err := visitor.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case <-c.promoteStarted:
 	case <-time.After(time.Second):
@@ -130,6 +135,11 @@ func TestPublicServicePromotionWaitsForControlAcknowledgment(t *testing.T) {
 	c.mu.Lock()
 	c.promoteErr = nil
 	c.mu.Unlock()
+	_ = visitor.SetReadDeadline(time.Now().Add(time.Second))
+	var response [4]byte
+	if _, err := io.ReadFull(visitor, response[:]); err != nil || string(response[:]) != "pong" {
+		t.Fatal("acknowledged capacity did not release the same visitor", err)
+	}
 	select {
 	case event := <-events:
 		if event.Validate() != nil || event.EventType != "connection.open" || event.Outcome != "allowed" {

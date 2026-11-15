@@ -8,15 +8,20 @@ import (
 	"net/netip"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-type serviceCompletionForwarder struct{ connection net.Conn }
+type serviceCompletionForwarder struct {
+	connection net.Conn
+	capacity   chan func(context.Context) error
+}
 
-func (f serviceCompletionForwarder) OpenPrivate(context.Context, ingressv1.ServiceRelay, tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+func (f serviceCompletionForwarder) OpenService(_ context.Context, _ ingressv1.ServiceRelay, _ tunnelv1.ServiceForwardingHeader, reserve func(context.Context) error) (net.Conn, error) {
+	f.capacity <- reserve
 	return f.connection, nil
 }
 
@@ -65,10 +70,21 @@ func TestPublicServiceDenialRetainsIndependentCompletionFailures(t *testing.T) {
 				backend.closeError = closeFailure
 			}
 			control.deny, control.recheckGate = true, backend.entered
-			p.config.Forwarder = serviceCompletionForwarder{connection: backend}
+			capacity := make(chan func(context.Context) error, 1)
+			p.config.Forwarder = serviceCompletionForwarder{connection: backend, capacity: capacity}
 			decoded := ingressWorker(t, func() { _ = peer.Close() }, func() error {
+				defer peer.Close()
 				_, _, err := proxyproto.Decode(peer)
-				return err
+				if err != nil {
+					return err
+				}
+				check, cancel := context.WithTimeout(t.Context(), time.Second)
+				defer cancel()
+				if err := (<-capacity)(check); err != nil {
+					return err
+				}
+				<-backend.closed
+				return nil
 			})
 			ctx := ingressContext(t)
 			done := ingressWorker(t, func() { _ = backend.Close(); _ = connection.Close() }, func() error {

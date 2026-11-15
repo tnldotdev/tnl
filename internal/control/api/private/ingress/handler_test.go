@@ -142,10 +142,12 @@ func TestObserveServiceRecoveryUsesExactIngressLease(t *testing.T) {
 		run controlstate.ServiceRunReference,
 		connection string,
 		recoveryEpisodeID uint64,
-		observedAt, deliveredAt time.Time,
+		observedAt time.Time,
+		evidence []byte,
+		deliveredAt time.Time,
 	) (controlstate.ServiceRecoveryObservation, error) {
 		gotIdentity = identity
-		if run != ref || connection != visitor || recoveryEpisodeID != 9 || !observedAt.Equal(now) || !deliveredAt.Equal(now) {
+		if run != ref || connection != visitor || recoveryEpisodeID != 9 || !observedAt.Equal(now) || !deliveredAt.Equal(now) || !bytes.Equal(evidence, []byte("exact-source-evidence")) {
 			t.Fatalf("recovery request = %+v, %q, %d, %v", run, connection, recoveryEpisodeID, observedAt)
 		}
 		return controlstate.ServiceRecoveryObservation{
@@ -155,7 +157,7 @@ func TestObserveServiceRecoveryUsesExactIngressLease(t *testing.T) {
 	}}
 	body := ingressv1.ServiceRecoveryObservationRequest{
 		IngressId: "ingress-1", IngressRunId: "run-1", IngressLeaseRevision: 7,
-		ServiceId: ref.ServiceID, ServiceRunId: ref.RunID, RunNumber: ref.RunNumber, VisitorConnectionId: visitor, ObservedAt: now,
+		ServiceId: ref.ServiceID, ServiceRunId: ref.RunID, RunNumber: ref.RunNumber, VisitorConnectionId: visitor, ObservedAt: now, SourceEvidence: []byte("exact-source-evidence"),
 	}
 	response := serveIngressJSON(
 		t, testIngressHandler(t, store, now, nil), http.MethodPost,
@@ -281,10 +283,15 @@ func assertIngressProblemType(t *testing.T, response *httptest.ResponseRecorder,
 type ingressStoreStub struct {
 	publicServiceStore
 	serviceAuditStore
-	registerIngress   func(context.Context, controlstate.IngressRegistration, time.Time, time.Duration) (controlstate.IngressLease, error)
-	renewIngress      func(context.Context, controlstate.IngressRenewal, time.Time, time.Duration) (controlstate.IngressLease, error)
-	beginIngressDrain func(context.Context, controlstate.IngressLeaseIdentity, time.Time, time.Time) (controlstate.IngressLease, error)
-	observeRecovery   func(context.Context, controlstate.IngressLeaseIdentity, controlstate.ServiceRunReference, string, uint64, time.Time, time.Time) (controlstate.ServiceRecoveryObservation, error)
+	readIngressServices func(context.Context, controlstate.IngressLeaseIdentity, time.Time) (controlstate.IngressServices, error)
+	registerIngress     func(context.Context, controlstate.IngressRegistration, time.Time, time.Duration) (controlstate.IngressLease, error)
+	renewIngress        func(context.Context, controlstate.IngressRenewal, time.Time, time.Duration) (controlstate.IngressLease, error)
+	beginIngressDrain   func(context.Context, controlstate.IngressLeaseIdentity, time.Time, time.Time) (controlstate.IngressLease, error)
+	observeRecovery     func(context.Context, controlstate.IngressLeaseIdentity, controlstate.ServiceRunReference, string, uint64, time.Time, []byte, time.Time) (controlstate.ServiceRecoveryObservation, error)
+}
+
+func (s *ingressStoreStub) ReadIngressServices(ctx context.Context, identity controlstate.IngressLeaseIdentity, now time.Time) (controlstate.IngressServices, error) {
+	return s.readIngressServices(ctx, identity, now)
 }
 
 func (s *ingressStoreStub) RegisterIngress(
@@ -311,7 +318,9 @@ func (s *ingressStoreStub) ObserveServiceRecovery(
 	run controlstate.ServiceRunReference,
 	visitor string,
 	recoveryEpisodeID uint64,
-	observedAt, now time.Time,
+	observedAt time.Time,
+	evidence []byte,
+	now time.Time,
 ) (controlstate.ServiceRecoveryObservation, error) {
-	return s.observeRecovery(ctx, identity, run, visitor, recoveryEpisodeID, observedAt, now)
+	return s.observeRecovery(ctx, identity, run, visitor, recoveryEpisodeID, observedAt, evidence, now)
 }

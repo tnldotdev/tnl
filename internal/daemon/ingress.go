@@ -268,6 +268,7 @@ func (d *daemon) startIngressRuntime(
 		return err
 	}
 	runtime.server = server
+	metrics.RegisterIngressServiceRouting(server.RoutingObservedAt)
 	if metrics != nil {
 		for resource, limit := range map[string]int64{
 			"service_connections":         int64(ingressConfig.Traffic.Default.Connections),
@@ -284,6 +285,7 @@ func (d *daemon) startIngressRuntime(
 	d.publishIngressRuntime(runtime)
 	owned = true
 	d.start("run ingress control", func() error { return controller.Run(ctx) })
+	d.start("refresh service routing", func() error { return server.RefreshServices(ctx) })
 	d.start("serve public ingress", server.Serve)
 	log.Printf("public ingress listening on %s", runtimeConfig.listener.Addr())
 	return nil

@@ -95,7 +95,7 @@ func TestIngressStalledAttemptLeavesFallbackBudget(t *testing.T) {
 				a, b := net.Pipe()
 				ownIngressConn(t, a)
 				ownIngressConn(t, b)
-				first = func(context.Context, tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+				first = func(context.Context, tunnelv1.ServiceForwardingHeader, func(context.Context) error) (net.Conn, error) {
 					return a, nil // peer never reads the PROXY header.
 				}
 				if stage == "hello_write" {

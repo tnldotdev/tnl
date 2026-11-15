@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -190,6 +191,7 @@ func lifecycleFixture(t *testing.T) (RunConfig, *lifecycleControl) {
 	f := &lifecycleControl{prep: p.Preparation, setup: controlv1.ServiceRunSetup{
 		ServiceId: service, ServiceRunId: p.Preparation.ServiceRunId,
 		RunNumber: p.Preparation.RunNumber, RunToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		VisitorSourceKey:     bytes.Repeat([]byte{1}, 32),
 		PublisherConnections: []controlv1.ConnectionAssignment{bound.connections[0], bound.connections[1]},
 	}}
 	base := RunConfig{Control: f, Access: func(context.Context) (string, error) { return "scoped-publisher-token", nil },

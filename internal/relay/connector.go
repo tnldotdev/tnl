@@ -160,7 +160,7 @@ func (a *ConnectorAcceptor) serve(ctx context.Context, outer muxsession.Session,
 	if !valid || !present {
 		return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 	}
-	packets, err := newConnectorPacketSession(ctx, outer)
+	packets, err := newConnectorPacketSession(ctx, outer, packetStreamReader)
 	if err != nil {
 		return err
 	}

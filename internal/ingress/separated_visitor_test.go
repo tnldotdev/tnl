@@ -21,7 +21,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
-	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
@@ -34,8 +33,6 @@ type separatedHTTPControl struct {
 	publisherservice.HTTPControl
 	policy       *visitorfixture.PolicyClient
 	service, run string
-	admitted     <-chan string
-	decisions    chan controlv1.AuthorizeServiceHTTPVisitorRequest
 }
 
 func (c separatedHTTPControl) ControlURL() string { return "https://control.example.test" }
@@ -49,29 +46,19 @@ func (c separatedHTTPControl) ReadPublisherVisitorPolicy(ctx context.Context, re
 	return update, err
 }
 
-func (c separatedHTTPControl) AuthorizeServiceHTTPVisitor(ctx context.Context, service, run string, token credentials.ServiceRunToken, request controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
-	if service != c.service || run != c.run || token != "run-secret" || request.RunNumber != 1 || request.DestinationPort != 443 {
-		return controlv1.ServiceClientCertificateDecision{}, ErrServiceAdmission
-	}
-	// the HTTP frontend must wait until ingress has admitted this exact visitor.
-	select {
-	case visitor := <-c.admitted:
-		if visitor != request.VisitorConnectionId {
-			return controlv1.ServiceClientCertificateDecision{}, ErrServiceAdmission
-		}
-	case <-ctx.Done():
-		return controlv1.ServiceClientCertificateDecision{}, ctx.Err()
-	}
-	c.decisions <- request
-	return controlv1.ServiceClientCertificateDecision{Allowed: true, Admitted: true, ValidUntil: time.Now().Add(time.Minute)}, nil
-}
-
 func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 	var transport *serviceTransportFixture
 	var opens atomic.Int32
-	config := serviceIngressConfig(t, func(ctx context.Context, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+	capacity := make(chan tunnelv1.ServiceForwardingHeader, 2)
+	config := serviceIngressConfig(t, func(ctx context.Context, header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) (net.Conn, error) {
 		opens.Add(1)
-		return transport.open(ctx, header)
+		return transport.open(ctx, header, func(call context.Context) error {
+			err := reserveCapacity(call)
+			if err == nil {
+				capacity <- header
+			}
+			return err
+		})
 	})
 	control := config.Control.(*httpsServiceControl)
 	control.sources = netip.MustParsePrefix("203.0.113.0/24")
@@ -84,17 +71,14 @@ func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 	}
 	transport = newServiceTransportFixture(t, ref, relay)
 	control.relays[0] = transport.relay
-	admitted := make(chan string, 2)
+	denied := make(chan serviceaudit.Observation, 2)
 	config.AuditSink = auditSinkFunc(func(event serviceaudit.Observation) bool {
-		if event.EventType == "connection.open" && event.Outcome == "allowed" {
-			admitted <- event.VisitorConnectionID
-		}
+		denied <- event
 		return true
 	})
 	httpControl := separatedHTTPControl{
 		policy:  &visitorfixture.PolicyClient{Key: ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))},
-		service: control.service, run: control.run, admitted: admitted,
-		decisions: make(chan controlv1.AuthorizeServiceHTTPVisitorRequest, 2),
+		service: control.service, run: control.run,
 	}
 	subject := visitorscope.Scope{Kind: visitorscope.Service, ID: control.service}
 	proof, err := httpaccess.NewReadinessProof(httpaccess.ReadinessRun{Subject: subject, ID: control.run, Number: 1, Hostname: "route.example"}, "/health")
@@ -146,13 +130,16 @@ func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				if metadata.Source.Addr().String() != header.SourceIP || metadata.Destination != netip.MustParseAddrPort("203.0.113.10:443") {
+				if metadata.Source.Addr().String() != header.SourceIP || metadata.Destination != netip.MustParseAddrPort("203.0.113.10:443") || metadata.VisitorSourceProof == "" {
 					return errors.New("HTTP stream lost trusted PROXY metadata")
 				}
 				secured := tls.Server(&testReaderConn{Conn: stream, reader: replay}, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13})
 				defer secured.Close()
 				connectionHTTP := frontend
 				connectionHTTP.Header = header
+				connectionHTTP.ReserveCapacity = func(call context.Context) error {
+					return transport.publisher.RequestServiceCapacity(call, header)
+				}
 				return connectionHTTP.Forward(t.Context(), secured, target)
 			}(); err != nil {
 				return err
@@ -169,8 +156,8 @@ func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 	if opens.Load() != 0 {
 		t.Fatal("source rejection opened a relay stream")
 	}
-	if claim := ingressAwait(t, control.claims); claim.ObservedSourceIp != "198.51.100.1" {
-		t.Fatal("source rejection did not use the trusted PROXY address", claim)
+	if event := ingressAwait(t, denied); event.SourceIP != "198.51.100.1" || event.Reason != "ip_policy" || event.Outcome != "denied" {
+		t.Fatal("source rejection did not use the trusted PROXY address", event)
 	}
 	for _, test := range []struct {
 		source, proof string
@@ -199,10 +186,10 @@ func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 		if response.StatusCode != test.want {
 			t.Fatalf("source %s status %d; want %d", test.source, response.StatusCode, test.want)
 		}
-		claim := ingressAwait(t, control.claims)
-		decision := ingressAwait(t, httpControl.decisions)
-		if decision.VisitorConnectionId != claim.VisitorConnectionId || decision.SourceIp != netip.MustParseAddrPort(test.source).Addr().String() {
-			t.Fatal("HTTP authorization lost the admitted source or visitor identity", decision, claim)
+		reserved := ingressAwait(t, capacity)
+		if reserved.VisitorConnectionID == "" || reserved.SourceIP != netip.MustParseAddrPort(test.source).Addr().String() ||
+			len(control.claims) != 0 {
+			t.Fatal("HTTP capacity lost the admitted source/visitor or called control for a prepared visitor", reserved)
 		}
 		transfer := ingressAwait(t, transport.transfers)
 		if transfer.LeftToRight <= 0 || transfer.RightToLeft <= 0 || !serviceHTTPStreamClosed(transfer.err) {

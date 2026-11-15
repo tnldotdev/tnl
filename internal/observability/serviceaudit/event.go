@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 const MaxBatch = 256
@@ -56,6 +57,7 @@ type Observation struct {
 	SourceIP            string    `json:"source_ip,omitempty"`
 	Outcome             string    `json:"outcome"`
 	Reason              string    `json:"reason,omitempty"`
+	RoutingAuthority    []byte    `json:"routing_authority,omitempty"`
 }
 
 type Batch struct {
@@ -132,14 +134,19 @@ func (o Observation) Validate() error {
 	}
 	serviceDenial := o.RunID == "" && o.RunNumber == 0 && o.EventType == "connection.open" &&
 		o.Outcome == "denied"
-	if serviceDenial && o.Reason != "capacity" && o.Reason != "unavailable" && o.Reason != "invalid_request" {
+	if serviceDenial && o.Reason != "capacity" && o.Reason != "unavailable" && o.Reason != "invalid_request" &&
+		(o.Reason != "ip_policy" || len(o.RoutingAuthority) == 0) {
+		return ErrInvalid
+	}
+	if len(o.RoutingAuthority) > 0 && (!serviceDenial || len(o.RoutingAuthority) > tunnelv1.MaxVisitorSourceAuthorityBytes) {
 		return ErrInvalid
 	}
 	if !serviceDenial && (o.RunNumber < 1 || !opaqueid.Valid(o.RunID, opaqueid.ServiceRunPrefix)) {
 		return ErrInvalid
 	}
 	// only the denied open above may omit a selected service run. control
-	// still checks its exact pending admission receipt and mandatory source.
+	// checks a signed routing authority or the native pending receipt. neither
+	// kind of denial claims an authenticated visitor or grants access.
 	if o.SourceIP == "" {
 		return ErrInvalid
 	}

@@ -241,11 +241,13 @@ func TestIntegrationServiceEndpointEditRetainsCapturedConnectorIdentity(t *testi
 			renewalID = renewal.ID
 		}
 	}
-	for _, hostname := range []string{prepared.Hostname, changed.Endpoint.Hostname} {
-		_, err := d.AdmitPublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, controlstate.PrimaryIngressPoolID,
-			newID(opaqueid.VisitorConnectionPrefix), hostname, 443, netip.MustParseAddr("192.0.2.20"), now.Add(2*time.Second))
-		if !errors.Is(err, controlstate.ErrServiceAccess) {
-			t.Fatal("new public admission used the old run's certificate", hostname, err)
+	routing, err := d.ReadIngressServices(ctx, ingress.IngressLeaseIdentity, now.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range routing.Runs {
+		if entry.ServiceID == service.ID || entry.Hostname == prepared.Hostname || entry.Hostname == changed.Endpoint.Hostname {
+			t.Fatal("new public routing used the old run's certificate", entry)
 		}
 	}
 	removal, found, err := d.ClaimServiceEndpointDNSWork(ctx, "retired", now.Add(2*time.Second), time.Minute)
@@ -270,10 +272,10 @@ func TestIntegrationServiceEndpointEditRetainsCapturedConnectorIdentity(t *testi
 	if err != nil || !found || newDNS.Hostname != changed.Endpoint.Hostname {
 		t.Fatal("matching run did not enable current endpoint DNS", newDNS, found, err)
 	}
-	admitted, err := d.AdmitPublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, controlstate.PrimaryIngressPoolID,
-		newID(opaqueid.VisitorConnectionPrefix), changed.Endpoint.Hostname, 443, netip.MustParseAddr("192.0.2.20"), at)
-	if err != nil || admitted.RunID != replacement.RunID {
-		t.Fatal("public admission did not select the matching certificate", admitted, err)
+	routing, err = d.ReadIngressServices(ctx, ingress.IngressLeaseIdentity, at)
+	if err != nil || len(routing.Runs) != 1 || routing.Runs[0].RunID != replacement.RunID ||
+		routing.Runs[0].ServiceID != service.ID || routing.Runs[0].Hostname != changed.Endpoint.Hostname {
+		t.Fatal("public routing did not select the matching certificate", routing, err)
 	}
 	if err := d.CloseServiceRun(ctx, service.ID, replacement.RunID, replacement.Token, at); err != nil {
 		t.Fatal(err)

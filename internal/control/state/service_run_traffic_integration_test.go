@@ -97,10 +97,7 @@ func TestIntegrationServiceRunTrafficStoredRetryAndProjection(t *testing.T) {
 				ProtocolVersion: 1, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
 				HTTPS: protocol == "http",
 			}
-			hostname := ""
-			if protocol == "http" {
-				hostname = service.Endpoint.Hostname
-			} else {
+			if protocol != "http" {
 				registration.ServicePorts = []int32{int32(service.Endpoint.Port)}
 			}
 			ingress, err := d.RegisterIngress(ctx, registration, now, time.Minute)
@@ -108,18 +105,32 @@ func TestIntegrationServiceRunTrafficStoredRetryAndProjection(t *testing.T) {
 				t.Fatal(err)
 			}
 			visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-			admit := func() PublicServiceVisitorAdmission {
-				t.Helper()
-				admitted, err := d.AdmitPublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, hostname, service.Endpoint.Port, netip.MustParseAddr("192.0.2.10"), now)
-				if err != nil || admitted.ServiceID != service.ID || admitted.RunID != run.RunID || admitted.RunNumber != run.RunNumber || admitted.Traffic != want || admitted.Anonymous != test.anonymous {
-					t.Fatal("public admission lost exact stored run approval", admitted, err)
+			if protocol == "http" {
+				read := func() IngressServiceRun {
+					t.Helper()
+					entry, err := readIngressServiceRun(ctx, d, ingress.IngressLeaseIdentity, service.ID, run.RunID, now)
+					if err != nil || entry.RunNumber != run.RunNumber || entry.Traffic != want || entry.Anonymous != test.anonymous {
+						t.Fatal("HTTP routing lost exact stored run approval", entry, err)
+					}
+					return entry
 				}
-				return admitted
-			}
-			first := admit()
-			repeated := admit()
-			if !first.ExpiresAt.Equal(repeated.ExpiresAt) {
-				t.Fatal("approval projection changed admission retry deadline")
+				first, repeated := read(), read()
+				if !first.ValidUntil.Equal(repeated.ValidUntil) {
+					t.Fatal("repeated approval projection changed routing observation deadline")
+				}
+			} else {
+				admit := func() PublicServiceVisitorAdmission {
+					t.Helper()
+					admitted, err := d.AdmitPublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, service.Endpoint.Port, netip.MustParseAddr("192.0.2.10"), now)
+					if err != nil || admitted.ServiceID != service.ID || admitted.RunID != run.RunID || admitted.RunNumber != run.RunNumber || admitted.Traffic != want {
+						t.Fatal("native admission lost exact stored run approval", admitted, err)
+					}
+					return admitted
+				}
+				first, repeated := admit(), admit()
+				if !first.ExpiresAt.Equal(repeated.ExpiresAt) {
+					t.Fatal("approval projection changed admission retry deadline")
+				}
 			}
 			exact := ServiceRunReference{ServiceID: service.ID, RunID: run.RunID, RunNumber: run.RunNumber}
 			lookup := func(refs []ServiceRunReference, want []ServiceRunReference) {
@@ -136,8 +147,10 @@ func TestIntegrationServiceRunTrafficStoredRetryAndProjection(t *testing.T) {
 				t.Fatal(err)
 			}
 			lookup([]ServiceRunReference{exact}, []ServiceRunReference{})
-			if err := d.ClosePublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, visitor, now); err != nil {
-				t.Fatal(err)
+			if protocol != "http" {
+				if err := d.ClosePublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, visitor, now); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if err := d.CloseServiceRun(ctx, service.ID, run.RunID, run.Token, now); err != nil {
 				t.Fatal(err)

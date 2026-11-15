@@ -9,6 +9,7 @@ import (
 	"time"
 
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
@@ -252,7 +253,7 @@ func (p *PeerSession) serveSession(session muxsession.Session) error {
 	controlDone := make(chan struct{})
 	go func() {
 		defer close(controlDone)
-		_ = tunnel.ServeConnectorPermissionControl(control, permissions, p.dispatchPermission, p.stop, &p.permissionGate)
+		_ = tunnel.ServeConnectorPermissionControl(control, permissions, p.dispatchPermission, p.completeVisitor, p.stop, &p.permissionGate)
 	}()
 	defer func() { cancelControl(); <-controlDone }()
 	for {
@@ -296,6 +297,8 @@ type connectorAdmission struct {
 	closeOnce  sync.Once
 	closeErr   error
 	audit      serviceaudit.Observation
+	completed  chan struct{}
+	complete   sync.Once
 }
 
 // the phase owns both capacity charges and the setup deadline's timer. retiring
@@ -369,11 +372,11 @@ func (p *PeerSession) reserve(caller context.Context, stream net.Conn) (*connect
 	if limit == 0 {
 		limit = 64
 	}
-	if caller.Err() != nil || !p.deliveryCurrentLocked() || b.connectorPending >= min(limit, 4096) || len(p.streams) >= maxConnectorPeerStreams {
+	if caller.Err() != nil || !b.httpDrainUntil.IsZero() || !p.deliveryCurrentLocked() || b.connectorPending >= min(limit, 4096) || len(p.streams) >= maxConnectorPeerStreams {
 		return nil, ErrPrivateStream
 	}
 	life, cancel := context.WithCancel(p.ctx)
-	a := &connectorAdmission{peer: p, ctx: life, caller: caller, cancel: cancel, stream: stream, state: reservedConnectorAdmission{}, setupUntil: time.Now().Add(10 * time.Second), timerDone: make(chan struct{})}
+	a := &connectorAdmission{peer: p, ctx: life, caller: caller, cancel: cancel, stream: stream, state: reservedConnectorAdmission{}, setupUntil: time.Now().Add(10 * time.Second), timerDone: make(chan struct{}), completed: make(chan struct{})}
 	a.timer = time.AfterFunc(time.Until(a.setupUntil), func() { defer close(a.timerDone); a.stopAndClose() })
 	p.streams[a] = struct{}{}
 	b.connectorPending++
@@ -446,6 +449,8 @@ type connectorOwnedConn struct {
 	admission *connectorAdmission
 	prefix    *bytes.Reader
 	readMu    sync.Mutex
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (c *connectorOwnedConn) Read(p []byte) (int, error) {
@@ -457,12 +462,70 @@ func (c *connectorOwnedConn) Read(p []byte) (int, error) {
 	return c.Conn.Read(p)
 }
 
-func (c *connectorOwnedConn) Close() error { return c.admission.closeStream() }
+func (c *connectorOwnedConn) Close() error {
+	c.closeOnce.Do(func() {
+		a, b := c.admission, c.admission.peer.bound
+		b.mu.Lock()
+		until := b.httpDrainUntil
+		if until.IsZero() && b.httpDrainDuration > 0 {
+			select {
+			case <-b.prepared.serviceHTTPRequests.Completed():
+				until = time.Now().Add(b.httpDrainDuration)
+			default:
+			}
+		}
+		graceful := b.prepared.managedProtocol == config.ProtocolHTTP && !until.IsZero()
+		if graceful {
+			authority, err := a.checkUseLocked(a.ctx)
+			graceful = err == nil
+			if authority.Before(until) {
+				until = authority
+			}
+		}
+		b.mu.Unlock()
+		if graceful {
+			// a request FIN is not proof of return delivery. keep packet carriers
+			// until an explicit receipt on this exact peer's control stream, within
+			// the original drain and authority bounds. it grants no new access.
+			c.closeErr = c.CloseWrite()
+			if c.closeErr == nil {
+				timer := time.NewTimer(time.Until(until))
+				select {
+				case <-a.completed:
+				case <-a.ctx.Done():
+					c.closeErr = context.Cause(a.ctx)
+				case <-timer.C:
+					c.closeErr = context.DeadlineExceeded
+				}
+				timer.Stop()
+			}
+		}
+		c.closeErr = errors.Join(c.closeErr, a.closeStream())
+	})
+	return c.closeErr
+}
 func (c *connectorOwnedConn) CloseWrite() error {
 	if closer, ok := c.Conn.(interface{ CloseWrite() error }); ok {
 		return closer.CloseWrite()
 	}
 	return errors.ErrUnsupported
+}
+
+func (p *PeerSession) completeVisitor(receipt tunnelv1.ConnectorVisitorCompletion) {
+	if receipt.Kind != tunnelv1.ConnectorVisitorCompleted {
+		return
+	}
+	b := p.bound
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for admission := range p.streams {
+		if admission.audit.VisitorConnectionID == receipt.VisitorConnectionID &&
+			admission.audit.DeliveryGeneration == receipt.DeliveryGeneration &&
+			admission.readyLocked() && !admission.retiringLocked() && admission.ctx.Err() == nil {
+			admission.complete.Do(func() { close(admission.completed) })
+			return
+		}
+	}
 }
 
 func (a *connectorAdmission) forwardPeer() (result error) {
@@ -593,6 +656,7 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 		return err
 	}
 	owned := &connectorOwnedConn{Conn: a.stream, admission: a, prefix: bytes.NewReader(initial)}
+	defer func() { result = errors.Join(result, owned.Close()) }()
 	if err := a.stream.SetDeadline(time.Time{}); err != nil {
 		return err
 	}

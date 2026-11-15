@@ -77,7 +77,7 @@ func (s *feedbackControlStub) AppendReviewerFeedbackEvent(_ context.Context, ser
 
 func testFeedbackRuntime(t *testing.T, f *HTTP, control *feedbackControlStub) *feedbackRuntime {
 	t.Helper()
-	f.Control = serviceHTTPAdmissionControl{HTTPControl: control}
+	f.Control = serviceHTTPControl{HTTPControl: control}
 	f.Feedback, f.PreviewID, f.ProjectService, f.Demo = true, "pv_0123456789abcdefghijkl", "web", true
 	runtime, err := newFeedbackRuntime(*f)
 	if err != nil {
@@ -330,10 +330,11 @@ func TestFeedbackUsesTrustedSourceAndIndependentShareAndBrowserProofs(t *testing
 			t.Fatal(err)
 		}
 		f.Requests = budget
-		f.Control = serviceHTTPAdmissionControl{HTTPControl: control, authorize: func(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+		f.Control = serviceHTTPControl{HTTPControl: control}
+		f.ReserveCapacity = func(context.Context) error {
 			ingress.Add(1)
-			return controlv1.ServiceClientCertificateDecision{Allowed: true, Admitted: true, ValidUntil: time.Now().Add(time.Minute)}, nil
-		}}
+			return nil
+		}
 	})
 	shareID := "shr_0123456789abcdefghijkl"
 	key := []byte(strings.Repeat("h", 32))
@@ -516,8 +517,12 @@ func TestFeedbackRunCompositionKeepsDirectServiceFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer closeRun()
-	visitor := prepared.managedVisitor(tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{PublicService: &tunnelv1.PublicServiceAdmission{DestinationPort: 443}}})
+	defer func() {
+		if err := closeRun(); err != nil {
+			t.Error("close configured run", err)
+		}
+	}()
+	visitor := prepared.managedVisitor(tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{PublicService: &tunnelv1.PublicServiceAdmission{DestinationPort: 443}}}, func(context.Context) error { return nil })
 	httpVisitor, ok := visitor.(servicestream.HTTPVisitor)
 	if !ok {
 		t.Fatal("HTTP service did not compose its existing HTTP frontend")

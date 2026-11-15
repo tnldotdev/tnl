@@ -39,10 +39,16 @@ func TestServiceHTTPAuditUsesExactRunTokenAndAcknowledgement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = c.ReportServiceRunObservations(t.Context(), service, run, 7, token, serviceaudit.Batch{Events: []serviceaudit.Observation{o}}); err != nil {
-		t.Fatal(err)
+	for _, kind := range []controlv1.ServiceObservationEventType{controlv1.ObservationHTTPDecision, controlv1.ObservationConnectionOpen, controlv1.ObservationConnectionClose} {
+		o.EventType = string(kind)
+		if kind == controlv1.ObservationConnectionClose {
+			o.Outcome = "closed"
+		}
+		if err = c.ReportServiceRunObservations(t.Context(), service, run, 7, token, serviceaudit.Batch{Events: []serviceaudit.Observation{o}}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err = c.ReportServiceRunObservations(t.Context(), service, run, 8, token, serviceaudit.Batch{Events: []serviceaudit.Observation{o}}); !errors.Is(err, serviceaudit.ErrInvalid) || !errors.Is(err, serviceaudit.ErrRejected) || calls != 1 {
+	if err = c.ReportServiceRunObservations(t.Context(), service, run, 8, token, serviceaudit.Batch{Events: []serviceaudit.Observation{o}}); !errors.Is(err, serviceaudit.ErrInvalid) || !errors.Is(err, serviceaudit.ErrRejected) || calls != 3 {
 		t.Fatal("cross-run number reached the network", err)
 	}
 }

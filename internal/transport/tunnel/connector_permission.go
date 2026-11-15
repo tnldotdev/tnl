@@ -161,6 +161,45 @@ func (w *ConnectorPermissionWriter) Renew(ctx context.Context, update tunnelv1.C
 	return err
 }
 
+// Complete reports joined return delivery. unlike renewal, it grants no new
+// authority and cannot wait behind a suspended permission update.
+func (w *ConnectorPermissionWriter) Complete(ctx context.Context, visitor string, generation int64) (result error) {
+	defer func() { result = errors.Join(result, context.Cause(w.ctx)) }()
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
+	if until, ok := ctx.Deadline(); !ok || !until.After(time.Now()) {
+		return context.DeadlineExceeded
+	}
+	w.mu.Lock()
+	if w.closed || w.ctx.Err() != nil {
+		w.mu.Unlock()
+		return errors.Join(ErrConnectorPermissionRejected, context.Cause(w.ctx))
+	}
+	w.uses.Add(1)
+	w.mu.Unlock()
+	defer w.uses.Done()
+	call, cancel := context.WithCancelCause(ctx)
+	stopped := make(chan struct{})
+	stop := context.AfterFunc(w.ctx, func() { defer close(stopped); cancel(context.Cause(w.ctx)) })
+	defer func() {
+		cancel(context.Canceled)
+		if !stop() {
+			<-stopped
+		}
+	}()
+	var delivery ConnectorPermissionGate
+	sharedFailure, err := delivery.write(call, w.stream, w.gate, func(out io.Writer) error {
+		return tunnelv1.WriteConnectorVisitorCompletion(out, tunnelv1.ConnectorVisitorCompletion{
+			Kind: tunnelv1.ConnectorVisitorCompleted, VisitorConnectionID: visitor, DeliveryGeneration: generation,
+		})
+	})
+	if sharedFailure {
+		w.cancel(err)
+	}
+	return err
+}
+
 func minTime(a, b time.Time) time.Time {
 	if a.Before(b) {
 		return a
@@ -257,9 +296,12 @@ func (r *ConnectorPermissionResponder) respond(update tunnelv1.ConnectorPermissi
 // dispatch must enqueue without policy or application IO. terminal wire failure
 // fences the owner through failed before physical interruption joins.
 // suspension belongs to the role that stages and activates the packet binding.
-func ServeConnectorPermissionControl(ctx context.Context, stream muxsession.Stream, dispatch func(tunnelv1.ConnectorPermissionUpdate, *ConnectorPermissionResponder), failed func(), suspension *ConnectorPermissionGate) error {
+func ServeConnectorPermissionControl(ctx context.Context, stream muxsession.Stream, dispatch func(tunnelv1.ConnectorPermissionUpdate, *ConnectorPermissionResponder), completed func(tunnelv1.ConnectorVisitorCompletion), failed func(), suspension *ConnectorPermissionGate) error {
 	if suspension == nil {
 		return errors.New("tunnel: connector permission suspension gate is required")
+	}
+	if completed == nil {
+		return errors.New("tunnel: connector completion dispatch is required")
 	}
 	life, cancel := context.WithCancelCause(ctx)
 	joined := make(chan struct{})
@@ -277,7 +319,7 @@ func ServeConnectorPermissionControl(ctx context.Context, stream muxsession.Stre
 	}
 	responder := &ConnectorPermissionResponder{ctx: life, stream: stream, gate: make(chan struct{}, 1), fail: fail, suspension: suspension}
 	for {
-		update, err := tunnelv1.ReadConnectorPermissionUpdate(stream)
+		message, err := tunnelv1.ReadConnectorControlMessage(stream)
 		if errors.Is(err, tunnelv1.ErrConnectorPermissionUpdate) {
 			continue
 		}
@@ -285,6 +327,11 @@ func ServeConnectorPermissionControl(ctx context.Context, stream muxsession.Stre
 			fail(err)
 			return err
 		}
-		dispatch(update, responder)
+		switch message := message.(type) {
+		case tunnelv1.ConnectorPermissionUpdate:
+			dispatch(message, responder)
+		case tunnelv1.ConnectorVisitorCompletion:
+			completed(message)
+		}
 	}
 }

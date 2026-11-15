@@ -32,10 +32,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
-	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 // the existing control/relay fixture owns runs, certificates and connections.
@@ -64,6 +62,7 @@ func (c *targetRunControl) ReadPublisherVisitorPolicy(_ context.Context, request
 	key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
 	return controlv1.VisitorPolicyUpdate{AfterRevision: request.AfterRevision, Revisions: []int64{}, SnapshotRequired: request.AfterRevision == 0,
 		Policy: controlv1.VisitorPolicySnapshot{Resource: request.Resource, Hostname: run.Service.Endpoint.Hostname, Port: 443, Issuer: c.ControlURL(),
+			PublicEndpoint:        &controlv1.VisitorPublicEndpoint{Hostname: run.Service.Endpoint.Hostname, Port: 443, EndpointRevision: run.Service.EndpointRevision},
 			VisitorPolicyRevision: 1, MetadataRevision: run.Service.TrustRevision, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second),
 			Enabled: true, Anonymous: true, VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "fixture", PublicKey: key.Public().(ed25519.PublicKey)}}}}, nil
 }
@@ -310,44 +309,13 @@ func TestHTTPProjectTargetReplacementKeepsRunAndOpenResponse(t *testing.T) {
 
 func targetRunVisitor(t *testing.T, ctx context.Context, fixture *testutil.PublishingFixture, saved controlv1.Service) *tls.Conn {
 	t.Helper()
-	session, ref, found := fixture.Connection(saved.Id)
-	if !found {
-		t.Fatal("ready service has no publisher connection")
-	}
-	run, found := fixture.Run(ref.ServiceRunID)
-	if !found {
-		t.Fatal("ready service run disappeared")
-	}
-	id := func(prefix string) string {
-		t.Helper()
-		value, err := opaqueid.New(prefix)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return value
-	}
-	slot := run.Setup.PublisherConnections[ref.ConnectionSlot]
-	header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: tunnelv1.Version,
-		Kind: tunnelv1.ServiceForwardingStream, ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber,
-		PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
-		VisitorConnectionID: id(opaqueid.VisitorConnectionPrefix), SourceIP: "127.0.0.1", ExpiresAt: time.Now().Add(30 * time.Second),
-		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "fixture", IngressRunID: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 443}},
-		ConnectionSlot: ref.ConnectionSlot, RelayServiceID: slot.RelayServiceId, RelayID: "fixture", RelayRunID: id(opaqueid.RelayRunPrefix),
-		RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}
-	stream, err := session.OpenServiceForwardingStream(ctx, header)
+	stream, err := fixture.OpenHTTPVisitor(ctx, saved.Id, netip.MustParseAddrPort("127.0.0.1:45123"), netip.MustParseAddrPort("127.0.0.1:443"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = stream.Close() })
 	deadline, _ := ctx.Deadline()
 	_ = stream.SetDeadline(deadline)
-	metadata, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("127.0.0.1:45123"), Destination: netip.MustParseAddrPort("127.0.0.1:443")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := stream.Write(metadata); err != nil {
-		t.Fatal(err)
-	}
 	connection := tls.Client(stream, &tls.Config{MinVersion: tls.VersionTLS13, ServerName: saved.Endpoint.Hostname, NextProtos: []string{"h2"}})
 	if err := connection.HandshakeContext(ctx); err != nil {
 		t.Fatal(err)

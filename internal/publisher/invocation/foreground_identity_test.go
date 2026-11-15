@@ -215,6 +215,81 @@ func TestForegroundServiceDeclarationDoesNotMutateItsSavedInput(t *testing.T) {
 	}
 }
 
+func TestForegroundExplicitAccessWireShape(t *testing.T) {
+	for _, mode := range []controlv1.VisitorAccessMode{controlv1.Anonymous, controlv1.Restricted} {
+		for _, test := range []struct {
+			name     string
+			prefixes []string
+		}{
+			{"omitted IP filter", nil},
+			{"empty IP selection", []string{}},
+			{"nonempty IP filter", []string{"192.0.2.1", "198.51.100.0/24"}},
+		} {
+			for _, retained := range []bool{false, true} {
+				t.Run(string(mode)+"/"+test.name+map[bool]string{false: "/new", true: "/retained"}[retained], func(t *testing.T) {
+					var current *controlv1.ProjectServiceConfiguration
+					if retained {
+						current = &controlv1.ProjectServiceConfiguration{Target: "saved.internal:8080",
+							Http: &controlv1.ProjectServiceHTTP{
+								Access: &controlv1.ProjectHTTPAccess{Mode: new(controlv1.Restricted), Ip: new([]string{"203.0.113.0/24"})},
+								Limits: &controlv1.ProjectHTTPApplicationLimits{Total: new(900)},
+							}}
+					}
+					before, err := json.Marshal(current)
+					if err != nil {
+						t.Fatal(err)
+					}
+					policy := resolvedVisitorAccess{explicit: true, access: mode, prefixes: test.prefixes}
+					selected, err := foregroundServiceDeclaration(PublicOptions{Limits: applicationlimits.Limits{Concurrency: 7}}, policy, foregroundPlan(), current)
+					if err != nil {
+						t.Fatal(err)
+					}
+					encoded, err := json.Marshal(selected.Http)
+					if err != nil {
+						t.Fatal(err)
+					}
+					// this is the same validated http declaration decoded by
+					// control, including its rejection of an explicit empty list.
+					var accepted config.HTTPService
+					if err := json.Unmarshal(encoded, &accepted); err != nil {
+						t.Fatalf("control cannot decode the explicit access declaration: %s: %v", encoded, err)
+					}
+					wantPrefixes := test.prefixes
+					if len(wantPrefixes) == 0 {
+						wantPrefixes = nil
+					}
+					if accepted.Access == nil || accepted.Access.Mode != string(mode) || accepted.Access.Validate() != nil ||
+						!reflect.DeepEqual(accepted.Access.IP, wantPrefixes) {
+						t.Fatalf("explicit replacement retained or changed an IP filter: %s", encoded)
+					}
+					var wire struct {
+						Access map[string]json.RawMessage `json:"access"`
+					}
+					if err := json.Unmarshal(encoded, &wire); err != nil {
+						t.Fatal(err)
+					}
+					_, hasIP := wire.Access["ip"]
+					if hasIP != (len(test.prefixes) != 0) || selected.Http.Limits == nil ||
+						selected.Http.Limits.Concurrency == nil || *selected.Http.Limits.Concurrency != 7 ||
+						retained && (selected.Http.Limits.Total == nil || *selected.Http.Limits.Total != 900 || selected.Target != current.Target) {
+						t.Fatalf("access wire shape or unrelated settings changed: %s", encoded)
+					}
+					after, err := json.Marshal(current)
+					if err != nil || !bytes.Equal(before, after) {
+						t.Fatal("explicit access mutated its saved declaration", err)
+					}
+					if len(test.prefixes) != 0 {
+						(*selected.Http.Access.Ip)[0] = "changed"
+						if test.prefixes[0] != "192.0.2.1" {
+							t.Fatal("access declaration retained the caller's IP slice")
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestForegroundServiceRejectsOtherOwnershipAndWorktree(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

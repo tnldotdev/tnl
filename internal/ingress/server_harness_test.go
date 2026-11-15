@@ -19,6 +19,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 const fixtureTimeout = 5 * time.Second
@@ -71,6 +72,7 @@ func startIngress(t *testing.T, config Config, configure ...func(*Server)) (*Ser
 	for _, configure := range configure {
 		configure(server)
 	}
+	applyServiceRoutingFixture(t, server)
 	ingressWorker(t, func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -83,6 +85,24 @@ func startIngress(t *testing.T, config Config, configure ...func(*Server)) (*Ser
 		return err
 	})
 	return server, listener.Addr().String()
+}
+
+func applyServiceRoutingFixture(t *testing.T, server *Server) {
+	t.Helper()
+	lease := server.config.CurrentLease()
+	if lease.Draining || !lease.LeaseExpiresAt.After(time.Now()) {
+		return
+	}
+	started := time.Now()
+	snapshot, err := server.config.Control.ReadIngressServices(t.Context(), lease.IngressId, ingressv1.IngressLeaseIdentity{
+		IngressId: lease.IngressId, IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := server.services.apply(started, lease, snapshot); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func ownIngressConn(t *testing.T, c net.Conn) {

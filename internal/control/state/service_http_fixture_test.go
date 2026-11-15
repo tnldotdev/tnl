@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -72,6 +73,19 @@ func (f serviceHTTPFixture) publish(t *testing.T, service ServiceRecord) Service
 func (f serviceHTTPFixture) auth() ServiceHTTPRun {
 	return ServiceHTTPRun{Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: f.service.ID},
 		RunID: f.run.RunID, Number: f.run.RunNumber, Token: credentials.ServiceRunToken(f.run.Token)}
+}
+
+func readIngressServiceRun(ctx context.Context, d *Database, lease IngressLeaseIdentity, service, run string, now time.Time) (IngressServiceRun, error) {
+	snapshot, err := d.ReadIngressServices(ctx, lease, now)
+	if err != nil {
+		return IngressServiceRun{}, err
+	}
+	for _, entry := range snapshot.Runs {
+		if entry.ServiceID == service && entry.RunID == run {
+			return entry, nil
+		}
+	}
+	return IngressServiceRun{}, ErrServiceAccess
 }
 
 func (f serviceHTTPFixture) preview(t *testing.T, key string, services ...ServiceRecord) Preview {

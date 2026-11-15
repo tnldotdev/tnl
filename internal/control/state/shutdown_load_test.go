@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 // half the services close while the others heartbeat. two ingress observers
@@ -25,7 +26,7 @@ func TestLoadShutdown(t *testing.T) {
 	var ingresses [2]IngressLease
 	for index := range ingresses {
 		lease, err := f.database.RegisterIngress(t.Context(), IngressRegistration{
-			IngressID: fmt.Sprintf("shutdown-ingress-%d", index), IngressRunID: "run", ProtocolVersion: 1,
+			IngressID: fmt.Sprintf("shutdown-ingress-%d", index), IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1,
 			HTTPS: true, IngressPoolID: PrimaryIngressPoolID, ConnectionCapacity: uint64(max(64, f.routes)),
 		}, f.now, time.Hour)
 		if err != nil {
@@ -170,8 +171,26 @@ func TestLoadShutdown(t *testing.T) {
 	var openRuns, activeConnections int64
 	if err := f.database.pool.QueryRow(ctx, `SELECT
 		(SELECT count(*) FROM control.service_runs WHERE closed_at IS NULL OR state<>'closed'),
-		(SELECT count(*) FROM control.service_connection_slots WHERE state<>'closed' OR session_open)`).Scan(&openRuns, &activeConnections); err != nil || openRuns != 0 || activeConnections != 0 {
+		(SELECT count(*) FROM control.service_connection_slots WHERE session_open)`).Scan(&openRuns, &activeConnections); err != nil || openRuns != 0 || activeConnections != 0 {
 		t.Fatalf("remaining runs=%d connections=%d: %v", openRuns, activeConnections, err)
+	}
+	// closure releases the parent run's assignments_open fence. slot state
+	// remains the last transport observation, not another lifecycle authority.
+	for _, session := range sessions {
+		for _, connection := range session.run.Connections {
+			var settled bool
+			err := f.database.pool.QueryRow(ctx, `SELECT NOT slot.session_open AND NOT run.assignments_open
+				AND run.state='closed' AND run.closed_at IS NOT NULL
+				AND slot.service_id=$2 AND slot.service_run_id=$3 AND slot.run_number=$4
+				AND slot.connection_slot=$5 AND slot.connection_assignment_revision=$6 AND slot.state='ready'
+				FROM control.service_connection_slots slot JOIN control.service_runs run ON run.id=slot.service_run_id
+				WHERE slot.publisher_connection_id=$1`, connection.PublisherConnectionID, session.service.ID, session.run.RunID,
+				session.run.RunNumber, connection.ConnectionSlot, connection.Revision).Scan(&settled)
+			if err != nil || !settled {
+				t.Fatalf("shutdown lost or retained an active connection tuple service=%s slot=%d: %v",
+					session.service.ID, connection.ConnectionSlot, err)
+			}
+		}
 	}
 	assertAssignmentTotals(t, f.database.pool, 0)
 	// a late close rejects the old run instead of releasing capacity twice.
@@ -211,10 +230,14 @@ func observeShutdownLoad(t *testing.T, ctx context.Context, database *Database, 
 			done = true
 		default:
 		}
+		callCtx, stop := context.WithTimeout(ctx, 10*time.Second)
+		runs, err := readLoadServiceRuns(callCtx, database, ingress.IngressLeaseIdentity, now)
+		stop()
+		if err != nil {
+			return err
+		}
 		for index, session := range sessions {
-			callCtx, stop := context.WithTimeout(ctx, 10*time.Second)
-			err := observeLoadService(callCtx, database, ingress.IngressLeaseIdentity, session, now)
-			stop()
+			err := observeLoadService(runs, session, now)
 			if err == nil {
 				if retired[session.service.ID] {
 					return fmt.Errorf("shutdown resurrected service %s", session.service.ID)

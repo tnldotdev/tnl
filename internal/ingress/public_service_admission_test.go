@@ -65,7 +65,7 @@ func TestPublicServiceExpiredAdmissionNeedsFreshControlDecisionNotFreshIngressLe
 				stream, stop := publicServiceActiveStream(t, server, forwarder)
 				header := ingressAwait(t, forwarder.observed)
 				if header.ServiceID != control.service || header.ServiceRunID != control.run || header.RunNumber != 1 ||
-					!header.ExpiresAt.Equal(control.initialValidUntil) {
+					!header.ExpiresAt.Equal(privateMinTime(control.initialValidUntil, now.Add(server.config.OpenTimeout))) {
 					t.Fatal("recovery used another service run or an expired claim", header)
 				}
 				_ = stream.Close()
@@ -92,7 +92,7 @@ func (c changedPublicServiceControl) AdmitPublicServiceVisitor(ctx context.Conte
 
 type rejectedPublicServiceForwarder struct{ calls int }
 
-func (f *rejectedPublicServiceForwarder) OpenPrivate(context.Context, ingressv1.ServiceRelay, tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+func (f *rejectedPublicServiceForwarder) OpenService(context.Context, ingressv1.ServiceRelay, tunnelv1.ServiceForwardingHeader, func(context.Context) error) (net.Conn, error) {
 	f.calls++
 	return nil, ErrServiceAdmission
 }
@@ -107,7 +107,6 @@ func TestPublicServiceVisitorRejectsExpiredOrMalformedClaim(t *testing.T) {
 		"missing run":        func(p *ingressv1.PublicServiceVisitorAdmission) { p.ServiceRunId = "" },
 		"missing run number": func(p *ingressv1.PublicServiceVisitorAdmission) { p.RunNumber = 0 },
 		"missing traffic":    func(p *ingressv1.PublicServiceVisitorAdmission) { p.Traffic = ingressv1.IngressTrafficLimits{} },
-		"anonymous non-HTTP": func(p *ingressv1.PublicServiceVisitorAdmission) { p.Anonymous = true },
 		"invalid traffic period": func(p *ingressv1.PublicServiceVisitorAdmission) {
 			p.Traffic.RatePerNs = 0
 		},

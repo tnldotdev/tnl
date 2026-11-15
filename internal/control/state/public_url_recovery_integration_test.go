@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"errors"
 	"net/netip"
 	"reflect"
@@ -9,6 +10,9 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIntegrationServiceRecovery(t *testing.T) {
@@ -60,20 +64,20 @@ func TestIntegrationServiceRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	admission, err := database.AdmitPublicServiceVisitor(t.Context(), ingress.IngressLeaseIdentity, PrimaryIngressPoolID,
-		visitor, f.service.Endpoint.Hostname, 443, netip.MustParseAddr("192.0.2.10"), recoveredAt)
+	admission, err := readIngressServiceRun(t.Context(), database, ingress.IngressLeaseIdentity, f.service.ID, f.run.RunID, recoveredAt)
 	if err != nil || admission.RecoveryEpisodeID == nil || *admission.RecoveryEpisodeID != recoveryEpisodeID ||
 		len(admission.Relays) != 1 || admission.RunID != f.run.RunID || admission.RunNumber != f.run.RunNumber {
 		t.Fatalf("recovered service admission = %#v, %v", admission, err)
 	}
+	evidence := recoverySourceEvidence(t, admission, visitor, recoveredAt)
 	observedAt := recoveredAt.Add(750 * time.Millisecond)
 	wantSeconds := observedAt.Sub(openedAt).Seconds()
 	ref := ServiceRunReference{ServiceID: f.service.ID, RunID: f.run.RunID, RunNumber: f.run.RunNumber}
-	observation, err := database.ObserveServiceRecovery(t.Context(), ingress.IngressLeaseIdentity, ref, visitor, uint64(recoveryEpisodeID), observedAt, observedAt)
+	observation, err := database.ObserveServiceRecovery(t.Context(), ingress.IngressLeaseIdentity, ref, visitor, uint64(recoveryEpisodeID), observedAt, evidence, observedAt)
 	if err != nil || observation.ObservedSeconds != wantSeconds {
 		t.Fatalf("recovery observation = %#v, %v", observation, err)
 	}
-	repeated, err := database.ObserveServiceRecovery(t.Context(), ingress.IngressLeaseIdentity, ref, visitor, uint64(recoveryEpisodeID), observedAt, observedAt.Add(time.Second))
+	repeated, err := database.ObserveServiceRecovery(t.Context(), ingress.IngressLeaseIdentity, ref, visitor, uint64(recoveryEpisodeID), observedAt, evidence, observedAt.Add(time.Second))
 	if err != nil || !reflect.DeepEqual(repeated, observation) {
 		t.Fatalf("observation replay = %#v, %v", repeated, err)
 	}
@@ -83,7 +87,7 @@ func TestIntegrationServiceRecovery(t *testing.T) {
 	for range 4 {
 		go func() {
 			got, err := database.ObserveServiceRecovery(t.Context(), ingress.IngressLeaseIdentity, ref, visitor,
-				uint64(recoveryEpisodeID), observedAt, observedAt.Add(2*time.Second))
+				uint64(recoveryEpisodeID), observedAt, evidence, observedAt.Add(2*time.Second))
 			if err == nil && !reflect.DeepEqual(got, observation) {
 				err = errors.New("replay changed the committed recovery")
 			}
@@ -125,6 +129,10 @@ func TestIntegrationServiceRecovery(t *testing.T) {
 	if recoveryCount != 1 || replacements != 2 {
 		t.Fatalf("committed recovery metrics: observations=%d replacements=%g", recoveryCount, replacements)
 	}
+	var visitors int
+	if err := database.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.public_service_visitors WHERE service_id=$1`, f.service.ID).Scan(&visitors); err != nil || visitors != 0 {
+		t.Fatal("HTTP recovery wrote visitor coordination rows", visitors, err)
+	}
 }
 
 func TestIntegrationServiceRecoveryRequiresExactAdmissionAndCurrentLease(t *testing.T) {
@@ -144,15 +152,17 @@ func TestIntegrationServiceRecoveryRequiresExactAdmissionAndCurrentLease(t *test
 	}
 	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
 	at := f.now.Add(2 * time.Second)
-	admission, err := f.database.AdmitPublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, PrimaryIngressPoolID,
-		visitor, f.service.Endpoint.Hostname, 443, netip.MustParseAddr("192.0.2.10"), at)
+	admission, err := readIngressServiceRun(ctx, f.database, ingress.IngressLeaseIdentity, f.service.ID, f.run.RunID, at)
 	if err != nil || admission.RecoveryEpisodeID == nil {
 		t.Fatal("surviving relay did not retain the open recovery episode", err)
 	}
+	evidence := recoverySourceEvidence(t, admission, visitor, at)
 	ref := ServiceRunReference{ServiceID: f.service.ID, RunID: f.run.RunID, RunNumber: f.run.RunNumber}
-	for _, field := range []string{"service", "run", "number", "visitor", "lease", "before-admission", "future", "expired-lease"} {
+	for _, field := range []string{"service", "run", "number", "visitor", "lease", "before-admission", "future", "expired-lease",
+		"missing evidence", "malformed evidence", "source", "destination port", "proof signature", "source timestamp", "trailing application bytes", "oversized evidence"} {
 		t.Run(field, func(t *testing.T) {
 			run, connection, lease, observed, delivered := ref, visitor, ingress.IngressLeaseIdentity, at, at
+			sourceEvidence := bytes.Clone(evidence)
 			switch field {
 			case "service":
 				run.ServiceID = mustOpaqueID(t, opaqueid.ServicePrefix)
@@ -170,9 +180,47 @@ func TestIntegrationServiceRecoveryRequiresExactAdmissionAndCurrentLease(t *test
 				observed = at.Add(2 * time.Second)
 			case "expired-lease":
 				delivered = f.now.Add(2 * time.Minute)
+			case "missing evidence":
+				sourceEvidence = nil
+			case "malformed evidence":
+				sourceEvidence = []byte("not a PROXY header")
+			case "trailing application bytes":
+				sourceEvidence = append(sourceEvidence, []byte("GET /private HTTP/1.1\r\n\r\n")...)
+			case "oversized evidence":
+				sourceEvidence = make([]byte, 2049)
+			case "source", "destination port", "proof signature", "source timestamp":
+				metadata, _, err := proxyproto.Decode(bytes.NewReader(sourceEvidence))
+				if err != nil {
+					t.Fatal(err)
+				}
+				switch field {
+				case "source":
+					metadata.Source = netip.MustParseAddrPort("192.0.2.11:40000")
+				case "destination port":
+					metadata.Destination = netip.MustParseAddrPort("198.51.100.10:25443")
+				default:
+					proof, err := tunnelv1.ReadVisitorSourceProof([]byte(metadata.VisitorSourceProof))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if field == "proof signature" {
+						proof.MAC[0]++
+					} else {
+						proof.ObservedAt++
+					}
+					wire, err := proof.MarshalBinary()
+					if err != nil {
+						t.Fatal(err)
+					}
+					metadata.VisitorSourceProof = string(wire)
+				}
+				sourceEvidence, err = proxyproto.Encode(metadata)
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
 			if _, err := f.database.ObserveServiceRecovery(ctx, lease, run, connection,
-				uint64(*admission.RecoveryEpisodeID), observed, delivered); err == nil {
+				uint64(*admission.RecoveryEpisodeID), observed, sourceEvidence, delivered); err == nil {
 				t.Fatal("recovery accepted another admission, run, timestamp, or expired sender")
 			}
 		})
@@ -181,7 +229,7 @@ func TestIntegrationServiceRecoveryRequiresExactAdmissionAndCurrentLease(t *test
 		t.Fatal(err)
 	}
 	if _, err := f.database.ObserveServiceRecovery(ctx, ingress.IngressLeaseIdentity, ref, visitor,
-		uint64(*admission.RecoveryEpisodeID), at, at.Add(2*time.Second)); !errors.Is(err, ErrServiceRecoveryEpisodeStale) {
+		uint64(*admission.RecoveryEpisodeID), at, evidence, at.Add(2*time.Second)); !errors.Is(err, ErrServiceRecoveryEpisodeStale) {
 		t.Fatal("closed run completed its canceled recovery", err)
 	}
 	var canceled bool
@@ -189,6 +237,114 @@ func TestIntegrationServiceRecoveryRequiresExactAdmissionAndCurrentLease(t *test
 		FROM control.service_recovery_episodes WHERE id=$1`, *admission.RecoveryEpisodeID).Scan(&canceled); err != nil || !canceled {
 		t.Fatal("run closure did not cancel its exact open recovery", canceled, err)
 	}
+}
+
+func TestIntegrationHTTPRecoveryRetainsOriginalEvidenceAfterRoutingRefresh(t *testing.T) {
+	f, _ := guestAuthorityFixture(t, true)
+	ctx := t.Context()
+	ingress, err := f.database.RegisterIngress(ctx, IngressRegistration{
+		IngressID: "recovery-refresh", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix),
+		ProtocolVersion: 1, HTTPS: true, ConnectionCapacity: 100, IngressPoolID: PrimaryIngressPoolID,
+	}, f.now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot := f.run.Connections[0]
+	if _, err := f.database.DisconnectServicePublisherConnection(ctx, slot.PublisherConnectionID, f.run.RunID,
+		f.run.RunNumber, slot.Revision, f.leases[slot.RelayServiceID].RelayLeaseIdentity, f.now.Add(time.Second), true); err != nil {
+		t.Fatal(err)
+	}
+	at := f.now.Add(2 * time.Second)
+	route, err := readIngressServiceRun(ctx, f.database, ingress.IngressLeaseIdentity, f.service.ID, f.run.RunID, at)
+	if err != nil || route.RecoveryEpisodeID == nil {
+		t.Fatal("routing omitted the open recovery", err)
+	}
+	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
+	evidence := recoverySourceEvidence(t, route, visitor, at)
+	fresh, err := readIngressServiceRun(ctx, f.database, ingress.IngressLeaseIdentity, f.service.ID, f.run.RunID, at.Add(time.Second))
+	if err != nil || bytes.Equal(route.SourceAuthority, fresh.SourceAuthority) {
+		t.Fatal("routing refresh did not replace its short-lived delegation", err)
+	}
+	observed := route.ValidUntil.Add(time.Second)
+	metadata, _, err := proxyproto.Decode(bytes.NewReader(evidence))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := tunnelv1.ReadVisitorSourceProof([]byte(metadata.VisitorSourceProof))
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := tunnelv1.VisitorSourceBinding{ServiceID: f.service.ID, ServiceRunID: f.run.RunID, RunNumber: uint64(f.run.RunNumber),
+		VisitorConnectionID: visitor, Source: metadata.Source, Destination: metadata.Destination}
+	if err := visitortoken.VerifyVisitorSource(f.run.VisitorSourceKey, proof, binding, proof.Authority.VisitorPolicyRevision, observed); err == nil {
+		t.Fatal("historical source evidence became current visitor setup authority")
+	}
+	ref := ServiceRunReference{ServiceID: f.service.ID, RunID: f.run.RunID, RunNumber: f.run.RunNumber}
+	result, err := f.database.ObserveServiceRecovery(ctx, ingress.IngressLeaseIdentity, ref, visitor,
+		uint64(*route.RecoveryEpisodeID), observed, evidence, observed)
+	if err != nil || !result.ObservedAt.Equal(observed) || result.ObservedSeconds != observed.Sub(f.now.Add(time.Second)).Seconds() {
+		t.Fatal("recovery lost its actual first-byte timestamp or original signed source observation", result, err)
+	}
+}
+
+func TestIntegrationNativeRecoveryRetainsAdmissionReceiptScope(t *testing.T) {
+	f := newNativeServiceAdmissionFixture(t)
+	ctx := t.Context()
+	ingress := registerNativeServiceAdmissionIngress(t, ctx, f, "native-recovery")
+	slot := f.run.Connections[0]
+	if _, err := f.database.DisconnectServicePublisherConnection(ctx, slot.PublisherConnectionID, f.run.RunID,
+		f.run.RunNumber, slot.Revision, f.leases[slot.RelayServiceID].RelayLeaseIdentity, f.now.Add(time.Second), true); err != nil {
+		t.Fatal(err)
+	}
+	at := f.now.Add(2 * time.Second)
+	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
+	admission, err := f.database.AdmitPublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, PrimaryIngressPoolID, visitor,
+		f.service.Endpoint.Port, netip.MustParseAddr("192.0.2.10"), at)
+	if err != nil || admission.RecoveryEpisodeID == nil {
+		t.Fatal("native admission omitted the exact open recovery", err)
+	}
+	ref := ServiceRunReference{ServiceID: f.service.ID, RunID: f.run.RunID, RunNumber: f.run.RunNumber}
+	for _, wrong := range []string{mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), visitor} {
+		reportedAt := at
+		if wrong == visitor {
+			reportedAt = at.Add(-time.Second)
+		}
+		if _, err := f.database.ObserveServiceRecovery(ctx, ingress.IngressLeaseIdentity, ref, wrong,
+			uint64(*admission.RecoveryEpisodeID), reportedAt, nil, at); !errors.Is(err, ErrServiceRecoveryEpisodeStale) {
+			t.Fatal("native recovery bypassed its exact visitor or original admission time", err)
+		}
+	}
+	result, err := f.database.ObserveServiceRecovery(ctx, ingress.IngressLeaseIdentity, ref, visitor,
+		uint64(*admission.RecoveryEpisodeID), at, nil, at)
+	if err != nil || !result.ObservedAt.Equal(at) {
+		t.Fatal("native recovery lost its control admission authority", result, err)
+	}
+}
+
+func recoverySourceEvidence(t *testing.T, run IngressServiceRun, visitor string, at time.Time) []byte {
+	t.Helper()
+	authority, err := tunnelv1.ReadVisitorSourceAuthority(run.SourceAuthority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("198.51.100.10:443")}
+	proof, err := visitortoken.SignVisitorSource([32]byte(run.SourceKey), authority, 1, tunnelv1.VisitorSourceBinding{
+		ServiceID: run.ServiceID, ServiceRunID: run.RunID, RunNumber: uint64(run.RunNumber), VisitorConnectionID: visitor,
+		Source: metadata.Source, Destination: metadata.Destination,
+	}, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := proof.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata.VisitorSourceProof = string(wire)
+	evidence, err := proxyproto.Encode(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return evidence
 }
 
 func TestIntegrationServiceRecoveryIgnoresIntentionalAndNeverReadyDisconnects(t *testing.T) {

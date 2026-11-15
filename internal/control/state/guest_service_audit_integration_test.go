@@ -3,7 +3,6 @@ package state
 import (
 	"context"
 	"errors"
-	"net/netip"
 	"testing"
 	"time"
 
@@ -23,37 +22,38 @@ func TestIntegrationGuestIngressAuditRetainsTeamlessOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	source := netip.MustParseAddr("192.0.2.10")
-	if _, err := f.database.AdmitPublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, PrimaryIngressPoolID, visitor,
-		f.service.Endpoint.Hostname, 443, source, f.now); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.database.ClosePublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, visitor, f.now); err != nil {
+	routing, err := readIngressServiceRun(ctx, f.database, ingress.IngressLeaseIdentity, f.service.ID, f.run.RunID, f.now)
+	if err != nil {
 		t.Fatal(err)
 	}
 	denial := serviceaudit.Observation{
 		EventID: serviceaudit.NewID(), ServiceID: f.service.ID, ServiceKind: "service",
-		VisitorConnectionID: visitor, SourceIP: source.String(), EventType: "connection.open",
-		Outcome: "denied", Reason: "capacity", OccurredAt: f.now,
+		VisitorConnectionID: visitor, SourceIP: "192.0.2.10", EventType: "connection.open",
+		Outcome: "denied", Reason: "capacity", OccurredAt: f.now, RoutingAuthority: routing.SourceAuthority,
 	}
 	forwarded := denial
 	forwarded.EventID, forwarded.RunID, forwarded.RunNumber = serviceaudit.NewID(), f.run.RunID, f.run.RunNumber
-	forwarded.Outcome, forwarded.Reason = "forwarded", ""
-	batch := serviceaudit.Batch{Events: []serviceaudit.Observation{denial, forwarded, forwarded}}
+	forwarded.Outcome, forwarded.Reason, forwarded.RoutingAuthority = "allowed", "", nil
+	batch := serviceaudit.Batch{Events: []serviceaudit.Observation{denial, denial}}
 	result, err := f.database.IngestIngressServiceObservations(ctx, ingress.IngressLeaseIdentity, batch, f.now)
-	if err != nil || result.Accepted != 2 || result.Duplicates != 1 {
-		t.Fatal("teamless ingress observations did not commit once", result, err)
+	if err != nil || result.Accepted != 1 || result.Duplicates != 1 {
+		t.Fatal("teamless ingress denial did not commit once", result, err)
+	}
+	result, err = f.database.IngestServiceRunObservations(ctx, f.service.ID, f.run.RunID, f.run.Token, f.run.RunNumber,
+		serviceaudit.Batch{Events: []serviceaudit.Observation{forwarded, forwarded}}, f.now)
+	if err != nil || result.Accepted != 1 || result.Duplicates != 1 {
+		t.Fatal("teamless publisher connection did not commit once", result, err)
 	}
 	var count int
 	if err := f.database.pool.QueryRow(ctx, `SELECT count(*) FROM control.service_audit_events
-		WHERE id=ANY($1) AND team_id IS NULL AND guest_id=$2 AND service_id=$3`,
-		[]string{denial.EventID, forwarded.EventID}, guest.ID, f.service.ID).Scan(&count); err != nil || count != 2 {
+		WHERE id=ANY($1) AND team_id IS NULL AND guest_id=$2 AND service_id=$3 AND host(source_ip)=$4`,
+		[]string{denial.EventID, forwarded.EventID}, guest.ID, f.service.ID, denial.SourceIP).Scan(&count); err != nil || count != 2 {
 		t.Fatal("ingress observations lost the actual guest owner", count, err)
 	}
-	forwarded.EventID, forwarded.SourceIP = serviceaudit.NewID(), "192.0.2.11"
+	denial.EventID, denial.ServiceID = serviceaudit.NewID(), mustOpaqueID(t, opaqueid.ServicePrefix)
 	if _, err := f.database.IngestIngressServiceObservations(ctx, ingress.IngressLeaseIdentity,
-		serviceaudit.Batch{Events: []serviceaudit.Observation{forwarded}}, f.now); !errors.Is(err, ErrServiceAuditAccess) {
-		t.Fatal("teamless audit bypassed the admission source", err)
+		serviceaudit.Batch{Events: []serviceaudit.Observation{denial}}, f.now); !errors.Is(err, ErrServiceAuditAccess) {
+		t.Fatal("teamless audit bypassed its signed service owner", err)
 	}
 }
 
@@ -73,9 +73,8 @@ func TestIntegrationGuestAuditLocksOwnerBeforeIngressAndRun(t *testing.T) {
 				t.Fatal(err)
 			}
 			visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-			source := netip.MustParseAddr("192.0.2.10")
-			if _, err := f.database.AdmitPublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, PrimaryIngressPoolID,
-				visitor, f.service.Endpoint.Hostname, 443, source, f.now); err != nil {
+			routing, err := readIngressServiceRun(ctx, f.database, ingress.IngressLeaseIdentity, f.service.ID, f.run.RunID, f.now)
+			if err != nil {
 				t.Fatal(err)
 			}
 			workers := newIntegrationWorkers(t, cancel)
@@ -97,11 +96,13 @@ func TestIntegrationGuestAuditLocksOwnerBeforeIngressAndRun(t *testing.T) {
 			event := serviceaudit.Observation{
 				EventID: serviceaudit.NewID(), ServiceID: f.service.ID, ServiceKind: "service",
 				RunID: f.run.RunID, RunNumber: f.run.RunNumber,
-				VisitorConnectionID: visitor, SourceIP: source.String(), EventType: "connection.open",
-				Outcome: "forwarded", OccurredAt: f.now,
+				VisitorConnectionID: visitor, SourceIP: "192.0.2.10", EventType: "connection.open",
+				Outcome: "denied", Reason: "capacity", OccurredAt: f.now,
 			}
 			if test.reporter == "publisher" {
-				event.EventType, event.Outcome = "http.decision", "allowed"
+				event.EventType, event.Outcome, event.Reason = "http.decision", "allowed", ""
+			} else {
+				event.RunID, event.RunNumber, event.RoutingAuthority = "", 0, routing.SourceAuthority
 			}
 			batch := serviceaudit.Batch{Events: []serviceaudit.Observation{event}}
 			done := make(chan error, 1)

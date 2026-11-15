@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
-	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -29,26 +27,18 @@ func TestServiceHTTPWaitsForIngressAfterRequestAuthorization(t *testing.T) {
 					forwarded.Add(1)
 					w.WriteHeader(http.StatusNoContent)
 				}), h2, inline, func(f *HTTP) {
-					service, run, secret := f.Subject.ID, f.RunID, f.Token
-					f.browser = &httpaccess.Browser{Subject: f.Subject, Client: serviceHTTPAdmissionControl{}, RunID: f.RunID, Number: f.Number, Token: f.Token, ControlURL: "https://control.example.test"}
-					f.Control = serviceHTTPAdmissionControl{authorize: func(ctx context.Context, gotService, gotRun string, gotToken credentials.ServiceRunToken, input controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
-						if gotService != service || gotRun != run || gotToken != secret || input.RunNumber != 1 || input.VisitorConnectionId != "vc_"+strings.Repeat("V", 22) || input.SourceIp != "192.0.2.1" || input.DestinationPort != 443 {
-							t.Error("HTTP admission lost its exact run or trusted forwarding facts")
-						}
-						call := calls.Add(1)
-						if call == 1 {
-							return controlv1.ServiceClientCertificateDecision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
-						}
-						if call == 2 {
+					f.browser = &httpaccess.Browser{Subject: f.Subject, Client: serviceHTTPControl{}, RunID: f.RunID, Number: f.Number, Token: f.Token, ControlURL: "https://control.example.test"}
+					f.ReserveCapacity = func(ctx context.Context) error {
+						if calls.Add(1) == 1 {
 							close(waiting)
 						}
 						select {
 						case <-promoted:
-							return controlv1.ServiceClientCertificateDecision{Allowed: true, Admitted: true, ValidUntil: time.Now().Add(time.Minute)}, nil
+							return nil
 						case <-ctx.Done():
-							return controlv1.ServiceClientCertificateDecision{}, ctx.Err()
+							return ctx.Err()
 						}
-					}}
+					}
 				})
 				client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 				request := func(path, credential string) *http.Request {
@@ -107,7 +97,7 @@ func TestServiceHTTPWaitsForIngressAfterRequestAuthorization(t *testing.T) {
 				}
 				check(request("/", token.Reveal()), http.StatusNoContent)
 				check(request("/", "invalid"), http.StatusForbidden)
-				if calls.Load() != 2 || forwarded.Load() != 2 {
+				if calls.Load() != 1 || forwarded.Load() != 2 {
 					t.Fatal("connection admission was repeated or replaced per-request authorization", calls.Load(), forwarded.Load())
 				}
 			})
@@ -123,12 +113,12 @@ func TestServiceHTTPGuardStaysActiveWhileIngressAdmissionWaits(t *testing.T) {
 			client, policy, update, token := serviceHTTPConfiguredFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 				forwarded.Add(1)
 			}), h2, true, func(f *HTTP) {
-				f.Control = serviceHTTPAdmissionControl{authorize: func(ctx context.Context, _, _ string, _ credentials.ServiceRunToken, _ controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+				f.ReserveCapacity = func(ctx context.Context) error {
 					close(waiting)
 					<-ctx.Done()
 					close(stopped)
-					return controlv1.ServiceClientCertificateDecision{}, ctx.Err()
-				}}
+					return ctx.Err()
+				}
 			})
 			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://preview.example.test/", nil)
 			if err != nil {
@@ -171,15 +161,17 @@ func TestServiceHTTPAdmissionKeepsOriginalHeaderDeadline(t *testing.T) {
 					forwarded.Add(1)
 				}), h2, true, func(f *HTTP) {
 					f.Header.ExpiresAt = deadline
-					f.Control = serviceHTTPAdmissionControl{authorize: func(ctx context.Context, _, _ string, _ credentials.ServiceRunToken, _ controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+					f.ReserveCapacity = func(ctx context.Context) error {
 						if until, ok := ctx.Deadline(); !ok || !until.Equal(deadline) {
-							t.Error("admission RPC lost the trusted header deadline")
+							t.Error("capacity request lost the trusted header deadline")
 						}
 						if calls.Add(1) == 1 {
 							close(started)
 						}
-						return controlv1.ServiceClientCertificateDecision{Allowed: true, ValidUntil: time.Now().Add(time.Hour)}, nil
-					}}
+						<-ctx.Done()
+						// a late success must not extend the original setup deadline.
+						return nil
+					}
 				})
 				request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://preview.example.test/", nil)
 				if err != nil {
@@ -200,20 +192,20 @@ func TestServiceHTTPAdmissionKeepsOriginalHeaderDeadline(t *testing.T) {
 				}()
 				serviceHTTPAwait(t, started)
 				synctest.Wait()
-				// advance the fake clock after the first RPC is waiting to retry.
+				// advance the fake clock while the capacity request is waiting.
 				time.Sleep(time.Second)
 				synctest.Wait()
 				if err := serviceHTTPAwait(t, replies); err != nil {
 					t.Fatal(err)
 				}
 				count := calls.Load()
-				if count < 2 {
-					t.Fatal("fixture did not exercise newer pending validity windows", count)
+				if count != 1 {
+					t.Fatal("capacity was requested more than once", count)
 				}
 				time.Sleep(time.Second)
 				synctest.Wait()
 				if calls.Load() != count || forwarded.Load() != 0 {
-					t.Fatal("new validity windows extended pending admission", calls.Load(), count, forwarded.Load())
+					t.Fatal("late success extended pending admission", calls.Load(), count, forwarded.Load())
 				}
 			})
 		})
@@ -228,10 +220,10 @@ func TestServiceHTTPAnonymousAndReadinessNeedIngressAcknowledgment(t *testing.T)
 			client, policy, update, _ := serviceHTTPConfiguredFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 				forwarded.Add(1)
 			}), false, true, func(f *HTTP) {
-				f.Control = serviceHTTPAdmissionControl{authorize: func(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+				f.ReserveCapacity = func(context.Context) error {
 					calls.Add(1)
-					return controlv1.ServiceClientCertificateDecision{Allowed: false, ValidUntil: time.Now()}, nil
-				}}
+					return errors.New("ingress capacity denied")
+				}
 				if readiness {
 					var err error
 					proof, err = httpaccess.NewReadinessProof(httpaccess.ReadinessRun{Subject: f.Subject, ID: f.RunID, Number: uint64(f.Number), Hostname: f.Hostname}, "/health")

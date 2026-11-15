@@ -715,7 +715,6 @@ type ControlPublicServiceVisitor struct {
 	IdentityID           pgtype.Text
 	DeviceID             pgtype.Text
 	CertificateDigest    []byte
-	AuthorizedAt         pgtype.Timestamptz
 	PromotedAt           pgtype.Timestamptz
 	ValidUntil           pgtype.Timestamptz
 	CreatedAt            pgtype.Timestamptz

@@ -82,14 +82,14 @@ func newSeparatedPlan(workload, scenario, path string, count int, ha bool) (map[
 	p["servers"] = join(p["controls"], p["ingresses"], p["relays"])
 	p["ready"] = join(p["servers"], p["apps"], []string{"pebble"})
 	p["components"] = join(p["servers"], p["publishers"], p["visitors"], p["apps"], []string{"pebble"})
-	p["start"] = join(p["components"], p["targets"], []string{"dns", "coordinator"})
+	p["start"] = join(p["components"], p["targets"], []string{"ingress-address", "dns", "coordinator"})
 	p["resources"] = join(p["components"], p["targets"], []string{"postgres", "coordinator"})
 	p["services"] = join([]string{"postgres"}, p["start"])
 	p["stop-visitors"] = slices.Clone(p["visitors"])
 	p["stop-publishers"] = join(p["apps"], p["publishers"])
 	p["stop-servers"] = join(p["ingresses"], p["relays"])
 	p["stop-controls"] = slices.Clone(p["controls"])
-	p["stop-support"] = join([]string{"pebble", "dns", "coordinator"}, p["targets"], []string{"postgres"})
+	p["stop-support"] = join([]string{"ingress-address", "pebble", "dns", "coordinator"}, p["targets"], []string{"postgres"})
 	switch scenario {
 	case "relay-restart", "relay-kill":
 		p["fault-targets"] = p["relays"][:1]
@@ -196,7 +196,7 @@ func TestSeparatedRuntimePlan(t *testing.T) {
 				if scenario == "control-restart" {
 					relays = append(relays, "relay-a-2", "relay-b-2")
 				}
-				want := slices.Concat(controls, ingresses, relays, test.publishers, test.visitors, test.apps, []string{"pebble"}, test.targets, []string{"dns", "coordinator"})
+				want := slices.Concat(controls, ingresses, relays, test.publishers, test.visitors, test.apps, []string{"pebble"}, test.targets, []string{"ingress-address", "dns", "coordinator"})
 				if !slices.Equal(plan["start"], want) {
 					t.Fatalf("%s/%d ha=%t %s: start=%v, want %v", test.workload, test.count, ha, scenario, plan["start"], want)
 				}
@@ -208,7 +208,7 @@ func TestSeparatedRuntimePlan(t *testing.T) {
 					"ready":         slices.Concat(controls, ingresses, relays, test.apps, []string{"pebble"}),
 					"resources":     slices.Concat(components, test.targets, []string{"postgres", "coordinator"}),
 					"stop-controls": controls,
-					"stop-support":  slices.Concat([]string{"pebble", "dns", "coordinator"}, test.targets, []string{"postgres"}),
+					"stop-support":  slices.Concat([]string{"ingress-address", "pebble", "dns", "coordinator"}, test.targets, []string{"postgres"}),
 				} {
 					if !slices.Equal(plan[key], want) {
 						t.Fatalf("%s: %v, want %v", key, plan[key], want)
@@ -281,6 +281,12 @@ func TestSeparatedComposeMatchesPlan(t *testing.T) {
 	}
 	if err := yaml.Unmarshal(data, &fixture); err != nil {
 		t.Fatal(err)
+	}
+	for name, service := range fixture.Services {
+		hasAddressAlias := slices.Contains(service.Networks["default"].Aliases, "ingress")
+		if hasAddressAlias != (name == "ingress-address") {
+			t.Fatal("only the load balancer may own the canonical ingress address", name)
+		}
 	}
 	used := map[string]bool{"build": true, "setup": true}
 	for _, test := range []struct {

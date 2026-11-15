@@ -13,7 +13,7 @@ import (
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
-func publicServiceWaitAuthorized(t *testing.T, p *Server) {
+func publicServiceWaitCapacity(t *testing.T, p *Server) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
@@ -23,14 +23,14 @@ func publicServiceWaitAuthorized(t *testing.T, p *Server) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatal("public service visitor was not promoted")
+	t.Fatal("public service visitor did not reserve capacity")
 }
 
 func TestPublicServiceLiveVisitorClosesOnExplicitDenial(t *testing.T) {
 	p, c, f, _ := publicServiceTestSetup(t)
 	p.config.RecheckInterval, p.config.RecheckTimeout, p.config.HardAuthorizationTTL = 20*time.Millisecond, 10*time.Millisecond, 150*time.Millisecond
 	stream, stop := publicServiceActiveStream(t, p, f)
-	publicServiceWaitAuthorized(t, p)
+	publicServiceWaitCapacity(t, p)
 	c.mu.Lock()
 	c.deny = true
 	c.mu.Unlock()
@@ -60,6 +60,7 @@ func TestPublicServiceLiveVisitorOutageHonorsLastSuccessfulDeadline(t *testing.T
 				p, c, f, _ := publicServiceTestSetup(t)
 				p.config.RecheckInterval, p.config.RecheckTimeout = 20*time.Millisecond, 10*time.Millisecond
 				p.config.HardAuthorizationTTL = 125 * time.Millisecond
+				c.recheckStarted = make(chan struct{}, 1)
 				bound := 300 * time.Millisecond
 				if grant {
 					p.config.HardAuthorizationTTL = 250 * time.Millisecond
@@ -67,7 +68,9 @@ func TestPublicServiceLiveVisitorOutageHonorsLastSuccessfulDeadline(t *testing.T
 					bound = 190 * time.Millisecond
 				}
 				stream, stop := publicServiceActiveStream(t, p, f)
-				publicServiceWaitAuthorized(t, p)
+				publicServiceWaitCapacity(t, p)
+				ingressAwait(t, c.recheckStarted)
+				synctest.Wait()
 				c.mu.Lock()
 				c.recheckErr = errors.New("control unavailable after last check")
 				c.mu.Unlock()
@@ -219,7 +222,7 @@ func TestPublicServiceLiveVisitorCloseJoinsBlockedRecheckAndCopy(t *testing.T) {
 	p, c, f, _ := publicServiceTestSetup(t)
 	p.config.RecheckInterval, p.config.RecheckTimeout, p.config.HardAuthorizationTTL = 120*time.Millisecond, 100*time.Millisecond, 350*time.Millisecond
 	_, stop := publicServiceActiveStream(t, p, f)
-	publicServiceWaitAuthorized(t, p)
+	publicServiceWaitCapacity(t, p)
 	c.mu.Lock()
 	c.recheckStarted, c.recheckGate = make(chan struct{}, 1), make(chan struct{})
 	started := c.recheckStarted

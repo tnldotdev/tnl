@@ -197,35 +197,74 @@ func serviceHTTPRequestPolicy(value *config.HTTPService) *config.HTTPService {
 }
 
 func (d *Database) serviceConfiguration(ctx context.Context, q *controlstatedb.Queries, service string) (*ProjectServiceConfiguration, error) {
-	saved, err := q.GetServiceConfiguration(ctx, service)
-	if err != nil {
-		return nil, publisherLookupError(err, ErrServiceAccess)
-	}
-	if saved.AllocationOwned && (saved.LocalOwned || saved.DeploymentOwned) ||
-		saved.DeploymentOwned && (saved.LocalOwned || saved.ConfigurationCiphertext != nil || saved.StorageKeyID.Valid) {
-		return nil, ErrServiceAccess
-	}
-	if !saved.DeploymentOwned {
-		declaration, err := d.openServiceConfiguration(service, saved.Service, saved.StorageKeyID.String, saved.ConfigurationCiphertext, saved.RequiredTemporaryApproval)
-		if err == nil && declaration == nil && (saved.LocalOwned || saved.AllocationOwned) {
-			return nil, ErrServiceAccess
-		}
-		return declaration, err
-	}
-	row, err := q.GetDeploymentServiceConfiguration(ctx, text(service))
-	if err != nil {
-		return nil, publisherLookupError(err, ErrServiceAccess)
-	}
-	c, err := d.openDeploymentConfiguration(row.ControlDeployment)
+	configurations, err := d.serviceConfigurations(ctx, q, []string{service})
 	if err != nil {
 		return nil, err
 	}
-	declaration, ok := c.Services[row.Service]
+	declaration, ok := configurations[service]
 	if !ok {
 		return nil, ErrServiceAccess
 	}
-	if err := normalizeAppliedProjectService(row.Service, &declaration, false); err != nil {
-		return nil, errors.Join(ErrServiceAccess, err)
+	return declaration, nil
+}
+
+// serviceConfigurations uses the same owner validation and declaration decoding
+// for point reads and routing snapshots. each deployment is opened once per read;
+// no configuration or decrypted secret survives the caller's transaction.
+func (d *Database) serviceConfigurations(ctx context.Context, q *controlstatedb.Queries, services []string) (map[string]*ProjectServiceConfiguration, error) {
+	rows, err := q.ListServiceConfigurations(ctx, services)
+	if err != nil {
+		return nil, err
 	}
-	return &declaration, nil
+	result := make(map[string]*ProjectServiceConfiguration, len(rows))
+	var deployed []string
+	for _, saved := range rows {
+		if saved.AllocationOwned && (saved.LocalOwned || saved.DeploymentOwned) ||
+			saved.DeploymentOwned && (saved.LocalOwned || saved.ConfigurationCiphertext != nil || saved.StorageKeyID.Valid) {
+			return nil, ErrServiceAccess
+		}
+		if saved.DeploymentOwned {
+			deployed = append(deployed, saved.ServiceID)
+			continue
+		}
+		declaration, err := d.openServiceConfiguration(saved.ServiceID, saved.Service, saved.StorageKeyID.String, saved.ConfigurationCiphertext, saved.RequiredTemporaryApproval)
+		if err != nil {
+			return nil, err
+		}
+		if declaration == nil && (saved.LocalOwned || saved.AllocationOwned) {
+			return nil, ErrServiceAccess
+		}
+		result[saved.ServiceID] = declaration
+	}
+	if len(deployed) == 0 {
+		return result, nil
+	}
+	bindings, err := q.ListDeploymentServiceConfigurations(ctx, deployed)
+	if err != nil {
+		return nil, err
+	}
+	if len(bindings) != len(deployed) {
+		return nil, ErrServiceAccess
+	}
+	opened := make(map[string]deploymentConfiguration)
+	for _, binding := range bindings {
+		deployment := binding.ControlDeployment
+		c, ok := opened[deployment.ID]
+		if !ok {
+			c, err = d.openDeploymentConfiguration(deployment)
+			if err != nil {
+				return nil, err
+			}
+			opened[deployment.ID] = c
+		}
+		declaration, ok := c.Services[binding.Service]
+		if !ok {
+			return nil, ErrServiceAccess
+		}
+		if err := normalizeAppliedProjectService(binding.Service, &declaration, false); err != nil {
+			return nil, errors.Join(ErrServiceAccess, err)
+		}
+		result[binding.ServiceID.String] = &declaration
+	}
+	return result, nil
 }

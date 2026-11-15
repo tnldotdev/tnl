@@ -1,17 +1,4 @@
 schemas:
-  AuthorizeServiceHTTPVisitorRequest:
-    type: object
-    additionalProperties: false
-    required: [run_number, visitor_connection_id, source_ip, destination_port]
-    properties:
-      run_number:
-        type: string
-        pattern: "^[0-9]+$"
-        x-go-type: int64
-        x-oapi-codegen-extra-tags: { json: "run_number,string" }
-      visitor_connection_id: { type: string, pattern: "^vc_[A-Za-z0-9]{22}$" }
-      source_ip: { type: string, maxLength: 45 }
-      destination_port: { type: integer, enum: [443] }
   ReleaseServiceEndpointRequest:
     type: object
     additionalProperties: false
@@ -466,7 +453,8 @@ schemas:
   ServiceRunSetup:
     type: object
     additionalProperties: false
-    required: [service_id, service_run_id, run_number, run_token, publisher_connections]
+    required:
+      [service_id, service_run_id, run_number, run_token, visitor_source_key, publisher_connections]
     properties:
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
@@ -478,6 +466,12 @@ schemas:
           x-oapi-codegen-extra-tags: { json: "run_number,string" },
         }
       run_token: { type: string, minLength: 1, maxLength: 4096 }
+      visitor_source_key:
+        type: string
+        format: byte
+        minLength: 44
+        maxLength: 44
+        description: Purpose-separated key for checking ingress source proofs for this run.
       publisher_connections:
         {
           type: array,

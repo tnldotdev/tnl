@@ -197,7 +197,7 @@ func (f *connectorFixture) serveConnectorPeer(p *fixtureConnectorPeer, ready cha
 			} else {
 				_ = responder.Respond(update, true)
 			}
-		}, func() { _ = session.Close() }, &permissionGate)
+		}, func(tunnelv1.ConnectorVisitorCompletion) {}, func() { _ = session.Close() }, &permissionGate)
 	})
 	for {
 		stream, err := session.AcceptStream(f.ctx)

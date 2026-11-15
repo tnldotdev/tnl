@@ -38,6 +38,7 @@ type Stream struct {
 	Public            bool
 	Hostname          string
 	HTTPRequests      RequestLimits
+	HTTPProxy         *proxy.Proxy
 	HTTPDrain         httpstream.Drain
 	Kubernetes        KubernetesLimits
 	Authority         string
@@ -304,6 +305,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		admissionDone(nil)
 		return httpVisitor.Frontend.Forward(ctx, secured, HTTPTarget{Address: s.Target, Handler: s.Handler, Transport: transport, Drain: s.HTTPDrain,
 			Mounts: s.Mounts, ResolveTarget: s.ResolveHTTPTarget,
+			Connections: targetConnections(s.HTTPRequests), proxy: s.HTTPProxy,
 			lifetime: ctx, track: trackTarget, enter: enterTargetWork})
 	}
 	authCtx, authDone := observability.PublisherOperation(setup, "visitor_authorization")
@@ -339,7 +341,8 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		done := make(chan struct{})
 		go func() { defer close(done); s.guardVisitor(live, client, nil, secured.ConnectionState(), decision) }()
 		defer func() { cancel(); <-done }()
-		target := HTTPTarget{Address: s.Target, Mounts: s.Mounts, ResolveTarget: s.ResolveHTTPTarget, Transport: transport, connector: connector, lifetime: ctx, track: trackTarget, enter: enterTargetWork}
+		target := HTTPTarget{Address: s.Target, Mounts: s.Mounts, ResolveTarget: s.ResolveHTTPTarget, Transport: transport,
+			Connections: targetConnections(s.HTTPRequests), connector: connector, lifetime: ctx, track: trackTarget, enter: enterTargetWork}
 		wrap := func(next http.Handler) http.Handler {
 			return wrapHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var authorization ConnectorHTTPAuthorization
@@ -347,7 +350,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 					var err error
 					authorization, err = httpProof.HTTPAuthorization(r.Context())
 					if err != nil {
-						DenyHTTP(w, HTTPDecisionStatus(err))
+						DenyHTTP(w, r, HTTPDecisionStatus(err))
 						return
 					}
 					// only the checked admission snapshot supplies the source.
@@ -366,12 +369,12 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 				authDone(managedAuthorizationError(decision, err))
 				cancel()
 				if err != nil || !decision.Allowed || !decision.ValidUntil.After(time.Now()) {
-					DenyHTTP(w, HTTPDecisionStatus(err))
+					DenyHTTP(w, r, HTTPDecisionStatus(err))
 					return
 				}
 				if strings.HasPrefix(r.URL.Path, "/__tnl/") {
 					if httpProof == nil || s.ConnectorHTTP == nil {
-						DenyHTTP(w, http.StatusForbidden)
+						DenyHTTP(w, r, http.StatusForbidden)
 						return
 					}
 					// reserved work spends no application budget and never opens
@@ -383,7 +386,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 				}
 				if s.AdmitRequest != nil {
 					if err := s.AdmitRequest(r); err != nil {
-						DenyHTTP(w, http.StatusServiceUnavailable)
+						DenyHTTP(w, r, http.StatusServiceUnavailable)
 						return
 					}
 				}

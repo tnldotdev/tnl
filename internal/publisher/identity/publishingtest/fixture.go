@@ -60,7 +60,6 @@ type Fixture struct {
 	URL, Namespace, DomainID, OwnerToken      string
 	HTTP                                      *http.Client
 	Enrollments, Allocations, Runs, Deletions atomic.Int32
-	VisitorDecisions                          atomic.Int32
 	mu                                        sync.Mutex
 	backend                                   *testutil.PublishingFixture
 	seed                                      *clientcontrol.Client
@@ -444,9 +443,6 @@ func (f *Fixture) run(w http.ResponseWriter, r *http.Request, parts []string) {
 		f.browser(w, r, run, parts)
 		return
 	}
-	if len(parts) == 6 && parts[5] == "authorize-http-visitor" {
-		f.VisitorDecisions.Add(1)
-	}
 	f.forward(w, r, false)
 }
 
@@ -506,6 +502,9 @@ func (f *Fixture) policy(w http.ResponseWriter, r *http.Request) {
 	policy := controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: saved.Endpoint.Hostname, Port: 443, Issuer: f.URL,
 		VisitorPolicyRevision: 1, MetadataRevision: saved.TrustRevision, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second),
 		Enabled: saved.Enabled, Anonymous: anonymous, VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "publishing-fixture", PublicKey: f.visitorKey.Public().(ed25519.PublicKey)}}}
+	if saved.Endpoint.Public {
+		policy.PublicEndpoint = &controlv1.VisitorPublicEndpoint{Hostname: saved.Endpoint.Hostname, Port: saved.Endpoint.Port, EndpointRevision: saved.EndpointRevision}
+	}
 	if saved.ExpiresAt != nil {
 		policy.ConnectionDeadline = saved.ExpiresAt
 		if saved.ExpiresAt.Before(policy.ValidUntil) {

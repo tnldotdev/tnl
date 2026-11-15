@@ -93,7 +93,7 @@ func TestIntegrationServiceEndpointChangesRetainConnectorAuthority(t *testing.T)
 	}
 	admit := func(port int) (PublicServiceVisitorAdmission, error) {
 		return d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID,
-			mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), "", port, netip.MustParseAddr("192.0.2.10"), now)
+			mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), port, netip.MustParseAddr("192.0.2.10"), now)
 	}
 	if _, err := admit(first.Endpoint.Port); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("stale public destination retained authority", err)

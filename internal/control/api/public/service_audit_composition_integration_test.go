@@ -17,6 +17,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,9 +51,10 @@ func (s auditCompositionSink) Observe(o serviceaudit.Observation) bool {
 	return true
 }
 
-// only the relay transport and application are local to this fixture. native
-// HTTP authorization, ingress admission, producers, queue and audit HTTP use
-// production code against the same database and exact ingress lease.
+// relay transport and the application are local to this fixture. routing,
+// HTTP access, capacity callbacks, request producers, queue and audit HTTP use
+// production code against the same database and exact ingress lease. connection
+// lifecycle producers are exercised with the run owner in daemon runtime tests.
 type auditCompositionTarget struct {
 	tls         *tls.Config
 	ctx         context.Context
@@ -61,11 +63,11 @@ type auditCompositionTarget struct {
 	workers     sync.WaitGroup
 }
 
-func (f *auditCompositionTarget) OpenPrivate(_ context.Context, _ ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
-	return f.open(header), nil
+func (f *auditCompositionTarget) OpenService(_ context.Context, _ ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) (net.Conn, error) {
+	return f.open(header, reserveCapacity), nil
 }
 
-func (f *auditCompositionTarget) open(header tunnelv1.ServiceForwardingHeader) net.Conn {
+func (f *auditCompositionTarget) open(header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) net.Conn {
 	front, back := net.Pipe()
 	f.workers.Add(1)
 	go func() {
@@ -83,6 +85,7 @@ func (f *auditCompositionTarget) open(header tunnelv1.ServiceForwardingHeader) n
 		}
 		frontend := f.frontend
 		frontend.Header = header
+		frontend.ReserveCapacity = reserveCapacity
 		_ = frontend.Forward(f.ctx, secure, servicestream.HTTPTarget{Handler: f.application})
 	}()
 	return front
@@ -175,23 +178,20 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	defer cancel()
 	now := time.Now().UTC()
 	service, prepared, run, publisher := fixture.service, fixture.prepared, fixture.run, fixture.publisher
-	// a pending HTTP transport has no person/device identity. only actual
-	// promotion permits an allowed transport audit; it never grants app access.
+	// ingress routing grants no application access. only the exact publisher
+	// run may report an allowed HTTP connection, with no control visitor row.
 	pendingID, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending, err := d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, controlstate.PrimaryIngressPoolID, pendingID, prepared.Hostname, 443, netip.MustParseAddr("127.0.0.1"), now)
-	if err != nil {
+	snapshot, err := d.ReadIngressServices(ctx, lease.IngressLeaseIdentity, now)
+	if err != nil || len(snapshot.Runs) == 0 {
 		t.Fatal(err)
 	}
-	unpromoted := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service.ID, ServiceKind: "service", RunID: pending.RunID, RunNumber: pending.RunNumber,
+	unpromoted := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service.ID, ServiceKind: "service", RunID: run.RunID, RunNumber: run.RunNumber,
 		VisitorConnectionID: pendingID, SourceIP: "127.0.0.1", EventType: "connection.open", OccurredAt: now, Outcome: "allowed"}
 	if _, err := d.IngestIngressServiceObservations(ctx, lease.IngressLeaseIdentity, serviceaudit.Batch{Events: []serviceaudit.Observation{unpromoted}}, now); !errors.Is(err, controlstate.ErrServiceAuditAccess) {
 		t.Fatal("unpromoted HTTP transport reported allowed access", err)
-	}
-	if err := d.ClosePublicServiceVisitor(ctx, lease.IngressLeaseIdentity, pendingID, now); err != nil {
-		t.Fatal(err)
 	}
 	var dropped uint64
 	rejected, retried := 0, false
@@ -224,12 +224,15 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 		Control: control, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID},
 		RunID: run.RunID, Number: run.RunNumber, Token: credentials.ServiceRunToken(run.Token),
 		Hostname: prepared.Hostname, Port: 443,
+		AuditSink: sink,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer closeHTTP()
+	var applications atomic.Int32
 	target := &auditCompositionTarget{tls: serverTLS, ctx: ctx, frontend: frontend, application: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		applications.Add(1)
 		if r.Header.Get(httpaccess.VisitorTokenHeader) != "" {
 			t.Error("visitor permission reached the target")
 		}
@@ -262,6 +265,15 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve() }()
+	routingCtx, stopRouting := context.WithCancel(ctx)
+	routingDone := make(chan error, 1)
+	go func() { routingDone <- server.RefreshServices(routingCtx) }()
+	defer func() {
+		stopRouting()
+		if err := <-routingDone; err != nil {
+			t.Error("join routing observer", err)
+		}
+	}()
 	t.Cleanup(func() {
 		stop, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -273,6 +285,20 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 		}
 		target.workers.Wait()
 	})
+	ready, stopReady := context.WithTimeout(ctx, 3*time.Second)
+	tick := time.NewTicker(time.Millisecond)
+	for server.RoutingObservedAt().IsZero() && ready.Err() == nil {
+		select {
+		case <-tick.C:
+		case <-ready.Done():
+		}
+	}
+	tick.Stop()
+	if ready.Err() != nil {
+		stopReady()
+		t.Fatal("ingress did not apply prepared routing", ready.Err())
+	}
+	stopReady()
 	valid, accepted := net.Pipe()
 	defer valid.Close()
 	forwarded := make(chan error, 1)
@@ -305,10 +331,10 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	select {
 	case opened = <-sink.events:
 	case <-ctx.Done():
-		t.Fatal("direct transport was not promoted", ctx.Err())
+		t.Fatal("direct HTTP request did not emit its access decision", ctx.Err())
 	}
-	if opened.Outcome != "allowed" || opened.RunID != run.RunID {
-		t.Fatal("direct admission lost its run")
+	if opened.EventType != "http.decision" || opened.Outcome != "allowed" || opened.RunID != run.RunID {
+		t.Fatal("direct HTTP decision lost its exact run")
 	}
 	_ = valid.Close()
 	select {
@@ -316,34 +342,43 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	case <-ctx.Done():
 		t.Fatal("direct producer did not join")
 	}
-	visitor, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	metadata, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("127.0.0.1:40001"), Destination: netip.MustParseAddrPort("203.0.113.1:443")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = visitor.Write(metadata); err != nil {
-		_ = visitor.Close()
-		t.Fatal(err)
-	}
-	publicTLS := clientTLS.Clone()
-	secure := tls.Client(visitor, publicTLS)
-	defer secure.Close()
-	_ = secure.SetDeadline(time.Now().Add(5 * time.Second))
-	if _, err = fmt.Fprintf(secure, "GET /never-audit-path?secret=%s HTTP/1.1\r\nHost: %s\r\n%s: %s\r\nConnection: close\r\n\r\n", secretPayload, prepared.Hostname, httpaccess.VisitorTokenHeader, permission); err != nil {
-		t.Fatal(err)
-	}
-	response, err := http.ReadResponse(bufio.NewReader(secure), nil)
-	if err != nil {
-		t.Fatal("public stream did not carry a response", err)
-	}
-	_, _ = io.Copy(io.Discard, response.Body)
-	_ = response.Body.Close()
-	_ = secure.Close()
-	if response.StatusCode != 200 {
-		t.Fatal("public visitor failed", response.StatusCode)
+	// retain both original application requests and add request denials that
+	// never reach the target. open/close accounting belongs to the run owner,
+	// not an ingress HTTP admission row.
+	for _, test := range []struct {
+		credential string
+		status     int
+	}{{permission, http.StatusOK}, {"", http.StatusForbidden}, {"invalid-secret", http.StatusForbidden}} {
+		visitor, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		metadata, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("127.0.0.1:40001"), Destination: netip.MustParseAddrPort("203.0.113.1:443")})
+		if err != nil {
+			_ = visitor.Close()
+			t.Fatal(err)
+		}
+		if _, err = visitor.Write(metadata); err != nil {
+			_ = visitor.Close()
+			t.Fatal(err)
+		}
+		secure := tls.Client(visitor, clientTLS.Clone())
+		_ = secure.SetDeadline(time.Now().Add(5 * time.Second))
+		if _, err = fmt.Fprintf(secure, "GET /never-audit-path?secret=%s HTTP/1.1\r\nHost: %s\r\n%s: %s\r\nConnection: close\r\n\r\n", secretPayload, prepared.Hostname, httpaccess.VisitorTokenHeader, test.credential); err != nil {
+			_ = secure.Close()
+			t.Fatal(err)
+		}
+		response, err := http.ReadResponse(bufio.NewReader(secure), nil)
+		if err != nil {
+			_ = secure.Close()
+			t.Fatal("public stream did not carry a response", err)
+		}
+		_, readErr := io.Copy(io.Discard, response.Body)
+		bodyErr := response.Body.Close()
+		_ = secure.Close()
+		if readErr != nil || bodyErr != nil || response.StatusCode != test.status {
+			t.Fatal("public visitor lost its complete response or access decision", response.StatusCode, readErr, bodyErr)
+		}
 	}
 	events := []serviceaudit.Observation{opened}
 	for range 3 {
@@ -357,13 +392,16 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	if n, _ := queue.Pending(); n != 5 {
 		t.Fatalf("events did not share one batch: %d", n)
 	}
+	if applications.Load() != 2 {
+		t.Fatal("HTTP audit denials reached the application or lost an original request", applications.Load())
+	}
 	if err = queue.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if dropped != 1 || rejected != 1 || !retried {
 		t.Fatalf("wrong isolation/retry counts: dropped=%d rejected=%d retried=%t", dropped, rejected, retried)
 	}
-	serviceEvents := 0
+	serviceEvents, allowed, denied := 0, 0, 0
 	for _, o := range events {
 		var e serviceaudit.Event
 		var raw []byte
@@ -380,6 +418,20 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 		if e.ServiceID != service.ID || e.RunID != run.RunID || e.PublisherIdentityID != publisher.ID || e.ActorIdentityID != "" || e.DeviceID != "" {
 			t.Fatalf("admitted stream lost its verified service binding: %+v", e)
 		}
+		if e.EventType != "http.decision" {
+			t.Fatal("request audit invented a connection lifecycle event", e.EventType)
+		}
+		switch e.Outcome {
+		case "allowed":
+			allowed++
+		case "denied":
+			if e.Reason != "authorization" {
+				t.Fatal("request denial lost its authorization classification", e.Reason)
+			}
+			denied++
+		default:
+			t.Fatal("request audit lost its decision outcome", e.Outcome)
+		}
 		for _, secret := range []string{secretPayload, "never-audit-path", fixture.enrollmentKey, run.Token, permission} {
 			if strings.Contains(string(raw), secret) {
 				t.Fatal("audit retained credentials or application bytes")
@@ -387,7 +439,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 		}
 	}
 	var invalid int
-	if err = inspect.QueryRow(ctx, `SELECT count(*) FROM control.service_audit_events WHERE id=$1 OR run_id=$2`, bad.EventID, badRun).Scan(&invalid); err != nil || invalid != 0 || serviceEvents != 4 {
+	if err = inspect.QueryRow(ctx, `SELECT count(*) FROM control.service_audit_events WHERE id=$1 OR run_id=$2`, bad.EventID, badRun).Scan(&invalid); err != nil || invalid != 0 || serviceEvents != 4 || allowed != 2 || denied != 2 {
 		t.Fatalf("invalid scope persisted or valid events missing: invalid=%d service=%d %v", invalid, serviceEvents, err)
 	}
 }

@@ -50,13 +50,25 @@ func IssueVisitorSourceAuthority(master [32]byte, authority tunnelv1.VisitorSour
 // SignVisitorSource spends only the installed delegation's deadline. it never
 // extends authority after renewal or substitutes a capacity count for permission.
 func SignVisitorSource(key [32]byte, authority tunnelv1.VisitorSourceAuthority, sequence uint64, binding tunnelv1.VisitorSourceBinding, now time.Time) (tunnelv1.VisitorSourceProof, error) {
-	proof := tunnelv1.VisitorSourceProof{Authority: authority, Sequence: sequence}
+	proof := tunnelv1.VisitorSourceProof{Authority: authority, Sequence: sequence, ObservedAt: now.UnixMicro()}
 	input, err := proof.SigningBytes(binding)
 	if err != nil || key == ([32]byte{}) || authority.ValidUntil <= now.Unix() {
 		return tunnelv1.VisitorSourceProof{}, ErrVisitorSource
 	}
 	proof.MAC = sourceMAC(key, "tnl-service-visitor-source-proof-v1", input)
 	return proof, nil
+}
+
+// VerifyVisitorSourceAuthority checks a control-issued delegation at its use time.
+// it proves routing scope, never visitor access or a new serving deadline.
+func VerifyVisitorSourceAuthority(master [32]byte, authority tunnelv1.VisitorSourceAuthority, now time.Time) error {
+	input, err := authority.SigningBytes()
+	if err != nil || master == ([32]byte{}) || authority.ValidUntil <= now.Unix() ||
+		authority.ValidUntil > now.Add(PolicyLifetime).Unix() ||
+		!hmac.Equal(authority.MAC, sourceMAC(master, "tnl-service-visitor-source-authority-v1", input)) {
+		return ErrVisitorSource
+	}
+	return nil
 }
 
 // VerifyVisitorSource authenticates origin, not visitor access. the caller must
@@ -66,13 +78,16 @@ func SignVisitorSource(key [32]byte, authority tunnelv1.VisitorSourceAuthority, 
 // cannot roll back the publisher's newer access policy. a future delegation may
 // not outrun the policy the publisher has actually installed.
 func VerifyVisitorSource(master [32]byte, proof tunnelv1.VisitorSourceProof, binding tunnelv1.VisitorSourceBinding, policyRevision int64, now time.Time) error {
-	input, err := proof.Authority.SigningBytes()
-	if err != nil || master == ([32]byte{}) || policyRevision < 1 || proof.Authority.VisitorPolicyRevision > policyRevision || proof.Authority.ValidUntil <= now.Unix() ||
-		proof.Authority.ValidUntil > now.Add(PolicyLifetime).Unix() ||
-		!hmac.Equal(proof.Authority.MAC, sourceMAC(master, "tnl-service-visitor-source-authority-v1", input)) {
+	if policyRevision < 1 || proof.Authority.VisitorPolicyRevision > policyRevision {
 		return ErrVisitorSource
 	}
-	input, err = proof.SigningBytes(binding)
+	if err := VerifyVisitorSourceAuthority(master, proof.Authority, now); err != nil {
+		return err
+	}
+	if err := VerifyVisitorSourceAuthority(master, proof.Authority, time.UnixMicro(proof.ObservedAt)); err != nil {
+		return err
+	}
+	input, err := proof.SigningBytes(binding)
 	if err != nil || !hmac.Equal(proof.MAC, sourceMAC(visitorSourceChildKey(master, proof.Authority), "tnl-service-visitor-source-proof-v1", input)) {
 		return ErrVisitorSource
 	}

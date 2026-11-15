@@ -41,7 +41,7 @@ func saveConnectorPeerAuditBinding(ctx context.Context, tx pgx.Tx, pair controls
 
 // IngestServiceRunObservations accepts facts from the owning publisher, not a
 // connector or relay. connector identity and source come from control's installed
-// pair; HTTP decisions carry no actor identity. reports never renew authority.
+// pair; HTTP observations carry no actor identity. reports never renew authority.
 func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, runID, token string, number int64, batch serviceaudit.Batch, now time.Time) (result ServiceObservationResult, retErr error) {
 	if err := validateObservationBatch(batch, now); err != nil {
 		return result, err
@@ -102,11 +102,14 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 		}
 		e := observationEvent(o)
 		e.TeamID, e.PublisherIdentityID = run.TeamID.String, run.PublisherIdentityID
-		if o.EventType == "http.decision" {
-			// the HTTP frontend reports request decisions under its exact run
-			// credential. reports never grant access or supply an actor identity.
-			if protocol != "http" || o.PairID != "" || o.DeliveryGeneration != 0 ||
-				o.OccurredAt.Before(run.CreatedAt.Time.Add(-time.Second)) || o.OccurredAt.After(until) {
+		if protocol == "http" && o.PairID == "" {
+			// the HTTP frontend reports requests and public connection lifetime
+			// under its exact run credential. it supplies no actor identity.
+			deadline := until
+			if o.EventType == "connection.close" || o.EventType == "connection.open" && o.Outcome != "allowed" {
+				deadline = deadline.Add(serviceObservationDeliveryGrace)
+			}
+			if o.DeliveryGeneration != 0 || o.OccurredAt.Before(run.CreatedAt.Time.Add(-time.Second)) || o.OccurredAt.After(deadline) {
 				return ServiceObservationResult{}, ErrServiceAuditAccess
 			}
 			n, err := insertServiceAuditCount(ctx, tx, e, now)
@@ -116,6 +119,9 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 			result.Accepted += int(n)
 			result.Duplicates += 1 - int(n)
 			continue
+		}
+		if o.EventType == "http.decision" {
+			return ServiceObservationResult{}, ErrServiceAuditAccess
 		}
 		if o.PairID == "" || o.EventType != "connection.open" && o.EventType != "connection.close" {
 			return ServiceObservationResult{}, ErrServiceAuditAccess

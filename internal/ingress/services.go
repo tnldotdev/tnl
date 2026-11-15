@@ -1,0 +1,377 @@
+package ingress
+
+import (
+	"context"
+	"errors"
+	"net/netip"
+	"slices"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
+)
+
+type ServiceRoutingClient interface {
+	ReadIngressServices(context.Context, string, ingressv1.IngressLeaseIdentity) (ingressv1.IngressServices, error)
+}
+
+type serviceEndpoint struct {
+	hostname string
+	port     int
+}
+
+// serviceRoute is checked once when control's snapshot arrives. its source key
+// signs socket addresses only; it cannot authorize a visitor.
+type serviceRoute struct {
+	run                   ingressv1.IngressServiceRun
+	until                 time.Time
+	ip                    *ippolicy.Policy
+	source                tunnelv1.VisitorSourceAuthority
+	sourceKey             [32]byte
+	traffic               TrafficLimits
+	observedAt, startedAt time.Time
+	sequence              *sourceCounter
+}
+
+func (serviceRoute) String() string   { return "service routing" }
+func (serviceRoute) GoString() string { return "service routing" }
+
+func (r *serviceRoute) authorityTime(now time.Time) time.Time {
+	return r.observedAt.Add(now.Sub(r.startedAt))
+}
+
+type routedVisitor struct {
+	runID            string
+	endpointRevision int64
+	source           netip.Addr
+	until            time.Time
+	stop             func()
+}
+
+type sourceCounter struct {
+	next       atomic.Uint64
+	validUntil int64
+}
+
+// ServiceRouting keeps short-lived serving information for one ingress process.
+// refresh replaces the whole snapshot; failed refreshes never extend its life.
+type ServiceRouting struct {
+	mu             sync.Mutex
+	lease          ingressv1.IngressLease
+	observedAt     time.Time
+	startedAt      time.Time
+	validUntil     time.Time
+	runs           map[string]*serviceRoute
+	endpoints      map[serviceEndpoint][]*serviceRoute
+	visitors       map[*routedVisitor]struct{}
+	stopping       []*routedVisitor
+	changed        chan struct{}
+	done           chan struct{}
+	sourceCounters map[[32]byte]*sourceCounter
+	closed         bool
+}
+
+func NewServiceRouting() *ServiceRouting {
+	r := &ServiceRouting{
+		runs: make(map[string]*serviceRoute), endpoints: make(map[serviceEndpoint][]*serviceRoute),
+		visitors: make(map[*routedVisitor]struct{}), changed: make(chan struct{}, 1), done: make(chan struct{}),
+		sourceCounters: make(map[[32]byte]*sourceCounter),
+	}
+	go r.expireVisitors()
+	return r
+}
+
+// RefreshServices runs independently of arriving visitors. it also removes
+// finished traffic budgets without putting a control call on connection setup.
+func (s *Server) RefreshServices(ctx context.Context) error {
+	r := s.services
+	ctx, cancelRefresh := context.WithCancel(ctx)
+	defer cancelRefresh()
+	stopped := make(chan struct{})
+	stop := context.AfterFunc(s.openContext, func() { defer close(stopped); cancelRefresh() })
+	defer func() {
+		if !stop() {
+			<-stopped
+		}
+	}()
+	defer r.Close()
+	for {
+		delay := min(s.config.RecheckInterval, time.Second)
+		lease := s.config.CurrentLease()
+		if lease.IngressLeaseRevision > 0 && !lease.Draining && lease.LeaseExpiresAt.After(time.Now()) {
+			started := time.Now()
+			call, cancel := context.WithTimeout(ctx, min(s.config.RecheckTimeout, 2*time.Second))
+			snapshot, err := s.config.Control.ReadIngressServices(call, lease.IngressId, ingressv1.IngressLeaseIdentity{
+				IngressId: lease.IngressId, IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision,
+			})
+			if err == nil {
+				err = context.Cause(call)
+			}
+			if deadline, ok := call.Deadline(); ok && !time.Now().Before(deadline) {
+				err = errors.Join(err, context.DeadlineExceeded)
+			}
+			if err == nil && samePrivateLease(lease, s.config.CurrentLease()) {
+				err = r.apply(started, lease, snapshot)
+				if err == nil {
+					s.retireClosedTrafficRuns(call, lease)
+				}
+			}
+			cancel()
+			if err != nil && ctx.Err() == nil && s.config.OnError != nil {
+				s.config.OnError(err)
+			}
+		} else {
+			delay = min(delay, 100*time.Millisecond)
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil
+		case <-timer.C:
+		}
+	}
+}
+
+func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, snapshot ingressv1.IngressServices) error {
+	duration := snapshot.ValidUntil.Sub(snapshot.ObservedAt)
+	now := time.Now()
+	if started.IsZero() || now.Before(started) || duration <= 0 || duration > visitortoken.PolicyLifetime ||
+		!now.Before(started.Add(duration)) || !lease.LeaseExpiresAt.After(now) || lease.Draining {
+		return ErrServiceAdmission
+	}
+	runs := make(map[string]*serviceRoute, len(snapshot.Runs))
+	endpoints := make(map[serviceEndpoint][]*serviceRoute)
+	for _, run := range snapshot.Runs {
+		if !serviceendpoint.Valid(string(run.Protocol), run.Hostname, run.Port, true) ||
+			run.EndpointRevision < 1 || run.RunNumber < 1 || runs[run.ServiceRunId] != nil ||
+			run.ValidUntil.After(snapshot.ValidUntil) || !run.ValidUntil.After(snapshot.ObservedAt) ||
+			len(run.SourceKey) != 32 || len(run.ConnectedRelays) == 0 || len(run.ConnectedRelays) > 2 ||
+			run.Anonymous && run.Protocol != "http" {
+			return ErrServiceAdmission
+		}
+		traffic, err := routingTraffic(run.Traffic)
+		if err != nil {
+			return err
+		}
+		if err := validateServiceRelays(run.ConnectedRelays, snapshot.ObservedAt); err != nil {
+			return err
+		}
+		source, err := tunnelv1.ReadVisitorSourceAuthority(run.SourceAuthority)
+		if err != nil || source.ServiceID != run.ServiceId || source.ServiceRunID != run.ServiceRunId ||
+			source.RunNumber != uint64(run.RunNumber) || source.EndpointRevision != run.EndpointRevision || source.IngressID != lease.IngressId ||
+			source.IngressRunID != lease.IngressRunId || source.IngressLeaseRevision != uint64(lease.IngressLeaseRevision) ||
+			source.ValidUntil > run.ValidUntil.Unix() || source.ValidUntil <= snapshot.ObservedAt.Unix() {
+			return ErrServiceAdmission
+		}
+		// use the request's start time so a slow response spends, rather than
+		// extends, the serving deadline. the ingress lease may end sooner.
+		until := started.Add(time.Unix(source.ValidUntil, 0).Sub(snapshot.ObservedAt))
+		route := &serviceRoute{run: run, source: source, traffic: traffic, until: privateMinTime(until, lease.LeaseExpiresAt),
+			observedAt: snapshot.ObservedAt, startedAt: started}
+		copy(route.sourceKey[:], run.SourceKey)
+		route.run.ConnectedRelays = slices.Clone(run.ConnectedRelays)
+		route.run.SourceKey, route.run.SourceAuthority, route.run.Ip = nil, nil, nil
+		if route.sourceKey == [32]byte{} {
+			return ErrServiceAdmission
+		}
+		if run.Ip != nil {
+			if len(run.Ip.Key) != 32 || len(run.Ip.Prefixes) > 2048 {
+				return ErrServiceAdmission
+			}
+			key := [32]byte(run.Ip.Key)
+			prefixes := make([]ippolicy.Entry, 0, len(run.Ip.Prefixes))
+			for _, prefix := range run.Ip.Prefixes {
+				prefixes = append(prefixes, ippolicy.Entry{Family: string(prefix.Family), Bits: prefix.PrefixLength, Digest: prefix.Digest})
+			}
+			ip, err := ippolicy.New(key, prefixes)
+			if err != nil {
+				return err
+			}
+			route.ip = &ip
+		}
+		endpoint := serviceEndpoint{port: run.Port}
+		if run.Protocol == "http" {
+			endpoint.hostname = run.Hostname
+		}
+		if previous := endpoints[endpoint]; len(previous) != 0 && previous[0].run.ServiceId != run.ServiceId {
+			return ErrServiceAdmission
+		}
+		runs[run.ServiceRunId] = route
+		endpoints[endpoint] = append(endpoints[endpoint], route)
+	}
+	r.mu.Lock()
+	now = time.Now()
+	if r.closed || started.Before(r.startedAt) || !snapshot.ObservedAt.After(r.observedAt) ||
+		!now.Before(started.Add(duration)) || !lease.LeaseExpiresAt.After(now) ||
+		r.lease.IngressLeaseRevision > lease.IngressLeaseRevision {
+		r.mu.Unlock()
+		return ErrServiceAdmission
+	}
+	if r.lease.IngressLeaseRevision != 0 && !samePrivateLease(r.lease, lease) {
+		for visitor := range r.visitors {
+			r.stopping = append(r.stopping, visitor)
+		}
+		clear(r.visitors)
+	}
+	// keep sequence numbers for an unchanged authority even if a run briefly
+	// disappears from routing. another service cannot spend its replay window.
+	for key, counter := range r.sourceCounters {
+		if counter.validUntil <= snapshot.ObservedAt.Unix() {
+			delete(r.sourceCounters, key)
+		}
+	}
+	for _, route := range runs {
+		key := [32]byte(route.source.MAC)
+		counter := r.sourceCounters[key]
+		if counter == nil {
+			counter = &sourceCounter{validUntil: route.source.ValidUntil}
+			r.sourceCounters[key] = counter
+		}
+		route.sequence = counter
+	}
+	r.lease, r.startedAt, r.observedAt, r.runs, r.endpoints = lease, started, snapshot.ObservedAt, runs, endpoints
+	r.validUntil = privateMinTime(started.Add(duration), lease.LeaseExpiresAt)
+	r.stopping = append(r.stopping, r.expireVisitorsLocked(now)...)
+	r.wake()
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *ServiceRouting) lookup(hostname string, port int, lease ingressv1.IngressLease, now time.Time) []*serviceRoute {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed || !samePrivateLease(r.lease, lease) || !lease.LeaseExpiresAt.After(now) || lease.Draining {
+		return nil
+	}
+	var result []*serviceRoute
+	for _, route := range r.endpoints[serviceEndpoint{hostname: hostname, port: port}] {
+		if route.until.After(now) {
+			result = append(result, route)
+		}
+	}
+	return result
+}
+
+func (r *ServiceRouting) bind(route *serviceRoute, source netip.Addr, stop func()) (func(), error) {
+	r.mu.Lock()
+	now := time.Now()
+	current := r.runs[route.run.ServiceRunId]
+	if r.closed || current == nil || current.run.EndpointRevision != route.run.EndpointRevision || stop == nil ||
+		!route.until.After(now) || !current.until.After(now) || current.ip != nil && !current.ip.Allows(source) {
+		r.mu.Unlock()
+		return nil, ErrServiceAdmission
+	}
+	visitor := &routedVisitor{runID: route.run.ServiceRunId, endpointRevision: route.run.EndpointRevision,
+		source: source, until: current.until, stop: stop}
+	r.visitors[visitor] = struct{}{}
+	r.wake()
+	r.mu.Unlock()
+	return sync.OnceFunc(func() {
+		r.mu.Lock()
+		delete(r.visitors, visitor)
+		r.mu.Unlock()
+	}), nil
+}
+
+func (s *Server) RoutingReady(now time.Time) bool {
+	r := s.services
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	lease := s.config.CurrentLease()
+	return !r.closed && samePrivateLease(r.lease, lease) && !lease.Draining &&
+		r.validUntil.After(now) && lease.LeaseExpiresAt.After(now)
+}
+
+// RoutingObservedAt is control's timestamp for the last applied snapshot.
+// reading it does not fetch or extend routing authority.
+func (s *Server) RoutingObservedAt() time.Time {
+	s.services.mu.Lock()
+	defer s.services.mu.Unlock()
+	return s.services.observedAt
+}
+
+func (r *ServiceRouting) expireVisitorsLocked(now time.Time) []*routedVisitor {
+	var stopped []*routedVisitor
+	for visitor := range r.visitors {
+		current := r.runs[visitor.runID]
+		if !visitor.until.After(now) || current == nil || current.run.EndpointRevision != visitor.endpointRevision ||
+			!current.until.After(now) || current.ip != nil && !current.ip.Allows(visitor.source) {
+			delete(r.visitors, visitor)
+			stopped = append(stopped, visitor)
+		} else {
+			visitor.until = current.until
+		}
+	}
+	return stopped
+}
+
+// one worker owns expiry and connection stops. Close wakes it and waits for it;
+// no timer callback or connection stop can outlive the routing owner.
+func (r *ServiceRouting) expireVisitors() {
+	defer close(r.done)
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	for {
+		r.mu.Lock()
+		now := time.Now()
+		stopped := append(r.stopping, r.expireVisitorsLocked(now)...)
+		r.stopping = nil
+		closed := r.closed
+		var next time.Time
+		for visitor := range r.visitors {
+			if closed {
+				stopped = append(stopped, visitor)
+			} else if next.IsZero() || visitor.until.Before(next) {
+				next = visitor.until
+			}
+		}
+		if closed {
+			clear(r.visitors)
+		}
+		r.mu.Unlock()
+		stopRoutedVisitors(stopped)
+		if closed {
+			return
+		}
+		var expiry <-chan time.Time
+		if !next.IsZero() {
+			timer.Reset(time.Until(next))
+			expiry = timer.C
+		}
+		select {
+		case <-r.changed:
+			timer.Stop()
+		case <-expiry:
+		}
+	}
+}
+
+func (r *ServiceRouting) Close() {
+	r.mu.Lock()
+	r.closed = true
+	clear(r.runs)
+	clear(r.endpoints)
+	clear(r.sourceCounters)
+	r.wake()
+	r.mu.Unlock()
+	<-r.done
+}
+
+func (r *ServiceRouting) wake() {
+	select {
+	case r.changed <- struct{}{}:
+	default:
+	}
+}
+
+func stopRoutedVisitors(visitors []*routedVisitor) {
+	for _, visitor := range visitors {
+		visitor.stop()
+	}
+}

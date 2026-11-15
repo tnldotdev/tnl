@@ -65,6 +65,11 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 	}
 	team, guestID, policy.Hostname, policy.Port = row.TeamID.String, row.GuestID.String, row.CertificateHostname, int(serviceendpoint.PermissionPort(row.Protocol))
 	policy.MetadataRevision = row.TrustRevision
+	if row.Public {
+		policy.PublicEndpoint = &controlv1.VisitorPublicEndpoint{
+			Hostname: row.CertificateHostname, Port: int(row.ServicePort.Int32), EndpointRevision: row.EndpointRevision,
+		}
+	}
 	policy.Enabled = row.Enabled && !row.DeletedAt.Valid && (!row.ExpiresAt.Valid || row.ExpiresAt.Time.After(now))
 	settings, err := d.serviceHTTPSettings(ctx, q, scope.ID)
 	if err != nil {
@@ -226,10 +231,10 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 	if scope.Kind != visitorscope.Service {
 		return result, ErrVisitorPolicy
 	}
-	if err := lockServiceAdmission(ctx, tx, scope.ID); err != nil {
+	if err := lockPublisherVisitorPolicy(ctx, tx, scope.ID); err != nil {
 		return result, err
 	}
-	row, err := d.serviceRunAuthorization(ctx, tx, q, scope.ID, run, token, now)
+	row, err := d.serviceRunObservationAuthorization(ctx, tx, q, scope.ID, run, token, now)
 	if err != nil {
 		return result, err
 	}

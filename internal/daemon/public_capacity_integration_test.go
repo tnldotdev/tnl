@@ -52,7 +52,9 @@ func TestIntegrationPublicRunCapacity(t *testing.T) {
 					process := startIntegrationProcessWithOptions(t, second, integrationProcessOptions{serviceHTTPClient: f.serviceHTTP,
 						relayClientTLS: f.roots, owner: owner, listeners: listeners})
 					waitForProcessReady(t, process)
-					visitors = []*integrationVisitor{f.visitor, newIntegrationVisitor(t, f.pebble.roots, second.IngressListen, owner)}
+					public := serviceRuntimeListener(t, owner)
+					startSplitIngressProxy(t, owner, public, second.IngressListen)
+					visitors = []*integrationVisitor{f.visitor, newIntegrationVisitor(t, f.pebble.roots, public.Addr().String(), owner)}
 					ready = func(t *testing.T, handle *integrationPublisher) controlv1.ServiceRunPreparation {
 						event := waitForPublisherReady(t, handle)
 						if event.Hostname != f.identity.hostname {
@@ -60,6 +62,7 @@ func TestIntegrationPublicRunCapacity(t *testing.T) {
 						}
 						waitForReadyPublisherConnections(t, f.inspect, event.ServiceId, event.RunNumber, 2)
 						waitForIngressRoutingCurrent(t, f.inspect, 2)
+						waitForAppliedServiceRouting(t, f.inspect, event.ServiceRunId, f.ingress.metricsAddress, process.metricsAddress)
 						return event
 					}
 				}
@@ -85,7 +88,9 @@ func TestIntegrationPublicRunCapacity(t *testing.T) {
 				} else {
 					quic, _ = disabledIntegrationConnector("QUIC disabled by capacity test")
 				}
-				_, config := identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{})
+				_, config := identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{
+					Http: &controlv1.ProjectServiceHTTP{Limits: &controlv1.ProjectHTTPApplicationLimits{Concurrency: new(capacity)}},
+				})
 				native, ok := config.Control.(*publisheridentity.Native)
 				if !ok {
 					t.Fatal("capacity fixture did not prepare a native publisher")
@@ -126,7 +131,7 @@ func TestIntegrationPublicRunCapacity(t *testing.T) {
 					if standalone && err != nil {
 						// the one ingress can exhaust its local limit before opening
 						// publisher TLS. split ingress has room locally and reaches
-						// the shared publisher counter instead.
+						// the shared HTTP request counter instead.
 						continue
 					}
 					if err != nil {

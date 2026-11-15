@@ -60,6 +60,46 @@ trust settings. Authentication between server roles does not replace visitor TLS
 Ingress may try another eligible relay before sending the first visitor byte.
 After that byte, it never retries the connection against another relay.
 
+For HTTP, control supplies short-lived routing and visitor policy before requests
+arrive. Ingress selects a run from its routing table; the publisher checks each
+request's access locally. An allowed request then reserves ingress capacity
+through the same authenticated relay sessions:
+
+```text
+visitor        ingress         relay         publisher       target
+   |-- request -->|-------------->|-------------->|             |
+   |              |              |          check access       |
+   |              |<-- reserve --|<-- capacity ---|             |
+   |              |-- reply ---->|-- reply ------>|             |
+   |              |              |               |-- request ->|
+```
+
+The capacity reply does not grant visitor access. Ingress signs the original
+socket addresses for the exact run and visitor connection; the publisher checks
+that proof and rejects reuse. Neither operation writes a per-HTTP-visitor record
+to PostgreSQL. Prepared HTTP traffic can continue through a control outage only
+until its existing routing, policy, and process leases expire. Native client
+certificate access still asks control for current permission, then uses the same
+forwarding and capacity exchange.
+
+PostgreSQL, MySQL, and TCP carry admitted traffic without a control call for each
+query or message. Public Kubernetes rechecks control for each API request;
+connector Kubernetes checks the visitor's admitted permission locally. Both
+retain authorization checks for long-running watches and upgrades.
+
+Ingress reports the first publisher byte in the background. For HTTP, the report
+carries the original signed socket observation, including its observation time;
+control verifies the exact run, visitor and ingress lease without requiring a
+visitor admission row. Native reports keep their control admission receipt.
+These reports record recovery measurements, not access or renewed authority.
+
+Public HTTP targets share a run-owned connection pool sized by the HTTP
+concurrency limit. Connector target sockets stay with their exact admission;
+they do not borrow another visitor's permission. Both paths use the same proxy
+for target routing, trust, response hooks, and dynamic target retirement.
+Closing an upgraded response retires its target slot without replaying its
+request or keeping that slot occupied until the service run stops.
+
 ### service access through a connector
 
 A local `tnl` connector reaches a service without ingress. It opens an encrypted
@@ -80,6 +120,12 @@ do not send duplicate application requests. Relay delivery remains available
 when direct UDP is not. Changing paths does not replay a failed stream against
 another target.
 
+A draining HTTP run keeps connector packet carriers until the connector reports
+that both copy directions have finished. That exact visitor's completion receipt
+uses the existing authenticated control stream and grants no access or renewal.
+Unready openings close when drain starts; missing receipts remain bounded by the
+original drain and visitor-authority deadlines.
+
 A service can also have a public hostname and port, reached through ingress.
 That is **public endpoint access**, rather than **connector access**. Making an
 endpoint public does not remove its visitor access rules.
@@ -97,7 +143,7 @@ certificate can delay reuse without later connector renewals pinning capacity.
 | Role      | Job                                                                                         |
 | --------- | ------------------------------------------------------------------------------------------- |
 | Control   | Stores identities, permissions, runs, relay assignments, leases, and certificate approvals. |
-| Ingress   | Asks control to admit each public connection, then forwards it to a connected relay.        |
+| Ingress   | Selects a connected relay from current routing or native admission, and reserves capacity.  |
 | Relay     | Holds publisher connections and carries visitor streams.                                    |
 | Publisher | Publishes apps and services, ends visitor TLS, and connects to targets.                     |
 | Connector | Selects a service, opens local listeners, and connects to its publisher.                    |

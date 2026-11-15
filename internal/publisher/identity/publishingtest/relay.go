@@ -4,16 +4,11 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
-	"errors"
 	"io"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"time"
-
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
-	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 // visit sends no visitor credential. restricted service tests must explicitly
@@ -38,22 +33,7 @@ func (f *Fixture) VisitWithHeaders(ctx context.Context, address string, headers 
 		}
 	}
 	f.mu.Unlock()
-	session, ref, found := f.backend.Connection(service)
-	if !found {
-		return 0, nil, nil, errors.New("service publisher connection is not ready")
-	}
-	run, found := f.backend.Run(ref.ServiceRunID)
-	if !found {
-		return 0, nil, nil, errors.New("service run has stopped")
-	}
-	slot := run.Setup.PublisherConnections[ref.ConnectionSlot]
-	header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
-		ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber, PublisherConnectionID: ref.PublisherConnectionID,
-		ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, VisitorConnectionID: id(f.t, opaqueid.VisitorConnectionPrefix), SourceIP: "127.0.0.1", ExpiresAt: time.Now().Add(10 * time.Second),
-		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "fixture-ingress", IngressRunID: id(f.t, opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 443}},
-		ConnectionSlot: ref.ConnectionSlot, RelayServiceID: slot.RelayServiceId, RelayID: "fixture-relay", RelayRunID: id(f.t, opaqueid.RelayRunPrefix),
-		RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}
-	stream, err := session.OpenServiceForwardingStream(ctx, header)
+	stream, err := f.backend.OpenHTTPVisitor(ctx, service, netip.MustParseAddrPort("127.0.0.1:45123"), netip.MustParseAddrPort("127.0.0.1:443"))
 	if err != nil {
 		return 0, nil, nil, err
 	}
@@ -63,13 +43,6 @@ func (f *Fixture) VisitWithHeaders(ctx context.Context, address string, headers 
 		deadline = d
 	}
 	_ = stream.SetDeadline(deadline)
-	metadata, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("127.0.0.1:45123"), Destination: netip.MustParseAddrPort("127.0.0.1:443")})
-	if err != nil {
-		return 0, nil, nil, err
-	}
-	if _, err := stream.Write(metadata); err != nil {
-		return 0, nil, nil, err
-	}
 	connection := tls.Client(stream, &tls.Config{MinVersion: tls.VersionTLS13, ServerName: u.Hostname()})
 	defer connection.Close()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)

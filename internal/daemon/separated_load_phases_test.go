@@ -55,7 +55,7 @@ func activateSeparatedPublishers(t *testing.T, database *sql.DB, routes int) sep
 		t.Fatalf("fallback events=%d want=%d", publishers.Fallbacks, routes)
 	}
 	if *runtimeLoadScenario == "udp-fallback" {
-		separatedWait(t, "udp.cleaned", 15*time.Second, nil)
+		separatedWait(t, "udp.fallback-checked", 15*time.Second, nil)
 	}
 	for _, run := range publishers.Runs {
 		ctx, cancel := context.WithTimeout(t.Context(), 25*time.Second)
@@ -65,7 +65,7 @@ func activateSeparatedPublishers(t *testing.T, database *sql.DB, routes int) sep
 			t.Fatalf("service %s run %d connections did not become ready: %v", run.ServiceID, run.Number, err)
 		}
 	}
-	waitForIngressRoutingCurrentWithin(t, database, len(separatedNames("ingresses")), separatedRoutingAcknowledgmentTimeout)
+	waitForSeparatedServiceRouting(t, database, separatedRoutingAcknowledgmentTimeout)
 	var orders, installed, distinctServices int
 	var workerAttempts int64
 	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), count(*) FILTER (WHERE state = 'installed'), count(DISTINCT service_id), coalesce(sum(attempts), 0) FROM control.acme_orders WHERE service_id<>''`).Scan(&orders, &installed, &distinctServices, &workerAttempts); err != nil {
@@ -249,6 +249,10 @@ func runSeparatedWorkloadPhases(t *testing.T, database *sql.DB, publishers separ
 			repaired = separatedWaitForRecovery(t, database, publishers, 25*time.Second)
 			separatedProbe(t, &sequence, benchworkload.Phase{Name: phase + "-restored", URLs: publishers.URLs, CloseHeld: true})
 			separatedReportVisitors(t, phase, results, restart, repaired)
+			if phase == "udp-fallback" {
+				separatedWrite(t, "udp.recovered", true)
+				separatedWait(t, "udp.recovery-checked", 15*time.Second, nil)
+			}
 		}
 		if phase == "control-restart" {
 			if assignments := separatedConnectionAssignments(t, database); assignments != controlRestartAssignments {
@@ -276,6 +280,10 @@ func verifySeparatedShutdown(t *testing.T, database *sql.DB, routes int) {
 		elapsed = max(elapsed, duration)
 	}
 	t.Logf("separated_final_shutdown publishers=%d elapsed=%s", (routes+1)/2, elapsed)
+	if *runtimeLoadScenario == "udp-fallback" {
+		separatedWrite(t, "udp.publishers-joined", true)
+		separatedWait(t, "udp.closed", 15*time.Second, nil)
+	}
 	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
 		var active int
 		err := database.QueryRowContext(ctx, `SELECT
@@ -288,7 +296,7 @@ func verifySeparatedShutdown(t *testing.T, database *sql.DB, routes int) {
 	if *runtimeLoadCapacityOnly {
 		routingTimeout = 30 * time.Second
 	}
-	waitForIngressRoutingCurrentWithin(t, database, len(separatedNames("ingresses")), routingTimeout)
+	waitForSeparatedServiceRouting(t, database, routingTimeout)
 	separatedCapture(t, database, "final")
 	if got := separatedCAOrders(t); got != int64(routes) {
 		t.Errorf("certificate issuance changed during workload: got %d want %d", got, routes)

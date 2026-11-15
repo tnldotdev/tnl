@@ -21,6 +21,13 @@ func Decode(body controlv1.VisitorPolicyUpdate) (Update, error) {
 	update := Update{View: visitortoken.View{Scope: scope, Issuer: policy.Issuer, Hostname: policy.Hostname, Port: uint16(policy.Port), VisitorPolicyRevision: policy.VisitorPolicyRevision,
 		ObservedAt: policy.ObservedAt, ValidUntil: policy.ValidUntil, MetadataRevision: policy.MetadataRevision},
 		KeyRevision: policy.KeyRevision, Enabled: policy.Enabled, Anonymous: policy.Anonymous, AfterRevision: body.AfterRevision, Events: body.Revisions, Snapshot: body.SnapshotRequired}
+	if policy.PublicEndpoint != nil {
+		if !validPublicEndpoint(*policy.PublicEndpoint) {
+			return Update{}, ErrUpdate
+		}
+		endpoint := *policy.PublicEndpoint
+		update.PublicEndpoint = &endpoint
+	}
 	if policy.ConnectionDeadline != nil {
 		if policy.ConnectionDeadline.IsZero() || policy.Enabled && policy.ValidUntil.After(*policy.ConnectionDeadline) {
 			return Update{}, ErrUpdate

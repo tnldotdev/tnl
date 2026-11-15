@@ -22,11 +22,11 @@ type admissionControl struct {
 }
 
 func (c *admissionControl) AuthorizeServiceClientCertificate(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceClientCertificateRequest) (controlv1.ServiceClientCertificateDecision, error) {
-	call := c.calls.Add(1)
+	c.calls.Add(1)
 	if c.err != nil {
 		return controlv1.ServiceClientCertificateDecision{}, c.err
 	}
-	return controlv1.ServiceClientCertificateDecision{Allowed: true, Admitted: call > 1, ValidUntil: time.Now().Add(time.Minute)}, nil
+	return controlv1.ServiceClientCertificateDecision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
 }
 
 func TestDirectAuthorizationWaitsForAdmissionAndPreservesInfrastructureCause(t *testing.T) {
@@ -50,16 +50,27 @@ func TestDirectAuthorizationWaitsForAdmissionAndPreservesInfrastructureCause(t *
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer cancel()
-			visitor := prepared.managedVisitor(tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{PublicService: &tunnelv1.PublicServiceAdmission{}}})
+			defer func() {
+				if err := cancel(); err != nil {
+					t.Error("close configured run", err)
+				}
+			}()
+			var capacity atomic.Int32
+			visitor := prepared.managedVisitor(tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{PublicService: &tunnelv1.PublicServiceAdmission{}}}, func(context.Context) error {
+				if c.calls.Load() != 1 {
+					t.Error("capacity was reserved before checking certificate access")
+				}
+				capacity.Add(1)
+				return nil
+			})
 			certificate := visitor.(servicestream.CertificateVisitor)
 			decision, err := certificate.Check(t.Context(), &x509.Certificate{})
 			if infrastructureFailure {
-				if !errors.Is(err, cause) || decision.Allowed || c.calls.Load() != 1 {
+				if !errors.Is(err, cause) || decision.Allowed || c.calls.Load() != 1 || capacity.Load() != 0 {
 					t.Fatal("infrastructure failure lost its cause or was admitted", decision, err)
 				}
-			} else if err != nil || !decision.Allowed || c.calls.Load() != 2 {
-				t.Fatal("allowed pending authorization entered the target boundary", decision, err, c.calls.Load())
+			} else if err != nil || !decision.Allowed || c.calls.Load() != 1 || capacity.Load() != 1 {
+				t.Fatal("certificate access did not reserve capacity exactly once", decision, err, c.calls.Load(), capacity.Load())
 			}
 		})
 	}

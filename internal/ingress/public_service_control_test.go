@@ -18,7 +18,7 @@ func TestHTTPPublicServiceAdmissionKeepsExactExclusionsAndDoesNotRetryFailures(t
 		t.Run(mode, func(t *testing.T) {
 			expected := ingressv1.PublicServiceVisitorClaim{
 				IngressRunId: "process", IngressLeaseRevision: 4, IngressPoolId: "pool",
-				DestinationPort: 443, ObservedSourceIp: "192.0.2.4", Hostname: new("route.example"),
+				DestinationPort: 25443, ObservedSourceIp: "192.0.2.4",
 				VisitorConnectionId: publicServiceTestID(t, "vc_"),
 				ExcludedRuns:        []ingressv1.ServiceRunReference{{ServiceId: publicServiceTestID(t, "svc_"), ServiceRunId: publicServiceTestID(t, "srun_"), RunNumber: 3}},
 			}

@@ -25,7 +25,9 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -158,11 +160,19 @@ func TestPublicServiceTLSCloseEndsReturnStreamExactlyOnce(t *testing.T) {
 	done := make(chan error, 1)
 	header := privateHeader(t, ref)
 	header.PublicService.DestinationPort = 443
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: p.Preparation.ServiceId}
+	policy, update, _ := visitorfixture.ScopePolicy(t, scope, p.managedHostname, 443, true)
+	p.policy = policy
+	defer p.policy.Close()
+	update.PublicEndpoint = &controlv1.VisitorPublicEndpoint{Hostname: p.managedHostname, Port: 443, EndpointRevision: 1}
+	if err := p.policy.Apply(p.policy.Begin(), update); err != nil {
+		t.Fatal(err)
+	}
+	metadata := publicSourceMetadata(t, p, header)
 	go func() {
 		defer server.Close()
-		done <- bound.serveBody(ctx, ref, server, header, func(context.Context) error { ended.Add(1); return nil })
+		done <- bound.serveBody(ctx, ref, server, header, func(context.Context) error { ended.Add(1); return nil }, nil)
 	}()
-	metadata, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:443")})
 	if _, err := client.Write(metadata); err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +229,7 @@ func privateFixture(t *testing.T, target string) (*Prepared, *Bound, tunnelv1.Se
 	if err := p.installManagedCertificate(certificate); err != nil {
 		t.Fatal(err)
 	}
-	p.managedVisitor = func(tunnelv1.ServiceForwardingHeader) servicestream.Authentication {
+	p.managedVisitor = func(tunnelv1.ServiceForwardingHeader, func(context.Context) error) servicestream.Authentication {
 		return servicestream.CertificateVisitor{Check: func(context.Context, *x509.Certificate) (servicestream.Decision, error) {
 			return servicestream.Decision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
 		}}
@@ -275,7 +285,7 @@ func TestServiceStreamRejectsStaleAdmissionsBeforeTargetDial(t *testing.T) {
 			case "source":
 				header.SourceIP = "192.0.2.11"
 			case "denied":
-				p.managedVisitor = func(tunnelv1.ServiceForwardingHeader) servicestream.Authentication {
+				p.managedVisitor = func(tunnelv1.ServiceForwardingHeader, func(context.Context) error) servicestream.Authentication {
 					return servicestream.CertificateVisitor{Check: func(context.Context, *x509.Certificate) (servicestream.Decision, error) {
 						return servicestream.Decision{}, nil
 					}}
@@ -288,7 +298,7 @@ func TestServiceStreamRejectsStaleAdmissionsBeforeTargetDial(t *testing.T) {
 			defer server.Close()
 			_ = client.SetDeadline(time.Now().Add(time.Second))
 			done := make(chan error, 1)
-			go func() { defer server.Close(); done <- bound.serveBody(t.Context(), ref, server, header, nil) }()
+			go func() { defer server.Close(); done <- bound.serveBody(t.Context(), ref, server, header, nil, nil) }()
 			proxy, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:25443")})
 			_, _ = client.Write(proxy)
 			secure := tls.Client(client, verification)

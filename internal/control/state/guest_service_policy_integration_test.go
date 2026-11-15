@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"net/netip"
 	"reflect"
 	"testing"
 	"time"
@@ -93,9 +92,8 @@ func TestIntegrationGuestAuthorityBoundsPreparationPolicyAndPermissions(t *testi
 				if err != nil || issued.Permission.ExpiresAt.After(horizon) {
 					t.Fatalf("visitor permission exceeded horizon: %+v, %v", issued.Permission, err)
 				}
-				admission, err := f.database.AdmitPublicServiceVisitor(t.Context(), ingress.IngressLeaseIdentity, PrimaryIngressPoolID,
-					mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), f.service.Endpoint.Hostname, 443, netip.MustParseAddr("198.51.100.33"), at)
-				if err != nil || admission.ExpiresAt.After(horizon) || admission.Anonymous || admission.RunID != f.run.RunID ||
+				admission, err := readIngressServiceRun(t.Context(), f.database, ingress.IngressLeaseIdentity, f.service.ID, f.run.RunID, at)
+				if err != nil || admission.ValidUntil.After(horizon) || admission.Anonymous || admission.RunID != f.run.RunID ||
 					admission.Traffic.TotalUploadBytes != 0 || admission.Traffic.TotalDownloadBytes != 0 || admission.Traffic.TotalConnections != 0 {
 					t.Fatalf("ordinary ingress horizon/budgets=%+v, %v", admission, err)
 				}
@@ -108,8 +106,7 @@ func TestIntegrationGuestAuthorityBoundsPreparationPolicyAndPermissions(t *testi
 				if _, err := f.database.IssueVisitorToken(t.Context(), testVisitorIssuer, scope, source, at); !errors.Is(err, ErrVisitorPermission) {
 					t.Fatalf("expired run issued token: %v", err)
 				}
-				if _, err := f.database.AdmitPublicServiceVisitor(t.Context(), ingress.IngressLeaseIdentity, PrimaryIngressPoolID,
-					mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), f.service.Endpoint.Hostname, 443, netip.MustParseAddr("198.51.100.33"), at); err == nil {
+				if _, err := readIngressServiceRun(t.Context(), f.database, ingress.IngressLeaseIdentity, f.service.ID, f.run.RunID, at); err == nil {
 					t.Fatal("expired run admitted ingress visitor")
 				}
 			}

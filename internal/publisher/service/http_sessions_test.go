@@ -37,9 +37,9 @@ func serviceHTTPSessionFixture(t *testing.T, control *visitorfixture.HTTPControl
 		ExpiresAt:     time.Now().Add(time.Minute),
 		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress", IngressRunID: "ir_" + strings.Repeat("I", 22), IngressLeaseRevision: 1, DestinationPort: 443}},
 		RelayID: "relay", RelayServiceID: "relay-service", RelayRunID: "rr_" + strings.Repeat("R", 22), RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}
-	backend := &serviceBrowserControl{HTTPControl: serviceHTTPAdmissionControl{}, origin: "https://control.example.test", policy: control, tokens: control}
+	backend := &serviceBrowserControl{HTTPControl: serviceHTTPControl{}, origin: "https://control.example.test", policy: control, tokens: control}
 	frontend, closeHTTP, err := PrepareHTTP(t.Context(), HTTP{Control: backend, Subject: scope, RunID: header.ServiceRunID,
-		Number: 1, Token: credentials.ServiceRunToken("run-secret"), Hostname: "route.example", Port: 443, Header: header})
+		Number: 1, Token: credentials.ServiceRunToken("run-secret"), Hostname: "route.example", Port: 443, Header: header, ReserveCapacity: func(context.Context) error { return nil }})
 	if err != nil {
 		t.Fatal(err)
 	}

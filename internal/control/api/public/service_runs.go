@@ -150,7 +150,7 @@ func (h *handler) StartServiceRun(w http.ResponseWriter, r *http.Request, servic
 		serviceRunProblem(r.Context(), w, "start service run", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, controlv1.ServiceRunSetup{ServiceId: state.ServiceID, ServiceRunId: state.RunID, RunNumber: state.RunNumber, RunToken: state.Token, PublisherConnections: serviceRunConnections(state.Connections)})
+	writeJSON(w, http.StatusOK, controlv1.ServiceRunSetup{ServiceId: state.ServiceID, ServiceRunId: state.RunID, RunNumber: state.RunNumber, RunToken: state.Token, VisitorSourceKey: state.VisitorSourceKey[:], PublisherConnections: serviceRunConnections(state.Connections)})
 }
 
 func (h *handler) RenewServiceRun(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID) {

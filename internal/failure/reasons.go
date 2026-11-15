@@ -402,11 +402,11 @@ var definitions = map[Reason]Definition{
 	},
 	PublisherEnrollmentRequired: {
 		Class: Unauthenticated, Message: "this publisher needs a new enrollment key",
-		Action: "request fresh enrollment for the saved public URL with tnl publisher enroll; set TNL_ENROLL_KEY and restart with the persistent state volume", Retry: RetryAfterChange,
+		Action: "request fresh enrollment for the saved service with tnl publisher enroll; set TNL_ENROLL_KEY and restart with the persistent state volume", Retry: RetryAfterChange,
 	},
 	InstalledPublishRunPending: {
-		Class: Unavailable, Message: "the saved public URL's previous publish run is still closing",
-		Action: "leave the publisher running while control expires the previous run; stop any other publisher still serving this URL", Retry: RetryLater,
+		Class: Unavailable, Message: "the saved service's previous service run is still closing",
+		Action: "leave the publisher running while control expires the previous run; stop any other publisher still serving this service", Retry: RetryLater,
 	},
 	PublisherInstallSourceInvalid: {
 		Class: Invalid, Message: "tnl's installation files are missing or unsafe",
@@ -418,11 +418,11 @@ var definitions = map[Reason]Definition{
 	},
 	InstalledPublisherSelectionMissing: {
 		Class: NotFound, Message: "this service has no saved scoped publisher grant",
-		Action: "publish the service once to save its public URL, then enroll a publisher for that URL and retry --install with --enroll-key", Retry: RetryAfterChange,
+		Action: "select or create the saved service, enroll a publisher for it, then retry --install with --enroll-key", Retry: RetryAfterChange,
 	},
 	InstalledServiceIdentityUnavailable: {
 		Class: Unavailable, Message: "tnl could not determine the configured service's exact public hostname and team",
-		Action: "sign in to resolve the selected team and domain, or configure an exact tunnel.public_url and select its publisher explicitly", Retry: RetryAfterChange,
+		Action: "sign in to resolve the service's selected team and domain, or select its scoped publisher explicitly", Retry: RetryAfterChange,
 	},
 	ServicePublisherUnavailable: {
 		Class: Unavailable, Message: "the private TCP publisher is not connected to the relay service yet",

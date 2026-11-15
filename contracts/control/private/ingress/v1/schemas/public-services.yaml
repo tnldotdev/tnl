@@ -55,12 +55,7 @@ schemas:
       ingress_run_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
       ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
       ingress_pool_id: { type: string, minLength: 1, maxLength: 128 }
-      destination_port: { type: integer, minimum: 1, maximum: 65535 }
-      hostname:
-        type: string
-        minLength: 1
-        maxLength: 253
-        description: Required exact inspected TLS hostname for shared HTTPS port 443. Must be absent on allocated non-HTTP service ports.
+      destination_port: { type: integer, minimum: 1024, maximum: 65535 }
       observed_source_ip: { type: string, minLength: 1, maxLength: 64 }
       visitor_connection_id: { $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID" }
       excluded_runs:
@@ -90,7 +85,6 @@ schemas:
         expires_at,
         connected_relays,
         traffic,
-        anonymous,
       ]
     properties:
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
@@ -99,9 +93,6 @@ schemas:
       visitor_connection_id: { $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID" }
       expires_at: { type: string, format: date-time }
       traffic: { $ref: "../openapi.yaml#/components/schemas/IngressTrafficLimits" }
-      anonymous:
-        type: boolean
-        description: Current HTTP policy allows anonymous visitors, so ordinary traffic accounting starts before relay setup. This does not authorize application requests or bypass publisher checks.
       recovery_episode_id:
         type: integer
         format: int64

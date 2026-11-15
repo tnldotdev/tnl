@@ -146,6 +146,34 @@ type IngressRenewal struct {
 	ReportedConnections  int64      `json:"reported_connections"`
 }
 
+// IngressServiceRun defines model for IngressServiceRun.
+type IngressServiceRun struct {
+	Anonymous         bool                          `json:"anonymous"`
+	ConnectedRelays   []ServiceRelay                `json:"connected_relays"`
+	EndpointRevision  int64                         `json:"endpoint_revision"`
+	Hostname          string                        `json:"hostname"`
+	Ip                *externalRef0.VisitorPolicyIP `json:"ip,omitempty"`
+	Port              int                           `json:"port"`
+	Protocol          externalRef0.ServiceProtocol  `json:"protocol"`
+	RecoveryEpisodeId *int64                        `json:"recovery_episode_id,omitempty"`
+	RunNumber         int64                         `json:"run_number"`
+	ServiceId         ServiceID                     `json:"service_id"`
+	ServiceRunId      ServiceRunID                  `json:"service_run_id"`
+	SourceAuthority   []byte                        `json:"source_authority"`
+	SourceKey         []byte                        `json:"source_key"`
+
+	// Traffic Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
+	Traffic    IngressTrafficLimits `json:"traffic"`
+	ValidUntil time.Time            `json:"valid_until"`
+}
+
+// IngressServices defines model for IngressServices.
+type IngressServices struct {
+	ObservedAt time.Time           `json:"observed_at"`
+	Runs       []IngressServiceRun `json:"runs"`
+	ValidUntil time.Time           `json:"valid_until"`
+}
+
 // IngressTrafficLimits Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
 type IngressTrafficLimits = externalRef0.TrafficLimits
 
@@ -166,8 +194,6 @@ type ProblemCode string
 
 // PublicServiceVisitorAdmission defines model for PublicServiceVisitorAdmission.
 type PublicServiceVisitorAdmission struct {
-	// Anonymous Current HTTP policy allows anonymous visitors, so ordinary traffic accounting starts before relay setup. This does not authorize application requests or bypass publisher checks.
-	Anonymous       bool           `json:"anonymous"`
 	ConnectedRelays []ServiceRelay `json:"connected_relays"`
 	ExpiresAt       time.Time      `json:"expires_at"`
 
@@ -187,15 +213,12 @@ type PublicServiceVisitorClaim struct {
 	DestinationPort int `json:"destination_port"`
 
 	// ExcludedRuns Exact runs rejected by this ingress's local quotas before forwarding visitor bytes. All entries must name the resolved service, with distinct run IDs and run numbers. Each new run attempt uses a new visitor connection ID; retrying an existing ID never moves its reservation.
-	ExcludedRuns []ServiceRunReference `json:"excluded_runs,omitempty"`
-
-	// Hostname Required exact inspected TLS hostname for shared HTTPS port 443. Must be absent on allocated non-HTTP service ports.
-	Hostname             *string             `json:"hostname,omitempty"`
-	IngressLeaseRevision int64               `json:"ingress_lease_revision"`
-	IngressPoolId        string              `json:"ingress_pool_id"`
-	IngressRunId         Identifier          `json:"ingress_run_id"`
-	ObservedSourceIp     string              `json:"observed_source_ip"`
-	VisitorConnectionId  VisitorConnectionID `json:"visitor_connection_id"`
+	ExcludedRuns         []ServiceRunReference `json:"excluded_runs,omitempty"`
+	IngressLeaseRevision int64                 `json:"ingress_lease_revision"`
+	IngressPoolId        string                `json:"ingress_pool_id"`
+	IngressRunId         Identifier            `json:"ingress_run_id"`
+	ObservedSourceIp     string                `json:"observed_source_ip"`
+	VisitorConnectionId  VisitorConnectionID   `json:"visitor_connection_id"`
 }
 
 // PublicServiceVisitorLookup defines model for PublicServiceVisitorLookup.
@@ -230,14 +253,17 @@ type ServiceRecoveryObservation struct {
 
 // ServiceRecoveryObservationRequest defines model for ServiceRecoveryObservationRequest.
 type ServiceRecoveryObservationRequest struct {
-	IngressId            Identifier          `json:"ingress_id"`
-	IngressLeaseRevision int64               `json:"ingress_lease_revision"`
-	IngressRunId         Identifier          `json:"ingress_run_id"`
-	ObservedAt           time.Time           `json:"observed_at"`
-	RunNumber            int64               `json:"run_number"`
-	ServiceId            ServiceID           `json:"service_id"`
-	ServiceRunId         ServiceRunID        `json:"service_run_id"`
-	VisitorConnectionId  VisitorConnectionID `json:"visitor_connection_id"`
+	IngressId            Identifier   `json:"ingress_id"`
+	IngressLeaseRevision int64        `json:"ingress_lease_revision"`
+	IngressRunId         Identifier   `json:"ingress_run_id"`
+	ObservedAt           time.Time    `json:"observed_at"`
+	RunNumber            int64        `json:"run_number"`
+	ServiceId            ServiceID    `json:"service_id"`
+	ServiceRunId         ServiceRunID `json:"service_run_id"`
+
+	// SourceEvidence Exact ingress-created PROXY v2 header with its signed source proof, required for HTTP and absent for native certificate admission. Contains no application bytes. Evidence authenticates the original visitor and socket facts; it grants no access or renewal.
+	SourceEvidence      []byte              `json:"source_evidence,omitempty"`
+	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
 }
 
 // ServiceRelay defines model for ServiceRelay.
@@ -328,6 +354,9 @@ type ReportIngressServiceObservationsJSONRequestBody ReportIngressServiceObserva
 
 // ObserveServiceRecoveryJSONRequestBody defines body for ObserveServiceRecovery for application/json ContentType.
 type ObserveServiceRecoveryJSONRequestBody = ServiceRecoveryObservationRequest
+
+// ReadIngressServicesJSONRequestBody defines body for ReadIngressServices for application/json ContentType.
+type ReadIngressServicesJSONRequestBody = IngressLeaseIdentity
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -506,6 +535,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/service-recovery/{recovery_episode_id}/observed (the `ObserveServiceRecovery` operationId).
 	ObserveServiceRecovery(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, body ObserveServiceRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadIngressServicesWithBody Read short-lived serving information for this ingress
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/services (the `ReadIngressServices` operationId).
+	ReadIngressServicesWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadIngressServices Read short-lived serving information for this ingress
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/services (the `ReadIngressServices` operationId).
+	ReadIngressServices(ctx context.Context, ingressId IngressID, body ReadIngressServicesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // RegisterIngressWithBody Register one ingress process run
@@ -802,6 +845,40 @@ func (c *Client) ObserveServiceRecoveryWithBody(ctx context.Context, ingressId I
 // Corresponds with POST /internal/v1/ingresses/{ingress_id}/service-recovery/{recovery_episode_id}/observed (the `ObserveServiceRecovery` operationId).
 func (c *Client) ObserveServiceRecovery(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, body ObserveServiceRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewObserveServiceRecoveryRequest(c.Server, ingressId, recoveryEpisodeId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReadIngressServicesWithBody Read short-lived serving information for this ingress
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /internal/v1/ingresses/{ingress_id}/services (the `ReadIngressServices` operationId).
+func (c *Client) ReadIngressServicesWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadIngressServicesRequestWithBody(c.Server, ingressId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReadIngressServices Read short-lived serving information for this ingress
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /internal/v1/ingresses/{ingress_id}/services (the `ReadIngressServices` operationId).
+func (c *Client) ReadIngressServices(ctx context.Context, ingressId IngressID, body ReadIngressServicesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadIngressServicesRequest(c.Server, ingressId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1313,6 +1390,53 @@ func NewObserveServiceRecoveryRequestWithBody(server string, ingressId IngressID
 	return req, nil
 }
 
+// NewReadIngressServicesRequest calls the generic ReadIngressServices builder with application/json body
+func NewReadIngressServicesRequest(server string, ingressId IngressID, body ReadIngressServicesJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReadIngressServicesRequestWithBody(server, ingressId, "application/json", bodyReader)
+}
+
+// NewReadIngressServicesRequestWithBody constructs an http.Request for the ReadIngressServices method, with any body, and a specified content type
+func NewReadIngressServicesRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/services", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -1472,6 +1596,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/service-recovery/{recovery_episode_id}/observed (the `ObserveServiceRecovery` operationId).
 	ObserveServiceRecoveryWithResponse(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, body ObserveServiceRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*ObserveServiceRecoveryResponse, error)
+
+	// ReadIngressServicesWithBodyWithResponse Read short-lived serving information for this ingress
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/services (the `ReadIngressServices` operationId).
+	ReadIngressServicesWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadIngressServicesResponse, error)
+
+	// ReadIngressServicesWithResponse Read short-lived serving information for this ingress
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/services (the `ReadIngressServices` operationId).
+	ReadIngressServicesWithResponse(ctx context.Context, ingressId IngressID, body ReadIngressServicesJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadIngressServicesResponse, error)
 }
 
 type RegisterIngressResponse struct {
@@ -1940,6 +2078,54 @@ func (r ObserveServiceRecoveryResponse) ContentType() string {
 	return ""
 }
 
+type ReadIngressServicesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *IngressServices
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReadIngressServicesResponse) GetJSON200() *IngressServices {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReadIngressServicesResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReadIngressServicesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReadIngressServicesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReadIngressServicesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReadIngressServicesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // RegisterIngressWithBodyWithResponse Register one ingress process run
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -2174,6 +2360,32 @@ func (c *ClientWithResponses) ObserveServiceRecoveryWithResponse(ctx context.Con
 		return nil, err
 	}
 	return ParseObserveServiceRecoveryResponse(rsp)
+}
+
+// ReadIngressServicesWithBodyWithResponse Read short-lived serving information for this ingress
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /internal/v1/ingresses/{ingress_id}/services (the `ReadIngressServices` operationId).
+func (c *ClientWithResponses) ReadIngressServicesWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadIngressServicesResponse, error) {
+	rsp, err := c.ReadIngressServicesWithBody(ctx, ingressId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadIngressServicesResponse(rsp)
+}
+
+// ReadIngressServicesWithResponse Read short-lived serving information for this ingress
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /internal/v1/ingresses/{ingress_id}/services (the `ReadIngressServices` operationId).
+func (c *ClientWithResponses) ReadIngressServicesWithResponse(ctx context.Context, ingressId IngressID, body ReadIngressServicesJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadIngressServicesResponse, error) {
+	rsp, err := c.ReadIngressServices(ctx, ingressId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadIngressServicesResponse(rsp)
 }
 
 // ParseRegisterIngressResponse parses an HTTP response from a RegisterIngressWithResponse call
@@ -2498,6 +2710,39 @@ func ParseObserveServiceRecoveryResponse(rsp *http.Response) (*ObserveServiceRec
 	return response, nil
 }
 
+// ParseReadIngressServicesResponse parses an HTTP response from a ReadIngressServicesWithResponse call
+func ParseReadIngressServicesResponse(rsp *http.Response) (*ReadIngressServicesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReadIngressServicesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest IngressServices
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// RegisterIngress Register one ingress process run
@@ -2530,6 +2775,9 @@ type ServerInterface interface {
 	// ObserveServiceRecovery Record the first publisher byte written to a visitor after service recovery
 	// (POST /internal/v1/ingresses/{ingress_id}/service-recovery/{recovery_episode_id}/observed)
 	ObserveServiceRecovery(w http.ResponseWriter, r *http.Request, ingressId IngressID, recoveryEpisodeId int64)
+	// ReadIngressServices Read short-lived serving information for this ingress
+	// (POST /internal/v1/ingresses/{ingress_id}/services)
+	ReadIngressServices(w http.ResponseWriter, r *http.Request, ingressId IngressID)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -2827,6 +3075,32 @@ func (siw *ServerInterfaceWrapper) ObserveServiceRecovery(w http.ResponseWriter,
 	handler.ServeHTTP(w, r)
 }
 
+// ReadIngressServices operation middleware
+func (siw *ServerInterfaceWrapper) ReadIngressServices(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReadIngressServices(w, r, ingressId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -2947,6 +3221,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/services", wrapper.ReadIngressServices)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-services/admit", wrapper.AdmitPublicServiceVisitor)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-services/status", wrapper.PublicServiceVisitorStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-services/promote", wrapper.PromotePublicServiceVisitor)

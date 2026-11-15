@@ -117,11 +117,12 @@ func foregroundServiceDeclaration(flags PublicOptions, policy resolvedVisitorAcc
 			declaration.Http = &controlv1.ProjectServiceHTTP{}
 		}
 		if policy.explicit {
-			prefixes := slices.Clone(policy.prefixes)
-			if prefixes == nil {
-				prefixes = []string{}
+			access := &controlv1.ProjectHTTPAccess{Mode: new(policy.access)}
+			if len(policy.prefixes) != 0 {
+				prefixes := slices.Clone(policy.prefixes)
+				access.Ip = &prefixes
 			}
-			declaration.Http.Access = &controlv1.ProjectHTTPAccess{Mode: new(policy.access), Ip: &prefixes}
+			declaration.Http.Access = access
 		}
 		if limits.Requests != 0 || limits.Concurrency != 0 || limits.RateRequests != 0 || limits.RateBurst != 0 {
 			if declaration.Http.Limits == nil {
