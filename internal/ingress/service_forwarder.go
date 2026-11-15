@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -12,9 +13,9 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-// OpenPrivate uses the exact-process relay pool for public service streams.
+// OpenService uses the exact-process relay pool for public service streams.
 // it sends no PROXY or visitor bytes itself.
-func (f *Forwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (result net.Conn, retErr error) {
+func (f *Forwarder) OpenService(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, reserve func(context.Context) error) (result net.Conn, retErr error) {
 	ctx, finish := observability.Start(ctx, "ingress.private_relay_attempt")
 	defer func() { finish(retErr) }()
 	if f == nil || f.connector == nil || header.Validate() != nil || relay.TlsServerName == "" || relay.InternalRelayAddress == "" ||
@@ -32,11 +33,19 @@ func (f *Forwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRela
 			return nil, err
 		}
 		started := time.Now()
+		unregister := func() {}
+		if reserve != nil {
+			unregister, err = session.RegisterServiceCapacity(f.context, header, reserve)
+			if err != nil {
+				return nil, err
+			}
+		}
 		stream, err := session.OpenServiceForwardingStream(ctx, header)
 		f.observe(ctx, observability.OpIngressForwardingAck, err, started)
 		if err == nil {
-			return stream, nil
+			return &serviceForwardingConn{Conn: stream, unregister: unregister}, nil
 		}
+		unregister()
 		var rejected *tunnel.ProtocolError
 		if errors.As(err, &rejected) || ctx.Err() != nil || session.Err() == nil && f.currentSession(target.key(), session) {
 			return nil, err
@@ -46,6 +55,28 @@ func (f *Forwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRela
 			return nil, err
 		}
 	}
+}
+
+type serviceForwardingConn struct {
+	net.Conn
+	unregister func()
+	closeOnce  sync.Once
+	closeErr   error
+}
+
+func (c *serviceForwardingConn) Close() error {
+	c.closeOnce.Do(func() {
+		c.unregister()
+		c.closeErr = c.Conn.Close()
+	})
+	return c.closeErr
+}
+
+func (c *serviceForwardingConn) CloseWrite() error {
+	if writer, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return writer.CloseWrite()
+	}
+	return errors.ErrUnsupported
 }
 
 func privateRelayRef(header tunnelv1.ServiceForwardingHeader, relay ingressv1.ServiceRelay) tunnelv1.ServicePublisherConnectionRef {

@@ -19,9 +19,7 @@ func (c *Client) ReportServiceRunObservations(ctx context.Context, serviceID, ru
 		return errors.Join(serviceaudit.ErrRejected, err)
 	}
 	for _, e := range batch.Events {
-		if e.ServiceID != serviceID || e.RunID != runID || e.RunNumber != number || e.ServiceKind != "service" ||
-			(e.EventType == "http.decision" && e.PairID != "" ||
-				e.EventType != "http.decision" && (e.PairID == "" || e.EventType != "connection.open" && e.EventType != "connection.close")) {
+		if e.ServiceID != serviceID || e.RunID != runID || e.RunNumber != number || e.ServiceKind != "service" {
 			return errors.Join(serviceaudit.ErrRejected, serviceaudit.ErrInvalid)
 		}
 	}

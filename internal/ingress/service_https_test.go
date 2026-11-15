@@ -37,7 +37,7 @@ type httpsServiceForwarder struct {
 	workers  sync.WaitGroup
 }
 
-func (f *httpsServiceForwarder) OpenPrivate(_ context.Context, _ ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+func (f *httpsServiceForwarder) OpenService(_ context.Context, _ ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) (net.Conn, error) {
 	service, ok := f.services[header.ServiceID]
 	if !ok || header.Validate() != nil || header.ServiceRunID != service.run || header.PublicService.DestinationPort != 443 {
 		return nil, ErrServiceAdmission
@@ -59,6 +59,11 @@ func (f *httpsServiceForwarder) OpenPrivate(_ context.Context, _ ingressv1.Servi
 			return
 		}
 		defer request.Body.Close()
+		check, cancel := context.WithDeadline(f.ctx, header.ExpiresAt)
+		defer cancel()
+		if reserveCapacity == nil || reserveCapacity(check) != nil {
+			return
+		}
 		f.observed <- httpsServiceObservation{header: header, metadata: metadata, hostname: secured.ConnectionState().ServerName, authority: request.Host}
 		response := http.Response{
 			StatusCode: http.StatusOK, ProtoMajor: 1, ProtoMinor: 1,
@@ -95,6 +100,7 @@ func TestServiceHTTPSRoutesTwoHostnamesOnShared443(t *testing.T) {
 		listener.Close()
 		t.Fatal(err)
 	}
+	applyServiceRoutingFixture(t, server)
 	done := make(chan error, 1)
 	go func() { done <- server.Serve() }()
 	t.Cleanup(func() {
@@ -146,10 +152,9 @@ func TestServiceHTTPSRoutesTwoHostnamesOnShared443(t *testing.T) {
 		if err != nil || response.StatusCode != http.StatusOK || string(body) != service.service {
 			t.Fatal("shared HTTPS selected another service", hostname, string(body), err)
 		}
-		claim := ingressAwait(t, control.claims)
 		observed := ingressAwait(t, targets.observed)
-		if claim.Hostname == nil || *claim.Hostname != hostname || claim.DestinationPort != 443 ||
-			observed.hostname != hostname || observed.authority != hostname || observed.header.ServiceID != service.service || observed.header.ServiceRunID != service.run ||
+		if observed.hostname != hostname || observed.authority != hostname || observed.header.ServiceID != service.service || observed.header.ServiceRunID != service.run ||
+			observed.header.PublicService.DestinationPort != 443 || observed.metadata.VisitorSourceProof == "" ||
 			observed.metadata.Source != netip.MustParseAddrPort("192.0.2.4:42000") || observed.metadata.Destination != netip.MustParseAddrPort("203.0.113.8:443") {
 			t.Fatal("service selection, TLS, authority, or trusted metadata changed")
 		}
@@ -159,8 +164,8 @@ func TestServiceHTTPSRoutesTwoHostnamesOnShared443(t *testing.T) {
 		response.Body.Close()
 		t.Fatal("unknown hostname reached a default service")
 	}
-	if claim := ingressAwait(t, control.claims); claim.Hostname == nil || *claim.Hostname != "unknown.example.test" {
-		t.Fatal("unknown hostname was silently changed")
+	if len(control.claims) != 0 {
+		t.Fatal("prepared HTTP selection made a per-visitor control request")
 	}
 	select {
 	case <-targets.observed:

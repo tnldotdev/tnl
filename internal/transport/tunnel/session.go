@@ -64,6 +64,8 @@ type Session struct {
 	connectorLeg       *tunnelv1.ConnectorPairLegProof
 	connectorControl   sync.Mutex
 	connectorActivated bool
+	capacityMu         sync.Mutex
+	capacityRequests   map[string]*serviceCapacity
 
 	closeOnce sync.Once
 	closeErr  error
@@ -326,6 +328,7 @@ func (s *Session) HandlePublisherDrain(ctx context.Context, drain func(context.C
 // the relay lease and PROXY source before permitting application bytes.
 type IncomingServiceForwardingStream struct {
 	owner    context.Context
+	session  *Session
 	stream   muxsession.Stream
 	Header   tunnelv1.ServiceForwardingHeader
 	response *replyStream
@@ -381,10 +384,19 @@ func (s *Session) readServiceForwardingStream(ctx context.Context, stream muxses
 		return nil, &StreamHeaderError{Kind: "service forwarding", Err: errors.New("visitor bytes preceded service acceptance")}
 	}
 	reply := newReplyStream(stream)
-	return &IncomingServiceForwardingStream{owner: ctx, stream: reply, Header: header, response: reply}, nil
+	return &IncomingServiceForwardingStream{owner: ctx, session: s, stream: reply, Header: header, response: reply}, nil
 }
 
 func (r *IncomingServiceForwardingStream) Stream() muxsession.Stream { return r.stream }
+
+// RequestCapacity asks the sender of this exact stream to reserve capacity.
+// visitor access is checked separately by the publisher.
+func (r *IncomingServiceForwardingStream) RequestCapacity(ctx context.Context) error {
+	if r == nil || r.session == nil {
+		return &ProtocolError{Code: tunnelv1.Unavailable}
+	}
+	return r.session.RequestServiceCapacity(ctx, r.Header)
+}
 
 func (r *IncomingServiceForwardingStream) Context() context.Context {
 	return incomingContext(r.owner, r.Header.TraceContext)

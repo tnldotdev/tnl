@@ -63,8 +63,9 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.identity.teamID = team.Id
-	direct := startSeparatedPrivateIngress(t, f, 0, "quic", nil).ingresses[0].server
-	startSeparatedPrivateIngress(t, f, 1, "quic", nil)
+	firstIngress := startSeparatedPrivateIngress(t, f, 0, "quic", nil)
+	secondIngress := startSeparatedPrivateIngress(t, f, 1, "quic", nil)
+	direct := firstIngress.ingresses[0].server
 	var requests atomic.Int64
 	var targetConnection atomic.Value
 	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -124,6 +125,13 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	serviceID := *applied.Services[0].ServiceId
 	// a group assignment is the only publisher grant for this service.
 	publisherMetrics := startServiceHTTPDeploymentPublisher(t, f, applied, "http-auth", group, target.Listener.Addr().String())
+	var readyAt time.Time
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT ready_at FROM control.service_runs WHERE service_id=$1 AND state='ready'`, serviceID).Scan(&readyAt); err != nil {
+		t.Fatal(err)
+	}
+	privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+		return !direct.RoutingObservedAt().Before(readyAt) && !secondIngress.ingresses[0].server.RoutingObservedAt().Before(readyAt), nil
+	})
 	services, err := f.identity.routes.ListAvailableServices(t.Context(), controlv1.ServiceAccessPathPublicEndpoint)
 	if err != nil {
 		t.Fatal(err)
@@ -460,6 +468,17 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if *updated.Services[0].Hostname != service.Endpoint.Hostname || *updated.Services[0].Port != service.Endpoint.Port {
 		t.Fatal("reachability changed endpoint")
 	}
+	waitForHTTPRoutingMutation := func() {
+		t.Helper()
+		var committed time.Time
+		if err := f.inspect.QueryRowContext(t.Context(), `SELECT clock_timestamp()`).Scan(&committed); err != nil {
+			t.Fatal(err)
+		}
+		privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+			return !direct.RoutingObservedAt().Before(committed) && !secondIngress.ingresses[0].server.RoutingObservedAt().Before(committed), nil
+		})
+	}
+	waitForHTTPRoutingMutation()
 	client.Transport.(*http.Transport).CloseIdleConnections()
 	if response, err = client.Get(base + "/"); err == nil {
 		_ = response.Body.Close()
@@ -470,6 +489,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if _, err = f.identity.routes.ApplyProjectConfiguration(t.Context(), "http-auth", controlv1.ApplyProjectConfigurationRequest{Deployment: updated.Deployment, ServiceDeclarations: updated.ServiceDeclarations, TeamId: f.identity.teamID, Source: &testProjectSource, ExpectedRevision: updated.Revision, Configuration: updated.Configuration}); err != nil {
 		t.Fatal(err)
 	}
+	waitForHTTPRoutingMutation()
 	checkServiceHTTPCompany(t, f, issuer, client, base, service, person.Identity.Id)
 	var retired bool
 	if err = f.inspect.QueryRowContext(t.Context(), `SELECT to_regclass('control.public_urls') IS NULL`).Scan(&retired); err != nil || !retired {

@@ -331,6 +331,59 @@ func (q *Queries) ListDeploymentPublisherStatus(ctx context.Context, arg ListDep
 	return items, nil
 }
 
+const listDeploymentServiceConfigurations = `-- name: ListDeploymentServiceConfigurations :many
+SELECT binding.service_id,binding.service,deployment.ownership, deployment.id, deployment.team_id, deployment.project_key, deployment.name, deployment.description, deployment.domain_id, deployment.namespace, deployment.revision, deployment.configuration_hash, deployment.configuration_ciphertext, deployment.storage_key_id, deployment.create_principal_id, deployment.create_idempotency_key, deployment.create_request_digest, deployment.deleted_at
+FROM control.applied_project_services binding
+JOIN control.deployments deployment ON deployment.id=binding.deployment_id AND deployment.deleted_at IS NULL
+WHERE binding.service_id=ANY($1::text[])
+ORDER BY binding.service_id
+`
+
+type ListDeploymentServiceConfigurationsRow struct {
+	ServiceID         pgtype.Text
+	Service           string
+	ControlDeployment ControlDeployment
+}
+
+func (q *Queries) ListDeploymentServiceConfigurations(ctx context.Context, serviceIds []string) ([]ListDeploymentServiceConfigurationsRow, error) {
+	rows, err := q.db.Query(ctx, listDeploymentServiceConfigurations, serviceIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDeploymentServiceConfigurationsRow
+	for rows.Next() {
+		var i ListDeploymentServiceConfigurationsRow
+		if err := rows.Scan(
+			&i.ServiceID,
+			&i.Service,
+			&i.ControlDeployment.Ownership,
+			&i.ControlDeployment.ID,
+			&i.ControlDeployment.TeamID,
+			&i.ControlDeployment.ProjectKey,
+			&i.ControlDeployment.Name,
+			&i.ControlDeployment.Description,
+			&i.ControlDeployment.DomainID,
+			&i.ControlDeployment.Namespace,
+			&i.ControlDeployment.Revision,
+			&i.ControlDeployment.ConfigurationHash,
+			&i.ControlDeployment.ConfigurationCiphertext,
+			&i.ControlDeployment.StorageKeyID,
+			&i.ControlDeployment.CreatePrincipalID,
+			&i.ControlDeployment.CreateIdempotencyKey,
+			&i.ControlDeployment.CreateRequestDigest,
+			&i.ControlDeployment.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDeployments = `-- name: ListDeployments :many
 SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, revision, configuration_hash, configuration_ciphertext, storage_key_id, create_principal_id, create_idempotency_key, create_request_digest, deleted_at FROM control.deployments
 WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL

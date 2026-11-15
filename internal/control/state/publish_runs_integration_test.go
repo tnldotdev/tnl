@@ -33,7 +33,8 @@ func TestIntegrationPublishRunCreation(t *testing.T) {
 		t.Fatal("start did not assign distinct relay services")
 	}
 	repeated, err := f.database.StartServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.RunNumber, f.publisher, f.now)
-	if err != nil || repeated.Token != f.run.Token || !reflect.DeepEqual(repeated.Connections, f.run.Connections) {
+	if err != nil || repeated.Token != f.run.Token || repeated.VisitorSourceKey == [32]byte{} ||
+		repeated.VisitorSourceKey != f.run.VisitorSourceKey || !reflect.DeepEqual(repeated.Connections, f.run.Connections) {
 		t.Fatal("start replay changed its run or assignment credentials", err)
 	}
 	changed := f.service.ServiceMetadata
@@ -331,7 +332,7 @@ func publishRunPrerequisitesInDatabase(t *testing.T, database *Database, now tim
 func registerTestIngress(t *testing.T, database *Database, now time.Time) IngressLease {
 	t.Helper()
 	lease, err := database.RegisterIngress(t.Context(), IngressRegistration{
-		IngressID: "ingress_test", IngressRunID: "run_test", ProtocolVersion: 1, ConnectionCapacity: 100,
+		IngressID: "ingress_test", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1, ConnectionCapacity: 100,
 		IngressPoolID: PrimaryIngressPoolID, HTTPS: true,
 	}, now, time.Hour)
 	if err != nil {

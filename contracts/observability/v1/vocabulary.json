@@ -1787,6 +1787,14 @@
       ]
     },
     {
+      "name": "tnl_ingress_service_routing_observed_timestamp_seconds",
+      "semantics": "Control timestamp of the last routing snapshot applied by ingress; zero before the first refresh.",
+      "kind": "gauge",
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
+    },
+    {
       "name": "tnl_ingress_traffic_admissions_total",
       "semantics": "Process-local traffic decisions by fixed stage and result; excludes identities and network addresses.",
       "kind": "counter",

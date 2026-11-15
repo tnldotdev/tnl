@@ -9,12 +9,14 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
@@ -327,11 +329,6 @@ func TestIntegrationLocalHTTPServiceRequestLimitsAcrossPublicAndConnectorAccess(
 	process := startSeparatedPrivateIngress(t, f, 0, "quic", nil)
 	startSeparatedPrivateIngress(t, f, 1, "quic", nil)
 	var requests atomic.Int64
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		_, _ = io.WriteString(w, "limited local HTTP")
-	}))
-	t.Cleanup(target.Close)
 	protocol := controlv1.ServiceProtocolHTTP
 	realized, err := f.identity.routes.RealizeLocalProjectService(t.Context(), "local-http-limits", "api", controlv1.RealizeLocalProjectServiceRequest{
 		TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), WorktreeKey: "checkout",
@@ -358,8 +355,34 @@ func TestIntegrationLocalHTTPServiceRequestLimitsAcrossPublicAndConnectorAccess(
 	quic, tcp := f.connectors()
 	for round := range 2 {
 		t.Run([]string{"first run", "publisher restart"}[round], func(t *testing.T) {
-			stopPublisher := startPrivateHTTPPublisher(t, f, service, target.Listener.Addr().String())
-			defer stopPublisher()
+			release := make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(release) })
+			defer unblock()
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				_, _ = io.WriteString(w, "limited local HTTP")
+				if r.URL.Path == "/hold" {
+					w.(http.Flusher).Flush()
+					select {
+					case <-release:
+						_, _ = io.WriteString(w, " complete")
+					case <-r.Context().Done():
+					}
+				}
+			}))
+			t.Cleanup(target.Close)
+			var runID string
+			stopPublisher := startPrivateHTTPPublisher(t, f, service, target.Listener.Addr().String(), func(cfg *publisherservice.RunConfig) {
+				cfg.Prepared = func(preparation controlv1.ServiceRunPreparation) error {
+					runID = preparation.ServiceRunId
+					return nil
+				}
+			})
+			defer func() {
+				started := time.Now()
+				stopPublisher()
+				t.Log("publisher join", time.Since(started))
+			}()
 			verification := f.visitorRoots.Clone()
 			verification.ServerName = service.Endpoint.Hostname
 			publicTransport := &http.Transport{TLSClientConfig: verification, DialContext: workloadPublicEndpointDialer(t, process.ingresses[0].server, service.Endpoint.Port)}
@@ -376,8 +399,14 @@ func TestIntegrationLocalHTTPServiceRequestLimitsAcrossPublicAndConnectorAccess(
 			if err != nil {
 				t.Fatal(err)
 			}
-			local, stop := startRuntimeConnectorOn(t, f, service, listener, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp})
-			defer stop()
+			var completed atomic.Bool
+			local, stop := startRuntimeConnectorOn(t, f, service, listener, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp},
+				func(err error) bool { return completed.Load() && completedHTTPConnectorDenied(err) })
+			defer func() {
+				started := time.Now()
+				stop()
+				t.Log("connector join", time.Since(started))
+			}()
 			localTransport := &http.Transport{TLSClientConfig: verification.Clone()}
 			defer localTransport.CloseIdleConnections()
 			localClient := &http.Client{Transport: localTransport, Timeout: 5 * time.Second}
@@ -406,12 +435,112 @@ func TestIntegrationLocalHTTPServiceRequestLimitsAcrossPublicAndConnectorAccess(
 			}
 			localBase := "https://" + local.Addr().String()
 			request(publicClient, publicBase, token.Permission.VisitorToken, http.StatusOK)
-			request(localClient, localBase, "", http.StatusOK)
+			// keep the final admitted request active while both paths reject
+			// overflow; finishing it completes the run's total request budget.
+			heldRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, localBase+"/hold", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			held, err := localClient.Do(heldRequest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer held.Body.Close()
+			prefix := make([]byte, len("limited local HTTP"))
+			if held.StatusCode != http.StatusOK {
+				t.Fatal("final admitted request failed", held.StatusCode)
+			}
+			if _, err := io.ReadFull(held.Body, prefix); err != nil || string(prefix) != "limited local HTTP" {
+				t.Fatal("final admitted request did not stream", string(prefix), err)
+			}
 			request(publicClient, publicBase, token.Permission.VisitorToken, http.StatusServiceUnavailable)
 			request(localClient, localBase, "", http.StatusServiceUnavailable)
+			unblock()
+			body, err := io.ReadAll(held.Body)
+			if err != nil || string(body) != " complete" {
+				t.Fatal("budget overflow cut off the final admitted response", string(body), err)
+			}
+			// prove graceful completion before cleanup cancels the connector.
+			// cancellation may legitimately abort an unfinished raw copy; it is
+			// not a successful return-delivery receipt. this barrier spends no
+			// visitor budget and is shorter than the original drain deadline.
+			finished := time.Now()
+			privateWait(t, 3*time.Second, func(ctx context.Context) (bool, error) {
+				var closed bool
+				err := f.inspect.QueryRowContext(ctx, `SELECT closed_at IS NOT NULL FROM control.service_runs WHERE id=$1`, runID).Scan(&closed)
+				return closed, err
+			})
+			completed.Store(true)
+			t.Log("graceful run completion", time.Since(finished))
 		})
 	}
 	if requests.Load() != 4 {
 		t.Fatal("denied requests reached the target or restart lost its per-run budget", requests.Load())
+	}
+}
+
+// only the exact completed-run fixture may accept the connector's typed denial
+// after run closure. every joined cause still needs to be expected; an ordinary
+// errors.Is match must not hide physical cleanup or unrelated transport failures.
+func completedHTTPConnectorDenied(err error) bool {
+	reason, typed := failure.ReasonOf(err)
+	if !typed || reason != failure.ServerDenied || !errors.Is(err, connectorstream.ErrServiceConnection) {
+		return false
+	}
+	var expected func(error) bool
+	expected = func(err error) bool {
+		if err == connectorstream.ErrServiceConnection {
+			return true
+		}
+		if classified, ok := err.(*failure.Error); ok && classified.Reason() != failure.ServerDenied {
+			return false
+		}
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			children := joined.Unwrap()
+			if len(children) == 0 {
+				return false
+			}
+			for _, child := range children {
+				if !expected(child) {
+					return false
+				}
+			}
+			return true
+		}
+		if cause := errors.Unwrap(err); cause != nil {
+			return expected(cause)
+		}
+		problem, ok := err.(*clientcontrol.ProblemError)
+		return ok && problem.Status == http.StatusForbidden && problem.Problem.Code == controlv1.Forbidden
+	}
+	return expected(err)
+}
+
+func TestCompletedHTTPConnectorDenialKeepsIndependentFailures(t *testing.T) {
+	denial := failure.Wrap("request control API", failure.ServerDenied,
+		&clientcontrol.ProblemError{Status: http.StatusForbidden, Problem: controlv1.Problem{Code: controlv1.Forbidden}})
+	expected := errors.Join(connectorstream.ErrServiceConnection, denial)
+	for _, test := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"typed completed-run denial", expected, true},
+		{"only denial", denial, false},
+		{"only unavailable connection", connectorstream.ErrServiceConnection, false},
+		{"cleanup failure", errors.Join(expected, errors.New("independent cleanup failure")), false},
+		{"independent cancellation", errors.Join(expected, context.Canceled), false},
+		{"failed copy", errors.Join(expected, io.ErrUnexpectedEOF), false},
+		{"another reason", errors.Join(expected, failure.Wrap("request control API", failure.ServerUnavailable, clientcontrol.ErrUnavailable)), false},
+		{"unclassified forbidden", errors.Join(connectorstream.ErrServiceConnection,
+			&clientcontrol.ProblemError{Status: 403, Problem: controlv1.Problem{Code: controlv1.Forbidden}}), false},
+		{"wrong code", errors.Join(connectorstream.ErrServiceConnection, failure.Wrap("request control API", failure.ServerDenied,
+			&clientcontrol.ProblemError{Status: 403, Problem: controlv1.Problem{Code: controlv1.Conflict}})), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := completedHTTPConnectorDenied(test.err); got != test.want {
+				t.Fatal("completed-run denial hid another failure or lost its typed boundary", got, test.want, test.err)
+			}
+		})
 	}
 }

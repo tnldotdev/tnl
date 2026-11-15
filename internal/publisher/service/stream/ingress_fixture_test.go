@@ -26,6 +26,11 @@ type nativeIngressControl struct {
 	relays       []ingressv1.ServiceRelay
 }
 
+func (c nativeIngressControl) ReadIngressServices(context.Context, string, ingressv1.IngressLeaseIdentity) (ingressv1.IngressServices, error) {
+	now := time.Now()
+	return ingressv1.IngressServices{ObservedAt: now, ValidUntil: now.Add(30 * time.Second), Runs: []ingressv1.IngressServiceRun{}}, nil
+}
+
 func (c nativeIngressControl) AdmitPublicServiceVisitor(_ context.Context, _ string, claim ingressv1.PublicServiceVisitorClaim) (ingressv1.PublicServiceVisitorAdmission, error) {
 	if claim.DestinationPort != c.port || claim.ObservedSourceIp != "127.0.0.1" {
 		return ingressv1.PublicServiceVisitorAdmission{}, ingress.ErrServiceAdmission
@@ -54,7 +59,7 @@ type nativeIngressForwarder struct {
 	visitor func() servicestream.Authentication
 }
 
-func (f nativeIngressForwarder) OpenPrivate(ctx context.Context, _ ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+func (f nativeIngressForwarder) OpenService(ctx context.Context, _ ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) (net.Conn, error) {
 	if header.PublicService == nil || header.PublicService.DestinationPort != f.port || header.Validate() != nil {
 		return nil, ingress.ErrServiceAdmission
 	}

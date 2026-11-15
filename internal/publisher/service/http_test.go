@@ -74,7 +74,7 @@ func serviceHTTPConfiguredFixture(t *testing.T, target http.Handler, h2, inline 
 	if err := header.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	frontend := HTTP{Control: serviceHTTPAdmissionControl{}, Subject: scope, RunID: header.ServiceRunID, Number: 1, Token: credentials.ServiceRunToken("run-token"), Hostname: update.View.Hostname, Port: update.View.Port, Header: header, Policy: policy}
+	frontend := HTTP{Control: serviceHTTPControl{}, Subject: scope, RunID: header.ServiceRunID, Number: 1, Token: credentials.ServiceRunToken("run-token"), Hostname: update.View.Hostname, Port: update.View.Port, Header: header, Policy: policy, ReserveCapacity: func(context.Context) error { return nil }}
 	if configure != nil {
 		configure(&frontend)
 	}
@@ -101,20 +101,12 @@ func serviceHTTPConfiguredFixture(t *testing.T, target http.Handler, h2, inline 
 }
 
 type serviceHTTPShareControl struct {
-	serviceHTTPAdmissionControl
+	serviceHTTPControl
 	redeem func(context.Context, string, string, controlv1.RedeemServiceShareRequest, credentials.ServiceRunToken) (controlv1.ShareRedemption, error)
 }
 
-type serviceHTTPAdmissionControl struct {
+type serviceHTTPControl struct {
 	HTTPControl
-	authorize func(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error)
-}
-
-func (c serviceHTTPAdmissionControl) AuthorizeServiceHTTPVisitor(ctx context.Context, service, run string, token credentials.ServiceRunToken, request controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
-	if c.authorize != nil {
-		return c.authorize(ctx, service, run, token, request)
-	}
-	return controlv1.ServiceClientCertificateDecision{Allowed: true, Admitted: true, ValidUntil: time.Now().Add(time.Minute)}, nil
 }
 
 func (c serviceHTTPShareControl) RedeemServiceShare(ctx context.Context, service, run string, request controlv1.RedeemServiceShareRequest, token credentials.ServiceRunToken) (controlv1.ShareRedemption, error) {
@@ -272,6 +264,7 @@ func TestServiceHTTPAnonymousAccessKeepsPolicyAndCredentialFences(t *testing.T) 
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
+	client.Transport.(*http.Transport).MaxConnsPerHost = 1
 	apply := func(anonymous, enabled bool, ip *ippolicy.Policy) {
 		t.Helper()
 		now := time.Now()
@@ -331,6 +324,18 @@ func TestServiceHTTPAnonymousAccessKeepsPolicyAndCredentialFences(t *testing.T) 
 	request(nil, http.StatusForbidden)
 	apply(true, true, nil)
 	request(nil, http.StatusNoContent)
+	// a 204 header can reach the client before its handler releases the policy
+	// guard. a reserved request on the same sole connection proves that release
+	// before disablement; it reaches neither the target nor an application budget.
+	barrier, err := client.Get("https://preview.example.test/__tnl/unused-policy-barrier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, readErr := io.Copy(io.Discard, barrier.Body)
+	closeErr := barrier.Body.Close()
+	if barrier.StatusCode != http.StatusNotFound || readErr != nil || closeErr != nil {
+		t.Fatal("HTTP policy guard barrier failed", barrier.StatusCode, readErr, closeErr)
+	}
 	apply(true, false, nil)
 	request(nil, http.StatusServiceUnavailable)
 	if forwarded.Load() != 3 {

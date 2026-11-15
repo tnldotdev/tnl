@@ -49,6 +49,7 @@ type ServiceRunState struct {
 	RunNumber                       int64
 	ExpiresAt                       time.Time
 	Connections                     []ServiceRunAssignment
+	VisitorSourceKey                [32]byte
 	Healthy                         bool
 	StreamCapacity, ReportedStreams int32
 }
@@ -344,20 +345,44 @@ func privateAssignments(ctx context.Context, q *controlstatedb.Queries, seed cre
 
 func (d *Database) serviceRunAuthorization(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, serviceID, runID, token string, now time.Time) (controlstatedb.ControlServiceRun, error) {
 	clock := newAuthorizationClock(now)
+	digest, err := serviceRunCredentialDigest(runID, token)
+	if err != nil {
+		return controlstatedb.ControlServiceRun{}, err
+	}
+	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: runID, ServiceID: serviceID})
+	if err != nil {
+		return run, publisherLookupError(err, ErrServiceAccess)
+	}
+	return d.validateServiceRunAuthorization(ctx, tx, q, serviceID, runID, run, digest, clock)
+}
+
+// visitor certificate checks and policy observations read current run authority
+// without changing it. run writers keep the exclusive serviceRunAuthorization.
+func (d *Database) serviceRunObservationAuthorization(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, serviceID, runID, token string, now time.Time) (controlstatedb.ControlServiceRun, error) {
+	clock := newAuthorizationClock(now)
+	digest, err := serviceRunCredentialDigest(runID, token)
+	if err != nil {
+		return controlstatedb.ControlServiceRun{}, err
+	}
+	run, err := q.ObserveServiceRun(ctx, controlstatedb.ObserveServiceRunParams{ID: runID, ServiceID: serviceID})
+	if err != nil {
+		return run, publisherLookupError(err, ErrServiceAccess)
+	}
+	return d.validateServiceRunAuthorization(ctx, tx, q, serviceID, runID, run, digest, clock)
+}
+
+func serviceRunCredentialDigest(runID, token string) (credentials.SecretHash, error) {
 	if !opaqueid.Valid(runID, opaqueid.ServiceRunPrefix) {
-		return controlstatedb.ControlServiceRun{}, ErrServiceAccess
+		return credentials.SecretHash{}, ErrServiceAccess
 	}
 	digest, err := credentials.ParseServiceRunToken(credentials.ServiceRunToken(token))
 	if err != nil {
-		return controlstatedb.ControlServiceRun{}, ErrServiceAccess
+		return credentials.SecretHash{}, ErrServiceAccess
 	}
-	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: runID, ServiceID: serviceID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return run, ErrServiceAccess
-	}
-	if err != nil {
-		return run, err
-	}
+	return digest, nil
+}
+
+func (d *Database) validateServiceRunAuthorization(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, serviceID, runID string, run controlstatedb.ControlServiceRun, digest credentials.SecretHash, clock authorizationClock) (controlstatedb.ControlServiceRun, error) {
 	binding, err := checkedServiceRunBinding(serviceID, runID, run.RunNumber)
 	if err != nil || !binding.matches(run) {
 		return run, ErrServiceAccess

@@ -60,6 +60,12 @@ schemas:
         }
       visitor_connection_id: { type: string }
       source_ip: { type: string }
+      routing_authority:
+        description: Signed routing authority for an ingress HTTP selection denial; verified during ingestion and not saved in service history.
+        type: string
+        format: byte
+        maxLength: 1368
+        x-go-type-skip-optional-pointer: true
       outcome:
         type: string
         enum: [allowed, denied, failed, forwarded, closed]

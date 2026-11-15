@@ -102,6 +102,10 @@ func (d *Database) lockServiceHTTPRun(ctx context.Context, tx pgx.Tx, auth Servi
 	if err != nil {
 		return err
 	}
+	return validateServiceHTTPRun(ctx, q, auth, run, now)
+}
+
+func validateServiceHTTPRun(ctx context.Context, q *controlstatedb.Queries, auth ServiceHTTPRun, run controlstatedb.ControlServiceRun, now time.Time) error {
 	if run.RunNumber != auth.Number || run.State != "ready" || !run.Healthy || !run.CertificateExpiresAt.Time.After(now) {
 		return ErrServiceAccess
 	}

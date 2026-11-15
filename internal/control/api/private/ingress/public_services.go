@@ -14,8 +14,9 @@ import (
 )
 
 type publicServiceStore interface {
+	ReadIngressServices(context.Context, controlstate.IngressLeaseIdentity, time.Time) (controlstate.IngressServices, error)
 	ClosedServiceRuns(context.Context, controlstate.IngressLeaseIdentity, []controlstate.ServiceRunReference, time.Time) ([]controlstate.ServiceRunReference, error)
-	AdmitPublicServiceVisitor(context.Context, controlstate.IngressLeaseIdentity, string, string, string, int, netip.Addr, time.Time, ...controlstate.ServiceRunReference) (controlstate.PublicServiceVisitorAdmission, error)
+	AdmitPublicServiceVisitor(context.Context, controlstate.IngressLeaseIdentity, string, string, int, netip.Addr, time.Time, ...controlstate.ServiceRunReference) (controlstate.PublicServiceVisitorAdmission, error)
 	PublicServiceVisitorStatus(context.Context, controlstate.IngressLeaseIdentity, string, time.Time) (controlstate.PublicServiceVisitorStatus, error)
 	ClosePublicServiceVisitor(context.Context, controlstate.IngressLeaseIdentity, string, time.Time) error
 	PromotePublicServiceVisitor(context.Context, controlstate.IngressLeaseIdentity, string, time.Time) error
@@ -66,7 +67,7 @@ func (s *service) AdmitPublicServiceVisitor(ctx context.Context, id string, body
 	var result ingressv1.PublicServiceVisitorAdmission
 	lease, ok := ingressLeaseIdentity(id, body.IngressRunId, body.IngressLeaseRevision)
 	source, sourceOK := privateSource(body.ObservedSourceIp)
-	if !ok || !sourceOK || len(body.ExcludedRuns) > 7 {
+	if !ok || !sourceOK || body.DestinationPort < 1024 || body.DestinationPort > 65535 || len(body.ExcludedRuns) > 7 {
 		return result, serverhttp.NewProblemError(400, "invalid_request", "invalid public service admission")
 	}
 	excluded := make([]controlstate.ServiceRunReference, 0, len(body.ExcludedRuns))
@@ -81,32 +82,15 @@ func (s *service) AdmitPublicServiceVisitor(ctx context.Context, id string, body
 		runIDs[row.ServiceRunId], numbers[row.RunNumber] = true, true
 		excluded = append(excluded, controlstate.ServiceRunReference{ServiceID: row.ServiceId, RunID: row.ServiceRunId, RunNumber: row.RunNumber})
 	}
-	hostname := ""
-	if body.Hostname != nil {
-		hostname = *body.Hostname
-	}
-	admitted, err := s.store.AdmitPublicServiceVisitor(ctx, lease, body.IngressPoolId, body.VisitorConnectionId, hostname, body.DestinationPort, source, s.now(), excluded...)
+	admitted, err := s.store.AdmitPublicServiceVisitor(ctx, lease, body.IngressPoolId, body.VisitorConnectionId, body.DestinationPort, source, s.now(), excluded...)
 	if err != nil {
 		return result, s.privateStateError(ctx, err)
 	}
 	if !admitted.Traffic.Valid() || admitted.Traffic.RatePer == 0 {
 		return result, serverhttp.NewProblemError(500, "internal", "invalid service traffic approval")
 	}
-	traffic := ingressv1.IngressTrafficLimits{
-		Connections: admitted.Traffic.Connections, Rate: admitted.Traffic.Rate,
-		RatePerNs: int64(admitted.Traffic.Period()), Burst: admitted.Traffic.Burst,
-		UploadBytes: admitted.Traffic.UploadBytes, DownloadBytes: admitted.Traffic.DownloadBytes,
-	}
-	if admitted.Traffic.TotalConnections > 0 {
-		traffic.TotalConnections = &admitted.Traffic.TotalConnections
-	}
-	if admitted.Traffic.TotalUploadBytes > 0 {
-		traffic.TotalUploadBytes = &admitted.Traffic.TotalUploadBytes
-	}
-	if admitted.Traffic.TotalDownloadBytes > 0 {
-		traffic.TotalDownloadBytes = &admitted.Traffic.TotalDownloadBytes
-	}
-	return ingressv1.PublicServiceVisitorAdmission{ServiceId: admitted.ServiceID, ServiceRunId: admitted.RunID, RunNumber: admitted.RunNumber, VisitorConnectionId: admitted.ConnectionID, ExpiresAt: admitted.ExpiresAt, ConnectedRelays: privateRelayResponses(admitted.Relays), Traffic: traffic, Anonymous: admitted.Anonymous, RecoveryEpisodeId: admitted.RecoveryEpisodeID}, nil
+	traffic := ingressTraffic(admitted.Traffic)
+	return ingressv1.PublicServiceVisitorAdmission{ServiceId: admitted.ServiceID, ServiceRunId: admitted.RunID, RunNumber: admitted.RunNumber, VisitorConnectionId: admitted.ConnectionID, ExpiresAt: admitted.ExpiresAt, ConnectedRelays: privateRelayResponses(admitted.Relays), Traffic: traffic, RecoveryEpisodeId: admitted.RecoveryEpisodeID}, nil
 }
 
 func (s *service) PublicServiceVisitorStatus(ctx context.Context, id string, body ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error) {

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
@@ -23,6 +25,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
@@ -54,10 +57,12 @@ type Prepared struct {
 	managedProtocol     config.ProtocolName
 	managedTargetTLS    *tls.Config
 	visitorTLS          *tls.Config
-	managedVisitor      func(tunnelv1.ServiceForwardingHeader) servicestream.Authentication
+	managedVisitor      func(tunnelv1.ServiceForwardingHeader, func(context.Context) error) servicestream.Authentication
+	sourceKey           [32]byte
 	servicePort         uint16
 	managedPublic       bool
 	serviceHTTPRequests *requestlimit.HTTP
+	httpProxy           *proxy.Proxy
 	httpResponseHooks   httpstream.ResponseHooks
 	connectorHTTP       servicestream.ConnectorHTTPFrontend
 	policy              *visitorlease.Lease
@@ -107,18 +112,20 @@ type Bound struct {
 }
 
 type boundState struct {
-	connections      [2]controlv1.ConnectionAssignment
-	mu               sync.Mutex
-	active           map[net.Conn]struct{}
-	closed           bool
-	reservedStreams  int
-	connectorPending int
-	connectorPeers   map[string]*PeerSession
-	packetSlots      [2]*Claimed
-	closePolicy      func()
-	httpDrain        chan struct{}
-	httpDrainUntil   time.Time
-	httpWorkers      sync.WaitGroup
+	connections       [2]controlv1.ConnectionAssignment
+	mu                sync.Mutex
+	active            map[net.Conn]struct{}
+	closed            bool
+	reservedStreams   int
+	connectorPending  int
+	connectorPeers    map[string]*PeerSession
+	packetSlots       [2]*Claimed
+	closePolicy       func()
+	httpDrain         chan struct{}
+	httpDrainUntil    time.Time
+	httpDrainDuration time.Duration
+	httpWorkers       sync.WaitGroup
+	sourceProofs      sourceProofHistory
 }
 
 func (Bound) String() string   { return "private publisher run" }
@@ -466,7 +473,7 @@ func (c *Claimed) Serve(ctx context.Context) (result error) {
 		workers.Go(func() {
 			defer release()
 			defer incoming.Stream().Close()
-			_ = c.bound.serveBody(incoming.Context(), c.ref, incoming.Stream(), incoming.Header, incoming.CloseWrite)
+			_ = c.bound.serveBody(incoming.Context(), c.ref, incoming.Stream(), incoming.Header, incoming.CloseWrite, incoming.RequestCapacity)
 		})
 	}
 }
@@ -499,7 +506,7 @@ func (b *Bound) Invalidate() {
 	}
 }
 
-func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConnectionRef, stream net.Conn, header tunnelv1.ServiceForwardingHeader, endStream func(context.Context) error) error {
+func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConnectionRef, stream net.Conn, header tunnelv1.ServiceForwardingHeader, endStream func(context.Context) error, reserveCapacity func(context.Context) error) (result error) {
 	ctx = observability.ExtractWireTrace(ctx, header.TraceContext)
 	ctx = observability.WithVisitor(ctx, header.VisitorConnectionID)
 	if b == nil || stream == nil || !b.current(ref) ||
@@ -530,6 +537,11 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 		ctx = life
 	}
 	deadline := time.Now().Add(10 * time.Second)
+	for _, until := range []time.Time{header.ExpiresAt, header.LeaseExpiresAt} {
+		if until.Before(deadline) {
+			deadline = until
+		}
+	}
 	if err := stream.SetDeadline(deadline); err != nil {
 		return err
 	}
@@ -541,6 +553,74 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 		b.prepared.managedProtocol == config.ProtocolHTTP && header.PublicService.DestinationPort != 443) {
 		return ErrPrivateStream
 	}
+	if b.prepared.managedProtocol == config.ProtocolHTTP {
+		if b.prepared.policy == nil {
+			return ErrPrivateStream
+		}
+		proof, err := tunnelv1.ReadVisitorSourceProof([]byte(metadata.VisitorSourceProof))
+		if err != nil {
+			return err
+		}
+		// authenticate and commit source evidence only after a visitor byte.
+		// a newer signed delegation can wait for background policy installation
+		// within this same setup deadline; it cannot authorize against old policy.
+		reader := bufio.NewReader(replay)
+		if _, err := reader.Peek(1); err != nil {
+			return err
+		}
+		check, stop := context.WithDeadline(ctx, deadline)
+		err = b.checkVisitorSource(check, header, metadata, proof)
+		stop()
+		if err != nil {
+			return err
+		}
+		life, cancel := context.WithCancel(ctx)
+		defer cancel()
+		guard, err := b.prepared.policy.BindPublicConnection(controlv1.VisitorPublicEndpoint{
+			Hostname: b.prepared.managedHostname, Port: int(metadata.Destination.Port()), EndpointRevision: proof.Authority.EndpointRevision,
+		}, metadata.Source.Addr(), func() { cancel(); _ = stream.Close() })
+		if err != nil {
+			return err
+		}
+		defer guard.Close()
+		ctx = life
+		replay = reader
+		// the publisher reports HTTP access under its exact run credential.
+		// ingress capacity is not an authenticated visitor identity.
+		event := serviceaudit.Observation{ServiceID: header.ServiceID, ServiceKind: "service", RunID: header.ServiceRunID,
+			RunNumber: int64(header.RunNumber), VisitorConnectionID: header.VisitorConnectionID, SourceIP: header.SourceIP,
+			EventType: "connection.open", Outcome: "allowed"}
+		var opened atomic.Bool
+		var once sync.Once
+		reserve := reserveCapacity
+		reserveCapacity = func(call context.Context) error {
+			if reserve == nil {
+				return ErrPrivateStream
+			}
+			if err := reserve(call); err != nil {
+				return err
+			}
+			if err := context.Cause(call); err != nil {
+				return err
+			}
+			once.Do(func() {
+				serviceaudit.Emit(b.audit, event)
+				opened.Store(true)
+			})
+			return nil
+		}
+		defer func() {
+			if opened.Load() {
+				event.EventType, event.Outcome, event.Reason = "connection.close", "closed", "closed"
+				if result != nil {
+					event.Outcome, event.Reason = "failed", "forwarding"
+				}
+			} else {
+				event.Outcome, event.Reason = "denied", "authorization"
+			}
+			serviceaudit.Emit(b.audit, event)
+		}()
+	}
 	authority := ""
 	// direct visitors use the exact managed origin. admitted connector clients
 	// can use a loopback authority, including an owned kubeconfig's local server.
@@ -551,7 +631,47 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	if endStream != nil {
 		connection.endStream = func() error { return endStream(ctx) }
 	}
-	return b.forwardManaged(ctx, connection, b.prepared.managedVisitor(header), authority)
+	return b.forwardManaged(ctx, connection, b.prepared.managedVisitor(header, reserveCapacity), authority)
+}
+
+func (b *Bound) checkVisitorSource(ctx context.Context, header tunnelv1.ServiceForwardingHeader, metadata proxyproto.Header, proof tunnelv1.VisitorSourceProof) error {
+	public := header.PublicService
+	if public == nil || b.prepared.policy == nil || header.ServiceID != b.prepared.Preparation.ServiceId ||
+		header.ServiceRunID != b.prepared.Preparation.ServiceRunId || header.RunNumber != uint64(b.prepared.Preparation.RunNumber) ||
+		proof.Authority.IngressID != public.IngressID || proof.Authority.IngressRunID != public.IngressRunID ||
+		proof.Authority.IngressLeaseRevision != public.IngressLeaseRevision {
+		return visitortoken.ErrVisitorSource
+	}
+	view, enabled, _ := b.prepared.policy.Current()
+	if !enabled || view.Scope.ID != header.ServiceID {
+		return visitortoken.ErrVisitorSource
+	}
+	binding := tunnelv1.VisitorSourceBinding{
+		ServiceID: header.ServiceID, ServiceRunID: header.ServiceRunID, RunNumber: header.RunNumber,
+		VisitorConnectionID: header.VisitorConnectionID, Source: metadata.Source, Destination: metadata.Destination,
+	}
+	now := view.AuthorityTime(time.Now())
+	// reject a forged source before allowing it to wait for any policy update.
+	if err := visitortoken.VerifyVisitorSource(b.prepared.sourceKey, proof, binding, proof.Authority.VisitorPolicyRevision, now); err != nil {
+		return err
+	}
+	if proof.Authority.VisitorPolicyRevision > view.VisitorPolicyRevision {
+		wait, cancel := context.WithTimeout(ctx, time.Unix(proof.Authority.ValidUntil, 0).Sub(now))
+		err := b.prepared.policy.WaitRevision(wait, proof.Authority.VisitorPolicyRevision)
+		cancel()
+		if err != nil {
+			return err
+		}
+		view, enabled, _ = b.prepared.policy.Current()
+		if !enabled {
+			return visitortoken.ErrVisitorSource
+		}
+		now = view.AuthorityTime(time.Now())
+	}
+	if err := visitortoken.VerifyVisitorSource(b.prepared.sourceKey, proof, binding, view.VisitorPolicyRevision, now); err != nil {
+		return err
+	}
+	return b.sourceProofs.remember(proof, now)
 }
 
 func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor servicestream.Authentication, authority string) error {
@@ -639,6 +759,7 @@ func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor ser
 		InspectionMode: b.prepared.inspectionMode, ObserveSummary: b.prepared.observeSummary,
 		AdmitRequest: b.prepared.admitRequest, HTTPResponseHooks: b.prepared.httpResponseHooks, HTTPDrain: drain,
 		ConnectorHTTP: b.prepared.connectorHTTP,
+		HTTPProxy:     b.prepared.httpProxy,
 		Authority:     authority,
 		TLS:           b.prepared.visitorTLS, TargetTLS: targetTLS, Visitor: visitor}
 	return managed.Forward(ctx, stream)
@@ -646,16 +767,34 @@ func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor ser
 
 // startHTTPDrain fences new forwarding under the same lock as worker entry.
 // existing public, connector, and base HTTP work retains its authority checks.
-func (b *Bound) startHTTPDrain(until time.Time) {
+func (b *Bound) startHTTPDrain(until time.Time) error {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	if b.httpDrain == nil {
 		b.httpDrain = make(chan struct{})
 	}
+	var pending []*connectorAdmission
 	if b.httpDrainUntil.IsZero() {
 		b.httpDrainUntil = until
 		close(b.httpDrain)
+		for _, peer := range b.connectorPeers {
+			for admission := range peer.streams {
+				if !admission.readyLocked() {
+					admission.retireLocked()
+					pending = append(pending, admission)
+				}
+			}
+		}
 	}
+	b.mu.Unlock()
+	var result error
+	for _, admission := range pending {
+		// a prepared opening with no application has no response to drain.
+		// cancel it now, without waiting for its original TLS setup deadline
+		// or interrupting a ready visitor's return-delivery receipt.
+		admission.cancel()
+		result = errors.Join(result, admission.closeStream())
+	}
+	return result
 }
 
 func (b *Bound) joinHTTPDrain() error {

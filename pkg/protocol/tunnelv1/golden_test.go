@@ -60,7 +60,7 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 	assertGoldenFrame(t, "connector-peer-visitor-entry", peerOpeningFixture(), WriteConnectorPeerVisitorEntry, ReadConnectorPeerVisitorEntry)
 	assertGoldenFrame(t, "connector-peer-connectivity", connectorPeerConnectivityFixture(), WriteConnectorPeerConnectivity, ReadConnectorPeerConnectivity)
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
-	assertGoldenFrame(t, "service-forwarding-header", ServiceForwardingHeader{
+	forwarding := ServiceForwardingHeader{
 		ServiceStreamHeader: ServiceStreamHeader{
 			ProtocolVersion: Version, Kind: ServiceForwardingStream,
 			ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012",
@@ -71,7 +71,11 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 		},
 		ConnectionSlot: 1, RelayServiceID: "relay_service_1", RelayID: "relay_1",
 		RelayRunID: "rr_1234567890123456789012", RelayLeaseRevision: 4, LeaseExpiresAt: now.Add(time.Minute),
-	}, WriteServiceForwardingHeader, ReadServiceForwardingHeader)
+	}
+	assertGoldenFrame(t, "service-forwarding-header", forwarding, WriteServiceForwardingHeader, ReadServiceForwardingHeader)
+	assertGoldenFrame(t, "service-capacity", ServiceCapacityRequest{
+		Kind: "service_capacity", Stream: forwarding, Deadline: now.Add(5 * time.Second),
+	}, WriteServiceCapacityRequest, ReadServiceCapacityRequest)
 }
 
 func TestInvalidFixtures(t *testing.T) {

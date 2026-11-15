@@ -17,6 +17,7 @@ import (
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
@@ -127,16 +128,24 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		if status := request("prepare", publisherprotocol.Prepare{Version: 1, Directory: project, Service: "api", Framework: "node", Owner: owner, PID: os.Getpid()}, &assigned); status != http.StatusOK {
 			t.Fatalf("prepare status %d", status)
 		}
+		if assigned.Version != 1 || assigned.Service != "api" || assigned.RegistrationID == "" ||
+			assigned.Hostname == "" || assigned.PublicURL != "https://"+assigned.Hostname ||
+			len(assigned.Project.Services) != 1 || assigned.Project.Services["api"].URL != assigned.PublicURL ||
+			!assigned.Project.Services["api"].Public {
+			t.Fatalf("prepare lost the selected public app endpoint: service=%q registration=%t hostname=%q public_url=%q metadata=%+v",
+				assigned.Service, assigned.RegistrationID != "", assigned.Hostname, assigned.PublicURL, assigned.Project.Services)
+		}
 		registration := publisherprotocol.Registration{Version: 1, RegistrationID: assigned.RegistrationID, Owner: owner, Target: app.URL}
 		if status := request("register", registration, nil); status != http.StatusNoContent {
 			t.Fatalf("register status %d", status)
 		}
 		// renewal belongs to the app. keep the fixture's registration current
 		// while certificate issuance and public readiness finish.
-		stopRenewal, renewalDone := make(chan struct{}), make(chan struct{})
+		renewalCtx, cancelRenewal := context.WithCancel(t.Context())
+		renewalDone := make(chan struct{})
 		var renewalOnce sync.Once
 		stop := func() {
-			renewalOnce.Do(func() { close(stopRenewal) })
+			renewalOnce.Do(cancelRenewal)
 			<-renewalDone
 		}
 		t.Cleanup(stop)
@@ -146,21 +155,17 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 			defer ticker.Stop()
 			for {
 				select {
-				case <-stopRenewal:
+				case <-renewalCtx.Done():
 					return
 				case <-ticker.C:
-					payload, _ := json.Marshal(publisherprotocol.Registration{Version: 1, RegistrationID: assigned.RegistrationID, Owner: owner})
-					call, err := http.NewRequest(http.MethodPost, endpoint.Url+"/v1/renew", bytes.NewReader(payload))
-					if err != nil {
+					// renewal carries the exact target as well as the owner
+					// and registration; a rejected renewal cannot be ignored.
+					if err := publisherprotocol.Call(renewalCtx, endpoint, http.MethodPost, "/v1/renew", registration, nil); err != nil {
+						if renewalCtx.Err() == nil || !failure.Only(err, renewalCtx.Err()) {
+							t.Errorf("renew app registration: %v", err)
+						}
 						return
 					}
-					call.Header.Set("Content-Type", "application/json")
-					call.Header.Set("Authorization", "Bearer "+endpoint.Capability)
-					response, err := client.Do(call)
-					if err != nil {
-						return
-					}
-					_ = response.Body.Close()
 				}
 			}
 		}()

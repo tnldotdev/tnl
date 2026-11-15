@@ -166,18 +166,29 @@ func TestPublicServicePromotionDebitsLifetimeOnce(t *testing.T) {
 
 func TestPublicServicePhysicalLoadCountsPendingAndPromotedVisitorOnce(t *testing.T) {
 	p, c, _, _ := publicServiceTestSetup(t)
-	c.pending = true
-	c.recheckStarted, c.promoteStarted = make(chan struct{}, 1), make(chan struct{}, 1)
+	c.promoteStarted = make(chan struct{}, 1)
 	forwarder := p.config.Forwarder.(*publicServiceForwarderFixture)
-	_, stop := publicServiceActiveStream(t, p, forwarder)
-	<-c.recheckStarted
+	checking, allow := make(chan struct{}), make(chan struct{})
+	forwarder.checkAccess = func(ctx context.Context) error {
+		close(checking)
+		select {
+		case <-allow:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	forwarder.holdAfterReply = true
+	visitor, _, stop := publicServiceTestConnect(t, p)
+	if _, err := visitor.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	ingressAwait(t, checking)
 	if pending, active := publicServiceAdmissionCounts(p); pending != 1 || active != 0 || p.Load() != 1 {
 		t.Fatal("pending connection had incorrect physical load", pending, active, p.Load())
 	}
-	c.mu.Lock()
-	c.pending, c.authenticated = false, true
-	c.mu.Unlock()
-	<-c.promoteStarted
+	close(allow)
+	ingressAwait(t, c.promoteStarted)
 	if pending, active := publicServiceAdmissionCounts(p); pending != 0 || active != 1 || p.Load() != 1 {
 		t.Fatal("promotion counted a physical visitor twice", pending, active, p.Load())
 	}
@@ -289,13 +300,26 @@ func TestPublicServiceAnonymousAccountingSkipsPendingBudgetsAndKeepsRestrictedSe
 
 func TestPublicServiceAnonymousAccountingStillWaitsForPublisherAuthorization(t *testing.T) {
 	p, c, f, _ := publicServiceTestSetup(t)
-	c.anonymous, c.pending, f.failFirst, f.holdAfterReply = true, true, true, true
+	c.anonymous, f.failFirst, f.holdAfterReply, f.replyBeforeAccess = true, true, true, true
 	total := int64(1)
 	c.traffic.TotalConnections = &total
-	c.recheckStarted, c.promoteStarted = make(chan struct{}, 1), make(chan struct{}, 1)
+	checking, allow := make(chan struct{}), make(chan struct{})
+	allowAccess := sync.OnceFunc(func() { close(allow) })
+	defer allowAccess()
+	f.capacityResult = make(chan error, 1)
+	f.checkAccess = func(ctx context.Context) error {
+		close(checking)
+		select {
+		case <-allow:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	const hostname = "anonymous.example.test"
 	p.config.Control = &httpsServiceControl{publicServiceControlFixture: c,
 		services: map[string]httpsService{hostname: {service: c.service, run: c.run}}, claims: make(chan ingressv1.PublicServiceVisitorClaim, 1)}
+	applyServiceRoutingFixture(t, p)
 	events := make(chan serviceaudit.Observation, 2)
 	p.config.AuditSink = auditSinkFunc(func(event serviceaudit.Observation) bool { events <- event; return true })
 	connection, visitor := net.Pipe()
@@ -313,13 +337,13 @@ func TestPublicServiceAnonymousAccountingStillWaitsForPublisherAuthorization(t *
 		t.Fatal("anonymous setup forwarding failed", string(reply), err)
 	}
 	select {
-	case <-c.recheckStarted:
+	case <-checking:
 	case <-time.After(time.Second):
 		t.Fatal("publisher authorization was not checked")
 	}
 	select {
-	case <-c.promoteStarted:
-		t.Fatal("anonymous accounting acknowledged target authorization")
+	case <-f.capacityResult:
+		t.Fatal("anonymous accounting reserved capacity before publisher access")
 	case <-events:
 		t.Fatal("anonymous accounting emitted authorized admission")
 	default:
@@ -336,21 +360,19 @@ func TestPublicServiceAnonymousAccountingStillWaitsForPublisherAuthorization(t *
 	if run.connections != 1 || run.upload != 4 || run.download != 4 || pendingRuns != 0 || pendingSources != 0 || f.count() != 2 {
 		t.Fatal("anonymous accounting reset on fallback or charged metadata/pending budgets", run, pendingRuns, pendingSources, f.count())
 	}
-	c.mu.Lock()
-	c.pending, c.authenticated = false, true
-	c.mu.Unlock()
+	allowAccess()
 	select {
-	case <-c.promoteStarted:
+	case err := <-f.capacityResult:
+		if err != nil {
+			t.Fatal(err)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("publisher-authorized anonymous visitor did not acknowledge its budget")
 	}
 	select {
 	case event := <-events:
-		if event.Outcome != "allowed" {
-			t.Fatal("publisher-authorized admission was not recorded", event)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("pre-reserved anonymous quota was debited again instead of acknowledged")
+		t.Fatal("ingress duplicated the publisher's HTTP audit ownership", event)
+	default:
 	}
 	a.mu.Lock()
 	connections := a.runs[key].connections
@@ -405,8 +427,8 @@ func TestAnonymousMalformedTLSUsesProcessAndSourceAdmissionWithoutPromotion(t *t
 }
 
 func TestPublicServiceChargesInitialBytesOnceAcrossFallbackWithoutMetadata(t *testing.T) {
-	p, c, f, _ := publicServiceTestSetup(t)
-	c.pending, f.failFirst, f.holdAfterReply = true, true, true
+	p, _, f, _ := publicServiceTestSetup(t)
+	f.failFirst, f.holdAfterReply = true, true
 	connection, visitor := net.Pipe()
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)

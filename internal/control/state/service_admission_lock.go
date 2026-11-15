@@ -55,3 +55,31 @@ func lockServiceAdmission(ctx context.Context, tx pgx.Tx, id string) error {
 	}
 	return lockEnabledService(ctx, tx, id)
 }
+
+// visitor capacity writers serialize reservations and deadline extensions without
+// excluding policy observations. authority and lifecycle writers retain FOR UPDATE.
+func lockPublicServiceVisitorCapacity(ctx context.Context, tx pgx.Tx, id string) error {
+	if err := lockServiceOwner(ctx, tx, id); err != nil {
+		return err
+	}
+	var found string
+	err := tx.QueryRow(ctx, `SELECT id FROM control.services WHERE id = $1 AND enabled AND deleted_at IS NULL FOR NO KEY UPDATE`, id).Scan(&found)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrServiceAccess
+	}
+	return err
+}
+
+// policy observations do not reserve capacity or extend visitor deadlines.
+// explicit authority writers still exclude them with the service's FOR UPDATE.
+func lockPublisherVisitorPolicy(ctx context.Context, tx pgx.Tx, id string) error {
+	if err := lockServiceOwner(ctx, tx, id); err != nil {
+		return err
+	}
+	var found string
+	err := tx.QueryRow(ctx, `SELECT id FROM control.services WHERE id = $1 AND enabled AND deleted_at IS NULL FOR KEY SHARE`, id).Scan(&found)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrServiceAccess
+	}
+	return err
+}

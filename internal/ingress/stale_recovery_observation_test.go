@@ -27,7 +27,7 @@ func TestRecoveryReporterStopsAfterCanceledEpisode(t *testing.T) {
 				t.Error(err)
 			}
 		}()
-		reporter.Observe(ingressv1.ServiceRunReference{ServiceId: "service", ServiceRunId: "run", RunNumber: 1}, "visitor", 7, time.Now().UTC())
+		reporter.Observe(ingressv1.ServiceRunReference{ServiceId: "service", ServiceRunId: "run", RunNumber: 1}, "visitor", 7, time.Now().UTC(), nil)
 		time.Sleep(2 * time.Second)
 		synctest.Wait()
 		if control.calls != 1 {
@@ -38,7 +38,7 @@ func TestRecoveryReporterStopsAfterCanceledEpisode(t *testing.T) {
 
 type staleRecoveryControl struct{ calls int }
 
-func (c *staleRecoveryControl) ObserveRecovery(context.Context, ingressv1.ServiceRunReference, string, uint64, time.Time) (ingressv1.ServiceRecoveryObservation, error) {
+func (c *staleRecoveryControl) ObserveRecovery(context.Context, ingressv1.ServiceRunReference, string, uint64, time.Time, []byte) (ingressv1.ServiceRecoveryObservation, error) {
 	c.calls++
 	return ingressv1.ServiceRecoveryObservation{}, &ControlProblemError{
 		Operation: "observe service recovery", Status: http.StatusConflict,

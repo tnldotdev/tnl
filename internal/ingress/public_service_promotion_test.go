@@ -39,10 +39,10 @@ func (c *promotionTestControl) PromotePublicServiceVisitor(ctx context.Context, 
 	return c.promote(ctx)
 }
 
-type promotionTestForwarder func(context.Context, ingressv1.ServiceRelay, tunnelv1.ServiceForwardingHeader) (net.Conn, error)
+type promotionTestForwarder func(context.Context, ingressv1.ServiceRelay, tunnelv1.ServiceForwardingHeader, func(context.Context) error) (net.Conn, error)
 
-func (f promotionTestForwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
-	return f(ctx, relay, header)
+func (f promotionTestForwarder) OpenService(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) (net.Conn, error) {
+	return f(ctx, relay, header, reserveCapacity)
 }
 
 type servicePromotionFixture struct {
@@ -88,11 +88,13 @@ func newServicePromotionFixture(t *testing.T) *servicePromotionFixture {
 	ownIngressConn(t, publisher)
 	backend := &ownedConn{Conn: connection, close: sync.OnceValue(func() error { close(closed); return connection.Close() })}
 	var opens atomic.Int32
-	server.config.Forwarder = promotionTestForwarder(func(_ context.Context, _ ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+	capacity := make(chan func(context.Context) error, 1)
+	server.config.Forwarder = promotionTestForwarder(func(_ context.Context, _ ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) (net.Conn, error) {
 		if opens.Add(1) != 1 || header.Validate() != nil || header.ServiceID != receipt.service || header.ServiceRunID != receipt.run ||
 			header.RunNumber != 1 || header.PublicService == nil || header.PublicService.DestinationPort != 20000 {
 			return nil, errors.New("promotion changed the admitted stream or opened another relay")
 		}
+		capacity <- reserveCapacity
 		return backend, nil
 	})
 	f.publisher = ingressWorker(t, func() { _ = backend.Close(); _ = publisher.Close() }, func() error {
@@ -101,8 +103,13 @@ func newServicePromotionFixture(t *testing.T) *servicePromotionFixture {
 		if err != nil {
 			return err
 		}
+		check, cancel := context.WithDeadline(t.Context(), f.until)
+		defer cancel()
+		if err := (<-capacity)(check); err != nil {
+			return nil
+		}
 		// this publisher admits target bytes only after ingress acknowledges
-		// authorization. connection setup itself must not reach the target.
+		// capacity. connection setup itself must not reach the target.
 		select {
 		case <-authorized:
 		case <-closed:
@@ -188,7 +195,7 @@ func TestPublicServiceLatePromotionCannotExtendOriginalDeadline(t *testing.T) {
 		}
 		f.start(t)
 		f.assertDeniedAndJoined(t, f.until)
-		if !committed.Load() || f.control.promotions.Load() != 1 || f.control.statusCalls.Load() != 1 {
+		if !committed.Load() || f.control.promotions.Load() != 1 || f.control.statusCalls.Load() != 0 {
 			t.Fatal("expired promotion was retried or its future allowed status was consulted")
 		}
 	})
@@ -243,9 +250,12 @@ func TestPublicServiceTimedOutPromotionRecoversOnlyFromFreshAcknowledgment(t *te
 				t.Cleanup(resume)
 				f.control.status = func(ctx context.Context) (ingressv1.PublicServiceVisitorStatus, error) {
 					state := ingressv1.PublicServiceVisitorAuthenticated
-					if f.control.statusCalls.Load() > 1 {
+					if f.control.statusCalls.Load() >= 1 {
 						state = fresh
-						if f.control.statusCalls.Load() == 2 {
+						if f.control.promotions.Load() >= 2 {
+							state = ingressv1.PublicServiceVisitorAllowed
+						}
+						if f.control.statusCalls.Load() == 1 {
 							close(freshStarted)
 							select {
 							case <-acceptFresh:

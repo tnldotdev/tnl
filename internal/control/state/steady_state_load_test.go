@@ -2,9 +2,7 @@ package state
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net/netip"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,7 +12,7 @@ import (
 )
 
 // this is a bounded database workload, not a cadence or soak test. certificate
-// material is signed locally; ingress observers exercise real service admission.
+// material is signed locally; ingress observers read complete routing snapshots.
 func TestLoadSteadyState(t *testing.T) {
 	setupStarted := time.Now()
 	f := newControlLoadFixture(t)
@@ -22,7 +20,7 @@ func TestLoadSteadyState(t *testing.T) {
 	var ingresses [2]IngressLease
 	for index := range ingresses {
 		lease, err := f.database.RegisterIngress(t.Context(), IngressRegistration{
-			IngressID: fmt.Sprintf("load-ingress-%d", index), IngressRunID: "load-run", ProtocolVersion: 1,
+			IngressID: fmt.Sprintf("load-ingress-%d", index), IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1,
 			HTTPS: true, IngressPoolID: PrimaryIngressPoolID, ConnectionCapacity: uint64(max(64, f.routes)),
 		}, f.now, time.Hour)
 		if err != nil {
@@ -188,16 +186,20 @@ func observeSteadyLoad(t *testing.T, ctx context.Context, control *Database, ing
 			finished = true
 		default:
 		}
+		callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
+		runs, err := readLoadServiceRuns(callCtx, control, ingress, now)
+		stop()
+		if err != nil {
+			return err
+		}
 		for _, session := range sessions {
-			callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-			err := observeLoadService(callCtx, control, ingress, session, now)
-			stop()
+			err := observeLoadService(runs, session, now)
 			if err != nil {
 				return err
 			}
 			admissions++
 		}
-		callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
+		callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
 		lease, err := control.RenewIngress(callCtx, IngressRenewal{IngressLeaseIdentity: ingress}, now, time.Hour)
 		stop()
 		if err != nil || lease.IngressLeaseIdentity != ingress || !lease.LeaseExpiresAt.After(now) {
@@ -216,23 +218,13 @@ func observeSteadyLoad(t *testing.T, ctx context.Context, control *Database, ing
 	return ctx.Err()
 }
 
-func observeLoadService(ctx context.Context, control *Database, ingress IngressLeaseIdentity, session servicePublicationFixture, now time.Time) (result error) {
-	visitor, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
+func observeLoadService(runs map[string]IngressServiceRun, session servicePublicationFixture, now time.Time) error {
+	admission, err := loadServiceRun(runs, session, now)
 	if err != nil {
 		return err
 	}
-	admission, err := control.AdmitPublicServiceVisitor(ctx, ingress, PrimaryIngressPoolID, visitor,
-		session.service.Endpoint.Hostname, 443, netip.MustParseAddr("192.0.2.10"), now)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer stop()
-		result = errors.Join(result, control.ClosePublicServiceVisitor(cleanup, ingress, visitor, now))
-	}()
 	if admission.ServiceID != session.service.ID || admission.RunID != session.run.RunID ||
-		admission.RunNumber != session.run.RunNumber || !admission.ExpiresAt.After(now) || len(admission.Relays) != 2 {
+		admission.RunNumber != session.run.RunNumber || !admission.ValidUntil.After(now) || len(admission.Relays) != 2 {
 		return fmt.Errorf("admission changed ready service %s", session.service.ID)
 	}
 	for _, relay := range admission.Relays {
@@ -247,10 +239,6 @@ func observeLoadService(ctx context.Context, control *Database, ingress IngressL
 		if !matched {
 			return fmt.Errorf("admission changed a connected relay for service %s", session.service.ID)
 		}
-	}
-	status, err := control.PublicServiceVisitorStatus(ctx, ingress, visitor, now)
-	if err != nil || status.State != PublicServiceVisitorPending || !status.ValidUntil.Equal(admission.ExpiresAt) {
-		return fmt.Errorf("admission changed its pending deadline for service %s: %w", session.service.ID, err)
 	}
 	return nil
 }

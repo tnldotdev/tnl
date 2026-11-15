@@ -41,7 +41,7 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 	visitor := id(opaqueid.VisitorConnectionPrefix)
 	source := netip.MustParseAddr("192.0.2.44")
 	admit := func() (PublicServiceVisitorAdmission, error) {
-		return d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, "", port, source, now)
+		return d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, port, source, now)
 	}
 	if _, err = admit(); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("private endpoint admitted direct traffic", err)
@@ -164,7 +164,7 @@ func TestIntegrationPublicServiceAdmissionRunExclusions(t *testing.T) {
 	ctx := t.Context()
 	request := appliedProjectRequest(t, d, now)
 	request.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
-		"web": {Protocol: "http", Target: "http://localhost:3000", Public: new(true)},
+		"web": {Protocol: "tcp", Target: "localhost:3000", Public: new(true)},
 	}}
 	request = selectedProjectRequest(request, "production")
 	applied, err := d.ApplyProjectConfiguration(ctx, request)
@@ -187,7 +187,7 @@ func TestIntegrationPublicServiceAdmissionRunExclusions(t *testing.T) {
 	}
 	ingress, err := d.RegisterIngress(ctx, IngressRegistration{
 		IngressID: "service-run-exclusions", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix),
-		ProtocolVersion: tunnelv1.Version, HTTPS: true, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
+		ProtocolVersion: tunnelv1.Version, ServicePorts: []int32{int32(service.Endpoint.Port)}, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
 	}, now, time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -195,7 +195,7 @@ func TestIntegrationPublicServiceAdmissionRunExclusions(t *testing.T) {
 	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
 	admit := func(id string, excluded ...ServiceRunReference) (PublicServiceVisitorAdmission, error) {
 		return d.AdmitPublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, PrimaryIngressPoolID, id,
-			service.Endpoint.Hostname, 443, netip.MustParseAddr("192.0.2.30"), now, excluded...)
+			service.Endpoint.Port, netip.MustParseAddr("192.0.2.30"), now, excluded...)
 	}
 	first, err := admit(visitor)
 	if err != nil || first.RunID != runs[0].RunID || first.RunNumber != runs[0].RunNumber {

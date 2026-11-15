@@ -73,9 +73,7 @@ func separatedWaitForRecovery(t *testing.T, database *sql.DB, publishers separat
 	if err := separatedAwaitServiceConnections(ctx, database, publishers.Runs); err != nil {
 		t.Fatalf("publisher connections did not recover within %s: %v; current assignments=%s", timeout, err, separatedConnectionAssignments(t, database))
 	}
-	// control updates are acknowledged at the 10-second ingress
-	// lease-renewal cadence; allow the next renewal plus scheduling headroom.
-	waitForIngressRoutingCurrentWithin(t, database, len(separatedNames("ingresses")), separatedRoutingAcknowledgmentTimeout)
+	waitForSeparatedServiceRouting(t, database, separatedRoutingAcknowledgmentTimeout)
 	for _, ready := range publishers.Runs {
 		var id string
 		var number int64
@@ -85,6 +83,21 @@ func separatedWaitForRecovery(t *testing.T, database *sql.DB, publishers separat
 		}
 	}
 	return time.Now()
+}
+
+func waitForSeparatedServiceRouting(t *testing.T, database *sql.DB, timeout time.Duration) {
+	t.Helper()
+	// capture database time after the expected connections or closures are
+	// visible. the original run ready_at does not prove replacement routing.
+	var committed time.Time
+	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT clock_timestamp()`).Scan(&committed); err != nil {
+		t.Fatal(err)
+	}
+	var addresses []string
+	for _, ingress := range separatedNames("ingresses") {
+		addresses = append(addresses, ingress+":9090")
+	}
+	waitForIngressServiceRoutingAfter(t, committed, addresses, timeout)
 }
 
 func separatedAwaitServiceConnections(ctx context.Context, database *sql.DB, expected []benchworkload.ServiceRun) error {

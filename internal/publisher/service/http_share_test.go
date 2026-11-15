@@ -49,14 +49,11 @@ func TestServiceHTTPSharePreparationDoesNotAdmitApplicationTraffic(t *testing.T)
 				}
 				t.Cleanup(tokens.Close)
 				service, run, runToken, number := f.Subject.ID, f.RunID, f.Token, f.Number
+				f.ReserveCapacity = func(context.Context) error {
+					admissions.Add(1)
+					return nil
+				}
 				control := serviceHTTPShareControl{
-					serviceHTTPAdmissionControl: serviceHTTPAdmissionControl{authorize: func(_ context.Context, gotService, gotRun string, token credentials.ServiceRunToken, request controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
-						if gotService != service || gotRun != run || token != runToken || request.RunNumber != number {
-							t.Error("HTTP admission changed the service run")
-						}
-						admissions.Add(1)
-						return controlv1.ServiceClientCertificateDecision{Allowed: true, Admitted: true, ValidUntil: time.Now().Add(time.Minute)}, nil
-					}},
 					redeem: func(_ context.Context, gotService, gotRun string, request controlv1.RedeemServiceShareRequest, token credentials.ServiceRunToken) (controlv1.ShareRedemption, error) {
 						redemptions.Add(1)
 						if gotService != service || gotRun != run || token != runToken || request.RunNumber != number ||

@@ -54,7 +54,7 @@ jobs:
       - name: Set up tools
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          tools: node pnpm bun task
+          tools: go node pnpm bun task go:github.com/sqlc-dev/sqlc/cmd/sqlc
           pnpm: true
           save-cache: true
 

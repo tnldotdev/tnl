@@ -122,47 +122,6 @@ WHERE id=sqlc.arg(id) AND service_id=sqlc.arg(service_id);
 SELECT id,kind,expires_at,revoked_at FROM control.service_http_grants
 WHERE service_id=sqlc.arg(service_id) ORDER BY id;
 
--- name: ServiceHTTPTransportBinding :one
-SELECT (v.authorized_at IS NOT NULL)::boolean AS authorized,
-    (v.promoted_at IS NOT NULL)::boolean AS admitted,LEAST(sqlc.arg(now)::timestamptz+interval '2 minutes',
-    run.publisher_expires_at,run.certificate_expires_at,permission.expires_at,ingress.lease_expires_at,
-    (SELECT max(relay.lease_expires_at) FROM control.service_connection_slots slot
-     JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
-     AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
-     WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
-     AND relay.lease_expires_at>sqlc.arg(now) AND NOT relay.draining))::timestamptz AS valid_until
-FROM control.public_service_visitors v
-JOIN control.services service ON service.id=v.service_id AND service.public AND service.enabled
-    AND service.deleted_at IS NULL AND service.protocol='http' AND service.service_port=v.destination_port
-JOIN control.service_runs run ON run.id=v.service_run_id AND run.service_id=service.id
-    AND run.run_number=v.run_number AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
-    AND run.publisher_expires_at>sqlc.arg(now) AND run.certificate_expires_at>sqlc.arg(now)
-JOIN control.ingress_leases ingress ON ingress.ingress_id=v.ingress_id AND ingress.ingress_run_id=v.ingress_run_id
-    AND ingress.ingress_lease_revision=v.ingress_lease_revision AND ingress.lease_expires_at>sqlc.arg(now)
-JOIN LATERAL control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,service.id,sqlc.arg(now)) permission ON true
-JOIN control.publisher_grants g ON g.id=run.publisher_grant_id
-JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id AND signing.publisher_identity_id=run.publisher_identity_id
-    AND (g.kind='service' OR signing.retired_at IS NULL)
-JOIN control.publisher_identities publisher ON publisher.id=g.publisher_identity_id AND publisher.id=run.publisher_identity_id AND publisher.revoked_at IS NULL
-WHERE v.visitor_connection_id=sqlc.arg(visitor_connection_id) AND v.service_id=sqlc.arg(service_id)
-AND v.service_run_id=sqlc.arg(service_run_id) AND v.run_number=sqlc.arg(run_number)
-AND v.source_ip=sqlc.arg(source_ip) AND v.destination_port=sqlc.arg(destination_port)
-AND v.closed_at IS NULL AND v.valid_until>sqlc.arg(now)
-AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.relay_leases relay
-    ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
-    AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
-    WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
-    AND relay.lease_expires_at>sqlc.arg(now) AND NOT relay.draining);
-
--- name: AuthorizeServiceHTTPVisitor :one
-UPDATE control.public_service_visitors
-SET authorized_at=COALESCE(authorized_at,sqlc.arg(now)),valid_until=sqlc.arg(valid_until)
-WHERE visitor_connection_id=sqlc.arg(visitor_connection_id) AND service_id=sqlc.arg(service_id)
-AND service_run_id=sqlc.arg(service_run_id) AND run_number=sqlc.arg(run_number)
-AND source_ip=sqlc.arg(source_ip) AND destination_port=443
-AND closed_at IS NULL AND valid_until>sqlc.arg(now)
-RETURNING valid_until;
-
 -- name: ServicePublicEndpointBinding :one
 SELECT destination_port,identity_id,device_id,workload_session_id FROM control.public_service_visitors
 WHERE visitor_connection_id=$1;

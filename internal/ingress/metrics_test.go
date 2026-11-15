@@ -54,7 +54,7 @@ func TestRestrictedVisitorForwardingHasSuccessfulOutcome(t *testing.T) {
 func TestVisitorLookupFailureIsCountedOnce(t *testing.T) {
 	metrics := &testMetrics{visitorOutcomes: make(chan string, 2)}
 	var opened bool
-	config := serviceIngressConfig(t, func(context.Context, tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+	config := serviceIngressConfig(t, func(context.Context, tunnelv1.ServiceForwardingHeader, func(context.Context) error) (net.Conn, error) {
 		opened = true
 		return nil, errors.New("missing service reached relay forwarding")
 	})

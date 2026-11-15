@@ -79,7 +79,7 @@ func NewSelectedTransport(ctx context.Context, connect func(context.Context) (ne
 	return newSelectedTransport(ctx, connect, 1, true)
 }
 
-// NewTargetTransport bounds live connections and setup to one visitor's target.
+// NewTargetTransport bounds live connections and setup to one captured target.
 // a failed request is never retried; later requests may open replacements.
 // connect returns a connection already secured when the target uses HTTPS.
 func NewTargetTransport(ctx context.Context, connect func(context.Context) (net.Conn, error), capacity int) (*SelectedTransport, error) {
@@ -195,9 +195,23 @@ func (t *SelectedTransport) RoundTrip(r *http.Request) (response *http.Response,
 			response, err := client.RoundTrip(r)
 			t.mu.Lock()
 			slot.headers--
-			// ClientConn hands a 101 socket to Body and then reports it unusable.
-			// retain that socket until owner Close, without an EOF/upgrade wrapper.
+			// ClientConn hands a 101 socket to Body and reports it unusable.
+			// keep its slot until the upgrade owner closes Body, then retire it
+			// so a run-owned pool can serve later independent requests.
 			slot.upgraded = response != nil && response.StatusCode == http.StatusSwitchingProtocols
+			if slot.upgraded {
+				body, ok := response.Body.(io.ReadWriteCloser)
+				if !ok {
+					err = errors.Join(err, ErrClosed)
+				} else {
+					owned := &selectedUpgradeBody{ReadWriteCloser: body, owner: t, slot: slot}
+					if writer, ok := body.(interface{ CloseWrite() error }); ok {
+						response.Body = &selectedUpgradeHalfClose{selectedUpgradeBody: owned, writer: writer}
+					} else {
+						response.Body = owned
+					}
+				}
+			}
 			if err != nil && client.Err() != nil {
 				if t.strict {
 					t.stopLocked(errors.Join(ErrClosed, err))
@@ -235,6 +249,37 @@ func (t *SelectedTransport) RoundTrip(r *http.Request) (response *http.Response,
 		case <-t.wake:
 		}
 	}
+}
+
+type selectedUpgradeBody struct {
+	io.ReadWriteCloser
+	owner *SelectedTransport
+	slot  *selectedSlot
+	once  sync.Once
+	err   error
+}
+
+type selectedUpgradeHalfClose struct {
+	*selectedUpgradeBody
+	writer interface{ CloseWrite() error }
+}
+
+func (b *selectedUpgradeHalfClose) CloseWrite() error { return b.writer.CloseWrite() }
+
+func (b *selectedUpgradeBody) Close() error {
+	b.once.Do(func() {
+		b.err = b.ReadWriteCloser.Close()
+		b.owner.closeError(b.err)
+		b.owner.mu.Lock()
+		if b.owner.strict {
+			b.owner.stopLocked(ErrClosed)
+		}
+		if !b.owner.closed {
+			b.owner.retireLocked(b.slot)
+		}
+		b.owner.mu.Unlock()
+	})
+	return b.err
 }
 
 // CloseIdleConnections closes current idle sockets without interrupting responses.

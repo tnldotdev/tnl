@@ -8,6 +8,7 @@ import (
 )
 
 type PublicServiceControl interface {
+	ServiceRoutingClient
 	AdmitPublicServiceVisitor(context.Context, string, ingressv1.PublicServiceVisitorClaim) (ingressv1.PublicServiceVisitorAdmission, error)
 	PublicServiceVisitorStatus(context.Context, string, ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error)
 	ClosePublicServiceVisitor(context.Context, string, ingressv1.PublicServiceVisitorLookup) error

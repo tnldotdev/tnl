@@ -155,8 +155,10 @@ func (f *guestServiceFixture) ready(t *testing.T, at time.Time) {
 	}
 	var err error
 	token := f.run.Token
+	sourceKey := f.run.VisitorSourceKey
 	f.run, err = f.heartbeat(at)
 	f.run.Token = token
+	f.run.VisitorSourceKey = sourceKey
 	if err != nil || f.run.State != "ready" {
 		t.Fatalf("guest did not become ready: %+v, %v", f.run, err)
 	}

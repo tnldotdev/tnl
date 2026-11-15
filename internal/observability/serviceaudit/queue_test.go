@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -88,7 +89,7 @@ func TestQueueRetriesStableIDsAndFlushesOnClose(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(batches) != 2 || len(batches[0].Events) != 1 || batches[0].Events[0] != batches[1].Events[0] {
+	if len(batches) != 2 || len(batches[0].Events) != 1 || !reflect.DeepEqual(batches[0].Events[0], batches[1].Events[0]) {
 		t.Fatalf("unstable retry: %+v", batches)
 	}
 	if q.Observe(observation()) {
@@ -234,7 +235,7 @@ func TestQueueIsolatesPermanentRejectionAndRetriesStableAcknowledgements(t *test
 				accepted, duplicates := 0, 0
 				for _, o := range batch.Events {
 					if previous, ok := stored[o.EventID]; ok {
-						if previous != o {
+						if !reflect.DeepEqual(previous, o) {
 							t.Error("retry changed event facts")
 						}
 						duplicates++

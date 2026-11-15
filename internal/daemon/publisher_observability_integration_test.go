@@ -192,9 +192,9 @@ func TestIntegrationPublisherObservabilityPublic(t *testing.T) {
 				t.Fatalf("response: %s %q", response.Status, body)
 			}
 			fixture.visitor.transport.CloseIdleConnections()
-			collector.assertChain(t, "ingress.public_service_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.visitor_tls")
-			collector.assertChain(t, "ingress.public_service_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.http", "publisher.target_connect")
-			chain := []string{"ingress.public_service_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.http", "publisher.visitor_authorization", "publisher.authorization"}
+			collector.assertChain(t, "ingress.public_service_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.visitor_tls")
+			collector.assertChain(t, "ingress.public_service_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.http", "publisher.target_connect")
+			chain := []string{"ingress.public_service_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.http", "publisher.visitor_authorization", "publisher.authorization"}
 			collector.assertChainState(t, "admitted", chain...)
 			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, serviceHTTPAddress(ready)+"/denied", nil)
 			if err != nil {

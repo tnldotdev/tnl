@@ -350,6 +350,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		result = errors.Join(result, audit.Close(flush))
 	}()
 	bound.streamCapacity = int(config.StreamCapacity)
+	bound.httpDrainDuration = config.DrainTime
 	var certificateDone <-chan error
 	{
 		maintain, cancel, err := configureServiceRun(runCtx, config, prepared, setup, managedControl, config.State, audit)
@@ -360,7 +361,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		certificateDone = done
 		go func() { done <- maintain() }()
 		defer func() {
-			cancel()
+			result = errors.Join(result, cancel())
 			if certificateDone != nil {
 				result = errors.Join(result, serviceWorkerError(<-certificateDone, context.Canceled))
 			}
@@ -437,16 +438,21 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			}
 			finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), until)
 			defer cancel()
-			bound.startHTTPDrain(until)
+			result = errors.Join(result, bound.startHTTPDrain(until))
 			status.Ready, status.Draining = false, true
 			status.LastCheck = time.Now()
 			report()
 			drained := make(chan error, 1)
+			httpJoined := make(chan struct{})
 			go func() {
-				// relay acknowledgment must not close transports before the HTTP
-				// workers, including connector responses, have joined.
-				stopped := paths.StopAdmissions(finish)
-				drained <- errors.Join(stopped, bound.joinHTTPDrain())
+				// relay drain retires connector packet carriers. keep those
+				// carriers until HTTP closes join their exact completion receipts,
+				// then retire peers and drain the public paths under the original
+				// deadline. startHTTPDrain already fences new publisher work.
+				httpErr := bound.joinHTTPDrain()
+				close(httpJoined)
+				stopPeers()
+				drained <- errors.Join(httpErr, paths.StopAdmissions(finish))
 			}()
 		drain:
 			for {
@@ -463,9 +469,14 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 				case err := <-peersDone:
 					peersDone = nil
 					result = errors.Join(result, serviceWorkerError(err, context.Canceled))
-					cancel()
-					stopRun()
-					bound.Invalidate()
+					select {
+					case <-httpJoined:
+						// expected peer retirement after the final HTTP bytes.
+					default:
+						cancel()
+						stopRun()
+						bound.Invalidate()
+					}
 				}
 			}
 		} else {

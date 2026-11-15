@@ -3,7 +3,10 @@ package local
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +20,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/zalando/go-keyring"
 )
 
@@ -102,7 +108,66 @@ func assertProcessStopped(t *testing.T, state *clientstate.Database, project cli
 }
 
 func TestAppWorkflowProcessShutdownReleasesOwnershipAndPendingRegistration(t *testing.T) {
-	project, state, snapshot, path := processFixture(t)
+	project, state, _, path := processFixture(t)
+	token, _, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// pending preparation now realizes the selected private service. this
+	// control boundary must not receive publication or publisher enrollment.
+	control := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/v1/discovery" && r.Header.Get("Authorization") != "Bearer "+token.String() {
+			t.Error("pending preparation lost its control credential")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var response any
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/discovery":
+			response = controlv1.ControlDiscovery{ManagedUrlMode: "simple", Authentication: controlv1.AuthenticationFacts{
+				Methods: []controlv1.AuthenticationFactsMethods{controlv1.Oidc},
+				Oidc:    &controlv1.OIDCAuthenticationFacts{Issuer: "https://identity.example", LoginFlow: controlv1.DeviceCode},
+			}}
+		case "GET /v1/identity":
+			response = authorityv1.IdentityContext{PersonalTeamId: "team_1", Memberships: []authorityv1.Membership{{TeamId: "team_1"}}}
+		case "GET /v1/teams/team_1":
+			response = authorityv1.Team{Id: "team_1", DisplayName: "developer", Kind: authorityv1.Personal, DefaultDomainId: "domain_1"}
+		case "GET /v1/teams/team_1/domains":
+			response = authorityv1.DomainPage{Domains: []authorityv1.Domain{
+				{Id: "domain_1", CanonicalDomain: "example.test", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady},
+			}}
+		case "PUT /v1/projects/" + project.LocalPublicationIdentity().Key + "/local-services/web":
+			var request controlv1.RealizeLocalProjectServiceRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if request.Configuration.Target != "app" || request.Configuration.Public != nil && *request.Configuration.Public {
+				t.Error("pending preparation changed its private app declaration")
+			}
+			response = controlv1.LocalProjectService{Service: "web", WorktreeKey: request.WorktreeKey, ServiceId: "svc_0123456789abcdefghijkl"}
+		default:
+			t.Errorf("pending preparation requested unrelated work: %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(control.Close)
+	project.Config.Server = &control.URL
+	t.Setenv("TNL_SERVER", control.URL)
+	t.Setenv("TNL_ACCESS_TOKEN", token.String())
+	original := http.DefaultTransport
+	http.DefaultTransport = control.Client().Transport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	snapshot, _, err := project.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
 	initial, err := app.ReadSnapshotFrom(t.Context(), state, project.Root)
 	if err != nil {
 		t.Fatal(err)

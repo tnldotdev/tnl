@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
 	"testing"
 	"time"
 
@@ -31,12 +32,29 @@ func TestIntegrationServiceAuditCleanupObservedOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	now := time.Now()
+	session, err := db.CreateOIDCControlSession(t.Context(), "audit.example.test", controlstate.OIDCIdentity{
+		Issuer: "https://identity.example.test", Subject: "audit-cleanup", DisplayName: "audit cleanup",
+		AssertionDigest: sha256.Sum256([]byte("audit-cleanup")), AssertionExpiry: now.Add(time.Hour),
+	}, time.Hour, 24*time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := db.CreateServiceAt(t.Context(), session.Identity.PersonalTeamID, session.Identity.Identity.ID,
+		"cleanup", "cleanup", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "http"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retained int
+	if err := inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.service_audit_events`).Scan(&retained); err != nil {
+		t.Fatal(err)
+	}
 	m := observability.New("control")
 	defer m.Shutdown(context.Background())
 	db.Instrument(m)
 	old := time.Now().Add(-serviceaudit.Retention - time.Hour)
 	for range 3 {
-		if _, err := inspect.ExecContext(t.Context(), `INSERT INTO control.service_audit_events(id,team_id,service_id,service_kind,event_type,occurred_at,received_at) VALUES($1,'team_fixture','service_fixture','service','connection.close',$2,$2)`, serviceaudit.NewID(), old); err != nil {
+		if _, err := inspect.ExecContext(t.Context(), `INSERT INTO control.service_audit_events(id,team_id,service_id,event_type,occurred_at,received_at) VALUES($1,$2,$3,'connection.close',$4,$4)`, serviceaudit.NewID(), service.TeamID, service.ID, old); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -45,9 +63,9 @@ func TestIntegrationServiceAuditCleanupObservedOnce(t *testing.T) {
 	if err := maintenance.RunServiceAuditCleanup(ctx, cancelingAuditDatabase{db, cancel}, m); err != nil {
 		t.Fatal(err)
 	}
-	var remaining int
-	if err := inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.service_audit_events`).Scan(&remaining); err != nil || remaining != 0 {
-		t.Fatal("worker did not remove real expired rows", remaining, err)
+	var remaining, expired int
+	if err := inspect.QueryRowContext(t.Context(), `SELECT count(*),count(*) FILTER (WHERE received_at<$1) FROM control.service_audit_events`, now.Add(-serviceaudit.Retention)).Scan(&remaining, &expired); err != nil || remaining != retained || expired != 0 {
+		t.Fatal("worker did not remove exactly the expired rows while retaining current service history", remaining, expired, retained, err)
 	}
 	families, err := m.Gather()
 	if err != nil {
@@ -78,5 +96,5 @@ func TestIntegrationServiceAuditCleanupObservedOnce(t *testing.T) {
 	if seen != 2 {
 		t.Fatal("missing cleanup observations", seen)
 	}
-	t.Log("instrumented PostgreSQL worker: cleanup_runs=1 cleanup_items=3 remaining_rows=0")
+	t.Logf("instrumented PostgreSQL worker: cleanup_runs=1 cleanup_items=3 expired_rows=0 retained_rows=%d", retained)
 }

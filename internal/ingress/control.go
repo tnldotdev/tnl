@@ -265,9 +265,10 @@ func (c *Controller) ObserveRecovery(
 	visitor string,
 	recoveryEpisodeID uint64,
 	observedAt time.Time,
+	sourceEvidence []byte,
 ) (ingressv1.ServiceRecoveryObservation, error) {
 	if run.ServiceId == "" || run.ServiceRunId == "" || run.RunNumber <= 0 || visitor == "" || recoveryEpisodeID == 0 ||
-		recoveryEpisodeID > math.MaxInt64 || observedAt.IsZero() {
+		recoveryEpisodeID > math.MaxInt64 || observedAt.IsZero() || len(sourceEvidence) > 2048 {
 		return ingressv1.ServiceRecoveryObservation{}, errors.New("ingress: service recovery observation is invalid")
 	}
 	lease := c.Lease()
@@ -278,7 +279,7 @@ func (c *Controller) ObserveRecovery(
 		ctx, c.registration.IngressId, int64(recoveryEpisodeID), ingressv1.ServiceRecoveryObservationRequest{
 			IngressId: c.registration.IngressId, IngressRunId: c.registration.IngressRunId,
 			IngressLeaseRevision: lease.IngressLeaseRevision, ServiceId: run.ServiceId, ServiceRunId: run.ServiceRunId,
-			RunNumber: run.RunNumber, VisitorConnectionId: visitor, ObservedAt: observedAt,
+			RunNumber: run.RunNumber, VisitorConnectionId: visitor, ObservedAt: observedAt, SourceEvidence: sourceEvidence,
 		},
 	)
 	if err != nil {

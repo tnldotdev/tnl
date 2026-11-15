@@ -1,0 +1,18 @@
+paths:
+  /internal/v1/ingresses/{ingress_id}/services:
+    post:
+      operationId: readIngressServices
+      summary: Read short-lived serving information for this ingress
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/IngressID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/IngressLeaseIdentity" }
+      responses:
+        "200":
+          description: One consistent snapshot; replaces the previous snapshot rather than extending its deadline
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/IngressServices" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

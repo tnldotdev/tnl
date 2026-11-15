@@ -284,7 +284,7 @@ func (n *Connector) serve(p *connectorPair, ready chan<- error) {
 	workers.Go(func() {
 		_ = tunnel.ServeConnectorPermissionControl(control, permissions, func(update tunnelv1.ConnectorPermissionUpdate, responder *tunnel.ConnectorPermissionResponder) {
 			_ = responder.Respond(update, true)
-		}, func() { _ = session.Close() }, &permissionGate)
+		}, func(tunnelv1.ConnectorVisitorCompletion) {}, func() { _ = session.Close() }, &permissionGate)
 	})
 	for {
 		stream, err := session.AcceptStream(n.ctx)

@@ -2,12 +2,14 @@ package invocation
 
 import (
 	"context"
+	"errors"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
+	"github.com/tnldotdev/tnl/internal/config"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
@@ -36,6 +38,29 @@ func NewProjectRuntime(project clientproject.Project, state *clientstate.Databas
 func (a *ProjectRuntime) Metadata(ctx context.Context) (meta.Metadata, error) {
 	r := resolve.NewMetadataResolver(a.state, a.project.Project, authenticateRuntime)
 	return r.Generate(ctx)
+}
+
+// PrepareLocalService allocates only the selected local service before reading
+// its endpoint metadata. publication still waits for a registered app listener.
+func (a *ProjectRuntime) PrepareLocalService(ctx context.Context, name string) (meta.Metadata, error) {
+	if _, found := a.project.Config.Services[name]; !found || config.SelectedDeployment(a.project.Config) != "local" {
+		return meta.Metadata{}, errors.New("preparation requires a selected local service")
+	}
+	effective, err := a.project.EffectiveService(name)
+	if err != nil {
+		return meta.Metadata{}, err
+	}
+	resolver := resolve.NewMetadataResolver(a.state, a.project.Project, authenticateRuntime)
+	authenticated, current, err := resolver.Context(ctx, effective)
+	if err != nil {
+		return meta.Metadata{}, err
+	}
+	if _, err := RealizeLocalService(ctx, authenticated.Control, LocalService{
+		Project: a.project.Project, Team: FromTeamContext(current), Name: name, TargetResolver: a.TargetResolver,
+	}); err != nil {
+		return meta.Metadata{}, err
+	}
+	return resolver.Generate(ctx)
 }
 
 func valueOrEmpty(value *string) string {

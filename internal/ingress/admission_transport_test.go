@@ -180,7 +180,7 @@ func TestServiceForwardingBindsIdentityBeforeVisitorBytes(t *testing.T) {
 			} else {
 				value.SetUint(value.Uint() + 1)
 			}
-			connection, err := f.forwarder.OpenPrivate(ingressContext(t), f.relay, header)
+			connection, err := f.forwarder.OpenService(ingressContext(t), f.relay, header, nil)
 			if connection != nil || err == nil {
 				t.Fatal("changed forwarding identity was admitted")
 			}
@@ -215,7 +215,7 @@ func TestServiceForwardingLeaseAndCapacityRejectionBeforeAcknowledgment(t *testi
 			}
 			opened := make(chan result, 1)
 			go func() {
-				connection, err := f.forwarder.OpenPrivate(ctx, f.relay, f.header)
+				connection, err := f.forwarder.OpenService(ctx, f.relay, f.header, nil)
 				opened <- result{connection, err}
 			}()
 			incoming, err := f.publisher.AcceptServiceForwardingStream(ingressContext(t))
@@ -226,7 +226,7 @@ func TestServiceForwardingLeaseAndCapacityRejectionBeforeAcknowledgment(t *testi
 			if boundary == "capacity" {
 				header := f.header
 				header.VisitorConnectionID = "vc_" + strings.Repeat("b", 22)
-				connection, err := f.forwarder.OpenPrivate(ingressContext(t), f.relay, header)
+				connection, err := f.forwarder.OpenService(ingressContext(t), f.relay, header, nil)
 				if connection != nil {
 					connection.Close()
 					t.Fatal("capacity was not reserved while publisher acknowledgment was pending")
@@ -284,7 +284,7 @@ func TestServiceForwardingAcknowledgmentIsIdempotentAndKeepsDataOnce(t *testing.
 		}
 		return incoming.CloseWrite(ingressContext(t))
 	})
-	connection, err := f.forwarder.OpenPrivate(ingressContext(t), f.relay, f.header)
+	connection, err := f.forwarder.OpenService(ingressContext(t), f.relay, f.header, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,8 +1,10 @@
 package serviceaudit
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -110,11 +112,57 @@ func TestServiceLevelDenialQueueRetriesSameBoundedObservation(t *testing.T) {
 	if err := queue.Close(cleanup); err != nil {
 		t.Fatal(err)
 	}
-	if len(received) != 2 || received[0] != denied || received[1] != denied {
+	if len(received) != 2 || !reflect.DeepEqual(received[0], denied) || !reflect.DeepEqual(received[1], denied) {
 		t.Fatal("retry changed the denial's event ID, receipt, source, timestamp, or run-less scope", received)
 	}
 	if count, bytes := queue.Pending(); count != 0 || bytes != 0 {
 		t.Fatal("service denial retained queue capacity after joined shutdown", count, bytes)
+	}
+}
+
+func TestHTTPSelectionDenialOwnsBoundedRoutingEvidence(t *testing.T) {
+	denied := serviceDenialObservation()
+	denied.Reason, denied.RoutingAuthority = "ip_policy", []byte("signed-routing-authority")
+	wire, err := APIObservations(Batch{Events: []Observation{denied}})
+	if err != nil || len(wire) != 1 || !bytes.Equal(wire[0].RoutingAuthority, denied.RoutingAuthority) {
+		t.Fatal("HTTP selection denial lost its routing evidence", err)
+	}
+	wire[0].RoutingAuthority[0]++
+	if bytes.Equal(wire[0].RoutingAuthority, denied.RoutingAuthority) {
+		t.Fatal("wire conversion borrowed mutable routing evidence")
+	}
+	var received Observation
+	queue, err := NewQueue(t.Context(), QueueConfig{BatchSize: 2, FlushInterval: time.Hour,
+		Report: func(_ context.Context, batch Batch) error {
+			received = batch.Events[0]
+			return nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !queue.Observe(denied) {
+		t.Fatal("queue discarded a bounded HTTP selection denial")
+	}
+	denied.RoutingAuthority[0]++
+	cleanup, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := queue.Close(cleanup); err != nil {
+		t.Fatal(err)
+	}
+	if string(received.RoutingAuthority) != "signed-routing-authority" {
+		t.Fatal("a queued denial borrowed caller-owned routing evidence")
+	}
+	for _, change := range []func(*Observation){
+		func(o *Observation) { o.RunID, o.RunNumber = "srun_0123456789ABCDEFGHIJKL", 1 },
+		func(o *Observation) { o.Outcome = "allowed" },
+		func(o *Observation) { o.RoutingAuthority = bytes.Repeat([]byte{1}, 1025) },
+		func(o *Observation) { o.RoutingAuthority = nil },
+	} {
+		invalid := denied
+		change(&invalid)
+		if invalid.Validate() != ErrInvalid {
+			t.Fatal("routing evidence escaped its bounded, run-less denial shape")
+		}
 	}
 }
 

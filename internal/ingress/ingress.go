@@ -64,7 +64,7 @@ type Config struct {
 	OpenTimeout               time.Duration
 	Metrics                   Metrics
 	Observer                  OperationObserver
-	ObserveRecovery           func(ingressv1.ServiceRunReference, string, uint64, time.Time)
+	ObserveRecovery           func(ingressv1.ServiceRunReference, string, uint64, time.Time, []byte)
 	OnError                   func(error)
 	Traffic                   TrafficConfig
 	Pending                   PendingConfig
@@ -80,18 +80,20 @@ type Server struct {
 	closeOnce      sync.Once
 	closeErr       error
 
-	mu           sync.Mutex
-	connections  map[net.Conn]bool // true for public visitors, false during inspection.
-	backends     map[net.Conn]struct{}
-	pending      int
-	admitted     [connectionKinds]int
-	serving      bool
-	closing      bool
-	done         chan struct{}
-	active       sync.WaitGroup
-	nextBackend  atomic.Uint64
-	traffic      *trafficAdmission
-	servicePorts tcpport.Inventory
+	mu             sync.Mutex
+	connections    map[net.Conn]bool // true for public visitors, false during inspection.
+	backends       map[net.Conn]struct{}
+	pending        int
+	admitted       [connectionKinds]int
+	serving        bool
+	closing        bool
+	done           chan struct{}
+	active         sync.WaitGroup
+	nextBackend    atomic.Uint64
+	nextServiceRun atomic.Uint64
+	traffic        *trafficAdmission
+	servicePorts   tcpport.Inventory
+	services       *ServiceRouting
 }
 
 func New(listener net.Listener, config Config) (*Server, error) {
@@ -158,6 +160,7 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		done:           make(chan struct{}),
 		traffic:        traffic,
 		servicePorts:   servicePorts,
+		services:       NewServiceRouting(),
 	}
 	return server, nil
 }
@@ -234,6 +237,7 @@ func (s *Server) Close() error {
 		s.mu.Unlock()
 		_ = s.listener.Close()
 		s.closeErr = s.closeConnections()
+		s.services.Close()
 		s.active.Wait()
 	})
 	return s.closeErr

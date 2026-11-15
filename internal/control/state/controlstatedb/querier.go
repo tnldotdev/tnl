@@ -26,7 +26,6 @@ type Querier interface {
 	AdvanceGuestDemoNumber(ctx context.Context, arg AdvanceGuestDemoNumberParams) (int64, error)
 	AdvanceServiceRunNumber(ctx context.Context, arg AdvanceServiceRunNumberParams) (int64, error)
 	AdvanceTeamPolicyRevision(ctx context.Context, arg AdvanceTeamPolicyRevisionParams) (int64, error)
-	AuthorizeServiceHTTPVisitor(ctx context.Context, arg AuthorizeServiceHTTPVisitorParams) (pgtype.Timestamptz, error)
 	BeginAdminRelayDrain(ctx context.Context, arg BeginAdminRelayDrainParams) (BeginAdminRelayDrainRow, error)
 	BeginGuestServiceRun(ctx context.Context, arg BeginGuestServiceRunParams) (int64, error)
 	BeginIngressDrain(ctx context.Context, arg BeginIngressDrainParams) (ControlIngressLease, error)
@@ -280,6 +279,7 @@ type Querier interface {
 	ListDeploymentPublisherIDs(ctx context.Context, arg ListDeploymentPublisherIDsParams) ([]string, error)
 	ListDeploymentPublisherServices(ctx context.Context, deploymentID string) ([]ControlAppliedProjectService, error)
 	ListDeploymentPublisherStatus(ctx context.Context, arg ListDeploymentPublisherStatusParams) ([]ListDeploymentPublisherStatusRow, error)
+	ListDeploymentServiceConfigurations(ctx context.Context, serviceIds []string) ([]ListDeploymentServiceConfigurationsRow, error)
 	ListDeployments(ctx context.Context, arg ListDeploymentsParams) ([]ControlDeployment, error)
 	ListDiscoverablePreviews(ctx context.Context, arg ListDiscoverablePreviewsParams) ([]ListDiscoverablePreviewsRow, error)
 	ListDiscoverableProjects(ctx context.Context, arg ListDiscoverableProjectsParams) ([]ListDiscoverableProjectsRow, error)
@@ -290,6 +290,9 @@ type Querier interface {
 	ListIdentityMembershipContexts(ctx context.Context, identityID string) ([]ListIdentityMembershipContextsRow, error)
 	ListIdentityTeamDomains(ctx context.Context, arg ListIdentityTeamDomainsParams) ([]ListIdentityTeamDomainsRow, error)
 	ListIdentityTeams(ctx context.Context, identityID string) ([]ListIdentityTeamsRow, error)
+	ListIngressServiceRelays(ctx context.Context, arg ListIngressServiceRelaysParams) ([]ListIngressServiceRelaysRow, error)
+	// routing is read from one snapshot, never changed by a visitor connection.
+	ListIngressServiceRuns(ctx context.Context, arg ListIngressServiceRunsParams) ([]ListIngressServiceRunsRow, error)
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
 	ListPreviewServices(ctx context.Context, previewID string) ([]string, error)
 	ListProjectDeployments(ctx context.Context, arg ListProjectDeploymentsParams) ([]ControlDeployment, error)
@@ -305,6 +308,7 @@ type Querier interface {
 	ListRelayDNSChallengePresentations(ctx context.Context, tlsServerName string) ([]ListRelayDNSChallengePresentationsRow, error)
 	ListRelayServiceAssignmentTotals(ctx context.Context) ([]ListRelayServiceAssignmentTotalsRow, error)
 	ListServiceAuditEvents(ctx context.Context, arg ListServiceAuditEventsParams) ([]ControlServiceAuditEvent, error)
+	ListServiceConfigurations(ctx context.Context, serviceIds []string) ([]ListServiceConfigurationsRow, error)
 	ListServiceConnectionSlots(ctx context.Context, serviceRunID string) ([]ControlServiceConnectionSlot, error)
 	// replace expired never-ready claims even with a live relay lease.
 	// ready slots retain ownership and streams while their matching lease is live.
@@ -384,6 +388,7 @@ type Querier interface {
 	LockVisitorControlSession(ctx context.Context, accessTokenID string) (ControlControlSession, error)
 	LockVisitorIdentity(ctx context.Context, id string) (ControlIdentity, error)
 	LockVisitorTokenIssuer(ctx context.Context) (string, error)
+	LockVisitorTokenSigningAuthority(ctx context.Context) (ControlVisitorTokenKey, error)
 	LockVisitorTokenSigningKey(ctx context.Context) (ControlVisitorTokenKey, error)
 	LockWorkloadSession(ctx context.Context, id string) (ControlWorkloadSession, error)
 	LoginTeamRequiresCompany(ctx context.Context, id string) (bool, error)
@@ -396,6 +401,7 @@ type Querier interface {
 	// old run clears its supersession only after it has passed lease and key checks.
 	MarkSupersededRelayRunSigningKeys(ctx context.Context, arg MarkSupersededRelayRunSigningKeysParams) error
 	ObserveServiceRecoveryEpisode(ctx context.Context, arg ObserveServiceRecoveryEpisodeParams) (ControlServiceRecoveryEpisode, error)
+	ObserveServiceRun(ctx context.Context, arg ObserveServiceRunParams) (ControlServiceRun, error)
 	OpenServiceRecoveryEpisode(ctx context.Context, arg OpenServiceRecoveryEpisodeParams) error
 	OtherPreviewForTeamAccess(ctx context.Context, arg OtherPreviewForTeamAccessParams) (string, error)
 	OtherTeamAccessForService(ctx context.Context, arg OtherTeamAccessForServiceParams) (string, error)
@@ -492,7 +498,6 @@ type Querier interface {
 	ServiceHTTPBrowserEndpoint(ctx context.Context, arg ServiceHTTPBrowserEndpointParams) (ServiceHTTPBrowserEndpointRow, error)
 	ServiceHTTPBrowserPermission(ctx context.Context, arg ServiceHTTPBrowserPermissionParams) (ServiceHTTPBrowserPermissionRow, error)
 	ServiceHTTPPreviewTeamPermission(ctx context.Context, arg ServiceHTTPPreviewTeamPermissionParams) (pgtype.Timestamptz, error)
-	ServiceHTTPTransportBinding(ctx context.Context, arg ServiceHTTPTransportBindingParams) (ServiceHTTPTransportBindingRow, error)
 	ServiceNamespaceOwnsHostname(ctx context.Context, hostname string) (bool, error)
 	ServicePortPoolCapacity(ctx context.Context) ([]ServicePortPoolCapacityRow, error)
 	ServicePublicEndpointBinding(ctx context.Context, visitorConnectionID string) (ServicePublicEndpointBindingRow, error)

@@ -12,26 +12,43 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 )
 
-// Serve owns target transports for exactly one admitted HTTP visitor. routing and
-// response hooks stay in the existing proxy; every dial retains this stream's
-// connector checks and physical cleanup rather than borrowing another visitor's
-// socket. the caller's wrapper runs before target resolution or forwarding.
+// Serve borrows the run's public HTTP proxy or owns one admitted connector's
+// target transports. connector sockets never carry another visitor's admission.
+// the caller's wrapper runs before target resolution or forwarding.
 func (target HTTPTarget) Serve(ctx context.Context, client net.Conn, hostname string, wrap func(http.Handler) http.Handler, hooks httpstream.ResponseHooks) (result error) {
 	if client == nil || wrap == nil {
 		return ErrEndpoint
 	}
 	if target.Handler != nil {
-		if target.Address != "" || target.Transport.TLS != nil || len(target.Mounts) != 0 || target.ResolveTarget != nil {
+		if target.Address != "" || target.Transport.TLS != nil || len(target.Mounts) != 0 || target.ResolveTarget != nil || target.proxy != nil {
 			return ErrEndpoint
 		}
 		return httpstream.ServeHandler(ctx, client, wrap(target.Handler), target.Drain)
 	}
-	if target.Transport.Protocol != config.ProtocolHTTP {
-		return ErrEndpoint
+	if target.proxy != nil {
+		if target.connector != nil {
+			return ErrEndpoint
+		}
+		return httpstream.ServeHandler(ctx, client, wrap(http.HandlerFunc(target.proxy.ServeAdmittedHTTP)), target.Drain)
+	}
+	forwarder, err := target.NewHTTPProxy(ctx, hostname, hooks)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, forwarder.Close()) }()
+	return httpstream.ServeHandler(ctx, client, wrap(http.HandlerFunc(forwarder.ServeAdmittedHTTP)), target.Drain)
+}
+
+// NewHTTPProxy captures target routing and trust without dialing. its owner must
+// close it after joined visitors; closing a visitor does not retire a run's pool.
+func (target HTTPTarget) NewHTTPProxy(ctx context.Context, hostname string, hooks httpstream.ResponseHooks) (*proxy.Proxy, error) {
+	if ctx == nil || target.Transport.Protocol != config.ProtocolHTTP || target.Handler != nil || target.Connections < 0 {
+		return nil, ErrEndpoint
 	}
 	scheme := "http"
 	options := proxy.TargetOptions{}
@@ -39,8 +56,8 @@ func (target HTTPTarget) Serve(ctx context.Context, client net.Conn, hostname st
 		scheme = "https"
 		options.RootCAs, options.ServerName = target.Transport.TLS.RootCAs, target.Transport.TLS.ServerName
 	}
-	const connections = 64
-	forwarder, err := proxy.New(proxy.Config{
+	connections := applicationlimits.Limits{Concurrency: target.Connections}.Defaults(false).Concurrency
+	return proxy.New(proxy.Config{
 		Hostname: hostname, Target: (&url.URL{Scheme: scheme, Host: target.Address}).String(),
 		TargetOptions: options, Mounts: target.Mounts, ResolveTarget: target.ResolveTarget,
 		Hooks: hooks, MaxConnsPerHost: connections,
@@ -69,11 +86,6 @@ func (target HTTPTarget) Serve(ctx context.Context, client net.Conn, hostname st
 			return httpstream.NewTargetTransport(ctx, selected.Dial, connections)
 		},
 	})
-	if err != nil {
-		return err
-	}
-	defer func() { result = errors.Join(result, forwarder.Close()) }()
-	return httpstream.ServeHandler(ctx, client, wrap(http.HandlerFunc(forwarder.ServeAdmittedHTTP)), target.Drain)
 }
 
 // Dial bounds target setup and closes the raw socket when target TLS fails.

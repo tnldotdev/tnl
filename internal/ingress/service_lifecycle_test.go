@@ -21,7 +21,7 @@ type stalledServiceForwarder struct {
 	stallProxy bool
 }
 
-func (f stalledServiceForwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+func (f stalledServiceForwarder) OpenService(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) (net.Conn, error) {
 	if relay.ConnectionSlot == 0 {
 		if f.stallProxy {
 			connection, peer := net.Pipe()
@@ -31,7 +31,7 @@ func (f stalledServiceForwarder) OpenPrivate(ctx context.Context, relay ingressv
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	return f.alternate.OpenPrivate(ctx, relay, header)
+	return f.alternate.OpenService(ctx, relay, header, reserveCapacity)
 }
 
 func TestPublicServiceVisitorStalledRelayLeavesAlternateBudget(t *testing.T) {

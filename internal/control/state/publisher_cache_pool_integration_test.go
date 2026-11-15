@@ -3,15 +3,12 @@ package state
 import (
 	"bytes"
 	"crypto/x509"
-	"errors"
 	"fmt"
-	"net/netip"
 	"path/filepath"
 	"testing"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/zalando/go-keyring"
 )
@@ -44,14 +41,16 @@ func TestIntegrationPublicPublisherScopedCertificateCachePool(t *testing.T) {
 	ingress := registerTestIngress(t, d, now)
 	checkPool := func(expected ...servicePublicationFixture) {
 		t.Helper()
-		var excluded []ServiceRunReference
-		for range expected {
-			visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-			admission, err := d.AdmitPublicServiceVisitor(t.Context(), ingress.IngressLeaseIdentity, PrimaryIngressPoolID,
-				visitor, service.Endpoint.Hostname, 443, netip.MustParseAddr("192.0.2.10"), now, excluded...)
-			if err != nil || admission.ServiceID != service.ID || len(admission.Relays) != 2 {
-				t.Fatalf("pool lost a certified publisher or its two connection slots: %+v, %v", admission, err)
+		snapshot, err := d.ReadIngressServices(t.Context(), ingress.IngressLeaseIdentity, now)
+		if err != nil || len(snapshot.Runs) != len(expected) {
+			t.Fatal("pool returned starting, closed, or missing publishers", len(snapshot.Runs), len(expected), err)
+		}
+		seen := make(map[string]bool, len(expected))
+		for _, admission := range snapshot.Runs {
+			if admission.ServiceID != service.ID || len(admission.Relays) != 2 || seen[admission.RunID] {
+				t.Fatal("pool lost a certified publisher or its two connection slots", admission)
 			}
+			seen[admission.RunID] = true
 			var selected *servicePublicationFixture
 			for i := range expected {
 				if expected[i].run.RunID == admission.RunID && expected[i].run.RunNumber == admission.RunNumber {
@@ -68,15 +67,6 @@ func TestIntegrationPublicPublisherScopedCertificateCachePool(t *testing.T) {
 					t.Fatal("pool admission mixed publisher connection slots")
 				}
 			}
-			excluded = append(excluded, ServiceRunReference{ServiceID: service.ID, RunID: admission.RunID, RunNumber: admission.RunNumber})
-			if err := d.ClosePublicServiceVisitor(t.Context(), ingress.IngressLeaseIdentity, visitor, now); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if _, err := d.AdmitPublicServiceVisitor(t.Context(), ingress.IngressLeaseIdentity, PrimaryIngressPoolID,
-			mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), service.Endpoint.Hostname, 443,
-			netip.MustParseAddr("192.0.2.10"), now, excluded...); !errors.Is(err, ErrServiceAccess) {
-			t.Fatalf("pool admitted a starting, closed, or unexpected publisher: %v", err)
 		}
 	}
 	for index := range 2 {

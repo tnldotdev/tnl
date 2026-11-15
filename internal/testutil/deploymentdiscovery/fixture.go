@@ -92,6 +92,10 @@ func New(t *testing.T) *Fixture {
 	f.prepare = controlv1.ServiceRunPreparation{ServiceId: serviceID, ServiceRunId: runID, TeamId: member.TeamId, PublisherIdentityId: member.PublisherIdentityId, PublisherGrantId: grantID, PublisherKeyId: member.KeyId, RunNumber: 1, Hostname: f.service.Endpoint.Hostname, DomainId: id(opaqueid.DomainPrefix), ExpiresAt: time.Now().Add(time.Minute), CertificatePlan: &controlv1.CertificatePlan{CacheKey: "group-fixture", Scope: f.service.Endpoint.Hostname, Identifiers: []string{f.service.Endpoint.Hostname}, ChallengeMethod: controlv1.Dns01}}
 	f.prepare.Traffic = controlv1.TrafficLimits{Connections: 32, Rate: 20, RatePerNs: int64(time.Second), Burst: 40, UploadBytes: 8 << 20, DownloadBytes: 16 << 20}
 	f.setup = controlv1.ServiceRunSetup{ServiceId: serviceID, ServiceRunId: runID, RunNumber: 1, RunToken: "fixture-run"}
+	f.setup.VisitorSourceKey = make([]byte, 32)
+	if _, err := rand.Read(f.setup.VisitorSourceKey); err != nil {
+		t.Fatal(err)
+	}
 	for slot := range 2 {
 		f.setup.PublisherConnections = append(f.setup.PublisherConnections, controlv1.ConnectionAssignment{PublisherConnectionId: id(opaqueid.PublisherConnectionPrefix), ConnectionSlot: slot, ConnectionAssignmentRevision: 1, RelayServiceId: fmt.Sprintf("relay-%d", slot), RelayAddress: "127.0.0.1:1", TlsServerName: "relay.example.test", PublisherConnectionCredential: "fixture-connection", PublisherConnectionCredentialExpiresAt: time.Now().Add(time.Minute)})
 	}

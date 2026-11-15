@@ -86,6 +86,13 @@ func (m *Metrics) RegisterIngressRouting(source func() IngressRoutingSnapshot) {
 	}
 }
 
+// RegisterIngressServiceRouting reads the local snapshot owner without I/O.
+func (m *Metrics) RegisterIngressServiceRouting(source func() time.Time) {
+	m.gaugeFunc("tnl_ingress_service_routing_observed_timestamp_seconds",
+		"Control timestamp of the last routing snapshot applied by ingress; zero before the first refresh.",
+		func() float64 { return routingTimestamp(source()) })
+}
+
 func routingTimestamp(at time.Time) float64 {
 	if at.IsZero() {
 		return 0

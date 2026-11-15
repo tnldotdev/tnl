@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -22,6 +24,36 @@ type serviceSelectionControl struct {
 	live      map[string]ingressv1.PublicServiceVisitorAdmission
 	before    func(context.Context, *ingressv1.PublicServiceVisitorAdmission) error
 	close     func(context.Context, ingressv1.PublicServiceVisitorLookup) error
+	native    bool
+}
+
+func (c *serviceSelectionControl) ReadIngressServices(ctx context.Context, id string, lease ingressv1.IngressLeaseIdentity) (ingressv1.IngressServices, error) {
+	if c.native {
+		return c.publicServiceControlFixture.ReadIngressServices(ctx, id, lease)
+	}
+	now := time.Now()
+	snapshot := ingressv1.IngressServices{ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime)}
+	for _, candidate := range c.runs {
+		run := ingressv1.IngressServiceRun{ServiceId: candidate.ServiceId, ServiceRunId: candidate.ServiceRunId,
+			RunNumber: candidate.RunNumber, EndpointRevision: 1, Protocol: controlv1.ServiceProtocolHTTP,
+			Hostname: "route.example", Port: 443, ValidUntil: privateMinTime(candidate.ExpiresAt, snapshot.ValidUntil),
+			Anonymous: c.anonymous, ConnectedRelays: candidate.ConnectedRelays, Traffic: candidate.Traffic}
+		authority, key, err := visitortoken.IssueVisitorSourceAuthority([32]byte{1}, tunnelv1.VisitorSourceAuthority{
+			ServiceID: run.ServiceId, ServiceRunID: run.ServiceRunId, RunNumber: uint64(run.RunNumber), EndpointRevision: run.EndpointRevision,
+			IngressID: id, IngressRunID: lease.IngressRunId, IngressLeaseRevision: uint64(lease.IngressLeaseRevision),
+			VisitorPolicyRevision: 1, ValidUntil: run.ValidUntil.Unix(),
+		}, now)
+		if err != nil {
+			return snapshot, err
+		}
+		run.SourceAuthority, err = authority.MarshalBinary()
+		if err != nil {
+			return snapshot, err
+		}
+		run.SourceKey = key[:]
+		snapshot.Runs = append(snapshot.Runs, run)
+	}
+	return snapshot, nil
 }
 
 func (c *serviceSelectionControl) AdmitPublicServiceVisitor(ctx context.Context, id string, claim ingressv1.PublicServiceVisitorClaim) (ingressv1.PublicServiceVisitorAdmission, error) {
@@ -32,8 +64,8 @@ func (c *serviceSelectionControl) AdmitPublicServiceVisitor(ctx context.Context,
 	deadline, _ := ctx.Deadline()
 	c.deadlines = append(c.deadlines, deadline)
 	c.actions = append(c.actions, "admit "+claim.VisitorConnectionId)
-	if id != "ingress-a" || claim.IngressLeaseRevision != 1 || claim.Hostname == nil || *claim.Hostname != "route.example" ||
-		claim.ObservedSourceIp != "192.0.2.4" || claim.DestinationPort != 443 || len(claim.ExcludedRuns) > 7 {
+	if !c.native || id != "ingress-a" || claim.IngressLeaseRevision != 1 ||
+		claim.ObservedSourceIp != "192.0.2.4" || claim.DestinationPort != 20000 || len(claim.ExcludedRuns) > 7 {
 		return ingressv1.PublicServiceVisitorAdmission{}, ErrServiceAdmission
 	}
 	for _, run := range c.runs {
@@ -79,39 +111,52 @@ type serviceSelectionForwarder struct {
 	mu       sync.Mutex
 	openings map[string]serviceRelayOpening
 	observed []tunnelv1.ServiceForwardingHeader
+	before   func(tunnelv1.ServiceForwardingHeader)
+	port     uint16
 }
 
-func (f *serviceSelectionForwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+func (f *serviceSelectionForwarder) OpenService(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) (net.Conn, error) {
 	f.mu.Lock()
 	f.observed = append(f.observed, header)
 	open := f.openings[header.ServiceRunID]
 	f.mu.Unlock()
-	if header.Validate() != nil || header.PublicService == nil || header.PublicService.DestinationPort != 443 ||
+	if header.Validate() != nil || header.PublicService == nil || header.PublicService.DestinationPort != f.port ||
 		header.PublisherConnectionID != relay.PublisherConnectionId || header.ConnectionSlot != uint8(relay.ConnectionSlot) {
 		return nil, ErrServiceAdmission
+	}
+	if f.before != nil {
+		f.before(header)
 	}
 	if open == nil {
 		return nil, errors.New("unselected service run reached the relay")
 	}
-	return open(ctx, header)
+	return open(ctx, header, reserveCapacity)
 }
 
 func serviceSelectionConfig(t *testing.T, count int, anonymous bool) (Config, *serviceSelectionControl, *serviceSelectionForwarder) {
 	t.Helper()
 	config, base, _, _ := publicServiceTestConfig(t)
+	base.anonymous = anonymous
 	control := &serviceSelectionControl{publicServiceControlFixture: base, live: make(map[string]ingressv1.PublicServiceVisitorAdmission)}
 	for number := range count {
 		relay := base.relays[0]
 		relay.PublisherConnectionId = publicServiceTestID(t, "pc_")
 		control.runs = append(control.runs, ingressv1.PublicServiceVisitorAdmission{
 			ServiceId: base.service, ServiceRunId: publicServiceTestID(t, "srun_"), RunNumber: int64(number + 1),
-			ExpiresAt: time.Now().Add(time.Minute), ConnectedRelays: []ingressv1.ServiceRelay{relay}, Traffic: base.traffic, Anonymous: anonymous,
+			ExpiresAt: time.Now().Add(time.Minute), ConnectedRelays: []ingressv1.ServiceRelay{relay}, Traffic: base.traffic,
 		})
 	}
-	forwarder := &serviceSelectionForwarder{openings: make(map[string]serviceRelayOpening)}
+	forwarder := &serviceSelectionForwarder{openings: make(map[string]serviceRelayOpening), port: 443}
 	config.Control, config.Forwarder = control, forwarder
 	config.RequireProxyHeader = true
 	config.TrustedProxyPeers = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
+	return config, control, forwarder
+}
+
+func nativeServiceSelectionConfig(t *testing.T, count int) (Config, *serviceSelectionControl, *serviceSelectionForwarder) {
+	t.Helper()
+	config, control, forwarder := serviceSelectionConfig(t, count, false)
+	control.native, forwarder.port = true, 20000
 	return config, control, forwarder
 }
 
@@ -130,9 +175,23 @@ func serviceSelectionServer(t *testing.T, config Config) *Server {
 	return server
 }
 
+func serviceSelectionHTTPServer(t *testing.T, config Config) *Server {
+	t.Helper()
+	server := serviceSelectionServer(t, config)
+	applyServiceRoutingFixture(t, server)
+	return server
+}
+
 func rejectServiceSelection(t *testing.T, ctx context.Context, server *Server) error {
 	t.Helper()
 	connection, visitor := net.Pipe()
 	defer visitor.Close()
 	return server.AcceptPublic(ctx, connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.10:443"), "route.example", nil)
+}
+
+func rejectNativeServiceSelection(t *testing.T, ctx context.Context, server *Server) error {
+	t.Helper()
+	connection, visitor := net.Pipe()
+	defer visitor.Close()
+	return server.AcceptPublic(ctx, connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.10:20000"), "", nil)
 }

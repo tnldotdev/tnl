@@ -72,21 +72,6 @@ func (e AuthenticationFactsMethods) Valid() bool {
 	}
 }
 
-// Defines values for AuthorizeServiceHTTPVisitorRequestDestinationPort.
-const (
-	N443 AuthorizeServiceHTTPVisitorRequestDestinationPort = 443
-)
-
-// Valid indicates whether the value is a known member of the AuthorizeServiceHTTPVisitorRequestDestinationPort enum.
-func (e AuthorizeServiceHTTPVisitorRequestDestinationPort) Valid() bool {
-	switch e {
-	case N443:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for CertificateChallengeMethod.
 const (
 	Dns01 CertificateChallengeMethod = "dns-01"
@@ -1978,17 +1963,6 @@ type AuthorizeServiceClientCertificateRequest struct {
 	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
 }
 
-// AuthorizeServiceHTTPVisitorRequest defines model for AuthorizeServiceHTTPVisitorRequest.
-type AuthorizeServiceHTTPVisitorRequest struct {
-	DestinationPort     AuthorizeServiceHTTPVisitorRequestDestinationPort `json:"destination_port"`
-	RunNumber           int64                                             `json:"run_number,string"`
-	SourceIp            string                                            `json:"source_ip"`
-	VisitorConnectionId string                                            `json:"visitor_connection_id"`
-}
-
-// AuthorizeServiceHTTPVisitorRequestDestinationPort defines model for AuthorizeServiceHTTPVisitorRequest.DestinationPort.
-type AuthorizeServiceHTTPVisitorRequestDestinationPort int
-
 // BrowserAccessResponse defines model for BrowserAccessResponse.
 type BrowserAccessResponse struct {
 	DisplayName  string     `json:"display_name"`
@@ -3823,13 +3797,16 @@ type ServiceName = string
 
 // ServiceObservation defines model for ServiceObservation.
 type ServiceObservation struct {
-	DeliveryGeneration  int64                         `json:"delivery_generation,omitempty,string"`
-	EventId             string                        `json:"event_id"`
-	EventType           ServiceObservationEventType   `json:"event_type"`
-	OccurredAt          time.Time                     `json:"occurred_at"`
-	Outcome             ServiceObservationOutcome     `json:"outcome"`
-	PairId              *string                       `json:"pair_id,omitempty"`
-	Reason              *ServiceObservationReason     `json:"reason,omitempty"`
+	DeliveryGeneration int64                       `json:"delivery_generation,omitempty,string"`
+	EventId            string                      `json:"event_id"`
+	EventType          ServiceObservationEventType `json:"event_type"`
+	OccurredAt         time.Time                   `json:"occurred_at"`
+	Outcome            ServiceObservationOutcome   `json:"outcome"`
+	PairId             *string                     `json:"pair_id,omitempty"`
+	Reason             *ServiceObservationReason   `json:"reason,omitempty"`
+
+	// RoutingAuthority Signed routing authority for an ingress HTTP selection denial; verified during ingestion and not saved in service history.
+	RoutingAuthority    []byte                        `json:"routing_authority,omitempty"`
 	RunId               string                        `json:"run_id"`
 	RunNumber           int64                         `json:"run_number,string"`
 	ServiceId           string                        `json:"service_id"`
@@ -3936,6 +3913,9 @@ type ServiceRunSetup struct {
 	RunToken             string                 `json:"run_token"`
 	ServiceId            ServiceID              `json:"service_id"`
 	ServiceRunId         ServiceRunID           `json:"service_run_id"`
+
+	// VisitorSourceKey Purpose-separated key for checking ingress source proofs for this run.
+	VisitorSourceKey []byte `json:"visitor_source_key"`
 }
 
 // ServiceRunState defines model for ServiceRunState.
@@ -4232,7 +4212,10 @@ type VisitorPolicySnapshot struct {
 	ObservedAt       time.Time `json:"observed_at"`
 
 	// Port Exact resource port binding. Zero is permitted only for a service without a public reservation and is never a wildcard.
-	Port                int                         `json:"port"`
+	Port int `json:"port"`
+
+	// PublicEndpoint Current public endpoint only. Its removal does not revoke connector access or change the run's captured TLS hostname.
+	PublicEndpoint      *VisitorPublicEndpoint      `json:"public_endpoint,omitempty"`
 	RegisteredKeyLeases []VisitorRegisteredKeyLease `json:"registered_key_leases"`
 
 	// Resource An exact service authorization scope.
@@ -4249,6 +4232,13 @@ type VisitorPolicyUpdate struct {
 	Policy           VisitorPolicySnapshot `json:"policy"`
 	Revisions        RevisionList          `json:"revisions"`
 	SnapshotRequired bool                  `json:"snapshot_required"`
+}
+
+// VisitorPublicEndpoint defines model for VisitorPublicEndpoint.
+type VisitorPublicEndpoint struct {
+	EndpointRevision int64  `json:"endpoint_revision"`
+	Hostname         string `json:"hostname"`
+	Port             int    `json:"port"`
 }
 
 // VisitorRegisteredKeyLease defines model for VisitorRegisteredKeyLease.
@@ -4933,9 +4923,6 @@ type PrepareServiceRunJSONRequestBody = ServiceRunDeclaration
 
 // AuthorizeServiceClientCertificateJSONRequestBody defines body for AuthorizeServiceClientCertificate for application/json ContentType.
 type AuthorizeServiceClientCertificateJSONRequestBody = AuthorizeServiceClientCertificateRequest
-
-// AuthorizeServiceHTTPVisitorJSONRequestBody defines body for AuthorizeServiceHTTPVisitor for application/json ContentType.
-type AuthorizeServiceHTTPVisitorJSONRequestBody = AuthorizeServiceHTTPVisitorRequest
 
 // RedeemServiceBrowserHandoffJSONRequestBody defines body for RedeemServiceBrowserHandoff for application/json ContentType.
 type RedeemServiceBrowserHandoffJSONRequestBody = ServiceBrowserRequest
@@ -6457,24 +6444,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId).
 	AuthorizeServiceClientCertificate(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AuthorizeServiceHTTPVisitorWithBody Record locally verified HTTP request permission and check ingress admission
-	//
-	// The publisher reports permission only after authorizing an application request or verifying its exact readiness proof. Browser preparation and valid TLS alone do not authorize a visitor. Control rechecks the exact run, source, public endpoint, and live transport. The publisher must wait for admitted before calling the target.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor (the `AuthorizeServiceHTTPVisitor` operationId).
-	AuthorizeServiceHTTPVisitorWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AuthorizeServiceHTTPVisitor Record locally verified HTTP request permission and check ingress admission
-	//
-	// The publisher reports permission only after authorizing an application request or verifying its exact readiness proof. Browser preparation and valid TLS alone do not authorize a visitor. Control rechecks the exact run, source, public endpoint, and live transport. The publisher must wait for admitted before calling the target.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor (the `AuthorizeServiceHTTPVisitor` operationId).
-	AuthorizeServiceHTTPVisitor(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceHTTPVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RedeemServiceBrowserHandoffWithBody Exchange a service browser handoff through its publisher run
 	//
@@ -9522,44 +9491,6 @@ func (c *Client) AuthorizeServiceClientCertificateWithBody(ctx context.Context, 
 // Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId).
 func (c *Client) AuthorizeServiceClientCertificate(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizeServiceClientCertificateRequest(c.Server, serviceId, serviceRunId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AuthorizeServiceHTTPVisitorWithBody Record locally verified HTTP request permission and check ingress admission
-//
-// The publisher reports permission only after authorizing an application request or verifying its exact readiness proof. Browser preparation and valid TLS alone do not authorize a visitor. Control rechecks the exact run, source, public endpoint, and live transport. The publisher must wait for admitted before calling the target.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor (the `AuthorizeServiceHTTPVisitor` operationId).
-func (c *Client) AuthorizeServiceHTTPVisitorWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizeServiceHTTPVisitorRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AuthorizeServiceHTTPVisitor Record locally verified HTTP request permission and check ingress admission
-//
-// The publisher reports permission only after authorizing an application request or verifying its exact readiness proof. Browser preparation and valid TLS alone do not authorize a visitor. Control rechecks the exact run, source, public endpoint, and live transport. The publisher must wait for admitted before calling the target.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor (the `AuthorizeServiceHTTPVisitor` operationId).
-func (c *Client) AuthorizeServiceHTTPVisitor(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceHTTPVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizeServiceHTTPVisitorRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -15568,60 +15499,6 @@ func NewAuthorizeServiceClientCertificateRequestWithBody(server string, serviceI
 	return req, nil
 }
 
-// NewAuthorizeServiceHTTPVisitorRequest calls the generic AuthorizeServiceHTTPVisitor builder with application/json body
-func NewAuthorizeServiceHTTPVisitorRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceHTTPVisitorJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAuthorizeServiceHTTPVisitorRequestWithBody(server, serviceId, serviceRunId, "application/json", bodyReader)
-}
-
-// NewAuthorizeServiceHTTPVisitorRequestWithBody constructs an http.Request for the AuthorizeServiceHTTPVisitor method, with any body, and a specified content type
-func NewAuthorizeServiceHTTPVisitorRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/authorize-http-visitor", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewRedeemServiceBrowserHandoffRequest calls the generic RedeemServiceBrowserHandoff builder with application/json body
 func NewRedeemServiceBrowserHandoffRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body RedeemServiceBrowserHandoffJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -18759,24 +18636,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId).
 	AuthorizeServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error)
-
-	// AuthorizeServiceHTTPVisitorWithBodyWithResponse Record locally verified HTTP request permission and check ingress admission
-	//
-	// The publisher reports permission only after authorizing an application request or verifying its exact readiness proof. Browser preparation and valid TLS alone do not authorize a visitor. Control rechecks the exact run, source, public endpoint, and live transport. The publisher must wait for admitted before calling the target.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor (the `AuthorizeServiceHTTPVisitor` operationId).
-	AuthorizeServiceHTTPVisitorWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceHTTPVisitorResponse, error)
-
-	// AuthorizeServiceHTTPVisitorWithResponse Record locally verified HTTP request permission and check ingress admission
-	//
-	// The publisher reports permission only after authorizing an application request or verifying its exact readiness proof. Browser preparation and valid TLS alone do not authorize a visitor. Control rechecks the exact run, source, public endpoint, and live transport. The publisher must wait for admitted before calling the target.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor (the `AuthorizeServiceHTTPVisitor` operationId).
-	AuthorizeServiceHTTPVisitorWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceHTTPVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceHTTPVisitorResponse, error)
 
 	// RedeemServiceBrowserHandoffWithBodyWithResponse Exchange a service browser handoff through its publisher run
 	//
@@ -23742,54 +23601,6 @@ func (r AuthorizeServiceClientCertificateResponse) ContentType() string {
 	return ""
 }
 
-type AuthorizeServiceHTTPVisitorResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ServiceClientCertificateDecision
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AuthorizeServiceHTTPVisitorResponse) GetJSON200() *ServiceClientCertificateDecision {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AuthorizeServiceHTTPVisitorResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AuthorizeServiceHTTPVisitorResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AuthorizeServiceHTTPVisitorResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AuthorizeServiceHTTPVisitorResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AuthorizeServiceHTTPVisitorResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type RedeemServiceBrowserHandoffResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -27540,36 +27351,6 @@ func (c *ClientWithResponses) AuthorizeServiceClientCertificateWithResponse(ctx 
 		return nil, err
 	}
 	return ParseAuthorizeServiceClientCertificateResponse(rsp)
-}
-
-// AuthorizeServiceHTTPVisitorWithBodyWithResponse Record locally verified HTTP request permission and check ingress admission
-//
-// The publisher reports permission only after authorizing an application request or verifying its exact readiness proof. Browser preparation and valid TLS alone do not authorize a visitor. Control rechecks the exact run, source, public endpoint, and live transport. The publisher must wait for admitted before calling the target.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor (the `AuthorizeServiceHTTPVisitor` operationId).
-func (c *ClientWithResponses) AuthorizeServiceHTTPVisitorWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceHTTPVisitorResponse, error) {
-	rsp, err := c.AuthorizeServiceHTTPVisitorWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizeServiceHTTPVisitorResponse(rsp)
-}
-
-// AuthorizeServiceHTTPVisitorWithResponse Record locally verified HTTP request permission and check ingress admission
-//
-// The publisher reports permission only after authorizing an application request or verifying its exact readiness proof. Browser preparation and valid TLS alone do not authorize a visitor. Control rechecks the exact run, source, public endpoint, and live transport. The publisher must wait for admitted before calling the target.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor (the `AuthorizeServiceHTTPVisitor` operationId).
-func (c *ClientWithResponses) AuthorizeServiceHTTPVisitorWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceHTTPVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceHTTPVisitorResponse, error) {
-	rsp, err := c.AuthorizeServiceHTTPVisitor(ctx, serviceId, serviceRunId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizeServiceHTTPVisitorResponse(rsp)
 }
 
 // RedeemServiceBrowserHandoffWithBodyWithResponse Exchange a service browser handoff through its publisher run
@@ -31569,39 +31350,6 @@ func ParseAuthorizeServiceClientCertificateResponse(rsp *http.Response) (*Author
 	return response, nil
 }
 
-// ParseAuthorizeServiceHTTPVisitorResponse parses an HTTP response from a AuthorizeServiceHTTPVisitorWithResponse call
-func ParseAuthorizeServiceHTTPVisitorResponse(rsp *http.Response) (*AuthorizeServiceHTTPVisitorResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AuthorizeServiceHTTPVisitorResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ServiceClientCertificateDecision
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseRedeemServiceBrowserHandoffResponse parses an HTTP response from a RedeemServiceBrowserHandoffWithResponse call
 func ParseRedeemServiceBrowserHandoffResponse(rsp *http.Response) (*RedeemServiceBrowserHandoffResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -33052,9 +32800,6 @@ type ServerInterface interface {
 	// AuthorizeServiceClientCertificate Check a public endpoint visitor's client certificate and admission
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate)
 	AuthorizeServiceClientCertificate(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
-	// AuthorizeServiceHTTPVisitor Record locally verified HTTP request permission and check ingress admission
-	// (POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor)
-	AuthorizeServiceHTTPVisitor(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
 	// RedeemServiceBrowserHandoff Exchange a service browser handoff through its publisher run
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff)
 	RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
@@ -36649,41 +36394,6 @@ func (siw *ServerInterfaceWrapper) AuthorizeServiceClientCertificate(w http.Resp
 	handler.ServeHTTP(w, r)
 }
 
-// AuthorizeServiceHTTPVisitor operation middleware
-func (siw *ServerInterfaceWrapper) AuthorizeServiceHTTPVisitor(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId ServiceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "service_run_id" -------------
-	var serviceRunId ServiceRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AuthorizeServiceHTTPVisitor(w, r, serviceId, serviceRunId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // RedeemServiceBrowserHandoff operation middleware
 func (siw *ServerInterfaceWrapper) RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Request) {
 
@@ -38203,7 +37913,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs", wrapper.PrepareServiceRun)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}", wrapper.CloseServiceRun)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/renew", wrapper.RenewServiceRun)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor", wrapper.AuthorizeServiceHTTPVisitor)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo/publisher", wrapper.EnrollGuestPublisher)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/callback", wrapper.CompletePreviewBrowserLogin)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/preview", wrapper.CreateServiceRunPreview)

@@ -61,6 +61,9 @@ func (d *daemon) readyIngress(now time.Time) error {
 		if runtime.controller == nil || !runtime.controller.Ready(now) || runtime.server == nil || !runtime.server.Ready() {
 			return errors.New("ingress lease, routing table, or listener is not ready")
 		}
+		if !runtime.server.RoutingReady(now) {
+			return errors.New("ingress service routing is unavailable or stale")
+		}
 	}
 	return nil
 }

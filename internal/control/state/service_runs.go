@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
 
 // publisher authentication authorizes the exact prepared run and captured
@@ -128,6 +129,10 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 		return result, ErrServiceAccess
 	}
 	result = ServiceRunState{ServiceID: service, RunID: id, RunNumber: number, Token: token.String(), State: run.State, ExpiresAt: until, Connections: connections}
+	result.VisitorSourceKey, err = visitortoken.ServiceVisitorSourceKey(digest[:], id, uint64(number))
+	if err != nil {
+		return result, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return result, err
 	}

@@ -17,7 +17,7 @@ var ErrServiceSelectionLimit = errors.New("ingress: service run selection limit 
 // ServiceForwarder opens an acknowledged, lease-bound internal relay stream.
 // ingress writes the original PROXY v2 metadata only after relay acceptance.
 type ServiceForwarder interface {
-	OpenPrivate(context.Context, ingressv1.ServiceRelay, tunnelv1.ServiceForwardingHeader) (net.Conn, error)
+	OpenService(context.Context, ingressv1.ServiceRelay, tunnelv1.ServiceForwardingHeader, func(context.Context) error) (net.Conn, error)
 }
 
 func serviceDefaults(config *Config) error {

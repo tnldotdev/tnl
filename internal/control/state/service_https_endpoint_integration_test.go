@@ -9,6 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 )
 
 func TestIntegrationServiceHTTPSHasNoExclusiveReservation(t *testing.T) {
@@ -106,12 +107,11 @@ func TestIntegrationServiceHTTPSRequiresIngressCapabilityForDNSAndVisitors(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	admit := func(lease IngressLease) error {
-		_, err := d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID,
-			mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), service.Endpoint.Hostname, 443, netip.MustParseAddr("192.0.2.10"), now)
+	routing := func(lease IngressLease) error {
+		_, err := readIngressServiceRun(ctx, d, lease.IngressLeaseIdentity, service.ID, run.RunID, now)
 		return err
 	}
-	if err := admit(withoutHTTPS); !errors.Is(err, ErrServiceAccess) {
+	if err := routing(withoutHTTPS); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("allocated-port inventory was mistaken for shared HTTPS support", err)
 	}
 	registration.HTTPS = true
@@ -138,20 +138,27 @@ func TestIntegrationServiceHTTPSRequiresIngressCapabilityForDNSAndVisitors(t *te
 	if err != nil || withHTTPS.IngressLeaseRevision <= withoutHTTPS.IngressLeaseRevision {
 		t.Fatal("restart did not fence the previous process", err)
 	}
-	if err := admit(withoutHTTPS); !errors.Is(err, ErrServiceAccess) && !errors.Is(err, ErrIngressLeaseStale) {
+	if err := routing(withoutHTTPS); !errors.Is(err, ErrServiceAccess) && !errors.Is(err, ErrIngressLeaseStale) {
 		t.Fatal("restarted ingress retained its old lease authority", err)
 	}
-	if err := admit(withHTTPS); err != nil {
+	if err := routing(withHTTPS); err != nil {
 		t.Fatal("shared HTTPS required an allocated port listener", err)
 	}
-	deniedVisitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	if _, err := d.AdmitPublicServiceVisitor(ctx, withHTTPS.IngressLeaseIdentity, PrimaryIngressPoolID,
-		deniedVisitor, service.Endpoint.Hostname, 443, netip.MustParseAddr("203.0.113.10"), now); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("disallowed HTTP source reached TLS setup admission", err)
+	entry, err := readIngressServiceRun(ctx, d, withHTTPS.IngressLeaseIdentity, service.ID, run.RunID, now)
+	if err != nil || entry.IP == nil || len(entry.IP.Key) != 32 {
+		t.Fatal("HTTP routing omitted source policy", err)
 	}
-	var reserved bool
-	if err := d.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.public_service_visitors WHERE visitor_connection_id=$1)`, deniedVisitor).Scan(&reserved); err != nil || reserved {
-		t.Fatal("disallowed source retained pending visitor capacity", reserved, err)
+	prefixes := make([]ippolicy.Entry, 0, len(entry.IP.Prefixes))
+	for _, prefix := range entry.IP.Prefixes {
+		prefixes = append(prefixes, ippolicy.Entry{Family: string(prefix.Family), Bits: prefix.PrefixLength, Digest: prefix.Digest})
+	}
+	ip, err := ippolicy.New([32]byte(entry.IP.Key), prefixes)
+	if err != nil || !ip.Allows(netip.MustParseAddr("192.0.2.10")) || ip.Allows(netip.MustParseAddr("203.0.113.10")) {
+		t.Fatal("ingress routing lost the exact permitted and excluded sources", err)
+	}
+	var reserved int
+	if err := d.pool.QueryRow(ctx, `SELECT count(*) FROM control.public_service_visitors WHERE service_id=$1`, service.ID).Scan(&reserved); err != nil || reserved != 0 {
+		t.Fatal("HTTP routing retained visitor coordination rows", reserved, err)
 	}
 	work := claim(true)
 	if err := d.ValidateServiceEndpointDNSWork(ctx, work, now); err != nil {
@@ -169,7 +176,7 @@ func TestIntegrationServiceHTTPSRequiresIngressCapabilityForDNSAndVisitors(t *te
 	if err := d.ValidateServiceEndpointDNSWork(ctx, work, now); !errors.Is(err, ErrServiceEndpointDNSWorkStale) {
 		t.Fatal("revoked exposure left a public DNS worker authorized", err)
 	}
-	if err := admit(withHTTPS); !errors.Is(err, ErrServiceAccess) {
+	if err := routing(withHTTPS); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("stale public DNS authorized a connector-only service", err)
 	}
 }

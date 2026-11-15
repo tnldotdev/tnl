@@ -27,6 +27,20 @@ LEFT JOIN control.local_project_services local ON local.service_id=service.id
 LEFT JOIN control.publisher_namespace_allocations allocation ON allocation.service_id=service.id
 WHERE service.id=sqlc.arg(service_id);
 
+-- name: ListServiceConfigurations :many
+SELECT service.id AS service_id,COALESCE(local.service,service.name)::text AS service,
+    service.configuration_ciphertext,service.storage_key_id,
+    (local.service_id IS NOT NULL)::boolean AS local_owned,
+    EXISTS(SELECT 1 FROM control.applied_project_services binding
+        WHERE binding.service_id=service.id) AS deployment_owned,
+    (allocation.service_id IS NOT NULL)::boolean AS allocation_owned,
+    COALESCE(allocation.required_temporary_approval,'')::text AS required_temporary_approval
+FROM control.services service
+LEFT JOIN control.local_project_services local ON local.service_id=service.id
+LEFT JOIN control.publisher_namespace_allocations allocation ON allocation.service_id=service.id
+WHERE service.id=ANY(sqlc.arg(service_ids)::text[])
+ORDER BY service.id;
+
 -- name: SetServiceConfiguration :execrows
 UPDATE control.services
 SET configuration_ciphertext=sqlc.narg(ciphertext),storage_key_id=sqlc.narg(storage_key_id)
@@ -180,6 +194,10 @@ VALUES (sqlc.arg(preferred_regions), convert_from(sqlc.arg(traffic_limits)::byte
 -- name: LockServiceRun :one
 SELECT * FROM control.service_runs
 WHERE id = sqlc.arg(id) AND service_id = sqlc.arg(service_id) FOR UPDATE;
+
+-- name: ObserveServiceRun :one
+SELECT * FROM control.service_runs
+WHERE id = sqlc.arg(id) AND service_id = sqlc.arg(service_id) FOR SHARE;
 
 -- name: LockServiceRunsForClose :many
 SELECT * FROM control.service_runs

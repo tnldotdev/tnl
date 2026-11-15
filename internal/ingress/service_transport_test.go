@@ -54,11 +54,7 @@ func newServiceTransportFixture(t *testing.T, ref tunnelv1.ServicePublisherConne
 		}
 		defer session.Close()
 		registered <- session
-		select {
-		case <-ctx.Done():
-		case <-session.Done():
-		}
-		return nil
+		return session.ServeServiceCapacity(ctx)
 	})
 	setup := ingressContext(t)
 	transport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: material.roots}}).Connect(
@@ -105,6 +101,13 @@ func newServiceTransportFixture(t *testing.T, ref tunnelv1.ServicePublisherConne
 			}
 			if err := func() error {
 				defer incoming.Stream().Close()
+				unregister, err := f.relayPublisher.RegisterServiceCapacity(ctx, request.Header, func(call context.Context) error {
+					return session.RequestServiceCapacity(call, request.Header)
+				})
+				if err != nil {
+					return err
+				}
+				defer unregister()
 				upstream, err := f.relayPublisher.OpenServiceForwardingStream(ctx, request.Header)
 				if err != nil {
 					return err
@@ -149,9 +152,9 @@ func newServiceTransportFixture(t *testing.T, ref tunnelv1.ServicePublisherConne
 	return f
 }
 
-func (f *serviceTransportFixture) open(ctx context.Context, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+func (f *serviceTransportFixture) open(ctx context.Context, header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) (net.Conn, error) {
 	if tunnel.ServiceForwardingRef(header) != f.ref {
 		return nil, fmt.Errorf("service forwarding changed the claimed publisher connection")
 	}
-	return f.forwarder.OpenPrivate(ctx, f.relay, header)
+	return f.forwarder.OpenService(ctx, f.relay, header, reserveCapacity)
 }

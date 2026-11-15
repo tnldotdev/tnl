@@ -44,7 +44,11 @@ func TestHTTPAndConnectorShareRunPolicyOwner(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer closeRun()
+		defer func() {
+			if err := closeRun(); err != nil {
+				t.Error("close configured run", err)
+			}
+		}()
 		if err := bound.PrepareConnectorPolicy(t.Context(), control, credentials.ServiceRunToken(base.setup.RunToken)); err != nil {
 			t.Fatal(err)
 		}

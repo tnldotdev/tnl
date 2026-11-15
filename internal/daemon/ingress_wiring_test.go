@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -22,11 +23,13 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -45,6 +48,33 @@ type wiringControl struct {
 	load          func() int64
 	pendingLoad   int64
 	promotedLoad  int64
+}
+
+func (c *wiringControl) ReadIngressServices(_ context.Context, id string, lease ingressv1.IngressLeaseIdentity) (ingressv1.IngressServices, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	if !c.currentLease(id, lease.IngressRunId, lease.IngressLeaseRevision) {
+		return ingressv1.IngressServices{}, ingress.ErrServiceAdmission
+	}
+	until := now.Add(visitortoken.PolicyLifetime)
+	a, key, err := visitortoken.IssueVisitorSourceAuthority([32]byte{1}, tunnelv1.VisitorSourceAuthority{
+		ServiceID: c.admission.ServiceId, ServiceRunID: c.admission.ServiceRunId, RunNumber: uint64(c.admission.RunNumber), EndpointRevision: 1,
+		IngressID: id, IngressRunID: lease.IngressRunId, IngressLeaseRevision: uint64(lease.IngressLeaseRevision),
+		VisitorPolicyRevision: 1, ValidUntil: until.Unix(),
+	}, now)
+	if err != nil {
+		return ingressv1.IngressServices{}, err
+	}
+	authority, err := a.MarshalBinary()
+	if err != nil {
+		return ingressv1.IngressServices{}, err
+	}
+	return ingressv1.IngressServices{ObservedAt: now, ValidUntil: until, Runs: []ingressv1.IngressServiceRun{{
+		ServiceId: c.admission.ServiceId, ServiceRunId: c.admission.ServiceRunId, RunNumber: c.admission.RunNumber, EndpointRevision: 1,
+		Protocol: controlv1.ServiceProtocolHTTP, Hostname: "pool.example", Port: 443, ValidUntil: until,
+		ConnectedRelays: c.admission.ConnectedRelays, Traffic: c.admission.Traffic, SourceAuthority: authority, SourceKey: key[:],
+	}}}, nil
 }
 
 func (c *wiringControl) RegisterIngress(_ context.Context, r ingressv1.IngressRegistration) (ingressv1.IngressLease, error) {
@@ -75,26 +105,11 @@ func (c *wiringControl) IngestServiceObservations(_ context.Context, _ controlst
 	return controlstate.ServiceObservationResult{Accepted: len(batch.Events)}, nil
 }
 
-func (c *wiringControl) AdmitPublicServiceVisitor(_ context.Context, id string, claim ingressv1.PublicServiceVisitorClaim) (ingressv1.PublicServiceVisitorAdmission, error) {
+func (c *wiringControl) AdmitPublicServiceVisitor(context.Context, string, ingressv1.PublicServiceVisitorClaim) (ingressv1.PublicServiceVisitorAdmission, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.currentLease(id, claim.IngressRunId, claim.IngressLeaseRevision) || claim.IngressPoolId != "ingress-a" ||
-		claim.DestinationPort != 443 || claim.Hostname == nil || *claim.Hostname != "pool.example" || claim.ObservedSourceIp != "192.0.2.44" ||
-		!opaqueid.Valid(claim.VisitorConnectionId, opaqueid.VisitorConnectionPrefix) || c.admission.ServiceId == "" {
-		return ingressv1.PublicServiceVisitorAdmission{}, ingress.ErrServiceAdmission
-	}
-	if c.visitors == nil {
-		c.visitors = make(map[string]bool)
-	}
-	c.visitors[claim.VisitorConnectionId] = false
 	c.admitted++
-	if c.load != nil {
-		c.pendingLoad = c.load()
-	}
-	admission := c.admission
-	admission.VisitorConnectionId = claim.VisitorConnectionId
-	admission.ConnectedRelays = append([]ingressv1.ServiceRelay(nil), admission.ConnectedRelays...)
-	return admission, nil
+	return ingressv1.PublicServiceVisitorAdmission{}, errors.New("HTTP wiring called native control admission")
 }
 func (c *wiringControl) PublicServiceVisitorStatus(_ context.Context, id string, lookup ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error) {
 	c.mu.Lock()
@@ -217,10 +232,7 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 						defer session.Close()
 						if hello.Role == tunnelv1.Publisher {
 							registered <- session
-							select {
-							case <-ctx.Done():
-							case <-session.Done():
-							}
+							_ = session.ServeServiceCapacity(ctx)
 							return
 						}
 						for {
@@ -244,6 +256,25 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 									return
 								}
 								forwarded <- header
+								unregister, err := relayPublisher.Load().RegisterServiceCapacity(ctx, header, func(call context.Context) error {
+									control.mu.Lock()
+									control.pendingLoad = control.load()
+									control.mu.Unlock()
+									if err := session.RequestServiceCapacity(call, header); err != nil {
+										return err
+									}
+									control.mu.Lock()
+									control.promoted++
+									control.promotedLoad = control.load()
+									close(control.promotedReady)
+									control.mu.Unlock()
+									return nil
+								})
+								if err != nil {
+									t.Error("register publisher capacity", err)
+									return
+								}
+								defer unregister()
 								upstream, err := relayPublisher.Load().OpenServiceForwardingStream(ctx, header)
 								if err != nil {
 									t.Error("open publisher service stream", err)
@@ -284,7 +315,9 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 						return
 					}
 					workers.Go(func() {
-						publisherResult <- serveWiringServiceVisitor(ctx, incoming, secure, ref, fail, control.promotedReady)
+						publisherResult <- serveWiringServiceVisitor(ctx, incoming, secure, ref, fail, func(call context.Context) error {
+							return publisher.RequestServiceCapacity(call, incoming.Header)
+						})
 					})
 				}
 			})
@@ -330,6 +363,9 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 			control.mu.Lock()
 			control.load = d.ingresses[0].load
 			control.mu.Unlock()
+			privateWait(t, 5*time.Second, func(context.Context) (bool, error) {
+				return !d.ingresses[0].server.RoutingObservedAt().Before(now), nil
+			})
 			if got := d.ingresses[0].load(); got != 0 {
 				t.Fatal("idle ingress reported physical visitors", got)
 			}
@@ -366,7 +402,7 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 				}
 			} else {
 				if err != nil {
-					t.Fatalf("production ingress did not forward the control-selected service run: %v", err)
+					t.Fatalf("production ingress did not forward the control-selected service run: %v; publisher: %v", err, wiringServiceAwait(t, publisherResult))
 				}
 				body, err := io.ReadAll(response.Body)
 				_ = response.Body.Close()
@@ -392,10 +428,10 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 			admitted, promoted, closed, retained := control.admitted, control.promoted, control.closed, len(control.visitors)
 			pendingLoad, promotedLoad := control.pendingLoad, control.promotedLoad
 			control.mu.Unlock()
-			if admitted != 1 || closed != 1 || retained != 0 || !fail && promoted != 1 {
+			if admitted != 0 || closed != 0 || retained != 0 || !fail && promoted != 1 || fail && promoted != 0 {
 				t.Fatalf("service admission did not finish exactly once: admitted=%d promoted=%d closed=%d retained=%d", admitted, promoted, closed, retained)
 			}
-			if pendingLoad != 1 || !fail && promotedLoad != 1 || d.ingresses[0].load() != 0 {
+			if !fail && (pendingLoad != 1 || promotedLoad != 1) || d.ingresses[0].load() != 0 {
 				t.Fatalf("physical visitor counted more than once: pending=%d promoted=%d closed=%d", pendingLoad, promotedLoad, d.ingresses[0].load())
 			}
 			if len(forwarded) != 0 || len(publisherResult) != 0 {
@@ -426,7 +462,7 @@ func wiringServiceAwait[T any](t *testing.T, values <-chan T) T {
 	}
 }
 
-func serveWiringServiceVisitor(ctx context.Context, incoming *tunnel.IncomingServiceForwardingStream, secure *tls.Config, ref tunnelv1.ServicePublisherConnectionRef, fail bool, promoted <-chan struct{}) error {
+func serveWiringServiceVisitor(ctx context.Context, incoming *tunnel.IncomingServiceForwardingStream, secure *tls.Config, ref tunnelv1.ServicePublisherConnectionRef, fail bool, reserveCapacity func(context.Context) error) error {
 	defer incoming.Stream().Close()
 	if err := incoming.Stream().SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		return err
@@ -443,6 +479,16 @@ func serveWiringServiceVisitor(ctx context.Context, incoming *tunnel.IncomingSer
 	}
 	if metadata.Source != netip.MustParseAddrPort("192.0.2.44:42000") || metadata.Destination != netip.MustParseAddrPort("203.0.113.8:443") {
 		return fmt.Errorf("service forwarding changed trusted PROXY metadata")
+	}
+	proof, err := tunnelv1.ReadVisitorSourceProof([]byte(metadata.VisitorSourceProof))
+	if err != nil {
+		return err
+	}
+	if err := visitortoken.VerifyVisitorSource([32]byte{1}, proof, tunnelv1.VisitorSourceBinding{
+		ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber,
+		VisitorConnectionID: incoming.Header.VisitorConnectionID, Source: metadata.Source, Destination: metadata.Destination,
+	}, 1, time.Now()); err != nil {
+		return err
 	}
 	if fail {
 		var committed [1]byte
@@ -465,10 +511,10 @@ func serveWiringServiceVisitor(ctx context.Context, incoming *tunnel.IncomingSer
 	if request.Host != "pool.example" || request.Method != http.MethodGet || request.URL.String() != "/" {
 		return fmt.Errorf("publisher received another HTTP request")
 	}
-	select {
-	case <-promoted:
-	case <-ctx.Done():
-		return ctx.Err()
+	capacity, cancel := context.WithDeadline(ctx, incoming.Header.ExpiresAt)
+	defer cancel()
+	if err := reserveCapacity(capacity); err != nil {
+		return err
 	}
 	_, err = io.WriteString(visitor, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\npong")
 	return err

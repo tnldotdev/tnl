@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
-	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -48,7 +47,7 @@ func registerServingIngress(t *testing.T, f servicePublicationFixture, name stri
 		t.Fatal(err)
 	}
 	lease, err := f.database.RegisterIngress(t.Context(), IngressRegistration{
-		IngressID: name, IngressRunID: name + "-process", ProtocolVersion: 1, ConnectionCapacity: 64,
+		IngressID: name, IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1, ConnectionCapacity: 64,
 		IngressPoolID: pool, HTTPS: true,
 	}, now, time.Minute)
 	if err != nil {
@@ -57,16 +56,15 @@ func registerServingIngress(t *testing.T, f servicePublicationFixture, name stri
 	return lease.IngressLeaseIdentity
 }
 
-func admitServingVisitor(t *testing.T, f servicePublicationFixture, owner IngressLeaseIdentity, now time.Time) (PublicServiceVisitorAdmission, error) {
+func readServingRun(t *testing.T, f servicePublicationFixture, owner IngressLeaseIdentity, now time.Time) (IngressServiceRun, error) {
 	t.Helper()
-	return f.database.AdmitPublicServiceVisitor(t.Context(), owner, PrimaryIngressPoolID,
-		mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), f.service.Endpoint.Hostname, 443, netip.MustParseAddr("192.0.2.10"), now)
+	return readIngressServiceRun(t.Context(), f.database, owner, f.service.ID, f.run.RunID, now)
 }
 
 func TestIntegrationPublicServingReadinessRequiresPublisherCertificateAndConnections(t *testing.T) {
 	f := publicServingFixture(t, newServicePublicationFixture(t))
 	owner := registerServingIngress(t, f, "receiver-a", f.now)
-	if _, err := admitServingVisitor(t, f, owner, f.now); !errors.Is(err, ErrServiceAccess) {
+	if _, err := readServingRun(t, f, owner, f.now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("starting run admitted a visitor", err)
 	}
 	f.readyConnections(t, f.now)
@@ -79,11 +77,11 @@ func TestIntegrationPublicServingReadinessRequiresPublisherCertificateAndConnect
 		ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil || state.State != "ready" {
 		t.Fatal("complete publisher did not become ready", state.State, err)
 	}
-	// ingress processes select current service state, not per-process
+	// ingress processes read current service state without per-process
 	// installation acknowledgements. a joining process needs no run mutation.
 	other := registerServingIngress(t, f, "receiver-b", f.now)
 	for _, ingress := range []IngressLeaseIdentity{owner, other} {
-		admission, err := admitServingVisitor(t, f, ingress, f.now)
+		admission, err := readServingRun(t, f, ingress, f.now)
 		if err != nil || admission.RunID != f.run.RunID || admission.RunNumber != f.run.RunNumber {
 			t.Fatal("ingress selected a different run or required stale installation state", err)
 		}
@@ -100,18 +98,18 @@ func TestIntegrationPublicServingReadinessExactBindingAndDrain(t *testing.T) {
 	} {
 		stale := owner
 		change(&stale)
-		if _, err := admitServingVisitor(t, f, stale, f.now); err == nil {
+		if _, err := readServingRun(t, f, stale, f.now); err == nil {
 			t.Fatal("stale ingress process or lease admitted a visitor")
 		}
 	}
 	if _, err := f.database.BeginIngressDrain(t.Context(), owner, f.now, f.now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := admitServingVisitor(t, f, owner, f.now); !errors.Is(err, ErrServiceAccess) {
+	if _, err := readServingRun(t, f, owner, f.now); !errors.Is(err, ErrIngressLeaseStale) {
 		t.Fatal("draining ingress accepted a new visitor", err)
 	}
 	other := registerServingIngress(t, f, "serving", f.now)
-	if _, err := admitServingVisitor(t, f, other, f.now); err != nil {
+	if _, err := readServingRun(t, f, other, f.now); err != nil {
 		t.Fatal("one draining ingress suppressed a healthy receiver", err)
 	}
 }
@@ -143,7 +141,7 @@ func TestIntegrationPublicReadinessSerializesRegistrationWithFinalVisibility(t *
 	})
 	waitForPostgresBlock(t, ctx, f.database, int32(gate.Conn().PgConn().PID()), done)
 	// process registration is independent of a service's locked readiness
-	// transition. admission checks that transition under its own service guard.
+	// transition. routing reads only the committed ready state.
 	owner := registerServingIngress(t, f, "joining", f.now)
 	if err := gate.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -151,7 +149,7 @@ func TestIntegrationPublicReadinessSerializesRegistrationWithFinalVisibility(t *
 	if err := awaitIntegrationResult(t, ctx, done); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := admitServingVisitor(t, f, owner, f.now); err != nil {
+	if _, err := readServingRun(t, f, owner, f.now); err != nil {
 		t.Fatal("joining ingress could not use committed readiness", err)
 	}
 }
@@ -166,10 +164,10 @@ func TestIntegrationPublicServingReadinessIsolationAndStartingClosure(t *testing
 	if err := a.database.CloseServiceRun(t.Context(), a.service.ID, a.run.RunID, a.run.Token, a.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := admitServingVisitor(t, a, owner, a.now); !errors.Is(err, ErrServiceAccess) {
+	if _, err := readServingRun(t, a, owner, a.now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("closed starting run remained selectable", err)
 	}
-	admission, err := admitServingVisitor(t, b, owner, b.now)
+	admission, err := readServingRun(t, b, owner, b.now)
 	if err != nil || admission.RunID != b.run.RunID {
 		t.Fatal("closing a starting service suppressed its ready sibling", err)
 	}
@@ -178,22 +176,22 @@ func TestIntegrationPublicServingReadinessIsolationAndStartingClosure(t *testing
 func TestIntegrationPublicReadinessReplacementCannotReuseObservation(t *testing.T) {
 	f := publicServingFixture(t, newServicePublicationFixture(t))
 	prepareServingPublisher(t, f)
-	registration := IngressRegistration{IngressID: "replacement", IngressRunID: "first", HTTPS: true,
+	registration := IngressRegistration{IngressID: "replacement", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), HTTPS: true,
 		ProtocolVersion: 1, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID}
 	first, err := f.database.RegisterIngress(t.Context(), registration, f.now, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	registration.IngressRunID = "second"
+	registration.IngressRunID = mustOpaqueID(t, opaqueid.IngressRunPrefix)
 	later := f.now.Add(time.Second)
 	replacement, err := f.database.RegisterIngress(t.Context(), registration, later, time.Minute)
 	if err != nil || replacement.IngressLeaseRevision <= first.IngressLeaseRevision {
 		t.Fatal("ingress replacement lost its lease fence", err)
 	}
-	if _, err := admitServingVisitor(t, f, first.IngressLeaseIdentity, later); err == nil {
+	if _, err := readServingRun(t, f, first.IngressLeaseIdentity, later); err == nil {
 		t.Fatal("old ingress process admitted on its replacement's lease")
 	}
-	if _, err := admitServingVisitor(t, f, replacement.IngressLeaseIdentity, later); err != nil {
+	if _, err := readServingRun(t, f, replacement.IngressLeaseIdentity, later); err != nil {
 		t.Fatal("replacement could not select current service readiness", err)
 	}
 }
@@ -206,7 +204,7 @@ func TestIntegrationPublicReadinessIngressRenewalCannotExtendRunDeadline(t *test
 	if _, err := f.database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: owner}, at, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := admitServingVisitor(t, f, owner, at); !errors.Is(err, ErrServiceAccess) {
+	if _, err := readServingRun(t, f, owner, at); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("ingress renewal revived an expired publisher", err)
 	}
 	if _, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, at,

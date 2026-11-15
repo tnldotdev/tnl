@@ -16,6 +16,10 @@ func readServiceForwarding(r io.Reader) error {
 	_, err := ReadServiceForwardingHeader(r)
 	return err
 }
+func readServiceCapacity(r io.Reader) error {
+	_, err := ReadServiceCapacityRequest(r)
+	return err
+}
 func readConnectorPeerVisitor(r io.Reader) error {
 	_, err := ReadConnectorPeerVisitorEntry(r)
 	return err
@@ -43,6 +47,7 @@ var frameReaders = []struct {
 	{"connector-peer-visitor-entry", MaxHeaderBytes, readConnectorPeerVisitor},
 	{"connector-peer-connectivity", MaxConnectorPeerConnectivityBytes, readConnectorPeerConnectivity},
 	{"service-forwarding-header", MaxServiceHeaderBytes, readServiceForwarding},
+	{"service-capacity", MaxServiceHeaderBytes, readServiceCapacity},
 }
 
 func frame(payload string) io.Reader {

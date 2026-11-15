@@ -130,7 +130,7 @@ func TestConnectorPreparationTracksBorrowedPublisherTLSTransport(t *testing.T) {
 	released := make(chan struct{})
 	defer close(released)
 	address := traceMuxServer(t, ctx, tunnel.TransportTLSTCP, certificate.TLS, func(ctx context.Context, transport muxsession.Session) error {
-		packets, err := newConnectorPacketSession(ctx, transport)
+		packets, err := newConnectorPacketSession(ctx, transport, packetStreamReader)
 		if err != nil {
 			return err
 		}

@@ -7,19 +7,18 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
-	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -43,19 +42,23 @@ func TestServiceConnectionDeadlineClosesSetupAndIdleVisitors(t *testing.T) {
 					policy, update, _ := visitorfixture.ScopePolicy(t, scope, prepared.managedHostname, 443, true)
 					defer policy.Close()
 					update.BoundConnections = boundConnection
+					update.PublicEndpoint = &controlv1.VisitorPublicEndpoint{Hostname: prepared.managedHostname, Port: 443, EndpointRevision: 1}
 					update.View.ValidUntil = time.Now().Add(3 * time.Second)
 					if err := policy.Apply(policy.Begin(), update); err != nil {
 						t.Fatal(err)
 					}
 					prepared.policy = policy
-					prepared.managedVisitor = func(header tunnelv1.ServiceForwardingHeader) servicestream.Authentication {
-						return servicestream.HTTPVisitor{Frontend: HTTP{Control: serviceHTTPAdmissionControl{}, Subject: scope,
+					events := make(chan serviceaudit.Observation, 4)
+					bound.audit = connectorAuditSink(func(event serviceaudit.Observation) bool { events <- event; return true })
+					prepared.managedVisitor = func(header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) servicestream.Authentication {
+						return servicestream.HTTPVisitor{Frontend: HTTP{Control: serviceHTTPControl{}, Subject: scope,
 							RunID: header.ServiceRunID, Number: int64(header.RunNumber), Token: "run-token",
 							Hostname: prepared.managedHostname, Port: 443, Header: header,
-							Policy: policy, Requests: prepared.serviceHTTPRequests}}
+							Policy: policy, Requests: prepared.serviceHTTPRequests, ReserveCapacity: reserveCapacity}}
 					}
 					header := privateHeader(t, ref)
 					header.PublicService.DestinationPort = 443
+					metadata := publicSourceMetadata(t, prepared, header)
 					release, ok := bound.reserveStream(ref)
 					if !ok {
 						t.Fatal("current visitor could not reserve its capacity")
@@ -66,19 +69,37 @@ func TestServiceConnectionDeadlineClosesSetupAndIdleVisitors(t *testing.T) {
 						defer close(done)
 						defer release()
 						defer server.Close()
-						_ = bound.serveBody(t.Context(), ref, server, header, nil)
+						_ = bound.serveBody(t.Context(), ref, server, header, nil, func(context.Context) error { return nil })
 					}()
 					defer func() {
 						_ = visitor.Close()
 						_ = server.Close()
 						<-done
+						var observations []serviceaudit.Observation
+						for len(events) > 0 {
+							observations = append(observations, <-events)
+						}
+						if stage == "authorized-idle" {
+							if len(observations) != 2 || observations[0].EventType != "connection.open" || observations[0].Outcome != "allowed" ||
+								observations[1].EventType != "connection.close" {
+								t.Error("authorized HTTP connection did not report one open and one physical close", observations)
+							}
+							for _, event := range observations {
+								if event.ServiceID != header.ServiceID || event.RunID != header.ServiceRunID ||
+									event.RunNumber != int64(header.RunNumber) || event.VisitorConnectionID != header.VisitorConnectionID || event.SourceIP != header.SourceIP {
+									t.Error("HTTP connection audit lost its source or exact run")
+								}
+							}
+						} else {
+							for _, event := range observations {
+								if event.EventType == "connection.close" || event.Outcome == "allowed" {
+									t.Error("HTTP setup invented visitor access", event)
+								}
+							}
+						}
 					}()
 					var client net.Conn = visitor
 					if stage != "metadata" {
-						metadata, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:443")})
-						if err != nil {
-							t.Fatal(err)
-						}
 						if _, err := visitor.Write(metadata); err != nil {
 							t.Fatal(err)
 						}

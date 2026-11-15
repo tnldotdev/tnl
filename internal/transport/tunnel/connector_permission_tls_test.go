@@ -28,7 +28,7 @@ func TestConnectorTLSHalfCloseKeepsBoundedRenewalAndResponse(t *testing.T) {
 					}
 					renewed <- struct{}{}
 					_ = responder.Respond(got, got == permission)
-				}, func() {}, &permissionGate)
+				}, func(tunnelv1.ConnectorVisitorCompletion) {}, func() {}, &permissionGate)
 			})
 			serverTLS, clientTLS := realTunnelTLS(t)
 			serverTLS.MinVersion, serverTLS.MaxVersion = version, version

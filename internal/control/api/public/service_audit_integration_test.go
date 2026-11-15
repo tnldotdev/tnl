@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -135,11 +134,18 @@ func TestIntegrationServiceAuditBatchAPI(t *testing.T) {
 	o.EventID = serviceaudit.NewID()
 	o.EventType = "connection.open"
 	o.Outcome = "denied"
-	o.Reason = "authorization"
-	admitted, err := d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, controlstate.PrimaryIngressPoolID, visitor,
-		first.prepared.Hostname, 443, netip.MustParseAddr("192.0.2.1"), now)
-	if err != nil || admitted.RunID != first.run.RunID {
-		t.Fatal("audit did not bind the admitted service run", err)
+	o.Reason, o.RunID, o.RunNumber = "capacity", "", 0
+	snapshot, err := d.ReadIngressServices(ctx, lease.IngressLeaseIdentity, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range snapshot.Runs {
+		if entry.ServiceID == first.service.ID && entry.RunID == first.run.RunID {
+			o.RoutingAuthority = entry.SourceAuthority
+		}
+	}
+	if len(o.RoutingAuthority) == 0 {
+		t.Fatal("audit did not bind signed routing for the exact service run")
 	}
 	batch := serviceaudit.Batch{Events: []serviceaudit.Observation{o}}
 	endpoint = fmt.Sprintf("%s/internal/v1/ingresses/%s/service-observations?ingress_run_id=%s&ingress_lease_revision=%d", ingressServer.URL, lease.IngressID, lease.IngressRunID, lease.IngressLeaseRevision)
@@ -154,8 +160,11 @@ func TestIntegrationServiceAuditBatchAPI(t *testing.T) {
 	post(ingressServer.Client(), endpoint, secret, map[string]any{"events": []any{claimedScope}}, 400)
 	post(ingressServer.Client(), endpoint+"0", secret, batch, 409)
 	exerciseServiceAuditQueueComposition(t, d, pool, lease, first, control, permission.Permission.VisitorToken,
-		serviceaudit.HTTPReporter(ingressServer.Client(), func(context.Context) (serviceaudit.Destination, error) {
-			return serviceaudit.Destination{URL: endpoint, Bearer: secret}, nil
+		serviceaudit.HTTPReporter(server.Client(), func(context.Context) (serviceaudit.Destination, error) {
+			return serviceaudit.Destination{
+				URL:    server.URL + "/v1/services/" + first.service.ID + "/runs/" + first.run.RunID + "/service-observations",
+				Bearer: first.run.Token, RunNumber: first.run.RunNumber,
+			}, nil
 		}))
 	r, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/v1/teams/"+m.TeamID+"/service-audit?service_id="+first.service.ID, nil)
 	r.Header.Set("Authorization", "Bearer "+session.AccessToken.String())

@@ -103,6 +103,7 @@ type StreamKind string
 
 const (
 	ServiceForwardingStream StreamKind = "service_forward"
+	ServiceCapacityStream   StreamKind = "service_capacity"
 )
 
 type StreamResponseType string

@@ -4,6 +4,7 @@
 package visitorlease
 
 import (
+	"context"
 	"errors"
 	"net/netip"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 var ErrUpdate = errors.New("visitor policy update is stale or incomplete")
@@ -24,6 +26,7 @@ type Update struct {
 	Enabled, Anonymous bool
 	BoundConnections   bool
 	IP                 *ippolicy.Policy
+	PublicEndpoint     *controlv1.VisitorPublicEndpoint
 	AfterRevision      int64
 	Events             []int64
 	Snapshot           bool
@@ -47,6 +50,7 @@ type Lease struct {
 	phase                    leasePhase
 	timer                    *time.Timer
 	guards                   map[*Guard]struct{}
+	changed                  chan struct{}
 }
 
 // the last authenticated update survives expiry for revision and control-clock
@@ -66,7 +70,7 @@ func New(scope visitorscope.Scope, now func() time.Time) (*Lease, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Lease{scope: scope, now: now, guards: make(map[*Guard]struct{})}, nil
+	return &Lease{scope: scope, now: now, guards: make(map[*Guard]struct{}), changed: make(chan struct{})}, nil
 }
 
 func (l *Lease) Begin() Request {
@@ -135,10 +139,18 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 		ip := *update.IP
 		update.IP = &ip
 	}
+	if update.PublicEndpoint != nil {
+		if !validPublicEndpoint(*update.PublicEndpoint) {
+			return ErrUpdate
+		}
+		endpoint := *update.PublicEndpoint
+		update.PublicEndpoint = &endpoint
+	}
 	view.ControlTime = view.ObservedAt
 	view.ObservedAt, view.ValidUntil = request.StartedAt, request.StartedAt.Add(duration)
 	update.View, update.Events = view, nil
 	l.update, l.revision, l.keyRevision, l.applied, l.phase = update, view.VisitorPolicyRevision, update.KeyRevision, request.sequence, leaseCurrent
+	l.notifyLocked()
 	if l.timer == nil {
 		l.timer = time.AfterFunc(view.ValidUntil.Sub(now), l.expire)
 	} else {
@@ -159,6 +171,41 @@ func (l *Lease) Current() (visitortoken.View, bool, bool) {
 	return view, enabled, anonymous
 }
 
+// WaitRevision joins background policy installation, not a control request.
+// waiting never grants authority or extends the caller's setup deadline.
+func (l *Lease) WaitRevision(ctx context.Context, revision int64) error {
+	if ctx == nil || revision < 1 {
+		return ErrUpdate
+	}
+	for {
+		l.mu.Lock()
+		stopped := l.expireLocked(l.now())
+		current := l.phase == leaseCurrent && l.update.Enabled
+		installed, changed := l.revision, l.changed
+		l.mu.Unlock()
+		stopGuards(stopped)
+		if err := context.Cause(ctx); err != nil {
+			return err
+		}
+		if !current {
+			return visitortoken.ErrPolicy
+		}
+		if installed >= revision {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		case <-changed:
+		}
+	}
+}
+
+func (l *Lease) notifyLocked() {
+	close(l.changed)
+	l.changed = make(chan struct{})
+}
+
 func (l *Lease) allowedLocked(permission visitortoken.VerifiedPermission, source netip.Addr, now time.Time) bool {
 	return l.phase == leaseCurrent && l.update.Enabled && visitortoken.CheckCurrent(permission, l.update.View, now) == nil && (l.update.IP == nil || l.update.IP.Allows(source))
 }
@@ -175,10 +222,17 @@ type Guard struct {
 	renewable      bool
 	confirmedUntil time.Time
 	connector      *connectorPermission
+	publicEndpoint *controlv1.VisitorPublicEndpoint
 }
 
 func (g *Guard) allowedLocked(now time.Time) bool {
 	l := g.lease
+	if g.publicEndpoint != nil {
+		return l.phase != leaseClosed && l.update.Enabled && l.update.PublicEndpoint != nil &&
+			*g.publicEndpoint == *l.update.PublicEndpoint &&
+			(!l.update.BoundConnections || l.phase == leaseCurrent && now.Before(l.update.View.ValidUntil)) &&
+			(l.update.IP == nil || l.update.IP.Allows(g.source))
+	}
 	if g.connector != nil && g.connector.metadata != l.update.View.MetadataRevision {
 		return false
 	}
@@ -255,10 +309,18 @@ func (l *Lease) bind(permission visitortoken.VerifiedPermission, anonymous bool,
 }
 
 func (g *Guard) resetLocked() {
+	// ordinary HTTP policy expires per request. an idle endpoint guard grants
+	// no access; only time-limited serving authority also expires the socket.
+	if g.publicEndpoint != nil && !g.lease.update.BoundConnections {
+		if g.timer != nil {
+			g.timer.Stop()
+		}
+		return
+	}
 	view := g.lease.update.View
 	facts := g.permission.Facts()
 	until := view.ValidUntil
-	if !g.anonymous && !g.connection {
+	if !g.anonymous && !g.connection && g.publicEndpoint == nil {
 		until = view.LocalDeadline(facts.ExpiresAt)
 		if g.renewable && facts.VisitorPolicyRevision != view.VisitorPolicyRevision {
 			until = earlier(until, g.confirmedUntil)
@@ -363,9 +425,13 @@ func (l *Lease) expireLocked(now time.Time) []*Guard {
 		return nil
 	}
 	l.phase = leaseNeedsSnapshot
+	l.notifyLocked()
 	l.epoch++
 	var guards []*Guard
 	for guard := range l.guards {
+		if guard.publicEndpoint != nil && !l.update.BoundConnections {
+			continue
+		}
 		guards = append(guards, guard)
 		delete(l.guards, guard)
 	}
@@ -382,6 +448,7 @@ func (l *Lease) expire() {
 func (l *Lease) Close() {
 	l.mu.Lock()
 	l.phase = leaseClosed
+	l.notifyLocked()
 	if l.timer != nil {
 		l.timer.Stop()
 	}

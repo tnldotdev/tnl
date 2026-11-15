@@ -908,7 +908,15 @@ func (p *connectorConnection) Forward(ctx context.Context, local net.Conn) (resu
 		}
 	}
 	defer func() { result = errors.Join(result, use.prepared.Close()) }()
-	return use.prepared.Forward(ctx, local)
+	result = use.prepared.Forward(ctx, local)
+	if result == nil && p.config.Protocol == "http" {
+		// both raw copy directions joined, including a return FIN after a
+		// request-side half-close. this receipt grants no serving authority.
+		finish, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		result = p.permissions.Complete(finish, entry.VisitorConnectionID, entry.DeliveryGeneration)
+	}
+	return result
 }
 
 func (p *connectorConnection) Close() {

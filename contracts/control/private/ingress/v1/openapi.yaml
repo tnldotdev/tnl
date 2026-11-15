@@ -11,6 +11,8 @@ servers:
 security:
   - clusterAuth: []
 paths:
+  /internal/v1/ingresses/{ingress_id}/services:
+    $ref: "./paths/services.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1services"
   /internal/v1/ingresses/{ingress_id}/public-services/admit:
     $ref: "./paths/public-services.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1public-services~1admit"
   /internal/v1/ingresses/{ingress_id}/public-services/status:
@@ -46,6 +48,10 @@ components:
     Problem:
       $ref: "./schemas/common.yaml#/responses/Problem"
   schemas:
+    IngressServices:
+      $ref: "./schemas/services.yaml#/schemas/IngressServices"
+    IngressServiceRun:
+      $ref: "./schemas/services.yaml#/schemas/IngressServiceRun"
     ServiceID:
       $ref: "./schemas/public-services.yaml#/schemas/ServiceID"
     ServiceRunID:

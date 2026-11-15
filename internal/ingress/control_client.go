@@ -103,3 +103,17 @@ func ingressHTTPProblem(status int, problem *ingressv1.Problem) error {
 	}
 	return result
 }
+
+func (c *HTTPControlClient) ReadIngressServices(ctx context.Context, id string, body ingressv1.IngressLeaseIdentity) (ingressv1.IngressServices, error) {
+	response, err := c.client.ReadIngressServicesWithResponse(ctx, id, body)
+	if err != nil {
+		return ingressv1.IngressServices{}, err
+	}
+	if response == nil {
+		return ingressv1.IngressServices{}, ingressHTTPProblem(0, nil)
+	}
+	if response.JSON200 == nil {
+		return ingressv1.IngressServices{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
+	}
+	return *response.JSON200, nil
+}

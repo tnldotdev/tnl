@@ -8,13 +8,21 @@ import (
 	"time"
 )
 
+type visitorCapacityState uint8
+
+const (
+	pendingCapacity visitorCapacityState = iota
+	reservedCapacity
+	closedCapacity
+)
+
 type visitorAdmission struct {
 	mu               sync.Mutex
 	server           *Server
 	key              trafficKey
 	limits           TrafficLimits
 	source           netip.Addr
-	ordinary, closed bool
+	state            visitorCapacityState
 	metered          bool // ordinary byte accounting, not target permission.
 	deadline         time.Time
 	upload, download int64
@@ -35,7 +43,7 @@ func (s *Server) admitPendingService() (*visitorAdmission, string) {
 func (v *visitorAdmission) selectRun(key trafficKey, limits TrafficLimits, source netip.Addr, anonymous bool) string {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.closed || v.ordinary || v.key.service != "" {
+	if v.state != pendingCapacity || v.key.service != "" {
 		return "service_already_selected"
 	}
 	if !limits.Within(v.server.config.Traffic.Ceiling) {
@@ -68,20 +76,20 @@ func (v *visitorAdmission) selectRun(key trafficKey, limits TrafficLimits, sourc
 func (v *visitorAdmission) close() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.closed {
+	if v.state == closedCapacity {
 		return
 	}
-	v.closed = true
+	v.state = closedCapacity
 	v.release()
 }
 
 func (v *visitorAdmission) beforeWrite(ctx context.Context, upload bool, size int) error {
 	v.mu.Lock()
-	if v.closed {
+	if v.state == closedCapacity {
 		v.mu.Unlock()
 		return net.ErrClosed
 	}
-	ordinary := v.ordinary && v.metered
+	ordinary := v.state == reservedCapacity && v.metered
 	if !ordinary {
 		remaining := &v.download
 		if upload {
@@ -108,6 +116,18 @@ func (v *visitorAdmission) reserve(limits TrafficLimits) string {
 	return v.reserveLocked(limits)
 }
 
+func (v *visitorAdmission) reserveForVisitor() string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.state == closedCapacity || !v.deadline.After(time.Now()) {
+		return "pending_expired"
+	}
+	if v.state == reservedCapacity {
+		return ""
+	}
+	return v.reserveLocked(v.limits)
+}
+
 func (v *visitorAdmission) meterOrdinaryBytes() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -115,7 +135,7 @@ func (v *visitorAdmission) meterOrdinaryBytes() {
 }
 
 func (v *visitorAdmission) reserveLocked(limits TrafficLimits) string {
-	if v.closed || v.ordinary || !v.deadline.After(time.Now()) {
+	if v.state != pendingCapacity || !v.deadline.After(time.Now()) {
 		return "pending_expired"
 	}
 	s := v.server
@@ -130,7 +150,7 @@ func (v *visitorAdmission) reserveLocked(limits TrafficLimits) string {
 	}
 	v.release()
 	v.release = func() { release(); budgetRelease() }
-	v.ordinary = true
+	v.state = reservedCapacity
 	return ""
 }
 

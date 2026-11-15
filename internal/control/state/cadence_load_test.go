@@ -480,9 +480,13 @@ waiting:
 			t.Fatalf("ingress=%d lost current renewed lease", ingressIndex)
 		}
 		identity := IngressLeaseIdentity{IngressID: lease.IngressId, IngressRunID: lease.IngressRunId, IngressLeaseRevision: uint64(lease.IngressLeaseRevision)}
+		runs, err := readLoadServiceRuns(verifyCtx, f.database, identity, now())
+		if err != nil {
+			t.Fatal("final routing snapshot", err)
+		}
 		for index, session := range sessions {
 			session.run, session.leases = current[index], bindings[index]
-			if err := observeLoadService(verifyCtx, f.database, identity, session, now()); err != nil {
+			if err := observeLoadService(runs, session, now()); err != nil {
 				t.Fatalf("final admission ingress=%d service=%s: %v", ingressIndex, session.service.ID, err)
 			}
 		}
@@ -545,10 +549,14 @@ func observeCadenceAdmissions(t *testing.T, ctx context.Context, control *Databa
 			return errors.New("cadence ingress lost its current lease")
 		}
 		identity := IngressLeaseIdentity{IngressID: lease.IngressId, IngressRunID: lease.IngressRunId, IngressLeaseRevision: uint64(lease.IngressLeaseRevision)}
+		callCtx, stop := context.WithTimeout(ctx, cadenceControlTimeout)
+		runs, err := readLoadServiceRuns(callCtx, control, identity, now())
+		stop()
+		if err != nil {
+			return fmt.Errorf("cadence routing snapshot: %w", err)
+		}
 		for index, session := range sessions {
-			callCtx, stop := context.WithTimeout(ctx, cadenceControlTimeout)
-			admission, err := readLoadAdmission(callCtx, control, identity, session, now())
-			stop()
+			admission, err := loadServiceRun(runs, session, now())
 			if err != nil {
 				return fmt.Errorf("cadence admission service=%s: %w", session.service.ID, err)
 			}

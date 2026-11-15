@@ -104,6 +104,7 @@ func SharedVocabulary() Vocabulary {
 	defer m.Shutdown(context.Background())
 	m.RegisterDatabase(func(time.Time) DatabaseSnapshot { return DatabaseSnapshot{} })
 	m.RegisterIngressRouting(func() IngressRoutingSnapshot { return IngressRoutingSnapshot{} })
+	m.RegisterIngressServiceRouting(func() time.Time { return time.Time{} })
 	m.RegisterIngressLease(func() time.Time { return time.Time{} })
 	m.RegisterControlCertificate(func() time.Time { return time.Time{} })
 	instruments := append(m.InstrumentDefinitions(), RuntimeInstrumentDefinitions()...)

@@ -98,6 +98,9 @@ schemas:
         description: "Latest allowed lifetime for guest visitor connections, including idle connections. Ingress forwards visitors only after the run is ready; ingress and publisher keep connections within this deadline. An enabled policy's valid_until cannot exceed it. Installing preparation policy does not grant visitor access."
       enabled: { type: boolean }
       anonymous: { type: boolean }
+      public_endpoint:
+        $ref: "../openapi.yaml#/components/schemas/VisitorPublicEndpoint"
+        description: Current public endpoint only. Its removal does not revoke connector access or change the run's captured TLS hostname.
       verification_keys:
         type: array
         maxItems: 64
@@ -111,6 +114,14 @@ schemas:
         maxItems: 4096
         items: { $ref: "../openapi.yaml#/components/schemas/VisitorRegisteredKeyLease" }
       ip: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicyIP" }
+  VisitorPublicEndpoint:
+    type: object
+    additionalProperties: false
+    required: [hostname, port, endpoint_revision]
+    properties:
+      hostname: { type: string, minLength: 1, maxLength: 253 }
+      port: { type: integer, minimum: 1, maximum: 65535 }
+      endpoint_revision: { type: integer, format: int64, minimum: 1 }
   VisitorVerificationKey:
     type: object
     additionalProperties: false

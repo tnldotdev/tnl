@@ -360,7 +360,23 @@ func TestIndependentTargetsAndServersUseBoundedRetries(t *testing.T) {
 	}
 	var mu sync.Mutex
 	var retries []time.Time
+	parked := make(map[string]bool)
+	retryReady := map[string]uint64{"healthy": 2, "target-down": 3, "server-down": 4}
+	releaseRetry := make(chan struct{})
+	release := sync.OnceFunc(func() { close(releaseRetry) })
+	defer release()
 	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, RetryMin: 15 * time.Millisecond, RetryMax: 30 * time.Millisecond,
+		Observe: func(job Job, status Status) error {
+			if status.State == JobRetrying && status.Attempts >= retryReady[job.ID] {
+				// stop after the retryable failure has been recorded, not while
+				// the attempt may still return an independent failure.
+				mu.Lock()
+				parked[job.ID] = true
+				mu.Unlock()
+				<-releaseRetry
+			}
+			return nil
+		},
 		Clients: func(job Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 			if job.ID == "server-down" {
 				mu.Lock()
@@ -372,6 +388,8 @@ func TestIndependentTargetsAndServersUseBoundedRetries(t *testing.T) {
 			return jobClients(b.c), b.a, nil
 		}}
 	cancel, done := startEngine(t, engine)
+	join := sync.OnceFunc(func() { cancel(); release(); joinEngine(t, cancel, done) })
+	defer join()
 	await(t, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
@@ -382,9 +400,9 @@ func TestIndependentTargetsAndServersUseBoundedRetries(t *testing.T) {
 				targetRetried = j.Status.Attempts >= 3 && j.Status.State == JobRetrying
 			}
 		}
-		return len(retries) >= 4 && len(boundaries["healthy"].c.runs) >= 2 && targetRetried
+		return len(parked) == 3 && len(retries) >= 4 && len(boundaries["healthy"].c.runs) >= 2 && targetRetried
 	})
-	joinEngine(t, cancel, done)
+	join()
 	if len(boundaries["target-down"].c.runs) != 0 {
 		t.Fatal("unavailable target reached run creation")
 	}
@@ -401,6 +419,30 @@ func TestIndependentTargetsAndServersUseBoundedRetries(t *testing.T) {
 		if j.Status.Failure != "" {
 			t.Fatal("joined service retained failure", j.Status)
 		}
+	}
+}
+
+func TestInstalledCancellationPreservesIndependentPublicationFailure(t *testing.T) {
+	r := testRegistry(t)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer target.Close()
+	job, identity, private := fixture(t, "cancelled-attempt")
+	job.Target = target.URL
+	if err := r.Install(t.Context(), job, identity, private); err != nil {
+		t.Fatal(err)
+	}
+	control, authority := jobBoundary(job, identity, private)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	cause := errors.New("independent publication failure")
+	control.runError = errors.Join(context.Canceled, cause)
+	control.onPrepare = cancel
+	engine := Engine{Registry: r, RetryMin: time.Millisecond, RetryMax: time.Millisecond,
+		Clients: func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+			return jobClients(control), authority, nil
+		}}
+	if err := engine.run(ctx, job); !errors.Is(err, cause) {
+		t.Fatal("cancellation hid an independent publication failure", err)
 	}
 }
 

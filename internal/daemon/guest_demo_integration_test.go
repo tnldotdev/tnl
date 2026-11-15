@@ -363,7 +363,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 			t.Logf("guest authority at failure: %s; read error %v", authority, err)
 			var visitors, decisions string
 			err = inspect.QueryRow(`SELECT COALESCE(json_agg(json_build_object('run',service_run_id,
-				'authorized',authorized_at IS NOT NULL,'promoted',promoted_at IS NOT NULL,
+				'authenticated',identity_id IS NOT NULL OR workload_session_id IS NOT NULL,'promoted',promoted_at IS NOT NULL,
 				'closed',closed_at IS NOT NULL,'valid_until',valid_until))::text,'[]')
 				FROM control.public_service_visitors`).Scan(&visitors)
 			t.Logf("guest ingress admissions: %s; read error %v", visitors, err)

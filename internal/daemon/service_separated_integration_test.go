@@ -33,8 +33,8 @@ type observingServiceForwarder struct {
 	opened chan<- privateObservation
 }
 
-func (f observingServiceForwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
-	stream, err := f.ServiceForwarder.OpenPrivate(ctx, relay, header)
+func (f observingServiceForwarder) OpenService(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) (net.Conn, error) {
+	stream, err := f.ServiceForwarder.OpenService(ctx, relay, header, reserveCapacity)
 	if err == nil && f.opened != nil {
 		select {
 		case f.opened <- privateObservation{f.id, header}:

@@ -18,7 +18,7 @@ func sourceProofFixture(t *testing.T) ([32]byte, tunnelv1.VisitorSourceProof, tu
 	if err != nil {
 		t.Fatal(err)
 	}
-	authority, child, err := IssueVisitorSourceAuthority(master, tunnelv1.VisitorSourceAuthority{ServiceID: "svc_" + strings.Repeat("A", 22), ServiceRunID: "srun_" + strings.Repeat("B", 22), RunNumber: 1,
+	authority, child, err := IssueVisitorSourceAuthority(master, tunnelv1.VisitorSourceAuthority{ServiceID: "svc_" + strings.Repeat("A", 22), ServiceRunID: "srun_" + strings.Repeat("B", 22), RunNumber: 1, EndpointRevision: 4,
 		IngressID: "ingress", IngressRunID: "ir_" + strings.Repeat("D", 22), IngressLeaseRevision: 2, VisitorPolicyRevision: 3, ValidUntil: now.Add(PolicyLifetime).Unix()}, now)
 	if err != nil {
 		t.Fatal(err)
@@ -48,6 +48,9 @@ func TestVisitorSourceProofBindsRunProcessSequenceAndTrustedEndpoints(t *testing
 			b.Destination = netip.MustParseAddrPort("203.0.113.2:443")
 		},
 		func(_ *tunnelv1.VisitorSourceProof, b *tunnelv1.VisitorSourceBinding) {
+			b.Destination = netip.MustParseAddrPort("203.0.113.1:25443")
+		},
+		func(_ *tunnelv1.VisitorSourceProof, b *tunnelv1.VisitorSourceBinding) {
 			b.VisitorConnectionID = "vc_" + strings.Repeat("G", 22)
 		},
 		func(_ *tunnelv1.VisitorSourceProof, b *tunnelv1.VisitorSourceBinding) {
@@ -58,6 +61,7 @@ func TestVisitorSourceProofBindsRunProcessSequenceAndTrustedEndpoints(t *testing
 		},
 		func(_ *tunnelv1.VisitorSourceProof, b *tunnelv1.VisitorSourceBinding) { b.RunNumber++ },
 		func(p *tunnelv1.VisitorSourceProof, _ *tunnelv1.VisitorSourceBinding) { p.Sequence++ },
+		func(p *tunnelv1.VisitorSourceProof, _ *tunnelv1.VisitorSourceBinding) { p.ObservedAt++ },
 		func(p *tunnelv1.VisitorSourceProof, _ *tunnelv1.VisitorSourceBinding) {
 			p.Authority.IngressID = "other-ingress"
 		},
@@ -68,6 +72,7 @@ func TestVisitorSourceProofBindsRunProcessSequenceAndTrustedEndpoints(t *testing
 			p.Authority.IngressLeaseRevision++
 		},
 		func(p *tunnelv1.VisitorSourceProof, _ *tunnelv1.VisitorSourceBinding) { p.Authority.ValidUntil++ },
+		func(p *tunnelv1.VisitorSourceProof, _ *tunnelv1.VisitorSourceBinding) { p.Authority.EndpointRevision++ },
 		func(p *tunnelv1.VisitorSourceProof, _ *tunnelv1.VisitorSourceBinding) {
 			p.Authority.VisitorPolicyRevision--
 		},

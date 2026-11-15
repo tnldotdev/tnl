@@ -4,17 +4,14 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"errors"
 	"flag"
 	"fmt"
-	"net/netip"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	dto "github.com/prometheus/client_model/go"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
@@ -141,30 +138,74 @@ func (f *controlLoadFixture) request(index int) ServiceRunRequest {
 	return ServiceRunRequest{Metadata: f.services[index].ServiceMetadata}
 }
 
-func readLoadAdmission(ctx context.Context, control *Database, ingress IngressLeaseIdentity, session servicePublicationFixture, now time.Time) (admission PublicServiceVisitorAdmission, result error) {
-	visitor, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
+func sameLoadAssignment(actual, expected ServiceRunAssignment) bool {
+	// postgres may decode the same instant in Local rather than UTC. retain
+	// exact equality for every assignment field, but compare time as an instant.
+	sameExpiry := actual.CredentialExpiresAt.Equal(expected.CredentialExpiresAt)
+	actual.CredentialExpiresAt, expected.CredentialExpiresAt = time.Time{}, time.Time{}
+	return sameExpiry && actual == expected
+}
+
+func TestControlLoadAssignmentEquality(t *testing.T) {
+	expected := ServiceRunAssignment{
+		PublisherConnectionID: "pc_fixture", RelayServiceID: "relay", RelayAddress: "relay.example:443",
+		TLSServerName: "relay.example", Credential: "fixture-credential", State: "ready", ConnectionSlot: 1,
+		Revision: 3, CredentialExpiresAt: time.Date(2026, time.November, 15, 12, 0, 0, 0, time.UTC),
+	}
+	actual := expected
+	actual.CredentialExpiresAt = actual.CredentialExpiresAt.In(time.FixedZone("fixture-local", -7*60*60))
+	if !sameLoadAssignment(actual, expected) {
+		t.Fatal("equal expiry instants changed the assignment")
+	}
+	for _, test := range []struct {
+		name string
+		edit func(*ServiceRunAssignment)
+	}{
+		{"connection", func(a *ServiceRunAssignment) { a.PublisherConnectionID += "-changed" }},
+		{"relay service", func(a *ServiceRunAssignment) { a.RelayServiceID += "-changed" }},
+		{"relay address", func(a *ServiceRunAssignment) { a.RelayAddress += "-changed" }},
+		{"TLS server name", func(a *ServiceRunAssignment) { a.TLSServerName += "-changed" }},
+		{"credential", func(a *ServiceRunAssignment) { a.Credential += "-changed" }},
+		{"state", func(a *ServiceRunAssignment) { a.State = "assigned" }},
+		{"slot", func(a *ServiceRunAssignment) { a.ConnectionSlot++ }},
+		{"revision", func(a *ServiceRunAssignment) { a.Revision++ }},
+		{"expiry", func(a *ServiceRunAssignment) { a.CredentialExpiresAt = a.CredentialExpiresAt.Add(time.Nanosecond) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			changed := actual
+			test.edit(&changed)
+			if sameLoadAssignment(changed, expected) {
+				t.Fatal("changed assignment was accepted")
+			}
+		})
+	}
+}
+
+func readLoadServiceRuns(ctx context.Context, control *Database, ingress IngressLeaseIdentity, now time.Time) (map[string]IngressServiceRun, error) {
+	snapshot, err := control.ReadIngressServices(ctx, ingress, now)
 	if err != nil {
-		return admission, err
+		return nil, err
 	}
-	admission, err = control.AdmitPublicServiceVisitor(ctx, ingress, PrimaryIngressPoolID, visitor,
-		session.service.Endpoint.Hostname, 443, netip.MustParseAddr("192.0.2.10"), now)
-	if err != nil {
-		return admission, err
+	runs := make(map[string]IngressServiceRun, len(snapshot.Runs))
+	for _, entry := range snapshot.Runs {
+		if _, duplicate := runs[entry.RunID]; duplicate || entry.ValidUntil.After(snapshot.ValidUntil) {
+			return nil, fmt.Errorf("routing returned a duplicate or unbounded run %s", entry.RunID)
+		}
+		runs[entry.RunID] = entry
 	}
-	defer func() {
-		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer stop()
-		result = errors.Join(result, control.ClosePublicServiceVisitor(cleanup, ingress, visitor, now))
-	}()
-	if admission.ServiceID != session.service.ID || admission.RunID != session.run.RunID || admission.RunNumber != session.run.RunNumber ||
-		!admission.ExpiresAt.After(now) || len(admission.Relays) < 1 || len(admission.Relays) > 2 {
-		return admission, fmt.Errorf("admission lost current service run %s", session.service.ID)
+	return runs, nil
+}
+
+func loadServiceRun(runs map[string]IngressServiceRun, session servicePublicationFixture, now time.Time) (IngressServiceRun, error) {
+	entry, found := runs[session.run.RunID]
+	if !found {
+		return entry, ErrServiceAccess
 	}
-	status, err := control.PublicServiceVisitorStatus(ctx, ingress, visitor, now)
-	if err != nil || status.State != PublicServiceVisitorPending || !status.ValidUntil.Equal(admission.ExpiresAt) {
-		return admission, fmt.Errorf("admission changed pending deadline for service %s: %v", session.service.ID, err)
+	if entry.ServiceID != session.service.ID || entry.RunNumber != session.run.RunNumber || !entry.ValidUntil.After(now) || len(entry.Relays) < 1 || len(entry.Relays) > 2 ||
+		entry.Protocol != "http" || entry.Port != 443 || entry.Hostname != session.service.Endpoint.Hostname {
+		return entry, fmt.Errorf("routing lost current service run %s", session.service.ID)
 	}
-	return admission, nil
+	return entry, nil
 }
 
 // capture after fixture setup, before starting actors. end collection happens
@@ -183,6 +224,12 @@ func (f *controlLoadFixture) startMetrics(t *testing.T) {
 
 func (f *controlLoadFixture) logStats(t *testing.T) {
 	t.Helper()
+	ctx, stop := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+	defer stop()
+	var visitors int
+	if err := f.database.pool.QueryRow(ctx, `SELECT count(*) FROM control.public_service_visitors`).Scan(&visitors); err != nil || visitors != 0 {
+		t.Error("HTTP routing load wrote visitor coordination rows", visitors, err)
+	}
 	t.Logf("services=%d pools=2x8 extra_query_delay=%s", f.routes, f.delay)
 	for index := range f.controls {
 		after, err := f.metrics[index].Gather()

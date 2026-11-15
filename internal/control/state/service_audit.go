@@ -13,6 +13,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 var ErrServiceAuditAccess = errors.New("service audit access denied")
@@ -301,20 +303,24 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 		}
 		if o.RunID == "" {
 			if o.RunNumber != 0 || o.EventType != "connection.open" || o.Outcome != "denied" ||
-				o.Reason != "capacity" && o.Reason != "unavailable" && o.Reason != "invalid_request" {
+				o.Reason != "capacity" && o.Reason != "unavailable" && o.Reason != "invalid_request" && o.Reason != "ip_policy" {
 				return ServiceObservationResult{}, ErrServiceAuditAccess
 			}
-			// a failed local selection still has a real control admission receipt.
-			// recover only its team; it did not select a serving run or identity.
-			err = tx.QueryRow(ctx, `SELECT service.team_id
+			if len(o.RoutingAuthority) != 0 {
+				e.TeamID, err = d.ingressSelectionDenialOwner(ctx, tx, lease, o, now)
+			} else {
+				// native selection still has a control admission receipt. recover
+				// only its owner; it selected no serving run or visitor identity.
+				err = tx.QueryRow(ctx, `SELECT service.team_id
 				FROM control.public_service_visitors visitor JOIN control.services service ON service.id=visitor.service_id
 				WHERE visitor.visitor_connection_id=$1 AND visitor.service_id=$2
 				AND visitor.ingress_id=$3 AND visitor.ingress_run_id=$4 AND visitor.ingress_lease_revision=$5
 				AND host(visitor.source_ip)=$6 AND visitor.identity_id IS NULL AND visitor.device_id IS NULL
-				AND visitor.workload_session_id IS NULL AND visitor.authorized_at IS NULL AND visitor.promoted_at IS NULL
+				AND visitor.workload_session_id IS NULL AND visitor.promoted_at IS NULL
 				AND visitor.created_at<=$7 AND visitor.valid_until>=$8`,
-				o.VisitorConnectionID, o.ServiceID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision),
-				o.SourceIP, o.OccurredAt.Add(time.Second), o.OccurredAt.Add(-serviceObservationDeliveryGrace)).Scan((*nullableAuditString)(&e.TeamID))
+					o.VisitorConnectionID, o.ServiceID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision),
+					o.SourceIP, o.OccurredAt.Add(time.Second), o.OccurredAt.Add(-serviceObservationDeliveryGrace)).Scan((*nullableAuditString)(&e.TeamID))
+			}
 		} else {
 			// direct admission identity is recovered
 			// only from the publisher-authenticated record, never the report.
@@ -322,7 +328,7 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 				JOIN control.services s ON s.id=v.service_id JOIN control.service_runs r ON r.id=v.service_run_id
 				WHERE v.visitor_connection_id=$1 AND v.service_id=$2 AND v.service_run_id=$3 AND v.run_number=$4
 				AND v.ingress_id=$5 AND v.ingress_run_id=$6 AND v.ingress_lease_revision=$7 AND host(v.source_ip)=$8
-				AND($9<>'allowed' OR v.identity_id IS NOT NULL OR v.workload_session_id IS NOT NULL OR s.protocol='http' AND v.promoted_at IS NOT NULL)`, o.VisitorConnectionID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.Outcome).Scan((*nullableAuditString)(&e.TeamID), (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &e.PublisherIdentityID)
+				AND($9<>'allowed' OR v.identity_id IS NOT NULL OR v.workload_session_id IS NOT NULL)`, o.VisitorConnectionID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.Outcome).Scan((*nullableAuditString)(&e.TeamID), (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &e.PublisherIdentityID)
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ServiceObservationResult{}, ErrServiceAuditAccess
@@ -380,6 +386,37 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 	d.activity.metrics.Load().ServiceAuditCount("accepted", uint64(result.Accepted))
 	d.activity.metrics.Load().ServiceAuditCount("duplicate", uint64(result.Duplicates))
 	return result, nil
+}
+
+func (d *Database) ingressSelectionDenialOwner(ctx context.Context, tx pgx.Tx, lease IngressLeaseIdentity, o serviceaudit.Observation, now time.Time) (string, error) {
+	authority, err := tunnelv1.ReadVisitorSourceAuthority(o.RoutingAuthority)
+	if err != nil || authority.ServiceID != o.ServiceID || authority.IngressID != lease.IngressID ||
+		authority.IngressRunID != lease.IngressRunID || authority.IngressLeaseRevision != lease.IngressLeaseRevision ||
+		now.After(time.Unix(authority.ValidUntil, 0).Add(serviceObservationDeliveryGrace)) {
+		return "", ErrServiceAuditAccess
+	}
+	var team nullableAuditString
+	var secretDigest []byte
+	var ready time.Time
+	err = tx.QueryRow(ctx, `SELECT service.team_id,run.run_token_digest,run.ready_at
+		FROM control.services service JOIN control.service_runs run ON run.service_id=service.id
+		WHERE service.id=$1 AND service.protocol='http' AND run.id=$2 AND run.run_number=$3 AND run.ready_at IS NOT NULL`,
+		o.ServiceID, authority.ServiceRunID, authority.RunNumber).Scan(&team, &secretDigest, &ready)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrServiceAuditAccess
+	}
+	if err != nil {
+		return "", err
+	}
+	master, err := visitortoken.ServiceVisitorSourceKey(secretDigest, authority.ServiceRunID, authority.RunNumber)
+	if err != nil || o.OccurredAt.Before(ready.Add(-time.Second)) ||
+		visitortoken.VerifyVisitorSourceAuthority(master, authority, o.OccurredAt) != nil {
+		return "", ErrServiceAuditAccess
+	}
+	// ingress reports its observed socket source under this exact delegation.
+	// persist only the denial, source and owner, not the routing evidence, candidate
+	// run, publisher or a visitor identity. reporting cannot authorize traffic.
+	return string(team), nil
 }
 
 type nullableAuditString string

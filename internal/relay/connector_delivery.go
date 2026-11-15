@@ -26,8 +26,24 @@ type connectorPacketSession struct {
 	once    sync.Once
 }
 
-func newConnectorPacketSession(parent context.Context, outer muxsession.Session) (*connectorPacketSession, error) {
-	packets, err := peer.NewSharedSession(parent, outer)
+type connectorStreamReader uint8
+
+const (
+	packetStreamReader connectorStreamReader = iota + 1
+	serviceStreamReader
+)
+
+func newConnectorPacketSession(parent context.Context, outer muxsession.Session, reader connectorStreamReader) (*connectorPacketSession, error) {
+	var packets *peer.SharedSession
+	var err error
+	switch reader {
+	case packetStreamReader:
+		packets, err = peer.NewSharedSession(parent, outer)
+	case serviceStreamReader:
+		packets, err = peer.NewDispatchedSharedSession(parent, outer)
+	default:
+		return nil, errors.New("relay: connector stream reader is required")
+	}
 	if err != nil {
 		return nil, err
 	}

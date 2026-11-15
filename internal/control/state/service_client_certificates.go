@@ -179,14 +179,14 @@ func (d *Database) AuthorizeServiceClientCertificate(ctx context.Context, servic
 		return result, err
 	}
 	defer rollback(ctx, tx, "authorize service client certificate", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, service); err != nil {
+	if err = lockPublicServiceVisitorCapacity(ctx, tx, service); err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
 	if _, err := d.serviceHTTPSourcePolicy(ctx, q, service, source); err != nil {
 		return result, err
 	}
-	run, err := d.serviceRunAuthorization(ctx, tx, q, service, runID, token, now)
+	run, err := d.serviceRunObservationAuthorization(ctx, tx, q, service, runID, token, now)
 	if err != nil {
 		return result, err
 	}

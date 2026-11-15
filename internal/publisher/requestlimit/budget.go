@@ -18,6 +18,13 @@ import (
 // visitor connections. private and public HTTP use the same admission counter.
 type HTTP struct{ admission *Budget }
 
+func (l *HTTP) Limits() applicationlimits.Limits {
+	if l == nil {
+		return applicationlimits.Limits{}.Defaults(false)
+	}
+	return l.admission.Limits()
+}
+
 func NewHTTP(input *controlv1.ProjectHTTPApplicationLimits) (*HTTP, error) {
 	limits, err := ParseLimits(input)
 	if err != nil {

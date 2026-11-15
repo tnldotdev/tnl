@@ -49,7 +49,7 @@ func TestPublicOpeningLatency(t *testing.T) {
 		start := time.Now()
 		header := f.header
 		header.VisitorConnectionID, _ = opaqueid.New(opaqueid.VisitorConnectionPrefix)
-		stream, err := f.forwarder.OpenPrivate(ingressContext(t), f.relay, header)
+		stream, err := f.forwarder.OpenService(ingressContext(t), f.relay, header, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -296,7 +296,7 @@ func (c *publisherClaim) serve(ctx context.Context, session *tunnel.Session, out
 	paths := newStreamLifetime(session)
 	connection := &serviceConnection{ref: c.ref, lease: c.lease, paths: paths}
 	if acceptor.connector != nil {
-		packets, err := newConnectorPacketSession(ctx, outer)
+		packets, err := newConnectorPacketSession(ctx, outer, serviceStreamReader)
 		if err != nil {
 			return errors.Join(err, session.Close())
 		}
@@ -311,6 +311,15 @@ func (c *publisherClaim) serve(ctx context.Context, session *tunnel.Session, out
 		return errors.Join(err, session.Close())
 	}
 	defer func() { result = errors.Join(result, c.target.Registry.remove(connection)) }()
+	var peerStreams tunnel.PeerStreamIntroduction
+	if connection.packets != nil {
+		peerStreams = connection.packets.SharedSession
+	}
+	dispatcher, err := tunnel.NewServiceStreamDispatcher(ctx, session, peerStreams)
+	if err != nil {
+		return errors.Join(err, session.Close())
+	}
+	defer func() { result = errors.Join(result, dispatcher.Close()) }()
 	if err := c.target.Control.transitionServiceConnection(ctx, c.ref, c.lease, false, false); err != nil {
 		return err
 	}
@@ -319,7 +328,7 @@ func (c *publisherClaim) serve(ctx context.Context, session *tunnel.Session, out
 	finishAdmission(nil)
 	stop := context.AfterFunc(ctx, func() { _ = session.Close() })
 	defer stop()
-	err := session.HandlePublisherDrain(ctx, func(drain context.Context) error {
+	err = session.HandlePublisherDrain(ctx, func(drain context.Context) error {
 		if connection.packets != nil {
 			connection.packets.Close()
 		}
@@ -359,7 +368,7 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 			endSpan(err)
 		}
 	}()
-	defer incoming.Stream().Close()
+	defer func() { retErr = errors.Join(retErr, incoming.Stream().Close()) }()
 	if !a.acquireStream() {
 		rejected = &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
 		return incoming.Reject(tunnelv1.CapacityExceeded)
@@ -383,7 +392,25 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 		a.streamRejected("publisher_unavailable")
 		return errors.Join(incoming.Reject(tunnelv1.Unavailable), err)
 	}
-	defer publisher.Close()
+	defer func() { retErr = errors.Join(retErr, publisher.Close()) }()
+	unregister, err := connection.paths.session.RegisterServiceCapacity(ctx, header, func(call context.Context) error {
+		current, valid := a.registry.candidate(header, a.currentLease(), a.now())
+		if !valid || current != connection {
+			return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+		}
+		if err := incoming.RequestCapacity(call); err != nil {
+			return err
+		}
+		current, valid = a.registry.candidate(header, a.currentLease(), a.now())
+		if !valid || current != connection {
+			return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+		}
+		return nil
+	})
+	if err != nil {
+		return errors.Join(err, incoming.Reject(tunnelv1.Unavailable))
+	}
+	defer unregister()
 	if current, ok := a.registry.candidate(header, a.currentLease(), a.now()); !ok || current != connection {
 		a.streamRejected("stale_assignment")
 		rejected = &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}

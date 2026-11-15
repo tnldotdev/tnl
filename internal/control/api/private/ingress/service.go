@@ -139,14 +139,14 @@ func (s *service) ObserveServiceRecovery(
 	identity, ok := ingressLeaseIdentity(body.IngressId, body.IngressRunId, body.IngressLeaseRevision)
 	episode, episodeOK := serverhttp.Positive(recoveryEpisodeID)
 	if !ok || !episodeOK || body.RunNumber <= 0 || !opaqueid.Valid(body.ServiceId, opaqueid.ServicePrefix) ||
-		!opaqueid.Valid(body.ServiceRunId, opaqueid.ServiceRunPrefix) || !opaqueid.Valid(body.VisitorConnectionId, opaqueid.VisitorConnectionPrefix) || body.ObservedAt.IsZero() {
+		!opaqueid.Valid(body.ServiceRunId, opaqueid.ServiceRunPrefix) || !opaqueid.Valid(body.VisitorConnectionId, opaqueid.VisitorConnectionPrefix) || body.ObservedAt.IsZero() || len(body.SourceEvidence) > 2048 {
 		return ingressv1.ServiceRecoveryObservation{}, serverhttp.NewProblemError(
 			http.StatusBadRequest, "invalid_request", "Recovery observation identity is invalid",
 		)
 	}
 	observation, err := s.store.ObserveServiceRecovery(
 		ctx, identity, controlstate.ServiceRunReference{ServiceID: body.ServiceId, RunID: body.ServiceRunId, RunNumber: body.RunNumber},
-		body.VisitorConnectionId, episode, body.ObservedAt, s.now(),
+		body.VisitorConnectionId, episode, body.ObservedAt, body.SourceEvidence, s.now(),
 	)
 	if err != nil {
 		return ingressv1.ServiceRecoveryObservation{}, s.storeError(ctx, err)

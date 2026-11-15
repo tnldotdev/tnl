@@ -44,7 +44,7 @@ func TestIntegrationExpireSavedPublishRunsPublishesTombstones(t *testing.T) {
 	f := publicServingFixture(t, newServicePublicationFixture(t))
 	prepareServingPublisher(t, f)
 	owner := registerServingIngress(t, f, "expiry", f.now)
-	if _, err := admitServingVisitor(t, f, owner, f.now); err != nil {
+	if _, err := readServingRun(t, f, owner, f.now); err != nil {
 		t.Fatal(err)
 	}
 	assertAssignmentTotals(t, f.database.pool, 2)
@@ -59,7 +59,7 @@ func TestIntegrationExpireSavedPublishRunsPublishesTombstones(t *testing.T) {
 		FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&closed); err != nil || !closed {
 		t.Fatal("expiry retained run or connection authority", err)
 	}
-	if _, err := admitServingVisitor(t, f, owner, at); !errors.Is(err, ErrServiceAccess) {
+	if _, err := readServingRun(t, f, owner, at); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("expired run remained available to public admission", err)
 	}
 	if count, err := f.database.ExpireServiceRuns(t.Context(), at.Add(time.Second)); err != nil || count != 0 {

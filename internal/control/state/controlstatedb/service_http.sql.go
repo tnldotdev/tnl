@@ -7,45 +7,9 @@ package controlstatedb
 
 import (
 	"context"
-	"net/netip"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
-
-const authorizeServiceHTTPVisitor = `-- name: AuthorizeServiceHTTPVisitor :one
-UPDATE control.public_service_visitors
-SET authorized_at=COALESCE(authorized_at,$1),valid_until=$2
-WHERE visitor_connection_id=$3 AND service_id=$4
-AND service_run_id=$5 AND run_number=$6
-AND source_ip=$7 AND destination_port=443
-AND closed_at IS NULL AND valid_until>$1
-RETURNING valid_until
-`
-
-type AuthorizeServiceHTTPVisitorParams struct {
-	Now                 pgtype.Timestamptz
-	ValidUntil          pgtype.Timestamptz
-	VisitorConnectionID string
-	ServiceID           string
-	ServiceRunID        string
-	RunNumber           int64
-	SourceIp            netip.Addr
-}
-
-func (q *Queries) AuthorizeServiceHTTPVisitor(ctx context.Context, arg AuthorizeServiceHTTPVisitorParams) (pgtype.Timestamptz, error) {
-	row := q.db.QueryRow(ctx, authorizeServiceHTTPVisitor,
-		arg.Now,
-		arg.ValidUntil,
-		arg.VisitorConnectionID,
-		arg.ServiceID,
-		arg.ServiceRunID,
-		arg.RunNumber,
-		arg.SourceIp,
-	)
-	var valid_until pgtype.Timestamptz
-	err := row.Scan(&valid_until)
-	return valid_until, err
-}
 
 const consumeServiceHTTPBrowserLogin = `-- name: ConsumeServiceHTTPBrowserLogin :one
 UPDATE control.service_http_browser_logins SET consumed_at=$1
@@ -568,70 +532,6 @@ func (q *Queries) ServiceHTTPPreviewTeamPermission(ctx context.Context, arg Serv
 	var expires_at pgtype.Timestamptz
 	err := row.Scan(&expires_at)
 	return expires_at, err
-}
-
-const serviceHTTPTransportBinding = `-- name: ServiceHTTPTransportBinding :one
-SELECT (v.authorized_at IS NOT NULL)::boolean AS authorized,
-    (v.promoted_at IS NOT NULL)::boolean AS admitted,LEAST($1::timestamptz+interval '2 minutes',
-    run.publisher_expires_at,run.certificate_expires_at,permission.expires_at,ingress.lease_expires_at,
-    (SELECT max(relay.lease_expires_at) FROM control.service_connection_slots slot
-     JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
-     AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
-     WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
-     AND relay.lease_expires_at>$1 AND NOT relay.draining))::timestamptz AS valid_until
-FROM control.public_service_visitors v
-JOIN control.services service ON service.id=v.service_id AND service.public AND service.enabled
-    AND service.deleted_at IS NULL AND service.protocol='http' AND service.service_port=v.destination_port
-JOIN control.service_runs run ON run.id=v.service_run_id AND run.service_id=service.id
-    AND run.run_number=v.run_number AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
-    AND run.publisher_expires_at>$1 AND run.certificate_expires_at>$1
-JOIN control.ingress_leases ingress ON ingress.ingress_id=v.ingress_id AND ingress.ingress_run_id=v.ingress_run_id
-    AND ingress.ingress_lease_revision=v.ingress_lease_revision AND ingress.lease_expires_at>$1
-JOIN LATERAL control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,service.id,$1) permission ON true
-JOIN control.publisher_grants g ON g.id=run.publisher_grant_id
-JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id AND signing.publisher_identity_id=run.publisher_identity_id
-    AND (g.kind='service' OR signing.retired_at IS NULL)
-JOIN control.publisher_identities publisher ON publisher.id=g.publisher_identity_id AND publisher.id=run.publisher_identity_id AND publisher.revoked_at IS NULL
-WHERE v.visitor_connection_id=$2 AND v.service_id=$3
-AND v.service_run_id=$4 AND v.run_number=$5
-AND v.source_ip=$6 AND v.destination_port=$7
-AND v.closed_at IS NULL AND v.valid_until>$1
-AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.relay_leases relay
-    ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
-    AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
-    WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
-    AND relay.lease_expires_at>$1 AND NOT relay.draining)
-`
-
-type ServiceHTTPTransportBindingParams struct {
-	Now                 pgtype.Timestamptz
-	VisitorConnectionID string
-	ServiceID           string
-	ServiceRunID        string
-	RunNumber           int64
-	SourceIp            netip.Addr
-	DestinationPort     int32
-}
-
-type ServiceHTTPTransportBindingRow struct {
-	Authorized bool
-	Admitted   bool
-	ValidUntil pgtype.Timestamptz
-}
-
-func (q *Queries) ServiceHTTPTransportBinding(ctx context.Context, arg ServiceHTTPTransportBindingParams) (ServiceHTTPTransportBindingRow, error) {
-	row := q.db.QueryRow(ctx, serviceHTTPTransportBinding,
-		arg.Now,
-		arg.VisitorConnectionID,
-		arg.ServiceID,
-		arg.ServiceRunID,
-		arg.RunNumber,
-		arg.SourceIp,
-		arg.DestinationPort,
-	)
-	var i ServiceHTTPTransportBindingRow
-	err := row.Scan(&i.Authorized, &i.Admitted, &i.ValidUntil)
-	return i, err
 }
 
 const servicePublicEndpointBinding = `-- name: ServicePublicEndpointBinding :one

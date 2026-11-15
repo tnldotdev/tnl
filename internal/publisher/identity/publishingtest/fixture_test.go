@@ -6,6 +6,8 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -146,11 +148,11 @@ func exerciseServiceFixture(t *testing.T, anonymous, denySource bool) {
 	}
 	address := "https://" + service.Endpoint.Hostname
 	status, _, err := f.Visit(t.Context(), address)
-	if err != nil {
+	if err != nil && !denySource {
 		t.Fatal(err)
 	}
 	if denySource {
-		if status >= 200 && status < 300 || requests.Load() != 0 {
+		if !errors.Is(err, io.EOF) || status != 0 || requests.Load() != 0 {
 			t.Fatal("anonymous mode bypassed the saved IP policy", status)
 		}
 		permission, err := f.OwnerVisitorToken(t.Context(), service.Id)
@@ -159,7 +161,7 @@ func exerciseServiceFixture(t *testing.T, anonymous, denySource bool) {
 		}
 		status, _, _, err = f.VisitWithHeaders(t.Context(), address, http.Header{
 			httpaccess.VisitorTokenHeader: {permission.VisitorToken}, "X-Forwarded-For": {"192.0.2.10"}})
-		if err != nil || status >= 200 && status < 300 || requests.Load() != 0 {
+		if !errors.Is(err, io.EOF) || status != 0 || requests.Load() != 0 {
 			t.Fatal("HTTP headers replaced trusted forwarding metadata", status, err)
 		}
 	} else if anonymous {
@@ -210,8 +212,32 @@ func exerciseServiceFixture(t *testing.T, anonymous, denySource bool) {
 		if err := owner.DeleteService(t.Context(), service.Id); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := f.OwnerVisitorToken(t.Context(), service.Id); err == nil {
+			t.Fatal("disabled service issued fresh visitor permission")
+		}
+		// policy refresh is asynchronous. observe refusal of a reserved path,
+		// which cannot contact the app or spend request budget, before checking
+		// an old signed credential against the publisher's disabled policy.
+		policy, stopPolicy := context.WithTimeout(t.Context(), 3*time.Second)
+		defer stopPolicy()
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			probeStatus, _, _, probeErr := f.VisitWithHeaders(policy, address+"/__tnl/missing", nil)
+			if errors.Is(probeErr, io.EOF) && probeStatus == 0 {
+				break
+			}
+			if probeErr != nil || probeStatus != http.StatusNotFound {
+				t.Fatal("disablement failed outside the publisher's policy boundary", probeStatus, probeErr)
+			}
+			select {
+			case <-policy.Done():
+				t.Fatal("publisher did not install service disablement", policy.Err())
+			case <-ticker.C:
+			}
+		}
 		status, _, _, err = f.VisitWithHeaders(t.Context(), address, headers)
-		if err != nil || status >= 200 && status < 300 || requests.Load() != before {
+		if !errors.Is(err, io.EOF) || status != 0 || requests.Load() != before {
 			t.Fatal("signed permission bypassed current service disablement", status, err)
 		}
 	}
@@ -329,17 +355,26 @@ func TestSignedServiceFixtureAllocationRetryKeepsOriginalNamespaceGrant(t *testi
 			t.Fatal("service renewal changed the deadline returned by a scoped service read", err)
 		}
 	}
-	visitor, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
-	if err != nil {
-		t.Fatal(err)
+	policyRequest := controlv1.PublisherVisitorPolicyRequest{
+		Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: service.Id},
+		RunId:    setup.ServiceRunId, RunNumber: setup.RunNumber,
 	}
-	visit := controlv1.AuthorizeServiceHTTPVisitorRequest{RunNumber: setup.RunNumber, VisitorConnectionId: visitor, SourceIp: "127.0.0.1", DestinationPort: 443}
-	decision, err := owner.AuthorizeServiceHTTPVisitor(t.Context(), service.Id, setup.ServiceRunId, runToken, visit)
-	if err != nil || decision.Allowed || decision.Admitted {
-		t.Fatal("uninstalled run granted current visitor permission", decision, err)
-	}
-	if _, err := owner.AuthorizeServiceHTTPVisitor(t.Context(), service.Id, setup.ServiceRunId, credentials.ServiceRunToken("wrong-token"), visit); err == nil {
+	if _, err := owner.ReadPublisherVisitorPolicy(t.Context(), policyRequest, "wrong-token"); err == nil {
 		t.Fatal("run token was not checked")
+	}
+	assertStarting := func() {
+		t.Helper()
+		state, err := owner.HeartbeatServiceRun(t.Context(), service.Id, setup.ServiceRunId, runToken,
+			controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 7})
+		if err != nil || state.State != controlv1.ServiceRunStateStateStarting {
+			t.Fatal("incomplete run became routable", state.State, err)
+		}
+	}
+	assertStarting()
+	policy, err := owner.ReadPublisherVisitorPolicy(t.Context(), policyRequest, runToken.String())
+	if err != nil || policy.Policy.Resource != policyRequest.Resource || policy.Policy.ConnectionDeadline == nil ||
+		!policy.Policy.ConnectionDeadline.Equal(deadline) || policy.Policy.ValidUntil.After(deadline) {
+		t.Fatal("preparation policy lost its run or fixed allocation authority", err)
 	}
 	_, certificateKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -374,10 +409,7 @@ func TestSignedServiceFixtureAllocationRetryKeepsOriginalNamespaceGrant(t *testi
 	if err := owner.MarkServiceCertificateInstalled(t.Context(), service.Id, setup.ServiceRunId, setup.RunNumber, issuance.Id, *issuance.NotAfter, runToken); err != nil {
 		t.Fatal(err)
 	}
-	decision, err = owner.AuthorizeServiceHTTPVisitor(t.Context(), service.Id, setup.ServiceRunId, runToken, visit)
-	if err != nil || decision.Allowed || decision.Admitted {
-		t.Fatal("certificate installation substituted for ready publisher connections", decision, err)
-	}
+	assertStarting()
 	if err := native.CloseServiceRun(t.Context(), service.Id, setup.ServiceRunId, credentials.ServiceRunToken(setup.RunToken)); err != nil {
 		t.Fatal(err)
 	}

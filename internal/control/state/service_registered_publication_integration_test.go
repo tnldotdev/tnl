@@ -64,11 +64,10 @@ func TestIntegrationRegisteredServicePendingAdmissionRechecksPermission(t *testi
 			if err != nil {
 				t.Fatal(err)
 			}
-			visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-			admit := func() (PublicServiceVisitorAdmission, error) {
-				return d.AdmitPublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, service.Endpoint.Hostname, service.Endpoint.Port, netip.MustParseAddr("192.0.2.10"), now)
+			read := func() (IngressServiceRun, error) {
+				return readIngressServiceRun(ctx, d, ingress.IngressLeaseIdentity, service.ID, run.RunID, now)
 			}
-			first, err := admit()
+			first, err := read()
 			if err != nil || first.RunID != run.RunID {
 				t.Fatal("first admission failed", err)
 			}
@@ -84,9 +83,9 @@ func TestIntegrationRegisteredServicePendingAdmissionRechecksPermission(t *testi
 			if err != nil {
 				t.Fatal(err)
 			}
-			retry, err := admit()
+			retry, err := read()
 			if mutation == "service-deadline" {
-				if err != nil || !retry.ExpiresAt.Equal(deadline) || !retry.ExpiresAt.Before(first.ExpiresAt) {
+				if err != nil || !retry.ValidUntil.Equal(deadline) || !retry.ValidUntil.Before(first.ValidUntil) {
 					t.Fatal("pending retry ignored the current fixed service deadline", err)
 				}
 			} else if !errors.Is(err, ErrServiceAccess) {
