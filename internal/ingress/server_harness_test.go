@@ -105,6 +105,12 @@ func applyServiceRoutingFixture(t *testing.T, server *Server) {
 	}
 }
 
+func startServiceRoutingFixture(t *testing.T, server *Server) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	ingressWorker(t, cancel, func() error { return server.RefreshServices(ctx) })
+}
+
 func ownIngressConn(t *testing.T, c net.Conn) {
 	t.Helper()
 	t.Cleanup(func() { _ = c.Close() })

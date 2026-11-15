@@ -82,6 +82,16 @@ until its existing routing, policy, and process leases expire. Native client
 certificate access still asks control for current permission, then uses the same
 forwarding and capacity exchange.
 
+On a routing cache miss, ingress may keep the first HTTP connection within its
+original setup deadline until the next background snapshot arrives. A fresh miss
+is final. Installed endpoints do not wait, and no visitor triggers a control
+refresh or an application replay.
+
+If every relay opening fails before the first visitor byte, HTTP ingress may
+borrow replacement assignments for that same run from a background snapshot once.
+The visitor ID, signed source proof, capacity debit, and original setup deadline
+stay unchanged. Renewing a relay lease alone does not retry a failed assignment.
+
 PostgreSQL, MySQL, and TCP carry admitted traffic without a control call for each
 query or message. Public Kubernetes rechecks control for each API request;
 connector Kubernetes checks the visitor's admitted permission locally. Both

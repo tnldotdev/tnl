@@ -2161,9 +2161,19 @@ $$;
 -- publication permission is independent of management, visitor permission and
 -- public endpoint allocation. namespace grants need service allocation records
 -- before they can authorize an ordinary service.
-CREATE FUNCTION control.publisher_service_permission(publisher_id text,grant_id text,selected_service_id text,at_time timestamptz)
-RETURNS TABLE(expires_at timestamptz) LANGUAGE sql STABLE AS $$
-    SELECT LEAST(grant_record.expires_at,service.expires_at,trial.ready_deadline)
+-- read common authority once, then plan and check only the stored grant's branch.
+-- stable preserves the caller's snapshot; permissions themselves are never cached.
+CREATE FUNCTION control.publisher_service_permission(selected_publisher_id text,selected_grant_id text,selected_service_id text,at_time timestamptz)
+RETURNS TABLE(expires_at timestamptz) LANGUAGE plpgsql STABLE ROWS 1 AS $$
+DECLARE binding record;
+BEGIN
+    SELECT grant_record.kind AS grant_kind,grant_record.service_id AS granted_service_id,
+        grant_record.domain_id AS granted_domain_id,grant_record.namespace,grant_record.namespace_scope,
+        grant_record.membership_id,publisher.ownership,publisher.owner_membership_id,
+        service.team_id,service.domain_id,service.certificate_hostname,service.ephemeral,service.protocol,
+        team.kind AS team_kind,team.display_name AS team_name,
+        LEAST(grant_record.expires_at,service.expires_at,trial.ready_deadline) AS deadline
+    INTO binding
     FROM control.publisher_identities publisher
     JOIN control.publisher_grants grant_record ON grant_record.publisher_identity_id=publisher.id
     JOIN control.services service ON service.id=selected_service_id
@@ -2173,7 +2183,7 @@ RETURNS TABLE(expires_at timestamptz) LANGUAGE sql STABLE AS $$
         AND grant_record.guest_id IS NOT DISTINCT FROM service.guest_id
     LEFT JOIN control.teams team ON team.id=service.team_id AND team.deleted_at IS NULL
     LEFT JOIN control.guest_trials trial ON trial.id=service.guest_id
-    WHERE publisher.id=publisher_id AND grant_record.id=grant_id
+    WHERE publisher.id=selected_publisher_id AND grant_record.id=selected_grant_id
     AND control.active_publisher(publisher.id,at_time)
     AND ((publisher.kind<>'guest' AND team.id IS NOT NULL AND service.guest_id IS NULL)
         OR (publisher.kind='guest' AND publisher.ownership='guest' AND publisher.team_id IS NULL
@@ -2186,63 +2196,70 @@ RETURNS TABLE(expires_at timestamptz) LANGUAGE sql STABLE AS $$
     AND service.enabled AND service.deleted_at IS NULL AND (service.expires_at IS NULL OR service.expires_at>at_time)
     AND (service.domain_id IS NULL OR EXISTS(SELECT 1 FROM control.domains domain
         WHERE domain.id=service.domain_id AND domain.state='ready' AND domain.released_at IS NULL
-        AND (domain.kind='managed' OR domain.team_id=service.team_id)))
-    AND ((grant_record.kind='service' AND grant_record.service_id=service.id
-            AND NOT EXISTS(SELECT 1 FROM control.publisher_namespace_allocations allocation WHERE allocation.service_id=service.id))
-        OR (grant_record.kind='namespace' AND service.ephemeral AND service.protocol='http'
-            AND service.domain_id=grant_record.domain_id
+        AND (domain.kind='managed' OR domain.team_id=service.team_id)));
+    IF NOT FOUND THEN RETURN; END IF;
+
+    IF binding.grant_kind='service' THEN
+        RETURN QUERY SELECT binding.deadline
+        WHERE binding.granted_service_id=selected_service_id
+            AND NOT EXISTS(SELECT 1 FROM control.publisher_namespace_allocations allocation WHERE allocation.service_id=selected_service_id);
+    ELSIF binding.grant_kind='namespace' THEN
+        RETURN QUERY SELECT binding.deadline
+        WHERE binding.ephemeral AND binding.protocol='http' AND binding.domain_id=binding.granted_domain_id
             AND EXISTS(SELECT 1 FROM control.publisher_namespace_allocations allocation
                 JOIN control.service_endpoints endpoint ON endpoint.service_id=allocation.service_id
-                    AND endpoint.hostname=service.certificate_hostname AND endpoint.retired_at IS NULL
-                    AND endpoint.domain_id=grant_record.domain_id AND endpoint.namespace=grant_record.namespace
+                    AND endpoint.hostname=binding.certificate_hostname AND endpoint.retired_at IS NULL
+                    AND endpoint.domain_id=binding.granted_domain_id AND endpoint.namespace=binding.namespace
                 JOIN control.domains domain ON domain.id=endpoint.domain_id
-                WHERE allocation.service_id=service.id AND allocation.publisher_identity_id=publisher.id
-                    AND allocation.publisher_grant_id=grant_record.id AND allocation.deployment_id IS NULL
+                WHERE allocation.service_id=selected_service_id AND allocation.publisher_identity_id=selected_publisher_id
+                    AND allocation.publisher_grant_id=selected_grant_id AND allocation.deployment_id IS NULL
                     AND endpoint.deployment_id IS NULL AND endpoint.local_source_key=''
-                    AND ((grant_record.namespace_scope='shared' AND team.kind='personal' AND domain.kind='custom'
-                        AND grant_record.namespace=domain.canonical_domain)
-                    OR (grant_record.namespace_scope='member' AND EXISTS(
+                    AND ((binding.namespace_scope='shared' AND binding.team_kind='personal' AND domain.kind='custom'
+                        AND binding.namespace=domain.canonical_domain)
+                    OR (binding.namespace_scope='member' AND EXISTS(
                         SELECT 1 FROM control.team_memberships member
                             JOIN control.member_slug_reservations reservation ON reservation.id=member.slug_reservation_id AND reservation.state<>'released'
-                            WHERE member.id=grant_record.membership_id
-                            AND member.team_id=team.id AND control.active_membership(member.id,at_time)
-                            AND (publisher.ownership<>'member' OR publisher.owner_membership_id=member.id)
-                            AND grant_record.namespace=CASE WHEN domain.kind='custom' THEN reservation.member_slug||'.'||domain.canonical_domain
-                                WHEN grant_record.namespace=member.managed_label||'.'||domain.canonical_domain THEN member.managed_label||'.'||domain.canonical_domain
-                                WHEN team.kind='personal' THEN team.display_name||'.'||domain.canonical_domain
-                                ELSE reservation.member_slug||'.'||team.display_name||'.'||domain.canonical_domain END)))))
-        OR (grant_record.kind='deployment_credential' AND publisher.ownership='team'
-            AND service.ephemeral AND service.protocol='http'
-            AND EXISTS(SELECT 1 FROM control.publisher_namespace_allocations allocation
+                            WHERE member.id=binding.membership_id
+                            AND member.team_id=binding.team_id AND control.active_membership(member.id,at_time)
+                            AND (binding.ownership<>'member' OR binding.owner_membership_id=member.id)
+                            AND binding.namespace=CASE WHEN domain.kind='custom' THEN reservation.member_slug||'.'||domain.canonical_domain
+                                WHEN binding.namespace=member.managed_label||'.'||domain.canonical_domain THEN member.managed_label||'.'||domain.canonical_domain
+                                WHEN binding.team_kind='personal' THEN binding.team_name||'.'||domain.canonical_domain
+                                ELSE reservation.member_slug||'.'||binding.team_name||'.'||domain.canonical_domain END))));
+    ELSIF binding.grant_kind='deployment_credential' THEN
+        RETURN QUERY SELECT binding.deadline
+        WHERE binding.ownership='team' AND binding.protocol='http'
+            AND ((binding.ephemeral AND EXISTS(SELECT 1 FROM control.publisher_namespace_allocations allocation
                 JOIN control.deployment_management_grants approval ON approval.grant_id=allocation.publisher_grant_id
                 JOIN control.applied_projects project ON project.team_id=approval.team_id AND project.project_key=approval.project_key
                 JOIN control.deployments deployment ON deployment.id=allocation.deployment_id
                     AND deployment.team_id=approval.team_id AND deployment.project_key=approval.project_key AND deployment.deleted_at IS NULL
                 JOIN control.service_namespace_claims claim ON claim.deployment_id=deployment.id AND claim.namespace=deployment.namespace
                     AND claim.domain_id=deployment.domain_id AND claim.retired_at IS NULL
-                JOIN control.service_endpoints endpoint ON endpoint.service_id=service.id AND endpoint.hostname=service.certificate_hostname
+                JOIN control.service_endpoints endpoint ON endpoint.service_id=selected_service_id AND endpoint.hostname=binding.certificate_hostname
                     AND endpoint.deployment_id=deployment.id AND endpoint.namespace=claim.namespace AND endpoint.domain_id=claim.domain_id AND endpoint.retired_at IS NULL
-                WHERE allocation.service_id=service.id AND allocation.publisher_identity_id=publisher.id
-                    AND allocation.publisher_grant_id=grant_record.id AND approval.team_id=publisher.team_id
-                    AND service.domain_id=deployment.domain_id
+                WHERE allocation.service_id=selected_service_id AND allocation.publisher_identity_id=selected_publisher_id
+                    AND allocation.publisher_grant_id=selected_grant_id AND approval.team_id=binding.team_id
+                    AND binding.domain_id=deployment.domain_id
                     AND (approval.temporary_publication='anonymous' OR approval.temporary_publication='restricted' AND allocation.required_temporary_approval='restricted')
                     AND (approval.all_deployments OR EXISTS(SELECT 1 FROM control.deployment_management_deployments allowed
                         WHERE allowed.grant_id=approval.grant_id AND allowed.deployment_id=deployment.id))))
-        OR (grant_record.kind='deployment_credential' AND publisher.ownership='team'
-            AND service.protocol='http' AND control.deployment_credential_available(grant_record.id)
+        OR (control.deployment_credential_available(selected_grant_id)
             AND EXISTS(SELECT 1 FROM control.deployment_management_grants approval
                 JOIN control.applied_projects project ON project.team_id=approval.team_id AND project.project_key=approval.project_key
                 JOIN control.deployment_management_services selected ON selected.grant_id=approval.grant_id
-                    AND selected.capability='publish' AND selected.revoked_at IS NULL AND selected.protocol=service.protocol
+                    AND selected.capability='publish' AND selected.revoked_at IS NULL AND selected.protocol=binding.protocol
                 JOIN control.project_services declaration ON declaration.team_id=approval.team_id
                     AND declaration.project_key=approval.project_key AND declaration.name=selected.service AND declaration.protocol=selected.protocol
-                JOIN control.applied_project_services binding ON binding.team_id=approval.team_id
-                    AND binding.project_key=approval.project_key AND binding.service=selected.service AND binding.service_id=service.id
-                JOIN control.deployments deployment ON deployment.id=binding.deployment_id AND deployment.team_id=approval.team_id
+                JOIN control.applied_project_services realized ON realized.team_id=approval.team_id
+                    AND realized.project_key=approval.project_key AND realized.service=selected.service AND realized.service_id=selected_service_id
+                JOIN control.deployments deployment ON deployment.id=realized.deployment_id AND deployment.team_id=approval.team_id
                     AND deployment.project_key=approval.project_key AND deployment.deleted_at IS NULL
-                WHERE approval.grant_id=grant_record.id AND approval.team_id=publisher.team_id
+                WHERE approval.grant_id=selected_grant_id AND approval.team_id=binding.team_id
                 AND (approval.all_deployments OR EXISTS(SELECT 1 FROM control.deployment_management_deployments allowed
-                    WHERE allowed.grant_id=approval.grant_id AND allowed.deployment_id=deployment.id)))))
+                    WHERE allowed.grant_id=approval.grant_id AND allowed.deployment_id=deployment.id)))));
+    END IF;
+END;
 $$;
 -- +goose StatementEnd
 -- +goose StatementBegin

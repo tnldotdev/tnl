@@ -426,6 +426,11 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		return result, ErrVisitorPermission
 	}
 	if !until.After(clock.current()) {
+		if _, workload := source.(WorkloadTokenSource); workload {
+			// the source can expire after its locked read while the selected
+			// service is checked. retain the source denial at this later fence.
+			return result, ErrWorkloadDenied
+		}
 		return result, ErrVisitorPermission
 	}
 	result.Permission = resource.permission(subject, until, now)

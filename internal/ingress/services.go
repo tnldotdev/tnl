@@ -71,6 +71,7 @@ type ServiceRouting struct {
 	visitors       map[*routedVisitor]struct{}
 	stopping       []*routedVisitor
 	changed        chan struct{}
+	updated        chan struct{}
 	done           chan struct{}
 	sourceCounters map[[32]byte]*sourceCounter
 	closed         bool
@@ -79,7 +80,7 @@ type ServiceRouting struct {
 func NewServiceRouting() *ServiceRouting {
 	r := &ServiceRouting{
 		runs: make(map[string]*serviceRoute), endpoints: make(map[serviceEndpoint][]*serviceRoute),
-		visitors: make(map[*routedVisitor]struct{}), changed: make(chan struct{}, 1), done: make(chan struct{}),
+		visitors: make(map[*routedVisitor]struct{}), changed: make(chan struct{}, 1), updated: make(chan struct{}), done: make(chan struct{}),
 		sourceCounters: make(map[[32]byte]*sourceCounter),
 	}
 	go r.expireVisitors()
@@ -238,6 +239,8 @@ func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, 
 	r.lease, r.startedAt, r.observedAt, r.runs, r.endpoints = lease, started, snapshot.ObservedAt, runs, endpoints
 	r.validUntil = privateMinTime(started.Add(duration), lease.LeaseExpiresAt)
 	r.stopping = append(r.stopping, r.expireVisitorsLocked(now)...)
+	close(r.updated)
+	r.updated = make(chan struct{})
 	r.wake()
 	r.mu.Unlock()
 	return nil
@@ -246,6 +249,10 @@ func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, 
 func (r *ServiceRouting) lookup(hostname string, port int, lease ingressv1.IngressLease, now time.Time) []*serviceRoute {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.lookupLocked(hostname, port, lease, now)
+}
+
+func (r *ServiceRouting) lookupLocked(hostname string, port int, lease ingressv1.IngressLease, now time.Time) []*serviceRoute {
 	if r.closed || !samePrivateLease(r.lease, lease) || !lease.LeaseExpiresAt.After(now) || lease.Draining {
 		return nil
 	}
@@ -253,6 +260,89 @@ func (r *ServiceRouting) lookup(hostname string, port int, lease ingressv1.Ingre
 	for _, route := range r.endpoints[serviceEndpoint{hostname: hostname, port: port}] {
 		if route.until.After(now) {
 			result = append(result, route)
+		}
+	}
+	return result
+}
+
+// waitForEndpoint keeps a first connection inside its original setup budget
+// while independently scheduled routing catches up with a newly ready run.
+// a cache hit never waits; a fresh miss is final. this never requests a refresh.
+func (r *ServiceRouting) waitForEndpoint(ctx context.Context, hostname string, lease ingressv1.IngressLease) error {
+	entered := time.Now()
+	for {
+		r.mu.Lock()
+		now := time.Now()
+		available := len(r.lookupLocked(hostname, 443, lease, now)) != 0
+		finished := r.closed || !lease.LeaseExpiresAt.After(now) || lease.Draining || !r.startedAt.Before(entered)
+		updated := r.updated
+		r.mu.Unlock()
+		if err := context.Cause(ctx); err != nil {
+			return err
+		}
+		if available {
+			return nil
+		}
+		if finished {
+			return ErrServiceAdmission
+		}
+		select {
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		case <-updated:
+		}
+	}
+}
+
+// waitForRelayReplacement borrows new relay assignments for the same run only
+// after every old opening failed before a visitor byte. it never renews the
+// original source proof, setup deadline, run selection, or capacity debit.
+func (r *ServiceRouting) waitForRelayReplacement(ctx context.Context, previous *serviceRoute, lease ingressv1.IngressLease, source netip.Addr) (*serviceRoute, error) {
+	entered := time.Now()
+	for {
+		r.mu.Lock()
+		now := time.Now()
+		current := r.runs[previous.run.ServiceRunId]
+		valid := !r.closed && samePrivateLease(r.lease, lease) && !lease.Draining && lease.LeaseExpiresAt.After(now) &&
+			previous.until.After(now) && current != nil && current.until.After(now) &&
+			current.run.ServiceId == previous.run.ServiceId && current.run.RunNumber == previous.run.RunNumber &&
+			current.run.EndpointRevision == previous.run.EndpointRevision && (current.ip == nil || current.ip.Allows(source))
+		replaced := valid && len(replacementRelays(previous.run.ConnectedRelays, current.run.ConnectedRelays)) != 0
+		fresh := !r.startedAt.Before(entered)
+		updated := r.updated
+		r.mu.Unlock()
+		if err := context.Cause(ctx); err != nil {
+			return nil, err
+		}
+		if !valid || fresh && !replaced {
+			return nil, ErrServiceAdmission
+		}
+		if replaced {
+			return current, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		case <-updated:
+		}
+	}
+}
+
+func replacementRelays(previous, current []ingressv1.ServiceRelay) []ingressv1.ServiceRelay {
+	var result []ingressv1.ServiceRelay
+	for _, candidate := range current {
+		found := false
+		for _, attempted := range previous {
+			// lease renewal alone cannot retry a failed connection assignment.
+			candidateKey, attemptedKey := candidate, attempted
+			candidateKey.LeaseExpiresAt, attemptedKey.LeaseExpiresAt = time.Time{}, time.Time{}
+			if candidateKey == attemptedKey {
+				found = true
+				break
+			}
+		}
+		if !found {
+			result = append(result, candidate)
 		}
 	}
 	return result
@@ -354,6 +444,9 @@ func (r *ServiceRouting) expireVisitors() {
 
 func (r *ServiceRouting) Close() {
 	r.mu.Lock()
+	if !r.closed {
+		close(r.updated)
+	}
 	r.closed = true
 	clear(r.runs)
 	clear(r.endpoints)

@@ -399,6 +399,7 @@ func TestPublicServiceFailedOpenKeepsLifetimeDebitAndDoesNotReselect(t *testing.
 			metrics := &testMetrics{visitorOutcomes: make(chan string, 2)}
 			config.Metrics = metrics
 			server, address := startIngress(t, config)
+			startServiceRoutingFixture(t, server)
 			first := ingressClient(t, address, "route.example", "192.0.2.4:40001")
 			if err := first.Handshake(); err == nil {
 				t.Fatal("failed service run completed TLS")

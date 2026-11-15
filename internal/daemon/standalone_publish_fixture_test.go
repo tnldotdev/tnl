@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql"
+	"errors"
+	"io"
 	"net"
 	"net/http"
 	"testing"
@@ -217,6 +219,14 @@ func assertIntegrationWebSocketPushes(
 	release()
 	if err := websocket.Message.Receive(connection, &message); err != nil || message != "update" {
 		t.Fatalf("second WebSocket message = %q, %v", message, err)
+	}
+	// finish the request direction before the target closes its socket. reading
+	// an update alone does not join the upgraded copy or its half-close.
+	if err := secured.(*tls.Conn).CloseWrite(); err != nil {
+		t.Fatal("finish WebSocket request", err)
+	}
+	if err := websocket.Message.Receive(connection, &message); !errors.Is(err, io.EOF) {
+		t.Fatal("WebSocket response did not finish after its final update", err)
 	}
 }
 

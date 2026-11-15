@@ -95,6 +95,11 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 	defer finish()
 	stopSetup := context.AfterFunc(p.admissions, finish)
 	defer stopSetup()
+	if destination.Port() == 443 {
+		if err := p.services.waitForEndpoint(setup, hostname, lease); err != nil {
+			return err
+		}
+	}
 	selected, err := p.selectPublicRun(setup, lease, source, destination, hostname, admission)
 	defer func() {
 		if selected.certificate != nil && selected.certificate.VisitorConnectionId != "" {
@@ -225,6 +230,11 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 		}
 	}
 	first := int((p.nextBackend.Add(1) - 1) % uint64(len(selected.relays)))
+	relays := make([]ingressv1.ServiceRelay, len(selected.relays))
+	for index := range relays {
+		relays[index] = selected.relays[(first+index)%len(selected.relays)]
+	}
+	refreshedRelays := false
 	var openingErr error
 	openingStarted := time.Now()
 	openingObserved := false
@@ -233,14 +243,14 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 			p.config.Metrics.ObserveVisitorOpen(false, time.Since(openingStarted))
 		}
 	}()
-	for attempt := range selected.relays {
-		relay := selected.relays[(first+attempt)%len(selected.relays)]
+	for attempt := 0; attempt < len(relays); attempt++ {
+		relay := relays[attempt]
 		header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{
 			ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream, ServiceID: selected.serviceID, ServiceRunID: selected.runID, RunNumber: uint64(selected.number),
 			PublicService: &tunnelv1.PublicServiceAdmission{IngressID: lease.IngressId, IngressRunID: lease.IngressRunId, IngressLeaseRevision: uint64(lease.IngressLeaseRevision), DestinationPort: destination.Port()},
 			SourceIP:      source.Addr().Unmap().String(), VisitorConnectionID: selected.visitorID, PublisherConnectionID: relay.PublisherConnectionId, ConnectionAssignmentRevision: uint64(relay.ConnectionAssignmentRevision), ExpiresAt: deadline,
 		}, ConnectionSlot: uint8(relay.ConnectionSlot), RelayServiceID: relay.RelayServiceId, RelayID: relay.RelayId, RelayRunID: relay.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLeaseRevision), LeaseExpiresAt: relay.LeaseExpiresAt}
-		attemptCtx, stopAttempt := backendAttemptContext(setup, len(selected.relays)-attempt)
+		attemptCtx, stopAttempt := backendAttemptContext(setup, len(relays)-attempt)
 		attemptStarted := time.Now()
 		backend, err := p.openPrivateRelay(attemptCtx, relay, header, proxy, initial, deadline, reserveCapacity)
 		stopAttempt()
@@ -264,6 +274,17 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 			}
 			if p.config.Metrics != nil {
 				p.config.Metrics.ObserveRelayAttempt(strconv.Itoa(relay.ConnectionSlot), observability.RelayAttemptOpenFailed)
+			}
+			if attempt+1 == len(relays) && !refreshedRelays && selected.access == httpRequestAccess {
+				refreshedRelays = true
+				replacement, refreshErr := p.services.waitForRelayReplacement(setup, selected.http, lease, source.Addr().Unmap())
+				if refreshErr != nil {
+					return errors.Join(ErrServiceAdmission, openingErr, refreshErr)
+				}
+				relays = append(relays, replacementRelays(selected.relays, replacement.run.ConnectedRelays)...)
+				deadline = privateMinTime(deadline, replacement.until)
+				selected.expiresAt = privateMinTime(selected.expiresAt, replacement.until)
+				selected.recoveryEpisodeID = replacement.run.RecoveryEpisodeId
 			}
 			continue
 		}

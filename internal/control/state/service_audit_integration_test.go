@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
+	"net/netip"
 	"sort"
 	"strconv"
 	"testing"
@@ -118,17 +119,40 @@ func TestIntegrationServiceAuditAuthenticatedBatches(t *testing.T) {
 	if _, err = d.IngestServiceRunObservations(t.Context(), service.ID, run.RunID, run.Token+"x", run.RunNumber, batch, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("wrong token accepted: %v", err)
 	}
-	ingressLease := registerTestIngress(t, d, now)
+	httpPage, err := d.ListServiceAudit(t.Context(), teamID, actorID, ServiceAuditFilter{ServiceID: service.ID}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpEvents := 0
+	for _, event := range httpPage.Events {
+		if event.ID != o.EventID {
+			continue
+		}
+		httpEvents++
+		if event.RunID != run.RunID || event.SourceIP != o.SourceIP || event.Outcome != "denied" || event.Reason != "authorization" {
+			t.Fatal("publisher HTTP audit lost its exact run, source, or denied decision")
+		}
+	}
+	if httpEvents != 1 {
+		t.Fatal("publisher HTTP audit was missing or duplicated", httpEvents)
+	}
+	// HTTP decisions belong to the publisher run; ingress connection reports
+	// use native admission receipts, not retired HTTP visitor records.
+	native := newNativeServiceAdmissionFixture(t)
+	d, now, service, run = native.database, native.now, native.service, native.run
+	teamID, actorID = service.TeamID, native.actor(t)
+	ingressLease := registerNativeServiceAdmissionIngress(t, t.Context(), native, "audit-batches")
 	o.EventID = serviceaudit.NewID()
+	o.ServiceID, o.RunID, o.RunNumber = service.ID, run.RunID, run.RunNumber
+	o.OccurredAt = now
 	o.EventType = "connection.open"
 	o.Outcome = "forwarded"
 	o.Reason = ""
 	batch.Events = []serviceaudit.Observation{o}
-	// ingress observations need an admitted visitor record for this exact ingress/run.
-	_, err = d.pool.Exec(t.Context(), `INSERT INTO control.public_service_visitors(visitor_connection_id,service_id,service_run_id,run_number,source_ip,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,valid_until,created_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,443,$9,$10)`, visitor, service.ID, run.RunID, run.RunNumber, "192.0.2.3", ingressLease.IngressID, ingressLease.IngressRunID, int64(ingressLease.IngressLeaseRevision), now.Add(time.Minute), now)
-	if err != nil {
-		t.Fatal(err)
+	admitted, err := d.AdmitPublicServiceVisitor(t.Context(), ingressLease.IngressLeaseIdentity, PrimaryIngressPoolID,
+		visitor, service.Endpoint.Port, netip.MustParseAddr(o.SourceIP), now)
+	if err != nil || admitted.ServiceID != service.ID || admitted.RunID != run.RunID || admitted.RunNumber != run.RunNumber {
+		t.Fatal("ingress audit lost its exact native admission", err)
 	}
 	if result, err = d.IngestIngressServiceObservations(t.Context(), ingressLease.IngressLeaseIdentity, batch, now); err != nil || result.Accepted != 1 {
 		t.Fatalf("ingress observation %+v %v", result, err)
@@ -140,10 +164,10 @@ func TestIntegrationServiceAuditAuthenticatedBatches(t *testing.T) {
 	serviceDenial.RunNumber = 0
 	serviceDenial.Outcome = "denied"
 	serviceDenial.Reason = "capacity"
-	_, err = d.pool.Exec(t.Context(), `INSERT INTO control.public_service_visitors(visitor_connection_id,service_id,service_run_id,run_number,source_ip,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,valid_until,created_at)
-		VALUES($1,$2,$9,$10,$3,$4,$5,$6,443,$7,$8)`, serviceDenial.VisitorConnectionID, service.ID, "192.0.2.3", ingressLease.IngressID, ingressLease.IngressRunID, int64(ingressLease.IngressLeaseRevision), now.Add(time.Minute), now, run.RunID, run.RunNumber)
-	if err != nil {
-		t.Fatal(err)
+	admitted, err = d.AdmitPublicServiceVisitor(t.Context(), ingressLease.IngressLeaseIdentity, PrimaryIngressPoolID,
+		serviceDenial.VisitorConnectionID, service.Endpoint.Port, netip.MustParseAddr(serviceDenial.SourceIP), now)
+	if err != nil || admitted.ServiceID != service.ID || admitted.RunID != run.RunID || admitted.RunNumber != run.RunNumber {
+		t.Fatal("selection denial lost its exact native receipt", err)
 	}
 	if result, err = d.IngestIngressServiceObservations(t.Context(), ingressLease.IngressLeaseIdentity, serviceaudit.Batch{Events: []serviceaudit.Observation{serviceDenial}}, now); err != nil || result.Accepted != 1 {
 		t.Fatalf("known service denial before run selection: %+v %v", result, err)
