@@ -151,7 +151,8 @@ func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) 
 			if domainErr != nil {
 				return meta.Metadata{}, domainErr
 			}
-			serviceMetadata, err = meta.NewEndpoint(domain.CanonicalDomain, endpoint.Hostname, string(assigned.Protocol), endpoint.Port, endpoint.Public)
+			namespace, _ := serviceContext.Namespace(domain)
+			serviceMetadata, err = meta.NewEndpoint(namespace, endpoint.Hostname, string(assigned.Protocol), endpoint.Port, endpoint.Public)
 		} else {
 			serviceMetadata, err = r.localServiceMetadata(ctx, name, effective, serviceContext)
 			if errors.Is(err, clientcontrol.ErrNotFound) {
@@ -215,7 +216,8 @@ func (r *MetadataResolver) localServiceMetadata(ctx context.Context, name string
 	if err != nil {
 		return meta.Service{}, err
 	}
-	return meta.NewEndpoint(domain.CanonicalDomain, endpoint.Hostname, "http", endpoint.Port, endpoint.Public)
+	namespace, _ := current.Namespace(domain)
+	return meta.NewEndpoint(namespace, endpoint.Hostname, "http", endpoint.Port, endpoint.Public)
 }
 
 func projectAliasMetadata(ctx context.Context, resolver *MetadataResolver, metadata meta.Metadata) (map[string]meta.Alias, error) {

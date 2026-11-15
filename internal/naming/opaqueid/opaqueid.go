@@ -34,8 +34,6 @@ const (
 	InvocationPrefix               = "ivk_"
 	IssuancePrefix                 = "iss_"
 	MembershipPrefix               = "mem_"
-	PublicURLPrefix                = "url_"
-	PublishRunPrefix               = "pr_"
 	ServiceCertificateWorkerPrefix = "scw_"
 	PublisherConnectionPrefix      = "pc_"
 	PublisherIdentityPrefix        = "pub_"

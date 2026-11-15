@@ -3,6 +3,7 @@ package state
 import (
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -153,5 +154,88 @@ func TestIntegrationExactAndPreviewShareSnapshotsHaveDifferentScopes(t *testing.
 		ShareID: exact.ID, ServiceID: second.ID, Now: timestamptz(now),
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("exact share opened the other preview URL: %v", err)
+	}
+}
+
+func TestIntegrationSharePaginationUsesBytewiseIDsAcrossDatabaseLocales(t *testing.T) {
+	f := newServiceHTTPFixture(t)
+	d, now, service := f.database, f.now, f.service
+	preview := f.preview(t, "pagination", service)
+	seed, err := d.CreateShare(t.Context(), CreateShareRequest{
+		PreviewID: preview.ID, TeamID: service.TeamID, ActingIdentityID: f.project.ActorID,
+		IdempotencyKey: "seed", SecretFingerprint: sha256.Sum256([]byte("pagination seed")),
+		ExpiresAt: now.Add(time.Hour), ServiceIDs: []string{service.ID}, EntryServiceID: service.ID,
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// model a non-bytewise database default even when the disposable database
+	// uses C. opaque IDs retain their case, and cursors use the same wire order.
+	if _, err := d.pool.Exec(t.Context(), `ALTER TABLE control.shares ALTER COLUMN id TYPE text COLLATE "en-x-icu"`); err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, letter := range []byte{'A', 'Z', 'a', 'z'} {
+		for index := range 26 {
+			ids = append(ids, fmt.Sprintf("shr_%c%021d", letter, index))
+		}
+	}
+	tx, err := d.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, tx)
+	if _, err := tx.Exec(t.Context(), `INSERT INTO control.shares
+		(id,preview_id,team_id,scope,entry_service_id,control_session_id,created_by_identity_id,
+		idempotency_key,request_digest,secret_digest,created_at,expires_at)
+		SELECT selected.id,source.preview_id,source.team_id,source.scope,source.entry_service_id,
+		source.control_session_id,source.created_by_identity_id,selected.id,
+		source.request_digest,source.secret_digest,source.created_at,source.expires_at
+		FROM unnest($1::text[]) selected(id) CROSS JOIN control.shares source WHERE source.id=$2`, ids, seed.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(t.Context(), `INSERT INTO control.share_services(share_id,team_id,service_id)
+		SELECT selected.id,$2,$3 FROM unnest($1::text[]) selected(id)`, ids, service.TeamID, service.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	expected := append(slices.Clone(ids), seed.ID)
+	slices.Sort(expected)
+	for _, scope := range []string{"preview", "team"} {
+		t.Run(scope, func(t *testing.T) {
+			var got []string
+			cursor := ""
+			for pageNumber := range 3 {
+				var page SharePage
+				var err error
+				if scope == "preview" {
+					page, err = d.ListShares(t.Context(), preview.ID, cursor)
+				} else {
+					page, err = d.ListTeamShares(t.Context(), service.TeamID, f.project.ActorID, cursor)
+				}
+				if err != nil || len(page.Shares) == 0 || len(page.Shares) > 100 {
+					t.Fatal("share pagination lost its bounded page", pageNumber, len(page.Shares), err)
+				}
+				for _, share := range page.Shares {
+					if share.ID <= cursor || share.TeamID != service.TeamID ||
+						!slices.Equal(share.ServiceIDs, []string{service.ID}) {
+						t.Fatal("share page changed scope or wire order", share.ID, cursor)
+					}
+					cursor = share.ID
+					got = append(got, share.ID)
+				}
+				if page.NextCursor == "" {
+					break
+				}
+				if page.NextCursor != cursor {
+					t.Fatal("share cursor did not name the final emitted record")
+				}
+			}
+			if !slices.Equal(got, expected) {
+				t.Fatal("share pagination repeated, reordered, or lost IDs", got, expected)
+			}
+		})
 	}
 }

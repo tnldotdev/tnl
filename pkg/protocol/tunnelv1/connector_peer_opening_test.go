@@ -9,8 +9,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 type openingWriter struct {
@@ -114,7 +112,7 @@ func TestPeerConnectorVisitorOpeningRejectsInvalidAndOversize(t *testing.T) {
 		"pair":       func(e *ConnectorPeerVisitorEntry) { e.PairID = "cpp_wrong" },
 		"delivery":   func(e *ConnectorPeerVisitorEntry) { e.DeliveryID = strings.Repeat("A", 22) },
 		"generation": func(e *ConnectorPeerVisitorEntry) { e.DeliveryGeneration = 0 },
-		"service":    func(e *ConnectorPeerVisitorEntry) { e.ServiceID = testOpaqueID(opaqueid.PublicURLPrefix) },
+		"service":    func(e *ConnectorPeerVisitorEntry) { e.ServiceID = testOpaqueID("url_") },
 		"run":        func(e *ConnectorPeerVisitorEntry) { e.ServiceRunID = "invalid" },
 		"run number": func(e *ConnectorPeerVisitorEntry) { e.RunNumber = 0 },
 		"subject":    func(e *ConnectorPeerVisitorEntry) { e.Subject.Kind = "browser" },

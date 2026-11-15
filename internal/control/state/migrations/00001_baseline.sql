@@ -1094,7 +1094,8 @@ CREATE TABLE control.shares (
     CHECK (revoked_by_guest_id IS NULL OR guest_id IS NOT NULL AND revoked_by_guest_id=guest_id)
 );
 CREATE UNIQUE INDEX shares_guest_request ON control.shares(guest_id,idempotency_key) WHERE guest_id IS NOT NULL;
-CREATE INDEX shares_by_preview ON control.shares(preview_id, id);
+CREATE INDEX shares_by_preview ON control.shares(preview_id, id COLLATE "C");
+CREATE INDEX shares_by_creator ON control.shares(team_id, created_by_identity_id, id COLLATE "C");
 CREATE INDEX shares_expiring ON control.shares(expires_at, id) WHERE revoked_at IS NULL;
 -- +goose StatementBegin
 CREATE FUNCTION control.bound_guest_share_expiry() RETURNS trigger LANGUAGE plpgsql AS $$

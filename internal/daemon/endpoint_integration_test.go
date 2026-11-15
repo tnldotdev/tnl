@@ -56,8 +56,8 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// reserve public capacity, then start privately with that reservation
-			// retained so enablement below does not replace the active run.
+			// retain the shared HTTP endpoint identity while starting privately.
+			// enablement below must not replace the active run.
 			binding := applied.Configuration.Services["api"]
 			binding.Public = new(false)
 			applied.Configuration.Services["api"] = binding
@@ -177,7 +177,7 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			if err != nil || response.StatusCode != http.StatusOK || string(body) != "native TLS reaches the publisher" {
 				t.Fatal(response.StatusCode, string(body), err)
 			}
-			// arrivals use prepared permission, not a control RPC. revocation must
+			// connector arrivals use prepared permission, not a control RPC. revocation must
 			// terminate this owner on its background refresh within the existing
 			// client request budget, without an application client certificate.
 			device, err := production.ConnectorSigner(t.Context(), person.Identity.Id)
@@ -242,15 +242,55 @@ func checkManagedPublicEndpointTLS(t *testing.T, f *privateSeparatedFixture, ser
 			t.Fatal(err)
 		}
 		applied = result
+		var committed time.Time
+		if err := f.inspect.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&committed); err != nil {
+			t.Fatal(err)
+		}
+		privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+			return !server.RoutingObservedAt().Before(committed), nil
+		})
 	}
 	setPublic(true)
-	response, err := client.Post(endpoint, "text/plain", strings.NewReader("service HTTP certificate"))
+	// exposure changed the policy revision. the earlier certificate cannot
+	// authorize requests with its superseded embedded visitor permission.
+	response, err := client.Get(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, readErr := io.Copy(io.Discard, response.Body)
+	_ = response.Body.Close()
+	if readErr != nil || response.StatusCode != http.StatusForbidden {
+		t.Fatal("stale certificate retained visitor permission", response.StatusCode, readErr)
+	}
+	transport.CloseIdleConnections()
+	currentTLS := transport.TLSClientConfig.Clone()
+	currentTLS.Certificates = []tls.Certificate{issueServiceClientCertificate(t, f, service.Id, device)}
+	transport = &http.Transport{TLSClientConfig: currentTLS, DialContext: workloadPublicEndpointDialer(t, server, service.Endpoint.Port)}
+	t.Cleanup(transport.CloseIdleConnections)
+	client.Transport = transport
+	// observe publisher policy installation with side-effect-free reads before
+	// the single application write; a failed POST is never retried.
+	privateWait(t, 10*time.Second, func(ctx context.Context) (bool, error) {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return false, err
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			return false, err
+		}
+		defer response.Body.Close()
+		_, err = io.Copy(io.Discard, response.Body)
+		return response.StatusCode == http.StatusOK, err
+	})
+	response, err = client.Post(endpoint, "text/plain", strings.NewReader("service HTTP certificate"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	body, err := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if err != nil || response.StatusCode != http.StatusOK || string(body) != "service HTTP certificate" {
+	if err != nil || response.StatusCode != http.StatusOK || string(body) != "service HTTP certificate" ||
+		response.TLS == nil || len(response.TLS.VerifiedChains) == 0 {
 		t.Fatalf("service HTTP default frontend: status=%d body=%q err=%v", response.StatusCode, body, err)
 	}
 	setPublic(false)

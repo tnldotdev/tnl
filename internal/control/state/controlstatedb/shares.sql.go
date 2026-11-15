@@ -324,8 +324,8 @@ func (q *Queries) ListShareServices(ctx context.Context, shareID string) ([]stri
 }
 
 const listShares = `-- name: ListShares :many
-SELECT id, schema_version, preview_id, team_id, guest_id, scope, entry_service_id, control_session_id, issuer_company_context, label, created_by_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id, revoked_by_guest_id FROM control.shares WHERE preview_id=$1 AND id>$2
-ORDER BY id LIMIT 101
+SELECT id, schema_version, preview_id, team_id, guest_id, scope, entry_service_id, control_session_id, issuer_company_context, label, created_by_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id, revoked_by_guest_id FROM control.shares WHERE preview_id=$1 AND id COLLATE "C">$2
+ORDER BY id COLLATE "C" LIMIT 101
 `
 
 type ListSharesParams struct {
@@ -375,8 +375,8 @@ func (q *Queries) ListShares(ctx context.Context, arg ListSharesParams) ([]Contr
 
 const listTeamShares = `-- name: ListTeamShares :many
 SELECT id, schema_version, preview_id, team_id, guest_id, scope, entry_service_id, control_session_id, issuer_company_context, label, created_by_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id, revoked_by_guest_id FROM control.shares WHERE team_id=$1
-    AND created_by_identity_id=$2 AND id>$3
-ORDER BY id LIMIT 101
+    AND created_by_identity_id=$2 AND id COLLATE "C">$3
+ORDER BY id COLLATE "C" LIMIT 101
 `
 
 type ListTeamSharesParams struct {

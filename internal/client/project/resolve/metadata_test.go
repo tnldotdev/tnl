@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
@@ -146,13 +147,35 @@ func TestLocalPublicMetadataUsesExactWorktreeEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolver := NewMetadataResolver(nil, project, nil)
+	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	resolver := NewMetadataResolver(state, project, nil)
 	resolver.Seed(server.URL, &auth.Client{ServerEndpoint: server.URL, Control: control})
-	resolver.contexts[server.URL+"\x00"] = appliedTestContext()
+	current := appliedTestContext()
+	resolver.contexts[server.URL+"\x00"] = current
 	metadata, err := resolver.Generate(t.Context())
 	if err != nil || requests != 1 || len(metadata.Services) != 1 || metadata.Services["api"].URL != "https://api.feature.tnl.dev" || !metadata.Services["api"].Public {
 		t.Fatal("metadata invented a port or included private/database bindings", metadata, requests, err)
 	}
+	domain, err := current.ReadyDomain("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace, _ := current.Namespace(domain)
+	resolver.project.Config.Webhooks = map[string]config.Webhook{"review": {Service: "api", Path: "/hooks/review", Provider: "custom"}}
+	withWebhook, err := resolver.Generate(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin, err := IntegrationOrigin(t.Context(), state, project, server.URL, namespace, "hooks")
+	if err != nil || withWebhook.Services["api"].Namespace != namespace ||
+		withWebhook.Webhooks["review"].Hostname != origin.Hostname || withWebhook.Webhooks["review"].URL != origin.URL+"/hooks/review" {
+		t.Fatal("webhook metadata discarded the publisher's membership namespace", withWebhook.Webhooks, err)
+	}
+	resolver.project.Config.Webhooks = nil
 	public = false
 	metadata, err = resolver.Generate(t.Context())
 	if err != nil || len(metadata.Services) != 0 {
