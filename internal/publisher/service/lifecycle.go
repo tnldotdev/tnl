@@ -403,7 +403,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	state, err := heartbeat(ctx)
 	if err != nil {
-		return errors.Join(ErrPrivateStream, err)
+		return err
 	}
 	if err := bound.PrepareConnectorPolicy(runCtx, config.Control, runToken); err != nil {
 		return err
