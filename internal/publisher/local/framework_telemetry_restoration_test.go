@@ -90,8 +90,9 @@ func newViteCompositionCollector(t *testing.T, capture *viteCompositionTelemetry
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := state.SetTelemetryEnabled(t.Context(), true); err != nil {
-		t.Fatal(err)
+	enabled, err := state.TelemetryEnabled(t.Context())
+	if err != nil || !enabled {
+		t.Fatal("fresh framework client state did not default telemetry on", err)
 	}
 	if err := state.Close(); err != nil {
 		t.Fatal(err)
