@@ -1,5 +1,6 @@
 {
   "extends": "./tsconfig.base.json",
+  "references": [{ "path": "./packages/ts/tsconfig.management.json" }],
   "compilerOptions": {
     "allowImportingTsExtensions": true,
     "declaration": false,

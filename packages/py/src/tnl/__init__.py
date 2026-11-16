@@ -19,7 +19,9 @@ from ._connections import (
     TCPConnectionHandle,
     connect,
 )
+from ._deployments import Client, Deployment, LocalPostgresConnection, create_client
 from ._handler import handler
+from ._management_client import ManagementError, SavedDeployment
 from ._protocol import (
     InvalidResponse,
     NativeUnavailable,
@@ -33,6 +35,12 @@ __all__ = [
     "Connection",
     "ConnectionHandle",
     "ClientFactory",
+    "Client",
+    "Deployment",
+    "LocalPostgresConnection",
+    "create_client",
+    "ManagementError",
+    "SavedDeployment",
     "HTTPConnection",
     "HTTPConnectionHandle",
     "KubernetesConnection",

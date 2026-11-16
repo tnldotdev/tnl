@@ -9,7 +9,13 @@ description = "take a shortcut through the internet."
 readme = "readme.md"
 requires-python = ">=3.12"
 license = "BSD-3-Clause"
-dependencies = ["httpx>=0.28,<0.29", "starlette>=0.45,<2", "uvicorn>=0.40,<1", "websockets>=14,<17"]
+dependencies = [
+  "httpx>=0.28,<0.29",
+  "pydantic>=2.12,<3",
+  "starlette>=0.45,<2",
+  "uvicorn>=0.40,<1",
+  "websockets>=14,<17",
+]
 
 [dependency-groups]
 dev = ["mypy>=1.18,<1.20", "psycopg[binary,pool]>=3.2,<4", "pytest>=8.4,<10", "ruff>=0.14,<0.16"]
@@ -23,6 +29,10 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ANN"]
+
+[tool.ruff.lint.per-file-ignores]
+# stock generated descriptions and annotation style; runtime checks stay strict.
+"src/tnl/_management/*.py" = ["E501", "UP042", "UP045"]
 
 [tool.mypy]
 strict = true

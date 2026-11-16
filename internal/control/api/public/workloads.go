@@ -76,7 +76,7 @@ func (h *handler) CheckWorkloadService(w http.ResponseWriter, r *http.Request, s
 func privateSelectionResponse(selected controlstate.ServiceSelection) controlv1.ServiceSelection {
 	result := controlv1.ServiceSelection{ServiceId: selected.ServiceID, ServiceRunId: selected.ServiceRunID, RunNumber: selected.RunNumber,
 		Subject: visitorsubject.Wire(selected.Subject), ExpiresAt: selected.ExpiresAt,
-		Protocol: controlv1.ServiceProtocol(selected.Protocol), TrustRevision: selected.TrustRevision, Endpoint: endpointResponse(selected.Endpoint)}
+		Protocol: controlv1.ServiceProtocol(selected.Protocol), TrustRevision: selected.TrustRevision, Endpoint: endpointResponse(selected.Endpoint), KubernetesAuth: selected.KubernetesAuth}
 	if selected.PairReady != nil {
 		result.PairReady = &controlv1.ConnectorPeerPairReady{PublisherIdentityId: selected.PairReady.PublisherIdentityID, Relays: connectorPairRelays(selected.PairReady.Relays)}
 	}
