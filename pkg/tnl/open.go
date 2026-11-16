@@ -98,26 +98,26 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 	}()
 	ready := make(chan struct{}, 1)
 	go func() {
-		result := runSDKPublication(runCtx, state, options, adhoc.Options{
-			RequirePostQuantum: options.RequirePostQuantum,
-			ControlURL:         serverURL, HTTPClient: options.HTTPClient, State: profile,
-			Publisher: native, InvocationID: invocationID, ExpiresAt: options.ExpiresAt,
-			Target: "http://" + listener.Addr().String(), AccessMode: options.AccessMode, IP: slices.Clone(options.IP), Limits: limits,
-			OnAllocated: func(service controlv1.Service) error {
-				tunnel.mu.Lock()
-				tunnel.service = cloneService(service)
-				tunnel.mu.Unlock()
-				return nil
-			},
-			Ready: func() error {
-				ready <- struct{}{}
-				return nil
-			},
+		result := runHTTPPublication(runCtx, local, serveDone, func(deadline func() time.Time) error {
+			return runSDKPublication(runCtx, state, options, adhoc.Options{
+				RequirePostQuantum: options.RequirePostQuantum,
+				ControlURL:         serverURL, HTTPClient: options.HTTPClient, State: profile,
+				Publisher: native, InvocationID: invocationID, ExpiresAt: options.ExpiresAt,
+				Target: "http://" + listener.Addr().String(), AccessMode: options.AccessMode, IP: slices.Clone(options.IP), Limits: limits,
+				OnAllocated: func(service controlv1.Service) error {
+					tunnel.mu.Lock()
+					tunnel.service = cloneService(service)
+					tunnel.mu.Unlock()
+					return nil
+				},
+				Ready: func() error {
+					ready <- struct{}{}
+					return nil
+				},
+				ShutdownDeadline: deadline,
+			})
 		})
-		shutdownCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		shutdownErr := shutdownHTTP(shutdownCtx, local, serveDone)
-		stop()
-		result = errors.Join(result, shutdownErr, state.Close())
+		result = errors.Join(result, state.Close())
 		tunnel.mu.Lock()
 		tunnel.err = result
 		tunnel.mu.Unlock()
@@ -140,6 +140,47 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 	case <-ctx.Done():
 		return nil, errors.Join(context.Cause(ctx), tunnel.Close())
 	}
+}
+
+// runHTTPPublication owns the local HTTP listener and one shutdown deadline.
+// native cleanup and HTTP drain spend the same remaining time. the timer closes
+// owned sockets even while publication cleanup is still joining its workers.
+func runHTTPPublication(ctx context.Context, server *http.Server, served <-chan error, publish func(func() time.Time) error) error {
+	started, stopped := make(chan struct{}), make(chan struct{})
+	deadline := sync.OnceValue(func() time.Time {
+		until := time.Now().Add(10 * time.Second)
+		close(started)
+		return until
+	})
+	canceled := make(chan struct{})
+	stopCancellation := context.AfterFunc(ctx, func() { defer close(canceled); deadline() })
+	defer func() {
+		if !stopCancellation() {
+			<-canceled
+		}
+	}()
+	forced := make(chan error, 1)
+	go func() {
+		select {
+		case <-started:
+			timer := time.NewTimer(time.Until(deadline()))
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+				forced <- errors.Join(context.DeadlineExceeded, server.Close())
+			case <-stopped:
+				forced <- nil
+			}
+		case <-stopped:
+			forced <- nil
+		}
+	}()
+	result := publish(deadline)
+	shutdown, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline())
+	result = errors.Join(result, shutdownHTTP(shutdown, server, served))
+	cancel()
+	close(stopped)
+	return errors.Join(result, <-forced)
 }
 
 // shutdownHTTP bounds graceful shutdown, closes remaining connections on timeout,

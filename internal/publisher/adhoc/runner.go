@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
@@ -41,15 +42,22 @@ type Options struct {
 	Limits              applicationlimits.Limits
 	OnAllocated         func(controlv1.Service) error
 	Ready               func() error
+	// shutdown deadline belongs to the caller's whole publication, including
+	// its local listener. nil lets this operation own a ten-second budget.
+	ShutdownDeadline func() time.Time
 }
 
 // Run allocates one ordinary ephemeral service, publishes it, and deletes that
 // exact allocation. ambiguous retries keep the original invocation and declaration.
 func Run(ctx context.Context, options Options) (result error) {
+	deadline := options.ShutdownDeadline
+	if deadline == nil {
+		deadline = sync.OnceValue(func() time.Time { return time.Now().Add(10 * time.Second) })
+	}
 	prepared, err := Prepare(ctx, options)
 	if prepared != nil {
 		defer func() {
-			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			cleanup, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline())
 			defer cancel()
 			result = errors.Join(result, prepared.Cleanup(cleanup))
 		}()
