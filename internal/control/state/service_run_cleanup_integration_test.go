@@ -2,10 +2,12 @@ package state
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
@@ -169,6 +171,80 @@ func TestIntegrationServiceRunTokenCleanupAfterRevocation(t *testing.T) {
 				}
 				if _, err := f.database.StartServiceRun(t.Context(), f.service.ID, p.RunID, p.RunNumber, f.publisher, at); !errors.Is(err, ErrServiceAccess) {
 					t.Fatal("revoked run was resurrected", err)
+				}
+			})
+		}
+	}
+}
+
+func TestIntegrationServiceRunTokenCleanupAfterSuspension(t *testing.T) {
+	for _, phase := range []string{"prepared", "started"} {
+		for _, closeFirst := range []bool{false, true} {
+			name := phase + "/suspension"
+			if closeFirst {
+				name = phase + "/closed-before-suspension"
+			}
+			t.Run(name, func(t *testing.T) {
+				f := preparedCleanupFixture(t)
+				ctx, d, p := t.Context(), f.database, f.prepared
+				if phase == "started" {
+					if _, err := d.StartServiceRun(ctx, f.service.ID, p.RunID, p.RunNumber, f.publisher, f.now); err != nil {
+						t.Fatal(err)
+					}
+				}
+				closedAt := f.now.Add(time.Second)
+				if closeFirst {
+					if err := d.CloseServiceRun(ctx, f.service.ID, p.RunID, p.Token, closedAt); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if _, err := d.SetServiceEnabled(ctx, f.service.ID, f.actor(t), false, closedAt); err != nil {
+					t.Fatal(err)
+				}
+				q := controlstatedb.New(d.pool)
+				before, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: p.RunID, ServiceID: f.service.ID})
+				if err != nil || before.State != "closed" || !before.ClosedAt.Valid {
+					t.Fatal("suspension did not close the run", err)
+				}
+				wrong, _, err := credentials.NewServiceRunToken()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := d.CloseServiceRun(ctx, f.service.ID, p.RunID, wrong.String(), closedAt); !errors.Is(err, ErrServiceAccess) {
+					t.Fatal("suspension bypassed exact-token authentication", err)
+				}
+				for range 2 {
+					if err := d.CloseServiceRun(ctx, f.service.ID, p.RunID, p.Token, closedAt.Add(time.Second)); err != nil {
+						t.Fatal("exact token could not confirm suspended run cleanup", err)
+					}
+				}
+				run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: p.RunID, ServiceID: f.service.ID})
+				if err != nil || !reflect.DeepEqual(run, before) {
+					t.Fatal("cleanup retry changed the terminal run", err)
+				}
+				if _, err := d.StartServiceRun(ctx, f.service.ID, p.RunID, p.RunNumber, f.publisher, closedAt); !errors.Is(err, ErrServiceAccess) {
+					t.Fatal("suspended run was resurrected", err)
+				}
+				if _, err := d.SetServiceEnabled(ctx, f.service.ID, f.actor(t), true, closedAt); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := d.StartServiceRun(ctx, f.service.ID, p.RunID, p.RunNumber, f.publisher, closedAt); !errors.Is(err, ErrServiceAccess) {
+					t.Fatal("enabling the service resurrected its closed run", err)
+				}
+				next, err := d.PrepareServiceRun(ctx, f.service.ID, f.publisher, "after-suspension", closedAt,
+					ServiceRunRequest{Metadata: f.service.ServiceMetadata})
+				if err != nil || next.RunID == p.RunID || next.RunNumber != p.RunNumber+1 {
+					t.Fatal("enabled service did not prepare a fresh run", err)
+				}
+				if err := d.CloseServiceRun(ctx, f.service.ID, next.RunID, p.Token, closedAt); !errors.Is(err, ErrServiceAccess) {
+					t.Fatal("old token closed the replacement", err)
+				}
+				if err := d.CloseServiceRun(ctx, f.service.ID, p.RunID, p.Token, closedAt); err != nil {
+					t.Fatal("late exact cleanup failed after replacement", err)
+				}
+				assertUnstartedCleanupRun(t, f, next.RunID, "prepared")
+				if phase == "prepared" {
+					assertUnstartedCleanupRun(t, f, p.RunID, "closed")
 				}
 			})
 		}

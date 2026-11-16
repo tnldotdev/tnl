@@ -833,10 +833,17 @@ func (d *Database) CloseServiceRun(ctx context.Context, serviceID, runID, token 
 		return err
 	}
 	defer rollback(ctx, tx, "close service run", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, serviceID); err != nil {
+	if err = lockServiceOwner(ctx, tx, serviceID); err != nil {
 		return err
 	}
 	q := controlstatedb.New(tx)
+	service, err := q.LockService(ctx, serviceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrServiceAccess
+	}
+	if err != nil {
+		return err
+	}
 	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: runID, ServiceID: serviceID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrServiceAccess
@@ -875,6 +882,9 @@ func (d *Database) CloseServiceRun(ctx context.Context, serviceID, runID, token 
 		// exact-token retries confirm only this run's terminal state. they
 		// cannot change a replacement or recreate any serving authority.
 		return tx.Commit(ctx)
+	}
+	if !service.Enabled || service.DeletedAt.Valid {
+		return ErrServiceAccess
 	}
 	count, err := closeServiceRun(ctx, q, run, now)
 	if err != nil {
