@@ -605,6 +605,7 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 type cliWorkflow struct {
 	publicIngress                *ingress.Server
 	url                          string
+	identityIssuer               string
 	publicAddress                string
 	databaseURL                  string
 	issuer                       *x509.Certificate
@@ -671,6 +672,7 @@ func newCLIWorkflow(t *testing.T, additionalRoots ...[]byte) *cliWorkflow {
 	provider.TLS = f.tls.Clone()
 	provider.StartTLS()
 	t.Cleanup(provider.Close)
+	f.identityIssuer = provider.URL
 	identityProvider, err := oidc.New(oidc.Config{Issuer: provider.URL, ClientID: "server", ClientSecret: "fixture-secret", Subject: "developer", RedirectURLs: []string{f.url + "/v1/auth/device/callback", f.url + "/v1/browser/callback"}})
 	if err != nil {
 		t.Fatal(err)
