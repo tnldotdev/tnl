@@ -15,6 +15,7 @@ import threading
 import time
 import uuid
 import weakref
+from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -278,11 +279,24 @@ def _prepared(value: object, service: str) -> Connection:
     return connection
 
 
-def _command(binary: Path, *arguments: str, input_value: object = None) -> object:
+def _command(
+    binary: Path,
+    *arguments: str,
+    input_value: object = None,
+    deadline: float | None = None,
+    interrupted: Callable[[], bool] | None = None,
+) -> object:
     """bound both pipes and exit by one deadline; never expose native output."""
     acknowledged = False
     try:
-        deadline = time.monotonic() + _TIMEOUT
+        deadline = min(
+            deadline if deadline is not None else float("inf"), time.monotonic() + _TIMEOUT
+        )
+        if interrupted is not None and interrupted():
+            raise _InterruptedError(
+                "sdk.connection_closed",
+                "native selection was interrupted; remote cleanup is unconfirmed",
+            )
         encoded = b"" if input_value is None else json.dumps(input_value).encode()
         if len(encoded) > _MAX_BYTES:
             raise _error("invalid")
@@ -308,10 +322,17 @@ def _command(binary: Path, *arguments: str, input_value: object = None) -> objec
                         os.set_blocking(child.stdin.fileno(), False)
                         selector.register(child.stdin, selectors.EVENT_WRITE)
                     while selector.get_map():
+                        if interrupted is not None and interrupted():
+                            raise _InterruptedError(
+                                "sdk.connection_closed",
+                                "native selection was interrupted; remote cleanup is unconfirmed",
+                            )
                         remaining = deadline - time.monotonic()
                         if remaining <= 0:
                             raise _error("unavailable")
-                        for key, _ in selector.select(remaining):
+                        for key, _ in selector.select(
+                            min(remaining, 0.05) if interrupted is not None else remaining
+                        ):
                             try:
                                 if key.fileobj is child.stdin:
                                     assert child.stdin is not None
@@ -402,6 +423,27 @@ class _Session:
         self.failure_handle: str | None = None
         self.request_handle: str | None = None
         self.interrupted = False
+        self.shutdown_until: float | None = None
+
+    def fence(self, until: float, seen: set[_Session] | None = None) -> None:
+        if seen is None:
+            seen = set()
+        if self in seen:
+            return
+        seen.add(self)
+        with self.changed:
+            self.closed = True
+            self.shutdown_until = min(self.shutdown_until or float("inf"), until)
+            self.interrupted = True
+            reference = self.request_handle
+            children = self.failed | self.preparations
+            if self.attached is not None:
+                children = children | {self.attached}
+        entry = self.scope.entry
+        if reference is not None and entry is not None:
+            entry[1].interrupt(reference)
+        for child in children:
+            child.fence(until, seen)
 
     def resolve_request(self, target: _Session | None) -> None:
         with self.changed:
@@ -453,40 +495,85 @@ class _Session:
                 children = children | {self.attached}
         return {target for child in children for target in child.cleanup_targets()}
 
-    def close(self) -> None:
+    def close(
+        self,
+        until: float | None = None,
+        attempt: dict[_Session, BaseException | None] | None = None,
+    ) -> None:
         # forked children must not acquire inherited locks or stop a parent owner.
         if self.creator_pid != os.getpid():
             return
-        if not self.cleanup_lock.acquire(timeout=_TIMEOUT):
-            raise _error("unavailable")
+        if attempt is None:
+            attempt = {}
+        if self in attempt:
+            previous = attempt[self]
+            if previous is not None:
+                raise previous
+            return
+        attempt[self] = None
+        deadline = min(until if until is not None else float("inf"), time.monotonic() + 10)
+        self.fence(deadline)
+        assert self.shutdown_until is not None
+        if not self.cleanup_lock.acquire(timeout=max(0, self.shutdown_until - time.monotonic())):
+            error = TimeoutError(
+                "connector shutdown timed out while joining cleanup; remote cleanup is unconfirmed"
+            )
+            attempt[self] = error
+            raise error
         try:
-            self._close()
+            self._close(attempt)
+        except BaseException as cause:
+            attempt[self] = cause
+            raise
         finally:
             self.cleanup_lock.release()
 
-    def _close(self) -> None:
-        deadline = time.monotonic() + _TIMEOUT
+    def _close(self, attempt: dict[_Session, BaseException | None]) -> None:
+        assert self.shutdown_until is not None
+        deadline = self.shutdown_until
         with self.scope.lock, self.changed:
             if self.joined:
                 return
             self.closed = True
         with self.changed:
+            timed_out = False
             while self.pending:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise _error("unavailable")
-                self.changed.wait(remaining)
+                    # fence interrupted every owned request before this join.
+                    # expiry grants no more remote work, but returning before
+                    # those interrupted SDK threads join is not cleanup.
+                    timed_out = True
+                    self.changed.wait()
+                else:
+                    self.changed.wait(remaining)
             if self.joined:
                 return
             selected = self.attached or self
             failed = tuple(self.failed)
             preparations = tuple(self.preparations)
+        failures: list[BaseException] = []
+        if timed_out:
+            failures.append(
+                TimeoutError("connector shutdown timed out; remote cleanup is unconfirmed")
+            )
         for preparation in preparations:
-            preparation.close()
+            try:
+                preparation.close(deadline, attempt)
+            except BaseException as cause:
+                failures.append(cause)
         for session in failed:
-            session.close()
+            try:
+                session.close(deadline, attempt)
+            except BaseException as cause:
+                if not any(value is cause for value in failures):
+                    failures.append(cause)
         if selected is not self:
-            selected.close()
+            try:
+                selected.close(deadline, attempt)
+            except BaseException as cause:
+                if not any(value is cause for value in failures):
+                    failures.append(cause)
         elif self.scope.mounted is None:
             reference = (
                 ["--request-handle", self.request_handle]
@@ -499,19 +586,35 @@ class _Session:
             )
             if reference:
                 assert self.scope.registry is not None
-                self.scope.check_stopped(
-                    _command(
-                        self.scope.binary(),
-                        "sdk-close",
-                        "--registry",
-                        self.scope.registry,
-                        "--parent-pid",
-                        str(os.getpid()),
-                        *reference,
+                try:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            "connector shutdown timed out; remote cleanup is unconfirmed"
+                        )
+                    self.scope.check_stopped(
+                        _command(
+                            self.scope.binary(),
+                            "sdk-close",
+                            "--registry",
+                            self.scope.registry,
+                            "--parent-pid",
+                            str(os.getpid()),
+                            *reference,
+                            "--shutdown-deadline",
+                            datetime.fromtimestamp(
+                                time.time() + max(0, deadline - time.monotonic()), UTC
+                            ).isoformat(),
+                            deadline=deadline,
+                        )
                     )
-                )
-                if self.request_handle is not None:
-                    self.resolve_request(None)
+                    if self.request_handle is not None:
+                        self.resolve_request(None)
+                except BaseException as cause:
+                    failures.append(cause)
+        if len(failures) == 1:
+            raise failures[0]
+        if failures:
+            raise BaseExceptionGroup("connector cleanup failed", failures)
         with self.changed:
             if self.ipc is not None:
                 self.ipc.close()
@@ -656,6 +759,8 @@ class _Scope:
             if requester is not None:
                 with requester.changed:
                     requester.failed.add(request)
+                    if requester.closed:
+                        request.interrupted = True
         if leading:
             received = False
             try:
@@ -786,7 +891,12 @@ class _Scope:
         arguments = [*arguments, "--sdk-request-handle", request_handle]
         entry = self.entry
         if entry is None:
-            raw = _command(binary, *arguments, input_value=private_input)
+            raw = _command(
+                binary,
+                *arguments,
+                input_value=private_input,
+                interrupted=lambda: request.interrupted,
+            )
         else:
             try:
                 raw = entry[1].prepare(
@@ -802,11 +912,17 @@ class _Scope:
                     ),
                     requested_at=requested_at,
                     request_handle=request_handle,
+                    interrupted=lambda: request.interrupted,
                 )
             except TnlError as original:
                 try:
                     raw = _command(
-                        binary, *arguments, "--recover-handle", entry[0], input_value=private_input
+                        binary,
+                        *arguments,
+                        "--recover-handle",
+                        entry[0],
+                        input_value=private_input,
+                        interrupted=lambda: request.interrupted,
                     )
                 except (_OwnerPreparationFailure, _RetainedStartFailure):
                     # the requester must retain the replacement's cleanup reference.
@@ -913,9 +1029,14 @@ class _Scope:
                 atexit.unregister(self._cleanup)
                 self.registry = None
 
-    def stop(self) -> None:
+    def stop(self, until: float | None = None) -> None:
         if self.creator_pid != os.getpid():
             return
+        deadline = min(until if until is not None else float("inf"), time.monotonic() + 10)
+        with self.lock:
+            sessions = tuple(self.request_handles.values())
+        for session in sessions:
+            session.fence(deadline)
         if self.mounted is not None and self.selected.ipc is not None:
             self.selected.ipc.close()
         if self.registry is not None:
@@ -927,6 +1048,11 @@ class _Scope:
                     self.registry,
                     "--parent-pid",
                     str(os.getpid()),
+                    "--shutdown-deadline",
+                    datetime.fromtimestamp(
+                        time.time() + max(0, deadline - time.monotonic()), UTC
+                    ).isoformat(),
+                    deadline=deadline,
                 ),
                 {"schema", "state"},
             )
@@ -1036,9 +1162,9 @@ class ConnectionAcquisition:
             self._lifetime.preparations.remove(preparation)
         return connection
 
-    def close(self) -> None:
+    def close(self, until: float | None = None) -> None:
         """join this acquisition's selected work; leave borrowed owners running."""
-        self._lifetime.close()
+        self._lifetime.close(until)
 
-    async def aclose(self) -> None:
-        await asyncio.to_thread(self.close)
+    async def aclose(self, until: float | None = None) -> None:
+        await asyncio.to_thread(self.close, until)

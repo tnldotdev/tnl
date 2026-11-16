@@ -8,6 +8,10 @@ schemas:
       registration_id: { type: string, maxLength: 128, x-go-name: RegistrationID }
       owner: { type: string, pattern: "^[a-f0-9]{32}$" }
       target: { type: string, maxLength: 4096, x-go-type-skip-optional-pointer: true }
+      shutdown_deadline:
+        type: string
+        format: date-time
+        description: Original caller shutdown deadline. Valid only for unregister; the native owner may shorten it but never grants more than ten seconds.
   Lease:
     type: object
     additionalProperties: false

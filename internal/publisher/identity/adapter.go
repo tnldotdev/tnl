@@ -41,6 +41,14 @@ type Native struct {
 	private              ed25519.PrivateKey
 	traffic              *trafficlimits.Selection
 	runtime              *processidentity.Owner
+	shutdownDeadline     func() time.Time
+}
+
+// WithShutdownDeadline binds allocation rollback to its composing operation.
+// configure it before the allocation adapter starts work.
+func (n *Native) WithShutdownDeadline(deadline func() time.Time) *Native {
+	n.shutdownDeadline = deadline
+	return n
 }
 
 func NewNative(control NativeControl, authority AssertionExchanger, identity authorityv1.PublisherEnrollmentResult, private ed25519.PrivateKey) (*Native, error) {

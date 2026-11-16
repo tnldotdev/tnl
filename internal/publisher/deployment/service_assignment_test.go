@@ -383,7 +383,7 @@ func testHTTPAssignment(t *testing.T, restricted bool, browserLogin *bool) {
 				default:
 				}
 			}
-		})
+		}, nil)
 	}()
 	defer func() { cancel(); <-done }()
 	select {

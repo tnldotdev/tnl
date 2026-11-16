@@ -186,7 +186,7 @@ func TestIntegrationDeploymentHTTPWorkerSurvivesAssignmentPolls(t *testing.T) {
 	events, done := make(chan event, 16), make(chan error, 1)
 	go func() {
 		done <- (publisherdeployment.Runtime{Control: poll, Member: initial.Member, Private: replica.private, PollInterval: time.Millisecond,
-			Publish: func(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
+			Publish: func(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, health func(bool), _ func() time.Time) error {
 				health(true)
 				events <- event{true, assignment}
 				<-ctx.Done()

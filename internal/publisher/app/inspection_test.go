@@ -31,7 +31,12 @@ func TestAppSummaryObservationStoresHTTPAndSQL(t *testing.T) {
 	observe(inspection.Summary{Protocol: inspection.HTTP, ReceivedAt: now, Method: "GET", Path: "/health", Status: 503, Result: inspection.ResultError, Duration: 2500 * time.Microsecond, Origin: "local_service"})
 	observe(inspection.Summary{Protocol: inspection.HTTP, ReceivedAt: now.Add(500 * time.Microsecond), Method: "GET", Path: "/interrupted-response", Status: 200, Result: inspection.ResultError, Origin: "local_service"})
 	observe(inspection.Summary{Protocol: inspection.MySQL, ReceivedAt: now.Add(time.Second), Operation: inspection.OperationExecute, Result: inspection.ResultError, SQLState: "HY000", MySQLErrorCode: 1045, Rows: 1, ResultSets: 2, Duration: 3 * time.Millisecond, Origin: "tnl"})
-	recorder.Close()
+	if err := recorder.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// a late application response must not reopen the recorder or panic after
+	// its owner's forced shutdown has already joined inspection persistence.
+	observe(inspection.Summary{Protocol: inspection.HTTP, ReceivedAt: now, Method: "GET", Path: "/late", Status: 200, Result: inspection.ResultOK, Origin: "local_service"})
 	items, err := database.ListInspections(t.Context(), clientstate.InspectionFilter{Project: root, SharedProject: root, Limit: 10})
 	if err != nil {
 		t.Fatal(err)

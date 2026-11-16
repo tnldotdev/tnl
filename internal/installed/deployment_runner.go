@@ -27,7 +27,8 @@ type DeploymentRunner struct {
 	Discovery  publisherdiscovery.Provider
 	Deployment *controlv1.PublisherDeploymentReport
 	// Startup bounds finite setup only, never a deployment's lease lifetime.
-	Startup *OperationLimiter
+	Startup          *OperationLimiter
+	ShutdownDeadline func() time.Time
 }
 
 type deploymentRunnerScope struct {
@@ -37,6 +38,9 @@ type deploymentRunnerScope struct {
 }
 
 func (r DeploymentRunner) Serve(ctx context.Context, job Job, profile *clientstate.Store, private ed25519.PrivateKey, observe func(int64, bool) error) (result error) {
+	var joinShutdown func()
+	r.ShutdownDeadline, joinShutdown = installedShutdown(ctx, 10*time.Second, r.ShutdownDeadline)
+	defer joinShutdown()
 	if validateJob(&job) != nil || job.Kind != KindDeployment || profile == nil || r.Discovery == nil || publisherprovenance.Validate(r.Deployment) != nil || r.Deployment != nil && r.Deployment.Instance != job.DeploymentInstance {
 		return ErrScope
 	}
@@ -109,7 +113,7 @@ func (r DeploymentRunner) Serve(ctx context.Context, job Job, profile *clientsta
 		ctx = observability.Independent(setup)
 		cancelSetup()
 		release()
-		err := (publisherdeployment.Runtime{Control: client, Member: member, Private: private, Deployment: r.Deployment, Observe: observe, MemberChanged: func(current controlv1.DeploymentPublisherIdentity) error {
+		err := (publisherdeployment.Runtime{Control: client, Member: member, Private: private, Deployment: r.Deployment, ShutdownDeadline: r.ShutdownDeadline, Observe: observe, MemberChanged: func(current controlv1.DeploymentPublisherIdentity) error {
 			value, err := credentialfile.NewDeployment(job.Server, job.DeploymentInstance, current, private)
 			if err != nil {
 				return err

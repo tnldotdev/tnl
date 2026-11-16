@@ -239,6 +239,7 @@ func (o Operations) ServeOwner(ctx context.Context, options OwnerServeOptions, i
 	}
 	backend := &connectorConnectionBackend{openSession: o.OpenSession, project: project, scope: scope, stateDir: options.StateDir, assertion: request.Assertion, directory: options.OwnerDirectory, runnerTemp: options.RunnerTemp, parentPID: options.ParentPID}
 	backend.telemetry = o.Telemetry
+	backend.shutdownDeadline = o.ShutdownDeadline
 	if request.Deployment != nil {
 		backend.deployment, err = newDeploymentConnection(*request.Deployment, nil)
 		if err != nil {

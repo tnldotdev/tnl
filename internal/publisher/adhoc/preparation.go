@@ -70,6 +70,7 @@ func Prepare(ctx context.Context, options Options) (*Prepared, error) {
 	}
 	// capture cleanup before the first attempt. Native retains observed or
 	// uncertain ownership and is the only allocation recovery/deletion authority.
+	native.WithShutdownDeadline(options.ShutdownDeadline)
 	prepared := &Prepared{native: native, request: body}
 	saved, err := allocateService(ctx, native, body)
 	if err != nil {
@@ -114,6 +115,7 @@ func Prepare(ctx context.Context, options Options) (*Prepared, error) {
 		Telemetry: options.Telemetry, Control: native, State: options.State, Access: native.Access,
 		PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
 		ServiceID: publication.Id, Target: target, Metadata: publisheridentity.ServiceMetadata(publication), Ready: options.Ready,
+		ShutdownDeadline: options.ShutdownDeadline,
 	}
 	return prepared, nil
 }

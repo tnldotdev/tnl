@@ -268,6 +268,7 @@ export function createClient<const Services extends ServiceFacts = Record<never,
       const publicationLifetime = new AbortController();
       let closed = false;
       let closing: Promise<void> | undefined;
+      let shutdownUntil: number | undefined;
       const validate = (service: string) => {
         if (closed) throw closedError;
         const protocol = protocols.get(service);
@@ -452,6 +453,10 @@ export function createClient<const Services extends ServiceFacts = Record<never,
                 ? {
                     kind: "local",
                     environment,
+                    shutdownDeadline: () =>
+                      shutdownUntil === undefined
+                        ? undefined
+                        : new Date(shutdownUntil).toISOString(),
                     retainCleanup: (cleanup) => {
                       failedPublications.add(cleanup);
                     },
@@ -463,6 +468,10 @@ export function createClient<const Services extends ServiceFacts = Record<never,
                     name,
                     credential: token ?? "",
                     environment,
+                    shutdownDeadline: () =>
+                      shutdownUntil === undefined
+                        ? undefined
+                        : new Date(shutdownUntil).toISOString(),
                     retainCleanup: (cleanup) => {
                       failedPublications.add(cleanup);
                     },
@@ -546,10 +555,14 @@ export function createClient<const Services extends ServiceFacts = Record<never,
         ) {
           validate(service);
           if (factories.size >= 64) throw new TnlError("sdk.client_capacity");
-          const factory = clientFactory(async () => {
-            const value = await acquire(service);
-            return { key: value.key, connection: value.connection };
-          }, driver);
+          const factory = clientFactory(
+            async () => {
+              const value = await acquire(service);
+              return { key: value.key, connection: value.connection };
+            },
+            driver,
+            () => shutdownUntil,
+          );
           const close = factory.close.bind(factory);
           factory.close = async () => {
             await close();
@@ -560,6 +573,7 @@ export function createClient<const Services extends ServiceFacts = Record<never,
         },
         close(): Promise<void> {
           closed = true;
+          shutdownUntil ??= Date.now() + 10_000;
           closing ??= (async () => {
             httpLifetime.abort(closedError);
             const stoppingPublications = [...publications].map((publication) =>
@@ -585,6 +599,7 @@ export function createClient<const Services extends ServiceFacts = Record<never,
               }),
               ...requests,
               ...[...httpFetches.values()].map((value) => value.close()),
+              connector?.close(shutdownUntil, closedError),
             ]);
             const errors = [
               ...new Set(
@@ -595,11 +610,6 @@ export function createClient<const Services extends ServiceFacts = Record<never,
                 ),
               ),
             ];
-            try {
-              await connector?.close();
-            } catch (error) {
-              errors.push(error);
-            }
             if (errors.length === 1) throw errors[0];
             if (errors.length > 1) throw new AggregateError(errors, "deployment cleanup failed");
           })().finally(() => {

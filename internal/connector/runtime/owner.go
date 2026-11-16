@@ -29,11 +29,35 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 	}
 	lifetime, cancel := context.WithCancel(observability.Independent(ctx))
 	defer cancel()
+	var shutdownMu sync.Mutex
+	var shutdownUntil time.Time
+	deadline := func() time.Time {
+		shutdownMu.Lock()
+		defer shutdownMu.Unlock()
+		if shutdownUntil.IsZero() {
+			var outer time.Time
+			if config.ShutdownDeadline != nil {
+				outer = config.ShutdownDeadline()
+			}
+			shutdownUntil = time.Now().Add(10 * time.Second)
+			if !outer.IsZero() && outer.Before(shutdownUntil) {
+				shutdownUntil = outer
+			}
+		}
+		return shutdownUntil
+	}
+	stopped := make(chan struct{})
+	stopDeadline := context.AfterFunc(lifetime, func() { defer close(stopped); deadline() })
+	defer func() {
+		if !stopDeadline() {
+			<-stopped
+		}
+	}()
 	var closeOnce sync.Once
 	var closeError error
 	closeBackend := func() {
 		closeOnce.Do(func() {
-			cleanup, done := context.WithTimeout(observability.Independent(context.WithoutCancel(ctx)), 15*time.Second)
+			cleanup, done := context.WithDeadline(observability.Independent(context.WithoutCancel(ctx)), deadline())
 			defer done()
 			cleanup, finish := observability.ClientOperation(cleanup, "connector.connections.shutdown")
 			closeError = backend.Close(cleanup)
@@ -118,6 +142,14 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 		}
 		operation := strings.TrimPrefix(r.URL.Path, "/v1/connections/")
 		if operation == "stop" {
+			deadline()
+			if request.ShutdownDeadline != nil {
+				shutdownMu.Lock()
+				if request.ShutdownDeadline.Before(shutdownUntil) {
+					shutdownUntil = *request.ShutdownDeadline
+				}
+				shutdownMu.Unlock()
+			}
 			defer cancel()
 			_ = json.NewEncoder(w).Encode(map[string]any{"schema": Schema, "state": "stopping"})
 			return
@@ -250,14 +282,21 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 	var serveError error
 	go func() { serveError = server.Serve(listener); close(serverDone) }()
 	defer func() {
+		until := deadline()
 		cancel()
-		shutdown, done := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = server.Shutdown(shutdown)
-		done()
-		_ = server.Close()
+		shutdown, done := context.WithDeadline(context.Background(), until)
+		defer done()
+		forced := make(chan error, 1)
+		stopForce := context.AfterFunc(shutdown, func() { forced <- errors.Join(context.DeadlineExceeded, server.Close()) })
+		_ = listener.Close()
 		closeBackend()
+		result = errors.Join(result, server.Shutdown(shutdown))
+		if !stopForce() {
+			result = errors.Join(result, <-forced)
+		}
+		result = errors.Join(result, server.Close())
 		<-serverDone
-		if !errors.Is(serveError, http.ErrServerClosed) {
+		if !failure.Only(serveError, http.ErrServerClosed) && !failure.Only(serveError, net.ErrClosed) {
 			result = errors.Join(result, serveError)
 		}
 	}()
@@ -272,8 +311,8 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 	}
 	renew := time.NewTicker(30 * time.Second)
 	defer renew.Stop()
-	deadline := time.NewTimer(time.Until(localDeadline))
-	defer deadline.Stop()
+	expiration := time.NewTimer(time.Until(localDeadline))
+	defer expiration.Stop()
 	updateDeadline := func(next time.Time) error {
 		stateMu.Lock()
 		defer stateMu.Unlock()
@@ -290,7 +329,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 			handle = nextHandle
 		}
 		localDeadline, expires, state.ExpiresAt = shifted, next, next
-		deadline.Reset(time.Until(localDeadline))
+		expiration.Reset(time.Until(localDeadline))
 		return nil
 	}
 	for {
@@ -301,7 +340,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 			return ErrUnavailable
 		case err := <-config.Done:
 			return errors.Join(ErrUnavailable, err)
-		case <-deadline.C:
+		case <-expiration.C:
 			return ErrExpired
 		case <-deadlineChanged:
 			if !persistent {

@@ -27,7 +27,7 @@ def test_close_before_first_handle_joins_native_and_retains_failed_stop(
     stopped_registries: list[str] = []
     owner = str(tmp_path / "owner" / "handle.json")
 
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
+    def command(binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         nonlocal stop_attempts
         if args[0] == "sdk-prepare":
             starting.set()
@@ -35,7 +35,8 @@ def test_close_before_first_handle_joins_native_and_retains_failed_stop(
             raise _connections._OwnerPreparationFailure(
                 tnl.TnlError("sdk.connection_unavailable", "initial service failed"), owner
             )
-        assert args[0] == "sdk-close" and args[-2:] == ("--handle", owner)
+        assert args[0] == "sdk-close" and args[args.index("--handle") + 1] == owner
+        assert "--shutdown-deadline" in args and isinstance(budget.get("deadline"), float)
         stopped_registries.append(args[args.index("--registry") + 1])
         stopping.set()
         stop_attempts += 1
@@ -94,7 +95,7 @@ def test_known_owner_is_retained_if_opening_its_ipc_client_fails(
         def __init__(self, path: str) -> None:
             raise failure
 
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
+    def command(binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         if args[0] == "sdk-prepare":
             return {
                 "schema": 1,
@@ -105,7 +106,8 @@ def test_known_owner_is_retained_if_opening_its_ipc_client_fails(
                 },
                 "prepared": {},
             }
-        assert args[0] == "sdk-close" and args[-2:] == ("--handle", owner)
+        assert args[0] == "sdk-close" and args[args.index("--handle") + 1] == owner
+        assert "--shutdown-deadline" in args and isinstance(budget.get("deadline"), float)
         closed.append(owner)
         return {"schema": 1, "state": "stopped"}
 

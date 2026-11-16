@@ -147,7 +147,11 @@ func RunServiceCLI(ctx context.Context, tunnel *clientstate.Tunnel, saved contro
 		if current.Draining {
 			if !draining {
 				draining = true
-				finish, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				until := time.Now().Add(10 * time.Second)
+				if cfg.ShutdownDeadline != nil {
+					until = cfg.ShutdownDeadline()
+				}
+				finish, stop := context.WithDeadline(context.WithoutCancel(ctx), until)
 				err := tunnel.SetDraining(finish)
 				stop()
 				record(errors.Join(err, output.draining()))

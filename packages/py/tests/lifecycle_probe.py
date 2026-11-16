@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -191,9 +192,17 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
     status = cast(dict[str, object], json.loads(process.stdout.readline()))
     original_command = _connections._command
 
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
+    def command(
+        binary: Path,
+        *args: str,
+        input_value: object = None,
+        deadline: float | None = None,
+        interrupted: Callable[[], bool] | None = None,
+    ) -> object:
         if args[0] == "sdk-close":
-            return original_command(binary, "stop", "--handle", args[-1])
+            return original_command(
+                binary, "stop", "--handle", args[args.index("--handle") + 1], deadline=deadline
+            )
         if args[0] == "sdk-prepare":
             return {
                 "schema": 1,
@@ -209,7 +218,9 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
                     "database",
                 ),
             }
-        return original_command(binary, *args, input_value=input_value)
+        return original_command(
+            binary, *args, input_value=input_value, deadline=deadline, interrupted=interrupted
+        )
 
     _connections._command = command
     deployment = tnl.create_client(

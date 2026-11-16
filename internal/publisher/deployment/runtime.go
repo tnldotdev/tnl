@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
@@ -28,14 +29,15 @@ type Control interface {
 }
 
 type Runtime struct {
-	Control       Control
-	Member        controlv1.DeploymentPublisherIdentity
-	Private       ed25519.PrivateKey
-	Publish       func(context.Context, controlv1.DeploymentPublisherServiceAssignment, func(bool)) error
-	Observe       func(int64, bool) error
-	MemberChanged func(controlv1.DeploymentPublisherIdentity) error
-	PollInterval  time.Duration
-	Deployment    *controlv1.PublisherDeploymentReport
+	Control          Control
+	Member           controlv1.DeploymentPublisherIdentity
+	Private          ed25519.PrivateKey
+	Publish          func(context.Context, controlv1.DeploymentPublisherServiceAssignment, func(bool), func() time.Time) error
+	Observe          func(int64, bool) error
+	MemberChanged    func(controlv1.DeploymentPublisherIdentity) error
+	PollInterval     time.Duration
+	Deployment       *controlv1.PublisherDeploymentReport
+	ShutdownDeadline func() time.Time
 }
 
 func (Runtime) String() string   { return "deployment runtime" }
@@ -63,12 +65,33 @@ func (r Runtime) Serve(ctx context.Context) (result error) {
 		return ErrAssignment
 	}
 	workers := map[string]*running{}
+	runtimeContext := ctx
+	var stopping atomic.Bool
+	parentDeadline := r.ShutdownDeadline
+	r.ShutdownDeadline = sync.OnceValue(func() time.Time {
+		var parent time.Time
+		if parentDeadline != nil {
+			parent = parentDeadline()
+		}
+		until := time.Now().Add(10 * time.Second)
+		if !parent.IsZero() && parent.Before(until) {
+			until = parent
+		}
+		return until
+	})
+	stopped := make(chan struct{})
+	stopDeadline := context.AfterFunc(ctx, func() { defer close(stopped); r.ShutdownDeadline() })
+	defer func() {
+		if !stopDeadline() {
+			<-stopped
+		}
+	}()
 	owner, err := processidentity.New(r.Control, r.Control.ServerURL(), r.Member.PublisherIdentityId, r.Member.KeyId, r.Member.DeploymentId, r.Private, r.Deployment)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), r.ShutdownDeadline())
 		defer cancel()
 		finish, end := observability.PublisherOperation(observability.Independent(finish), "deployment_shutdown")
 		err := owner.Stop(finish)
@@ -89,6 +112,8 @@ func (r Runtime) Serve(ctx context.Context) (result error) {
 		clear(workers)
 	}
 	defer func() {
+		stopping.Store(true)
+		r.ShutdownDeadline()
 		stop()
 		result = errors.Join(result, joinedErr)
 	}()
@@ -203,11 +228,22 @@ func (r Runtime) Serve(ctx context.Context) (result error) {
 					}
 					workerCtx, cancel := context.WithCancel(observability.Independent(observability.NarrowIdentity(poll, observability.Identity{ServiceID: service.ServiceId})))
 					w := &running{definition: definitions[service.Service], cancel: cancel, done: make(chan struct{})}
+					until := sync.OnceValue(func() time.Time {
+						var parent time.Time
+						if runtimeContext.Err() != nil || stopping.Load() {
+							parent = r.ShutdownDeadline()
+						}
+						deadline := time.Now().Add(10 * time.Second)
+						if !parent.IsZero() && parent.Before(deadline) {
+							deadline = parent
+						}
+						return deadline
+					})
 					w.lease = time.AfterFunc(time.Until(lease.ExpiresAt), cancel)
 					workers[service.Service] = w
 					go func() {
 						defer close(w.done)
-						w.err = r.Publish(workerCtx, service, func(healthy bool) { mu.Lock(); w.healthy = healthy; mu.Unlock() })
+						w.err = r.Publish(workerCtx, service, func(healthy bool) { mu.Lock(); w.healthy = healthy; mu.Unlock() }, until)
 						// only the worker's actual stop can explain cancellation;
 						// a joined independent failure must survive that stop.
 						if stopped := workerCtx.Err(); stopped != nil && failure.Only(w.err, stopped) {

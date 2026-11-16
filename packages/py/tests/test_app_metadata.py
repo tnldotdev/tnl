@@ -264,7 +264,10 @@ def test_rejects_invalid_native_assignment(
         assert caught.value.code == "sdk.response_invalid"
         assert str(caught.value) == "the local publisher returned an invalid response"
         assert native.operations == ["prepare"]
-        await publication.close()
+        with pytest.raises(tnl.TnlError, match="cleanup could not be confirmed") as cleanup:
+            await publication.close()
+        assert cleanup.value.code == "sdk.dev_unavailable"
+        assert native.operations == ["prepare"]
 
     asyncio.run(scenario())
 
@@ -365,6 +368,10 @@ def test_native_metadata_registration_and_cleanup(
                 if omit_service:
                     with pytest.raises(InvalidResponse):
                         await tnl.prepare(directory=tmp_path, service="web")
+                    status = await NativeRuntime().request(endpoint, "status")
+                    assert isinstance(status, dict)
+                    assert status["services"][0]["registered"] is False
+                    assert not status["services"][0].get("registration_id")
                     return
                 publication = await tnl.prepare(directory=tmp_path, service="web")
                 try:

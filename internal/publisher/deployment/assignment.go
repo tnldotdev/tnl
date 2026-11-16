@@ -3,6 +3,7 @@ package deployment
 import (
 	"context"
 	"crypto/ed25519"
+	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
@@ -40,7 +41,7 @@ type ServerDiscovery interface {
 func (AssignmentPublisher) String() string   { return "deployment publications" }
 func (AssignmentPublisher) GoString() string { return "deployment publications" }
 
-func (p AssignmentPublisher) Publish(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
+func (p AssignmentPublisher) Publish(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, health func(bool), deadline func() time.Time) error {
 	if assignment.Configuration.Protocol == nil || !assignment.Configuration.Protocol.Valid() || assignment.Configuration.Target == "app" || assignment.TrustRevision < 1 || p.Member.DeploymentId == "" || p.Member.DeploymentName == "" || p.Member.DeploymentName == "local" {
 		return ErrAssignment
 	}
@@ -82,7 +83,7 @@ func (p AssignmentPublisher) Publish(ctx context.Context, assignment controlv1.D
 	if health != nil {
 		defer health(false)
 	}
-	run := publisherservice.RunConfig{Telemetry: p.Telemetry, Control: native, State: p.State, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Metadata: publisheridentity.ServiceMetadata(service), BrowserLoginAvailable: browserLogin, ObserveReadiness: func(status publisherservice.RunStatus) {
+	run := publisherservice.RunConfig{Telemetry: p.Telemetry, Control: native, State: p.State, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, ShutdownDeadline: deadline, Metadata: publisheridentity.ServiceMetadata(service), BrowserLoginAvailable: browserLogin, ObserveReadiness: func(status publisherservice.RunStatus) {
 		if health != nil {
 			health(status.Ready)
 		}

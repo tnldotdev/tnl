@@ -93,7 +93,7 @@ func guestForDemoWithControl(
 // trial management owns allocation and deletion; the returned native identity
 // can only publish its exact service. cleanup remains usable after an uncertain
 // allocation error and never substitutes another request or extends trial time.
-func prepareGuestDemoService(ctx context.Context, state *clientstate.Database, server string, guest clientstate.GuestSession, flags PublicOptions, target string) (*publisheridentity.Native, controlv1.Service, func() error, error) {
+func prepareGuestDemoService(ctx context.Context, state *clientstate.Database, server string, guest clientstate.GuestSession, flags PublicOptions, target string, deadline func() time.Time) (*publisheridentity.Native, controlv1.Service, func() error, error) {
 	if !opaqueid.Valid(guest.GuestID, opaqueid.GuestPrefix) || !guest.ExpiresAt.After(time.Now()) {
 		return nil, controlv1.Service{}, nil, publisheridentity.ErrScope
 	}
@@ -119,7 +119,7 @@ func prepareGuestDemoService(ctx context.Context, state *clientstate.Database, s
 	body := controlv1.AllocateGuestDemoServiceRequest{Target: target, RequirePostQuantum: &pq}
 	allocation := &guestServiceAllocation{control: bootstrap, guest: clientstate.GuestSession{GuestID: guest.GuestID, ExpiresAt: guest.ExpiresAt}, request: body, key: key}
 	cleanup := func() error {
-		finish, stop := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		finish, stop := context.WithDeadline(context.WithoutCancel(ctx), deadline())
 		defer stop()
 		return allocation.cleanup(finish)
 	}

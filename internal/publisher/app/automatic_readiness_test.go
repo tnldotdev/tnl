@@ -537,7 +537,7 @@ func TestAutomaticReadinessOperationReturnJoinsBeforeCleanup(t *testing.T) {
 			close(joined)
 			return Observation{}
 		}
-		cfg.Cleanup = func() error {
+		cfg.Cleanup = func(context.Context) error {
 			select {
 			case <-joined:
 			default:

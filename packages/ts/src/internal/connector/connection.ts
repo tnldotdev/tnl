@@ -8,7 +8,7 @@ import { TnlCleanupError, TnlError } from "../../errors.js";
 import type { TnlConnectionRegistry, TnlFetch } from "../../project.js";
 import { ownerIPC, type OwnerIPC } from "./connection_ipc.js";
 import type { NativeScope } from "./context.js";
-import { cancellable } from "./cancellation.js";
+import { cancellable, shutdownBudget } from "./cancellation.js";
 import type { ConnectionSnapshot } from "./snapshot.js";
 import * as z from "zod";
 import { parseValue } from "../validation.js";
@@ -75,6 +75,7 @@ async function machineUntraced(
   signal?: AbortSignal,
   input?: unknown,
 ): Promise<unknown> {
+  let exited: Promise<void> | undefined;
   try {
     const stdout = await new Promise<string>((resolve, reject) => {
       const child = execFile(
@@ -86,12 +87,16 @@ async function machineUntraced(
           encoding: "utf8",
           env: { ...launchEnvironment(), ...scope.environment },
           ...(signal === undefined ? {} : { signal }),
+          killSignal: "SIGKILL",
         },
         (error, stdout, stderr) =>
           error === null
             ? resolve(stdout)
             : reject(Object.assign(error, stderr === undefined ? {} : { stderr })),
       );
+      exited = new Promise<void>((resolve) => {
+        child.once("close", () => resolve());
+      });
       child.stdin?.on?.("error", () => {
         /* execFile reports the process failure without exposing pipe data. */
       });
@@ -100,8 +105,19 @@ async function machineUntraced(
     const value: unknown = JSON.parse(stdout);
     return value;
   } catch (cause) {
-    if (signal?.aborted) throw signal.reason;
+    if (
+      signal?.aborted &&
+      (cause === signal.reason ||
+        (cause instanceof Error &&
+          cause.name === "AbortError" &&
+          "code" in cause &&
+          cause.code === "ABORT_ERR" &&
+          cause.cause === signal.reason))
+    )
+      throw signal.reason;
     throw machineError(cause, args[0]);
+  } finally {
+    await exited;
   }
 }
 
@@ -110,28 +126,63 @@ async function nativeScope(captured: {
   directory: string;
   environment: NativeScope["environment"];
 }): Promise<NativeScope> {
+  const lifetime = new AbortController();
   const scope: NativeScope = {
     ...captured,
     registry: await mkdtemp(path.join(await realpath(tmpdir()), "tnl-sdk-")),
     open: ownerIPC,
+    signal: lifetime.signal,
     // keep native error classification with the copy that owns this IPC.
     select: (...args) => requestSelection(scope, ...args),
     workload: (name, request) => requestWorkload(scope, name, request),
   };
+  let shutdownUntil: number | undefined;
+  let stopReason = new TnlError("sdk.client_closed");
   const cleanup = independent("sdk.app.cleanup", async () => {
-    await machine(scope, [
-      "sdk-stop",
-      "--registry",
-      scope.registry,
-      "--parent-pid",
-      String(process.pid),
-    ]);
-    if (scope.entry !== undefined) (await scope.entry.ipc).close();
+    const budget = shutdownBudget(shutdownUntil);
+    shutdownUntil = budget.until;
+    lifetime.abort(stopReason);
+    const failures: unknown[] = [];
+    let closedEntry: NativeScope["entry"];
+    const closeIPC = async () => {
+      if (scope.entry === undefined || scope.entry === closedEntry) return;
+      closedEntry = scope.entry;
+      try {
+        (await closedEntry.ipc).close(stopReason);
+      } catch (cause) {
+        failures.push(cause);
+      }
+    };
+    try {
+      await closeIPC();
+      await machine(
+        scope,
+        [
+          "sdk-stop",
+          "--registry",
+          scope.registry,
+          "--parent-pid",
+          String(process.pid),
+          "--shutdown-deadline",
+          new Date(budget.until).toISOString(),
+        ],
+        budget.signal,
+      );
+    } catch (cause) {
+      failures.push(cause);
+    } finally {
+      budget.finish();
+      await closeIPC();
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, "native and IPC cleanup failed");
   });
   const beforeExit = () => {
     void cleanup().catch(() => {});
   };
-  scope.close = async () => {
+  scope.close = async (until, reason) => {
+    if (reason !== undefined) stopReason = reason;
+    shutdownUntil = Math.min(shutdownUntil ?? Infinity, until ?? Infinity);
     await cleanup();
     process.removeListener("beforeExit", beforeExit);
   };
@@ -149,7 +200,7 @@ async function requestSelection(
 ): Promise<unknown> {
   const entry = scope.entry;
   let raw: unknown;
-  if (entry === undefined) raw = await machine(scope, args, undefined, input);
+  if (entry === undefined) raw = await machine(scope, args, scope.signal, input);
   else {
     try {
       raw = await (await entry.ipc).prepare(name, assertion, selectionOptions);
@@ -157,7 +208,7 @@ async function requestSelection(
       // native recovery checks the kernel lock before doing any selection or
       // network work. a timeout or service denial cannot authorize replacement.
       try {
-        raw = await machine(scope, [...args, "--recover-handle", entry.file], undefined, input);
+        raw = await machine(scope, [...args, "--recover-handle", entry.file], scope.signal, input);
       } catch (recovery) {
         if (recovery instanceof TnlError && recovery.code === "sdk.authentication_required")
           throw recovery;
@@ -190,7 +241,7 @@ async function requestWorkload(
     raw = await machine(
       scope,
       ["sdk-workload", "--directory", scope.directory, "--service", name],
-      undefined,
+      scope.signal,
       { schema: 1, sdk_workload: request },
     );
   }
@@ -567,7 +618,7 @@ export function deploymentConnector(
   let borrowed: Promise<OwnerIPC> | undefined;
   let closed = false;
   let closing: Promise<void> | undefined;
-  const closedError = new TnlError("sdk.client_closed");
+  let closedError = new TnlError("sdk.client_closed");
   const pending = new Set<Promise<unknown>>();
   const http = new Map<string, ReturnType<typeof managedFetch>>();
   const prepareRemoteWork = async (name: string) => {
@@ -696,21 +747,22 @@ export function deploymentConnector(
       );
       return work;
     },
-    close(): Promise<void> {
+    close(until?: number, reason?: TnlError): Promise<void> {
       closed = true;
+      if (reason !== undefined) closedError = reason;
       closing ??= (async () => {
-        const operations = await Promise.allSettled(pending);
         const cleanup = async () => {
-          if (borrowed !== undefined) (await borrowed).close();
+          if (borrowed !== undefined) (await borrowed).close(closedError);
           if (loading !== undefined) {
             const scope = await loading;
             if (scope.close === undefined) throw new TnlError("sdk.response_invalid");
-            await scope.close();
+            await scope.close(until, closedError);
           }
         };
         const results = await Promise.allSettled(
           [...http.values()].map((value) => value.close()).concat(cleanup()),
         );
+        const operations = await Promise.allSettled(pending);
         const failures = [...operations, ...results].flatMap((result) =>
           result.status === "rejected" && result.reason !== closedError
             ? [result.reason as unknown]

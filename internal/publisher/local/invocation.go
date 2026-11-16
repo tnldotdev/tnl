@@ -90,8 +90,16 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	var credentialExpiry time.Time
 	// cleanup is installed before allocation: an uncertain response still owns
 	// recovery of the exact invocation, even if cancellation wins registration.
-	var cleanup func() error
+	var cleanup func(context.Context) error
 	transferred, id := false, ""
+	ownDeadline := sync.OnceValue(func() time.Time { return time.Now().Add(10 * time.Second) })
+	deadline := func() time.Time {
+		if id != "" {
+			return a.manager.PublicationShutdownDeadline(id)
+		}
+		return ownDeadline()
+	}
+	options.ShutdownDeadline = deadline
 	defer func() {
 		if !transferred {
 			if id != "" {
@@ -104,7 +112,9 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 				}
 			}
 			if cleanup != nil {
-				result = errors.Join(result, cleanup())
+				finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline())
+				defer cancel()
+				result = errors.Join(result, cleanup(finish))
 			}
 		}
 	}()
@@ -158,7 +168,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		options.ControlURL, options.State, options.Publisher = server, profile, native
 		prepared, err := publisheradhoc.Prepare(ctx, options)
 		if prepared != nil {
-			cleanup = invocationCleanup(prepared.Cleanup, time.Time{})
+			cleanup = invocationCleanup(prepared.Cleanup, time.Time{}, deadline)
 		}
 		if err != nil {
 			return publisherprotocol.Registration{}, err
@@ -181,6 +191,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		return publisherprotocol.Registration{}, err
 	}
 	service := publisherapp.Service{Name: request.InvocationId, RegistrationID: id, Target: request.Target}
+	cfg.ShutdownDeadline = deadline
 	cfg.TransportTLS = &tls.Config{MinVersion: tls.VersionTLS13}
 	cfg.InspectionMode = policy.Mode
 	if !request.TelemetryDisabled {
@@ -364,11 +375,14 @@ func (a *appRuntime) invocationPublication(service publisherapp.Service, base pu
 
 // retain one exact allocation for transient retries. permanent authority loss or
 // the captured grant deadline retires only local ownership, never remote state.
-func invocationCleanup(remove func(context.Context) error, expiresAt time.Time) func() error {
+func invocationCleanup(remove func(context.Context) error, expiresAt time.Time, deadline func() time.Time) func(context.Context) error {
+	if deadline == nil {
+		deadline = sync.OnceValue(func() time.Time { return time.Now().Add(10 * time.Second) })
+	}
 	var mu sync.Mutex
 	cleaned := false
 	var permanent error
-	return func() error {
+	return func(ctx context.Context) error {
 		mu.Lock()
 		defer mu.Unlock()
 		if cleaned || remove == nil {
@@ -381,7 +395,7 @@ func invocationCleanup(remove func(context.Context) error, expiresAt time.Time) 
 			permanent = errors.Join(publisherapp.ErrCleanupPermanent, auth.ErrDeploymentCredential)
 			return permanent
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithDeadline(ctx, deadline())
 		defer cancel()
 		err := remove(ctx)
 		if err == nil || failure.Only(err, clientcontrol.ErrNotFound) {

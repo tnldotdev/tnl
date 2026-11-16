@@ -62,7 +62,7 @@ func TestSignedCloudAssignmentProductionCallbackAndTargetTLS(t *testing.T) {
 				if err := registry.InstallDeployment(t.Context(), fixture.Job, *fixture.Job.DeploymentMember, fixture.Key); err != nil {
 					t.Fatal(err)
 				}
-				engine := installedjobs.Engine{Registry: registry, PollInterval: 5 * time.Millisecond, Deployment: func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error) error {
+				engine := installedjobs.Engine{Registry: registry, PollInterval: 5 * time.Millisecond, Deployment: func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error, _ func() time.Time) error {
 					member, key, profile, err := registry.DeploymentIdentity(ctx, job)
 					if err != nil {
 						return err
@@ -172,7 +172,7 @@ func TestCloudAssignmentRejectsSavedServiceDriftBeforeAWS(t *testing.T) {
 			}
 			defer resolver.Close()
 			publication := publisherdeployment.AssignmentPublisher{Member: *fixture.Job.DeploymentMember, Private: fixture.Key, State: fixture.Profile, Control: control.NativeControl, Authority: authority, Discovery: resolver}
-			if err := publication.Publish(t.Context(), assignment, nil); err == nil {
+			if err := publication.Publish(t.Context(), assignment, nil, nil); err == nil {
 				t.Fatal("mismatched assignment was accepted")
 			}
 			if fixture.Requests.Load() != 0 || fixture.TargetHandshakes.Load() != 0 {
@@ -212,7 +212,7 @@ func TestCloudAssignmentChangedDescriptorPreparesIndependentPin(t *testing.T) {
 		}
 		// the fixture ends at the first heartbeat after successful native target
 		// TLS. the same resolver must allow the new declared selector its own pin.
-		publicationErr := publication.Publish(t.Context(), current.Services[0], nil)
+		publicationErr := publication.Publish(t.Context(), current.Services[0], nil, nil)
 		if publicationErr == nil {
 			t.Fatal("fixture heartbeat did not bound the publication")
 		}

@@ -145,18 +145,29 @@ export async function startRuntime(
       if (selection.invocationID !== undefined)
         args.push("--invocation-id", selection.invocationID);
       if (selection.publications) args.push("--publications");
-      const { stdout } = await promisify(execFile)(binary ?? resolveNativeBinary(), args, {
+      const launched = promisify(execFile)(binary ?? resolveNativeBinary(), args, {
         timeout: 30_000,
         maxBuffer: 64 * 1024,
         encoding: "utf8",
         env: launchEnvironment(environment),
         ...(signal === undefined ? {} : { signal }),
+        killSignal: "SIGKILL",
       });
+      const exited = new Promise<void>((resolve) => {
+        launched.child.once("close", () => resolve());
+      });
+      let stdout: string;
+      try {
+        ({ stdout } = await launched);
+      } finally {
+        await exited;
+      }
       endpoint = parseEndpoint(JSON.parse(stdout), selection);
     }
     await runtimeRequest(endpoint, "health", undefined, signal);
     return endpoint;
   } catch (cause) {
+    if (signal !== undefined && canceledRuntimeRequest(cause, signal)) throw signal.reason;
     if (cause instanceof TnlError) throw cause;
     throw new TnlError("sdk.dev_unavailable");
   }
@@ -292,11 +303,28 @@ function runtimeRequestUntraced(
     );
     const deadline = setTimeout(
       () => request.destroy(new TnlError("sdk.dev_unavailable")),
-      operation === "unregister" ? 75_000 : 30_000,
+      operation === "unregister" ? 10_000 : 30_000,
     );
     deadline.unref();
     request.once("close", () => clearTimeout(deadline));
-    request.on("error", () => reject(new TnlError("sdk.dev_unavailable")));
+    request.on("error", (cause: unknown) => {
+      if (signal !== undefined && canceledRuntimeRequest(cause, signal)) reject(signal.reason);
+      else reject(cause instanceof TnlError ? cause : new TnlError("sdk.dev_unavailable"));
+    });
     request.end(payload);
   });
+}
+
+// only the exact stop reason or Node's standard abort wrapper is an expected
+// cancellation. an independent failure may also have cancellation as its cause.
+export function canceledRuntimeRequest(cause: unknown, signal: AbortSignal): boolean {
+  return (
+    signal.aborted &&
+    (cause === signal.reason ||
+      (cause instanceof Error &&
+        cause.name === "AbortError" &&
+        "code" in cause &&
+        cause.code === "ABORT_ERR" &&
+        cause.cause === signal.reason))
+  );
 }

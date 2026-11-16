@@ -51,17 +51,18 @@ func PublishPrivate(ctx context.Context, plan TargetPlan, config publisherservic
 			return PreflightPrivate(ctx, current) == nil
 		}
 	}
-	publish := func(ctx context.Context, plan TargetPlan) error {
+	publish := func(ctx context.Context, plan TargetPlan, deadline func() time.Time) error {
 		target, close, err := ServiceTarget(ctx, plan)
 		if err != nil {
 			return err
 		}
 		defer close()
-		config.Target = target
+		run := config
+		run.Target, run.ShutdownDeadline = target, deadline
 		if err := PreflightPrivate(ctx, plan); err != nil {
 			return err
 		}
-		return publisherservice.Publish(ctx, config)
+		return publisherservice.Publish(ctx, run)
 	}
 	if plan.Project == nil {
 		if hook.Capture != nil {
@@ -69,7 +70,7 @@ func PublishPrivate(ctx context.Context, plan TargetPlan, config publisherservic
 				return err
 			}
 		}
-		return publish(ctx, plan)
+		return publish(ctx, plan, config.ShutdownDeadline)
 	}
 	if plan.Protocol == serviceconfig.ProtocolHTTP {
 		initial, err := ResolveTargetSnapshot(ctx, *plan.Project, plan.ProjectService, hook.Resolver)
@@ -88,7 +89,7 @@ func PublishPrivate(ctx context.Context, plan TargetPlan, config publisherservic
 			}
 		}
 		plan.Target = initial.Address
-		return publish(ctx, plan)
+		return publish(ctx, plan, config.ShutdownDeadline)
 	}
 	for ctx.Err() == nil {
 		initial, err := ResolveTargetSnapshot(ctx, *plan.Project, plan.ProjectService, hook.Resolver)
@@ -122,7 +123,7 @@ func PublishPrivate(ctx context.Context, plan TargetPlan, config publisherservic
 			}
 		}()
 		plan.Target = initial.Address
-		err = publish(worker, plan)
+		err = publish(worker, plan, targetRunShutdownDeadline(ctx, changed, config.ShutdownDeadline))
 		cancel()
 		<-done
 		if ctx.Err() != nil {
@@ -142,4 +143,22 @@ func PublishPrivate(ctx context.Context, plan TargetPlan, config publisherservic
 		}
 	}
 	return nil
+}
+
+// target replacement retires one run, not its still-serving process. only a
+// final stop consumes the composing operation's shared cleanup budget.
+func targetRunShutdownDeadline(parent context.Context, changed <-chan struct{}, deadline func() time.Time) func() time.Time {
+	if deadline == nil {
+		return nil
+	}
+	return func() time.Time {
+		if parent.Err() == nil {
+			select {
+			case <-changed:
+				return time.Time{}
+			default:
+			}
+		}
+		return deadline()
+	}
 }

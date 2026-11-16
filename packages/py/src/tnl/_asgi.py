@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 import uvicorn
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from ._native import NativeRuntime
+from ._native import NativeRuntime, _join_cleanup, _shutdown_deadline, _shutdown_timestamp
 from ._protocol import (
     Endpoint,
     InvalidResponse,
@@ -36,41 +36,24 @@ _alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 _duration = re.compile(r"(?:(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:ns|us|µs|ms|s|m|h))+")
 
 
-async def _join_cleanup[T](task: asyncio.Task[T]) -> T:
-    """defer caller cancellation until the owned cleanup task has finished."""
-    canceled: asyncio.CancelledError | None = None
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError as cause:
-            canceled = cause
-        except BaseException:
-            break
-    try:
-        result = task.result()
-    except BaseException as cause:
-        if canceled is not None and not isinstance(cause, asyncio.CancelledError):
-            raise BaseExceptionGroup("cleanup and cancellation failed", [canceled, cause]) from None
-        raise
-    if canceled is not None:
-        raise canceled
-    return result
-
-
-def _server_shutdown_deadline() -> asyncio.Timeout:
-    return asyncio.timeout(15)
+def _server_shutdown_deadline(until: float) -> asyncio.Timeout:
+    return asyncio.timeout_at(until)
 
 
 class _OwnedServer(uvicorn.Server):
     tunnel: Publication | None = None
     server_driven_shutdown = False
 
-    def __init__(self, config: uvicorn.Config, app: ASGIApp) -> None:
+    def __init__(self, config: uvicorn.Config, app: ASGIApp | None) -> None:
         super().__init__(config)
         self._asgi_workers: set[asyncio.Task[None]] = set()
         self._forcing = False
         self._worker_failures: list[BaseException] = []
+        self._shutdown_until: float | None = None
+        if app is not None:
+            self._own_app(app)
 
+    def _own_app(self, app: ASGIApp) -> None:
         async def owned(scope: Scope, receive: Receive, send: Send) -> None:
             task = asyncio.current_task()
             assert task is not None
@@ -86,10 +69,18 @@ class _OwnedServer(uvicorn.Server):
             finally:
                 self._asgi_workers.discard(task)
 
-        config.app = owned
+        if self.config.loaded:
+            self.config.loaded_app = owned
+        else:
+            self.config.app = owned
 
     async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
         self.server_driven_shutdown = self.tunnel is not None
+        if self._shutdown_until is None:
+            self._shutdown_until = (
+                self.tunnel._begin_shutdown() if self.tunnel is not None else _shutdown_deadline()
+            )
+        until = self._shutdown_until
         failures: list[BaseException] = []
         if self.tunnel is not None:
             try:
@@ -101,9 +92,13 @@ class _OwnedServer(uvicorn.Server):
         try:
             # aclose already shields caller cancellation. internal deadline
             # cancellation must reach this work instead of waiting forever.
-            await super().shutdown(sockets)
+            if asyncio.get_running_loop().time() >= until:
+                raise TimeoutError("ASGI shutdown timed out")
+            async with asyncio.timeout_at(until):
+                await super().shutdown(sockets)
         except BaseException as cause:
             failures.append(cause)
+            failures.extend(await self.force_shutdown(None))
         if len(failures) == 1:
             raise failures[0]
         if failures:
@@ -116,17 +111,34 @@ class _OwnedServer(uvicorn.Server):
             # identities that force_shutdown must cancel and join.
             await asyncio.wait(workers)
 
-    async def force_shutdown(self, serve: asyncio.Task[None]) -> list[BaseException]:
+    async def force_shutdown(self, serve: asyncio.Task[None] | None) -> list[BaseException]:
+        forcing = self._forcing
         self._forcing = self.force_exit = True
         for server in self.servers:
             server.close()
         for connection in tuple(self.server_state.connections):
             connection.shutdown()
+            connection.transport.abort()
         workers = self._asgi_workers | self.server_state.tasks
-        serve.cancel()
+        if serve is not None:
+            serve.cancel()
         for task in workers:
-            task.cancel()
-        results = await asyncio.gather(serve, *workers, return_exceptions=True)
+            if not forcing:
+                task.cancel()
+        # the serving loop and socket ownership belong to tnl. arbitrary ASGI
+        # handlers do not: cancellation cannot force an application to return.
+        results: list[object] = []
+        if serve is not None:
+            results.extend(await asyncio.gather(serve, return_exceptions=True))
+        if workers:
+            done, pending = await asyncio.wait(workers, timeout=0)
+            results.extend(await asyncio.gather(*done, return_exceptions=True))
+            if pending:
+                results.append(TimeoutError("application handlers did not stop after cancellation"))
+                for task in pending:
+                    task.add_done_callback(
+                        lambda value: value.exception() if not value.cancelled() else None
+                    )
         failures: list[BaseException] = []
         for cause in [*results, *self._worker_failures]:
             if isinstance(cause, BaseExceptionGroup):
@@ -243,6 +255,7 @@ class Publication:
         service: str | None = None,
         on_close: Callable[[Publication], None] | None = None,
         environment: Mapping[str, str] | None = None,
+        shutdown_deadline: Callable[[], float | None] | None = None,
     ) -> None:
         self._native = native
         self._deployment = None if deployment is None else dict(deployment)
@@ -294,6 +307,9 @@ class Publication:
         self._close_lock = asyncio.Lock()
         self._cleanup_task: asyncio.Task[None] | None = None
         self._close_complete = False
+        self._shutdown_until: float | None = None
+        self._shutdown_timestamp: str | None = None
+        self._parent_shutdown_deadline = shutdown_deadline
         self._registration_lock = asyncio.Lock()
         self._monitor: asyncio.Task[None] | None = None
         self._url: str | None = None
@@ -385,7 +401,25 @@ class Publication:
         await asyncio.shield(self._ready)
 
     async def unregister(self) -> None:
-        await _join_cleanup(asyncio.create_task(self._unregister()))
+        until = self._begin_shutdown()
+
+        async def bounded() -> None:
+            if self._loop.time() >= until:
+                raise TimeoutError("publication shutdown timed out; remote cleanup is unconfirmed")
+            async with asyncio.timeout_at(until):
+                await self._unregister()
+
+        await _join_cleanup(asyncio.create_task(bounded()))
+
+    def _begin_shutdown(self) -> float:
+        if self._shutdown_until is None:
+            self._shutdown_until = _shutdown_deadline()
+            if self._parent_shutdown_deadline is not None:
+                parent = self._parent_shutdown_deadline()
+                if parent is not None:
+                    self._shutdown_until = min(self._shutdown_until, parent)
+            self._shutdown_timestamp = _shutdown_timestamp(self._shutdown_until)
+        return self._shutdown_until
 
     async def _unregister(self) -> None:
         if not self._closed:
@@ -393,7 +427,7 @@ class Publication:
         if self._initial_registration is not None:
             try:
                 await self._initial_registration
-            except TnlError:
+            except (TnlError, asyncio.CancelledError):
                 pass
         async with self._registration_lock:
             for attempt in range(3):
@@ -410,14 +444,17 @@ class Publication:
             if self._registration is not None and self._endpoint is not None:
                 for attempt in range(3):
                     try:
-                        await self._native.request(self._endpoint, "unregister", self._registration)
+                        self._begin_shutdown()
+                        assert self._shutdown_timestamp is not None
+                        await self._native.request(
+                            self._endpoint,
+                            "unregister",
+                            {**self._registration, "shutdown_deadline": self._shutdown_timestamp},
+                        )
                         break
                     except RegistrationLost:
-                        if self._unregister_reply_lost:
-                            # a replacement owner or expired outcome cannot
-                            # acknowledge the lost result of the original call.
-                            raise NativeUnavailable() from None
-                        break
+                        # absence is not an acknowledgement of this cleanup.
+                        raise NativeUnavailable() from None
                     except PublicationCleanupFailed:
                         self._registration = None
                         self._registration_uncertain = False
@@ -539,19 +576,33 @@ class Publication:
                 return
             self._closed = True
             self._closing_event.set()
-            if self._monitor is not None:
-                await self._monitor
-            # an error retains the listener and registration for a later close
-            # retry. only a joined native cleanup may stop the application's ASGI.
+            until = self._begin_shutdown()
+            self._server._shutdown_until = until
             cleanup: list[BaseException] = []
+            for server in self._server.servers:
+                server.close()
+            if self._initial_registration is not None and not self._initial_registration.done():
+                self._initial_registration.cancel()
+            if self._monitor is not None:
+                self._monitor.cancel()
             try:
-                await self.unregister()
-            except PublicationCleanupFailed as cause:
+                async with asyncio.timeout_at(until):
+                    if self._monitor is not None:
+                        try:
+                            await self._monitor
+                        except asyncio.CancelledError:
+                            # this exact monitor was canceled above; joined
+                            # groups with independent failures are not suppressed.
+                            pass
+                    await self.unregister()
+            except BaseException as cause:
                 cleanup.append(cause)
             self._server.tunnel = None
             self._server.should_exit = True
             try:
-                async with _server_shutdown_deadline():
+                if self._loop.time() >= until:
+                    raise TimeoutError("publication shutdown timed out")
+                async with _server_shutdown_deadline(until):
                     await asyncio.shield(self._serve_task)
                     await self._server.join_workers()
             except BaseException as cause:
@@ -564,8 +615,8 @@ class Publication:
                         cleanup.append(joined)
             finally:
                 self._listener.close()
-            self._close_complete = True
-            if self._on_close is not None:
+            self._close_complete = self._registration is None and not self._registration_uncertain
+            if self._close_complete and self._on_close is not None:
                 self._on_close(self)
             failure: BaseException | None = None
             if len(cleanup) == 1:
@@ -651,6 +702,7 @@ async def start_publication(
     on_close: Callable[[Publication], None] | None = None,
     on_start: Callable[[Publication], None] | None = None,
     environment: Mapping[str, str] | None = None,
+    shutdown_deadline: Callable[[], float | None] | None = None,
 ) -> Publication:
     """start ASGI, register its bound listener, and wait for native routability."""
     if service is not None:
@@ -737,6 +789,7 @@ async def start_publication(
         service,
         on_close,
         environment,
+        shutdown_deadline,
     )
     try:
         if on_start is not None:

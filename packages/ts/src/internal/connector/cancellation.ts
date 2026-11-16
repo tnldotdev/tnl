@@ -20,3 +20,21 @@ export async function cancellable<Value>(
       .finally(() => signal.removeEventListener("abort", aborted));
   });
 }
+
+// callers retain until across retries; finishing a phase never grants more time.
+export function shutdownBudget(original?: number): {
+  until: number;
+  signal: AbortSignal;
+  finish(): void;
+} {
+  const until = Math.min(original ?? Infinity, Date.now() + 10_000);
+  const controller = new AbortController();
+  const abort = () =>
+    controller.abort(
+      new DOMException("shutdown timed out; remote cleanup may be unconfirmed", "TimeoutError"),
+    );
+  const remaining = until - Date.now();
+  const timer = setTimeout(abort, Math.max(0, remaining));
+  if (remaining <= 0) abort();
+  return { until, signal: controller.signal, finish: () => clearTimeout(timer) };
+}

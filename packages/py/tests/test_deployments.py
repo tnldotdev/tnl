@@ -26,7 +26,9 @@ def test_local_deployment_requires_no_credential_and_reuses_driver_bindings(
     calls: list[tuple[str, ...]] = []
     stopped: list[_connections._Scope] = []
     monkeypatch.setattr(_connections._Scope, "binary", lambda _self: Path("/fixture/tnl"))
-    monkeypatch.setattr(_connections._Scope, "stop", lambda scope: stopped.append(scope))
+    monkeypatch.setattr(
+        _connections._Scope, "stop", lambda scope, _until=None: stopped.append(scope)
+    )
 
     def command(_binary: Path, *args: str, input_value: object = None) -> object:
         calls.append(args)
@@ -68,7 +70,7 @@ def test_local_deployment_requires_no_credential_and_reuses_driver_bindings(
 def test_remote_connection_rejects_unknown_names_and_protocol_drift(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(_connections._Scope, "stop", lambda _self: None)
+    monkeypatch.setattr(_connections._Scope, "stop", lambda _self, _until=None: None)
 
     def prepare(
         scope: _connections._Scope,
@@ -139,7 +141,7 @@ def test_local_protocols_use_account_free_native_settings(
     connection_type: type[object],
 ) -> None:
     monkeypatch.setattr(_connections._Scope, "binary", lambda _self: Path("/fixture/tnl"))
-    monkeypatch.setattr(_connections._Scope, "stop", lambda _self: None)
+    monkeypatch.setattr(_connections._Scope, "stop", lambda _self, _until=None: None)
     calls: list[tuple[str, ...]] = []
 
     def command(_binary: Path, *args: str, input_value: object = None) -> object:
@@ -210,7 +212,7 @@ def test_local_protocols_reject_untrusted_native_settings(
     extra: dict[str, object],
 ) -> None:
     monkeypatch.setattr(_connections._Scope, "binary", lambda _self: Path("/fixture/tnl"))
-    monkeypatch.setattr(_connections._Scope, "stop", lambda _self: None)
+    monkeypatch.setattr(_connections._Scope, "stop", lambda _self, _until=None: None)
     monkeypatch.setattr(
         _deployments,
         "_command",
@@ -245,7 +247,9 @@ def test_remote_selections_are_independent_and_do_not_read_provider_configuratio
 ) -> None:
     selected: list[dict[str, object] | None] = []
     stopped: list[_connections._Scope] = []
-    monkeypatch.setattr(_connections._Scope, "stop", lambda scope: stopped.append(scope))
+    monkeypatch.setattr(
+        _connections._Scope, "stop", lambda scope, _until=None: stopped.append(scope)
+    )
 
     def prepare(
         scope: _connections._Scope,
@@ -502,7 +506,7 @@ def test_deployment_cleanup_retry_preserves_its_error_and_joins_exact_failed_wor
     command = native.command
     failures: list[tnl.TnlError] = []
 
-    def stop(binary: Path, *args: str, input_value: object = None) -> object:
+    def stop(binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         if args[0] in {"sdk-close", "sdk-stop"}:
             entered.set()
             assert release.wait(5)

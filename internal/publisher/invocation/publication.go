@@ -37,28 +37,28 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	var recorder *clientstate.InspectionRecorder
 	var localDemo *demo.Server
 	var cleanup func() error
+	ctx, shutdownDeadline, joinShutdown := publicationShutdown(ctx)
+	defer joinShutdown()
 	var stopIntegrations func()
 	// the service operation joins its workers before returning. drain its
 	// observations and remove temporary state before finishing this journal.
 	defer func() {
+		finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), shutdownDeadline())
+		defer cancel()
 		if stopIntegrations != nil {
 			stopIntegrations()
 		}
 		if recorder != nil {
-			recorder.Close()
+			result = errors.Join(result, recorder.Close(finish))
 		}
 		if cleanup != nil {
 			result = errors.Join(result, cleanup())
 		}
 		if localDemo != nil {
-			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			result = errors.Join(result, localDemo.Close(closeCtx))
-			cancel()
+			result = errors.Join(result, localDemo.Close(finish))
 		}
 		if tunnel != nil {
-			finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			result = errors.Join(result, tunnel.Finish(finishCtx, result))
-			cancel()
+			result = errors.Join(result, tunnel.Finish(finish, result))
 		}
 		if state != nil {
 			result = errors.Join(result, state.Close())
@@ -129,7 +129,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	var cfg publisherservice.RunConfig
 	if guest != nil {
 		output.configureBrowser(false)
-		native, saved, cleanup, err = prepareGuestDemoService(ctx, state, server, *guest, flags, address)
+		native, saved, cleanup, err = prepareGuestDemoService(ctx, state, server, *guest, flags, address, shutdownDeadline)
 		// cleanup is retained even if the allocation reply was lost.
 		if err != nil {
 			return err
@@ -169,7 +169,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 			prepared, err := publisheradhoc.Prepare(ctx, options)
 			if prepared != nil {
 				cleanup = func() error {
-					finish, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					finish, cancel := context.WithDeadline(context.Background(), shutdownDeadline())
 					defer cancel()
 					return prepared.Cleanup(finish)
 				}
@@ -232,6 +232,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 		return err
 	}
 	cfg.Control, cfg.State, cfg.Access = native, profile, native.Access
+	cfg.ShutdownDeadline = shutdownDeadline
 	cfg.PublisherIdentityID, cfg.PublisherGrantID, cfg.PublisherKeyID = native.PublisherIdentityID(), native.PublisherGrantID(), native.PublisherKeyID()
 	cfg.ServiceID, cfg.Metadata = saved.Id, publisheridentity.ServiceMetadata(saved)
 	cfg.Target, cfg.ProjectRoot, cfg.ProjectService = plan.Target, flags.ProjectRoot, flags.Service

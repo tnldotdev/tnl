@@ -12,6 +12,55 @@ function deferred<Value>() {
 }
 
 describe("ordinary client factories", () => {
+  test.each(["create", "close"])(
+    "one shutdown budget bounds an uncooperative driver %s callback",
+    async (phase) => {
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      const entered = deferred<void>();
+      const release = deferred<number>();
+      const parent = Date.now() + 700;
+      const close = vi.fn(() => (phase === "close" ? release.promise.then(() => {}) : undefined));
+      const factory = clientFactory(
+        async () => ({ key: "a", connection: 1 }),
+        {
+          create: () => {
+            entered.resolve();
+            return phase === "create" ? release.promise : 1;
+          },
+          close,
+        },
+        () => parent,
+      );
+      try {
+        const getter = factory();
+        const observedGetter = getter.catch((cause: unknown) => cause);
+        await entered.promise;
+        if (phase === "close") await getter;
+        const closing = factory.close();
+        const observedClose = closing.catch((cause: unknown) => cause);
+        await vi.advanceTimersByTimeAsync(699);
+        let finished = false;
+        void closing.then(
+          () => {
+            finished = true;
+          },
+          () => {
+            finished = true;
+          },
+        );
+        expect(finished).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(await observedClose).toMatchObject({ name: "TimeoutError" });
+        if (phase === "create")
+          expect(await observedGetter).toMatchObject({ name: "TimeoutError" });
+        release.resolve(1);
+        await expect(factory.close()).rejects.toMatchObject({ name: "TimeoutError" });
+      } finally {
+        release.resolve(1);
+        vi.useRealTimers();
+      }
+    },
+  );
   test("selects every getter but creates one ordinary client per exact binding", async () => {
     const acquired = vi.fn(async () => ({ key: "a", connection: { port: 1234 } }));
     const create = vi.fn((connection: { port: number }) => ({ connection, query: () => 42 }));

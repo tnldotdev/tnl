@@ -7,7 +7,6 @@ import (
 	"io"
 	"slices"
 	"strings"
-	"time"
 
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
@@ -49,6 +48,8 @@ func PublisherCredentialFileServer(selected, path string) (string, error) {
 // PublishEnrolled resolves one scoped identity and composes the service run with
 // its caller-owned journal, inspection, process coordination, and exact cleanup.
 func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection EnrolledSelection, output *Presentation, input io.Reader) (result error) {
+	ctx, shutdownDeadline, joinShutdown := publicationShutdown(ctx)
+	defer joinShutdown()
 	selected := 0
 	for _, value := range []string{selection.EnrollmentKey, selection.PublisherIdentityID, selection.PublisherCredentialFile} {
 		if value != "" {
@@ -85,21 +86,19 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 	// install ownership before preparation. runs return only after joining;
 	// process stop and allocation cleanup finish before borrowed state closes.
 	defer func() {
+		cleanup, cancel := context.WithDeadline(context.WithoutCancel(ctx), shutdownDeadline())
+		defer cancel()
 		if stopRuntime != nil {
 			result = errors.Join(result, stopRuntime())
 		}
 		if prepared != nil {
-			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			result = errors.Join(result, prepared.Cleanup(cleanup))
-			cancel()
 		}
 		if recorder != nil {
-			recorder.Close()
+			result = errors.Join(result, recorder.Close(cleanup))
 		}
 		if tunnel != nil {
-			finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			result = errors.Join(result, tunnel.Finish(finish, result))
-			cancel()
+			result = errors.Join(result, tunnel.Finish(cleanup, result))
 		}
 	}()
 	profile, err := database.Server(ctx, server)
@@ -345,7 +344,8 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 			return publish(ctx, cfg)
 		}
 	}
-	stopRuntime, err = startDeployedPublisher(ctx, native, server)
+	cfg.ShutdownDeadline = shutdownDeadline
+	stopRuntime, err = startDeployedPublisher(ctx, native, server, shutdownDeadline)
 	if err != nil {
 		return err
 	}

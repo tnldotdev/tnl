@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -61,12 +62,20 @@ func (e Engine) publishJob(ctx context.Context, job Job, attempts uint64, runtim
 	readiness := newPublicationReadiness(worker, cancel, job, service, attempts, func(ctx context.Context, status Status) error {
 		return e.status(ctx, job, status)
 	})
+	if e.ShutdownDeadline != nil {
+		readiness.shutdownDeadline = func() time.Time {
+			if until := e.ShutdownDeadline(); !until.IsZero() {
+				return until
+			}
+			return time.Now().Add(10 * time.Second)
+		}
+	}
 	cfg := publisherservice.RunConfig{
 		Telemetry: e.Telemetry, PreferredRegions: slices.Clone(job.PreferredRegions),
 		Control: native, State: profile, Access: native.Access,
 		PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId,
 		ServiceID: job.ServiceID, Target: job.Target, Metadata: publisheridentity.ServiceMetadata(service),
-		StreamCapacity: job.StreamCapacity, DrainTime: e.DrainTime,
+		StreamCapacity: job.StreamCapacity, DrainTime: e.DrainTime, ShutdownDeadline: e.ShutdownDeadline,
 		Prepared: readiness.Prepared, ObserveReadiness: readiness.Observe, Healthy: readiness.Healthy,
 	}
 	if job.Protocol == config.ProtocolHTTP {

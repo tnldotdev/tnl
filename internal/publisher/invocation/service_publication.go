@@ -7,7 +7,6 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -41,6 +40,8 @@ func SigningIdentity(ctx context.Context, profile *clientstate.Store, id string)
 // only the person's session creates saved state; every protocol then publishes
 // through its exact service grant and the shared service-run owner.
 func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePresentation) (result error) {
+	ctx, shutdownDeadline, joinShutdown := publicationShutdown(ctx)
+	defer joinShutdown()
 	project := projectConfiguration{Project: flags.Project, targetResolver: flags.Resolver}
 	protocol, err := privatePublishProtocol(flags.Protocol)
 	if err != nil {
@@ -379,7 +380,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 	}
 	ctx = tunnel.Context()
 	defer func() {
-		finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), shutdownDeadline())
 		defer cancel()
 		result = errors.Join(result, tunnel.Finish(finish, result))
 	}()
@@ -399,9 +400,13 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 	if err != nil {
 		return err
 	}
-	defer recorder.Close()
+	defer func() {
+		finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), shutdownDeadline())
+		defer cancel()
+		result = errors.Join(result, recorder.Close(finish))
+	}()
 	if selected != 0 {
-		stopRuntime, err := startDeployedPublisher(ctx, native, server)
+		stopRuntime, err := startDeployedPublisher(ctx, native, server, shutdownDeadline)
 		if err != nil {
 			return err
 		}
@@ -412,6 +417,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		ServiceID: job.ServiceID, Target: target, Metadata: publisheridentity.ServiceMetadata(approved), StreamCapacity: job.StreamCapacity,
 		PreferredRegions: job.PreferredRegions, InspectionMode: policy.Mode, ObserveSummary: SummaryObservation(recorder),
 		ProjectRoot: root, ProjectService: flags.Service}
+	cfg.ShutdownDeadline = shutdownDeadline
 	if flags.TelemetryDisabled {
 		cfg.Telemetry = nil
 	}

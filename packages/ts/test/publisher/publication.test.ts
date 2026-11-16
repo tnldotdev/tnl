@@ -90,7 +90,7 @@ test.each(["unregister", "publications/register", "status"])(
 );
 
 test.each(["terminal", "transient", "forgotten"])(
-  "Fetch recovers a lost %s unregister reply over real IPC before closing its listener",
+  "Fetch closes its listener and recovers a lost %s unregister reply over real IPC",
   async (outcome) => {
     let service = "";
     let target = "";
@@ -161,21 +161,22 @@ test.each(["terminal", "transient", "forgotten"])(
           code: "sdk.cleanup_failed",
           errors: [{ code: "sdk.dev_unavailable" }, { code: "sdk.dev_unavailable" }],
         });
-        const body = await new Promise<string>((resolve, reject) => {
-          const request = httpRequest(
-            target,
-            { headers: { Host: "app.example.test" } },
-            (response) => {
-              const chunks: Buffer[] = [];
-              response.on("data", (chunk: Buffer) => chunks.push(chunk));
-              response.on("error", reject);
-              response.on("end", () => resolve(Buffer.concat(chunks).toString()));
-            },
-          );
-          request.on("error", reject);
-          request.end();
-        });
-        expect(body).toBe("owned");
+        await expect(
+          new Promise<string>((resolve, reject) => {
+            const request = httpRequest(
+              target,
+              { headers: { Host: "app.example.test" } },
+              (response) => {
+                const chunks: Buffer[] = [];
+                response.on("data", (chunk: Buffer) => chunks.push(chunk));
+                response.on("error", reject);
+                response.on("end", () => resolve(Buffer.concat(chunks).toString()));
+              },
+            );
+            request.on("error", reject);
+            request.end();
+          }),
+        ).rejects.toMatchObject({ code: "ECONNREFUSED" });
         // withdraw the simulated restart so the fixture can return its original
         // exact stopped outcome. no production fallback changes the capability.
         restored = true;
@@ -242,7 +243,17 @@ test("real Node port-0 wildcard listener waits for exact native status and joins
           ),
         );
       } else {
-        expect(body).toEqual({ version: 1, registration_id: id, owner, target });
+        const deadline = z
+          .strictObject({
+            version: z.literal(1),
+            registration_id: z.literal(id),
+            owner: z.literal(owner),
+            target: z.literal(target),
+            shutdown_deadline: z.iso.datetime(),
+          })
+          .parse(body);
+        expect(Date.parse(deadline.shutdown_deadline)).toBeGreaterThan(Date.now());
+        expect(Date.parse(deadline.shutdown_deadline)).toBeLessThanOrEqual(Date.now() + 10_000);
         response.writeHead(204).end();
       }
     });

@@ -23,7 +23,7 @@ type deploymentInvocation struct {
 	profile   *clientstate.Store
 	service   controlv1.Service
 	config    publisherservice.RunConfig
-	cleanup   func() error
+	cleanup   func(context.Context) error
 	expiresAt time.Time
 }
 
@@ -88,7 +88,7 @@ func (a *appRuntime) prepareDeploymentInvocation(ctx context.Context, r publishe
 			PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
 			ServiceID: service.Id, Target: target.Host, Metadata: publisheridentity.ServiceMetadata(*service), BrowserLoginAvailable: &browserLoginAvailable}
 		// named publication borrows a retained service; it never owns deletion.
-		result.cleanup = invocationCleanup(nil, result.expiresAt)
+		result.cleanup = invocationCleanup(nil, result.expiresAt, options.ShutdownDeadline)
 		return result, nil
 	}
 	native, err := publisheridentity.NewDeploymentAllocator(control, authority, credential.Approval, key, selection.Name)
@@ -99,7 +99,7 @@ func (a *appRuntime) prepareDeploymentInvocation(ctx context.Context, r publishe
 	options.ExpiresAt = new(result.expiresAt)
 	prepared, err := publisheradhoc.Prepare(ctx, options)
 	if prepared != nil {
-		result.cleanup = invocationCleanup(prepared.Cleanup, result.expiresAt)
+		result.cleanup = invocationCleanup(prepared.Cleanup, result.expiresAt, options.ShutdownDeadline)
 	}
 	if err == nil {
 		result.native, result.service, result.config = prepared.Publisher(), prepared.Service, prepared.Config

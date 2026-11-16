@@ -8,6 +8,7 @@ export interface NativeScope {
   readonly directory: string;
   readonly registry: string;
   readonly binary: string;
+  readonly signal?: AbortSignal;
   readonly environment: Pick<
     NodeJS.ProcessEnv,
     "TNL_STATE_DIR" | "TNL_SERVER" | "TNL_CONNECTION_HANDLE"
@@ -21,7 +22,7 @@ export interface NativeScope {
     options: SelectionOptions,
   ): Promise<unknown>;
   workload(name: string, request: WorkloadRequest): Promise<unknown>;
-  close?(): Promise<void>;
+  close?(until?: number, reason?: TnlError): Promise<void>;
   entry?: { readonly file: string; readonly ipc: Promise<OwnerIPC> };
 }
 

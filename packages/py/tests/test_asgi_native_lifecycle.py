@@ -110,8 +110,8 @@ def test_initial_registration_reply_loss_reconciles_and_joins_before_asgi_shutdo
                 await marker("drain-started")
                 assert not task.done() and not shutdown.is_set()
                 async with httpx.AsyncClient(trust_env=False) as client:
-                    reply = await client.get(registration["target"])
-                    assert reply.text == "still serving"
+                    with pytest.raises(httpx.ConnectError):
+                        await client.get(registration["target"])
                 if cancel:
                     # repeated cancellation must still join native cleanup.
                     task.cancel()

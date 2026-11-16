@@ -21,6 +21,16 @@ tasks:
     cmds:
       - pnpm test
 
+  test:focused:
+    desc: Build and run selected JavaScript assertions with the normal test configuration
+    requires:
+      vars: [FILES]
+    vars:
+      FLAGS: '{{default "" .FLAGS}}'
+    cmds:
+      - task: build
+      - pnpm exec vitest run {{.FILES}} {{.FLAGS}}
+
   test:coverage:
     desc: Produce a diagnostic TypeScript coverage report
     cmds:

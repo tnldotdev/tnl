@@ -470,7 +470,7 @@ test("lost initial reply recovers exact intent; failed startup cleanup remains r
   expect(registered).toHaveLength(2);
   expect(registered[0]?.body).toEqual(registered[1]?.body);
   const target = payload.parse(registered[0]?.body).target;
-  expect(await visit(target)).toBe("retained");
+  await expect(visit(target)).rejects.toMatchObject({ code: "ECONNREFUSED" });
   failing = false;
   await deployment.close();
   await expect(fetch(target)).rejects.toThrow();
@@ -501,7 +501,7 @@ test("retained startup cleanup retires Fetch when transient deletion becomes per
   const target = payload.parse(registered[0]?.body).target;
   expect(registered).toHaveLength(2);
   expect(registered[0]?.body).toEqual(registered[1]?.body);
-  expect(await visit(target)).toBe("retained");
+  await expect(visit(target)).rejects.toMatchObject({ code: "ECONNREFUSED" });
   permanent = true;
   await expect(deployment.close()).rejects.toBe(terminal);
   await expect(fetch(target)).rejects.toThrow();
@@ -548,7 +548,7 @@ test("Bun stop is shared and restored without closing application-owned listener
   await Promise.all([a.close(), b.close()]);
 });
 
-test("ready cleanup retry retains Fetch and preserves the first failure", async () => {
+test("ready cleanup retry closes owned Fetch and preserves the first failure", async () => {
   const { request, calls } = fixture();
   let failing = true;
   native.request.mockImplementation(async (endpoint, operation, body) => {
@@ -563,7 +563,7 @@ test("ready cleanup retry retains Fetch and preserves the first failure", async 
     calls.find((call) => call.operation === "publications/register")?.body,
   ).target;
   await expect(deployment.close()).rejects.toThrow();
-  expect(await visit(target)).toBe("retained");
+  await expect(visit(target)).rejects.toMatchObject({ code: "ECONNREFUSED" });
   failing = false;
   await expect(deployment.close()).rejects.toThrow();
   await expect(fetch(target)).rejects.toThrow();

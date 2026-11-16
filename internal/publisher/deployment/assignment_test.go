@@ -92,7 +92,7 @@ func TestAssignmentPublisherRejectsInvalidAssignmentBeforeIdentityPreparation(t 
 			healthCalls := 0
 			// no identity capabilities are supplied: validation must reject the
 			// assignment before attempting native identity or target preparation.
-			err := publisher.Publish(t.Context(), assignment, func(bool) { healthCalls++ })
+			err := publisher.Publish(t.Context(), assignment, func(bool) { healthCalls++ }, nil)
 			if !errors.Is(err, ErrAssignment) || healthCalls != 0 {
 				t.Fatal("invalid assignment reached identity or health preparation", err, healthCalls)
 			}

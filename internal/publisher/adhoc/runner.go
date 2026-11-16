@@ -54,6 +54,7 @@ func Run(ctx context.Context, options Options) (result error) {
 	if deadline == nil {
 		deadline = sync.OnceValue(func() time.Time { return time.Now().Add(10 * time.Second) })
 	}
+	options.ShutdownDeadline = deadline
 	prepared, err := Prepare(ctx, options)
 	if prepared != nil {
 		defer func() {

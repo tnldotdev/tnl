@@ -96,7 +96,11 @@ vi.mock("node:child_process", () => ({
     _options: unknown,
     callback: (error: Error | null, value?: string) => void,
   ) {
+    let onClose = () => {};
     return {
+      once(_event: string, done: () => void) {
+        onClose = done;
+      },
       stdin: {
         end(input: string | undefined) {
           const complete = () => {
@@ -106,6 +110,8 @@ vi.mock("node:child_process", () => ({
               callback(null, JSON.stringify(response(args, body)));
             } catch {
               callback(new Error("native operation rejected"));
+            } finally {
+              onClose();
             }
           };
           if (args[2] === "recover" && fixture.dead.size > 0 && ++fixture.recoveries > 1)

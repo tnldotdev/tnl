@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/detached"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
@@ -111,9 +112,10 @@ func validateConnectMode(flags connectStartCommand) error {
 	return connector.ValidateMode(flags.options())
 }
 
-func runInstalledConnector(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, ready func() error) error {
+func runInstalledConnector(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, ready func() error, deadline func() time.Time) error {
 	operations := connectorOperations()
 	operations.Telemetry = telemetry
+	operations.ShutdownDeadline = deadline
 	return operations.RunInstalled(ctx, job, ready)
 }
 func runKubeCredential(ctx context.Context, flags kubeCredentialCommand, output io.Writer) error {

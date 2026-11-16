@@ -74,6 +74,49 @@ test.each(["node", "bun", "vite", "next"] as const)(
   },
 );
 
+test("close joins pending registration and preserves independent operation and cleanup failures", async () => {
+  const listener = createServer();
+  await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  const entered = Promise.withResolvers<void>();
+  const cleanup = new Error("native cleanup unavailable");
+  let operation: Error | undefined;
+  const handle = await createPreparedService({}, "node", {
+    start: async () => testEndpoint,
+    request: async (_endpoint, name, _body, signal) => {
+      if (name === "prepare") return assignment();
+      if (name === "unregister") throw cleanup;
+      if (name === "register") {
+        if (signal === undefined) throw new Error("registration has no lifetime");
+        entered.resolve();
+        return new Promise<never>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              operation = new Error("independent registration failure", { cause: signal.reason });
+              reject(operation);
+            },
+            { once: true },
+          );
+        });
+      }
+      return undefined;
+    },
+  });
+  try {
+    const registering = handle.register(listener);
+    const registrationError = registering.catch((cause: unknown) => cause);
+    await entered.promise;
+    const closing = await handle.close().catch((cause: unknown) => cause);
+    expect(closing).toMatchObject({ code: "sdk.cleanup_failed", errors: [operation, cleanup] });
+    expect(await registrationError).toBe(operation);
+    expect(operation?.message).toBe("independent registration failure");
+    expect(listener.listening).toBe(true);
+  } finally {
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+  }
+});
+
+
 test("an optional preparation that finishes after its deadline releases its reservation", async () => {
   const beforeExitListeners = process.listenerCount("beforeExit");
   const controller = new AbortController();

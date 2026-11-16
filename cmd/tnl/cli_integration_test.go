@@ -181,7 +181,9 @@ func TestSummaryRecorderKeepsHTTPAndDatabaseResults(t *testing.T) {
 	now := time.Now()
 	observe(inspection.Summary{Protocol: "http", ReceivedAt: now, Method: "GET", Path: "/orders", Status: 503, Result: inspection.ResultError, Duration: 2 * time.Millisecond, Origin: "local_service"})
 	observe(inspection.Summary{Protocol: "mysql", ReceivedAt: now.Add(time.Millisecond), Operation: inspection.OperationExecute, Result: inspection.ResultError, SQLState: "HY000", MySQLErrorCode: 1045, Rows: 1, ResultSets: 2, Duration: 3 * time.Millisecond, Origin: "tnl"})
-	recorder.Close()
+	if err := recorder.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	_, shared, err := invocation.InspectionRoots(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)

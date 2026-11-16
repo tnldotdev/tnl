@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	quic "github.com/quic-go/quic-go"
@@ -87,7 +88,10 @@ type RunConfig struct {
 	resolvedTargetTLS *tls.Config
 	HeartbeatInterval time.Duration
 	DrainTime         time.Duration
-	Connect           func(context.Context, *Bound, uint8, ConnectOptions) (SlotSession, error)
+	// shutdown deadline is owned by the composing operation and includes drain
+	// and exact-run cleanup. it is evaluated once when shutdown first starts.
+	ShutdownDeadline func() time.Time
+	Connect          func(context.Context, *Bound, uint8, ConnectOptions) (SlotSession, error)
 	// prepared observes validated control facts once, before starting that run.
 	Prepared     func(controlv1.ServiceRunPreparation) error
 	Ready        func() error
@@ -143,6 +147,25 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if config.DrainTime == 0 {
 		config.DrainTime = 10 * time.Second
 	}
+	parentDeadline := config.ShutdownDeadline
+	config.ShutdownDeadline = sync.OnceValue(func() time.Time {
+		var parent time.Time
+		if parentDeadline != nil {
+			parent = parentDeadline()
+		}
+		until := time.Now().Add(config.DrainTime)
+		if !parent.IsZero() && parent.Before(until) {
+			until = parent
+		}
+		return until
+	})
+	canceled := make(chan struct{})
+	stopShutdown := context.AfterFunc(ctx, func() { defer close(canceled); config.ShutdownDeadline() })
+	defer func() {
+		if !stopShutdown() {
+			<-canceled
+		}
+	}()
 	var dialer muxsession.QUICDialer
 	var udpErr error
 	if config.RelayQUIC == nil {
@@ -345,7 +368,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	bound.audit = audit
 	defer func() {
 		bound.Invalidate()
-		flush, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		flush, cancel := context.WithDeadline(context.WithoutCancel(ctx), config.ShutdownDeadline())
 		defer cancel()
 		result = errors.Join(result, audit.Close(flush))
 	}()
@@ -442,7 +465,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	completed := false
 	publisherExpires := state.PublisherExpiresAt
 	defer func() {
-		until := time.Now().Add(config.DrainTime)
+		until := config.ShutdownDeadline()
 		if publisherExpires.Before(until) {
 			until = publisherExpires
 		}

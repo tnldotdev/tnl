@@ -19,6 +19,61 @@ class Client:
     binding: str
 
 
+@pytest.mark.parametrize("phase", ["create", "close"])
+def test_factory_budget_does_not_wait_forever_for_application_callbacks(phase: str) -> None:
+    async def scenario() -> None:
+        entered, release = asyncio.Event(), asyncio.Event()
+        callbacks: list[asyncio.Task[object]] = []
+        until = asyncio.get_running_loop().time() + 0.08
+
+        async def callback() -> Client:
+            current = asyncio.current_task()
+            assert current is not None
+            callbacks.append(current)
+            entered.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                await release.wait()
+            return Client("a")
+
+        async def acquire() -> tuple[Hashable, int]:
+            return "a", 1
+
+        async def close(_value: Client) -> None:
+            if phase == "close":
+                await callback()
+
+        factory = _Factory(
+            acquire,
+            create=lambda _: callback() if phase == "create" else Client("a"),
+            close=close,
+            shutdown_deadline=lambda: until,
+        )
+        getter = asyncio.create_task(factory())
+        if phase == "create":
+            await entered.wait()
+        else:
+            await getter
+        try:
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(factory.aclose(), 1)
+            assert factory._shutdown_until == until
+            assert factory._closing is None
+            assert callbacks and not callbacks[0].done()
+            if phase == "create":
+                with pytest.raises(TimeoutError):
+                    await getter
+            with pytest.raises(TimeoutError):
+                await factory.aclose()
+            assert len(callbacks) == 1
+        finally:
+            release.set()
+            await asyncio.gather(*callbacks, getter, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("failed", [False, True])
 def test_factory_close_keeps_native_capabilities_until_deployment_close(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed: bool

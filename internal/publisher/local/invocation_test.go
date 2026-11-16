@@ -465,15 +465,15 @@ func TestInvocationExpiredOrRevokedCleanupRetiresWithoutRetryingItsCapturedKey(t
 
 func TestInvocationCleanupUsesCapturedExpiryWithoutReachingControl(t *testing.T) {
 	expired := time.Now().Add(-time.Second)
-	cleanup := invocationCleanup(func(context.Context) error { t.Fatal("expired cleanup reached control"); return nil }, expired)
-	first := cleanup()
+	cleanup := invocationCleanup(func(context.Context) error { t.Fatal("expired cleanup reached control"); return nil }, expired, nil)
+	first := cleanup(t.Context())
 	if !errors.Is(first, publisherapp.ErrCleanupPermanent) || !errors.Is(first, auth.ErrDeploymentCredential) {
 		t.Fatal("expired authority did not retain a terminal deletion failure", first)
 	}
-	if again := cleanup(); again != first {
+	if again := cleanup(t.Context()); again != first {
 		t.Fatal("expired cleanup did not retain its exact terminal outcome", again)
 	}
-	if err := invocationCleanup(nil, expired)(); err != nil {
+	if err := invocationCleanup(nil, expired, nil)(t.Context()); err != nil {
 		t.Fatal("saved publication acquired temporary deletion work", err)
 	}
 }
@@ -678,14 +678,14 @@ func TestInvocationCleanupKeepsIndependentFailureAndRetries(t *testing.T) {
 			return errors.Join(context.Canceled, problem)
 		}
 		return nil
-	}, time.Time{})
-	if err := cleanup(); !errors.Is(err, context.Canceled) || !errors.Is(err, problem) || errors.Is(err, publisherapp.ErrCleanupPermanent) {
+	}, time.Time{}, nil)
+	if err := cleanup(t.Context()); !errors.Is(err, context.Canceled) || !errors.Is(err, problem) || errors.Is(err, publisherapp.ErrCleanupPermanent) {
 		t.Fatal("cleanup suppressed an independent failure or retired a transient attempt", err)
 	}
-	if err := cleanup(); err != nil || attempts != 2 {
+	if err := cleanup(t.Context()); err != nil || attempts != 2 {
 		t.Fatal("cleanup did not retain its original retry", err, attempts)
 	}
-	if err := cleanup(); err != nil || attempts != 2 {
+	if err := cleanup(t.Context()); err != nil || attempts != 2 {
 		t.Fatal("confirmed cleanup was not terminal", err, attempts)
 	}
 }

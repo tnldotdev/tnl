@@ -162,6 +162,8 @@ func TestAllocateServiceCleansObservedResponseAfterFailedSelection(t *testing.T)
 			if cleanupFails {
 				control.cleanupErr = cleanupErr
 			}
+			until := time.Now().Add(time.Second)
+			native.WithShutdownDeadline(func() time.Time { return until })
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			control.onRead = cancel
@@ -170,8 +172,8 @@ func TestAllocateServiceCleansObservedResponseAfterFailedSelection(t *testing.T)
 					t.Error("cleanup inherited selection cancellation")
 				}
 				deadline, ok := ctx.Deadline()
-				if !ok || time.Until(deadline) > 5*time.Second {
-					t.Error("cleanup has no independent bound")
+				if !ok || !deadline.Equal(until) {
+					t.Error("cleanup did not use the owner's original deadline", deadline, until)
 				}
 			}
 			service, err := native.AllocateService(ctx, body)
@@ -191,7 +193,7 @@ func TestAllocateServiceCleansObservedResponseAfterFailedSelection(t *testing.T)
 				t.Fatal("cleanup-only ownership became publication selection", err)
 			}
 			control.cleanupErr = nil
-			retry, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			retry, stop := context.WithDeadline(context.WithoutCancel(ctx), until)
 			defer stop()
 			if err := native.DeleteAllocatedService(retry, service.Id); err != nil || control.cleanups != 2 || native.allocatedServiceID != "" {
 				t.Fatal("real caller could not retry observed-allocation cleanup", err)

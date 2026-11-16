@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -75,13 +76,20 @@ func (r *runPreparation) close(ctx context.Context) (result error) {
 	}
 	// recovery and closure share one budget. cleanup can recover only the
 	// original preparation; it never calls StartServiceRun or changes the key.
-	finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	until := time.Now().Add(10 * time.Second)
+	if r.config.ShutdownDeadline != nil {
+		until = r.config.ShutdownDeadline()
+	}
+	finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), until)
 	defer cancel()
 	defer func() {
 		// this context is detached from the caller. its own canceled recovery
 		// or close is an independent failure, not a successful caller stop.
 		if failure.Only(result, context.Canceled) {
 			result = errors.Join(errPreparationCleanupCanceled, result)
+		}
+		if result != nil {
+			result = fmt.Errorf("service run cleanup is unconfirmed: %w", result)
 		}
 	}()
 	if !r.known {

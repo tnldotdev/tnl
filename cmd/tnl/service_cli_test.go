@@ -195,7 +195,7 @@ func TestUserSupervisorCanAttachConnectorRunner(t *testing.T) {
 
 type testServiceRunner func(context.Context) error
 
-func (f testServiceRunner) Serve(ctx context.Context) error { return f(ctx) }
+func (f testServiceRunner) Serve(ctx context.Context, _ func() time.Time) error { return f(ctx) }
 
 func TestSystemServiceNativeStateOutput(t *testing.T) {
 	job := installedjobs.Job{Kind: installedjobs.KindService, ID: "service-012345", Name: "orders", Server: "https://control.example", PublisherIdentityID: "pub_selected", ServiceID: "svc_selected", Target: "private-target-secret", Protocol: "postgres", Trust: &targettrust.Snapshot{PEM: []byte("trust-secret")}, Enabled: true, Status: installedjobs.Status{State: "ready", RunNumber: 42, Address: "orders.example:25443"}}

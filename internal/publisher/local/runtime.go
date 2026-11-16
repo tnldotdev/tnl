@@ -344,12 +344,28 @@ func Serve(ctx context.Context, options Options) (result error) {
 	requestBase := observability.Independent(ctx)
 	server := &http.Server{Handler: a.handler(), BaseContext: func(net.Listener) context.Context { return requestBase }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 10 * time.Second, MaxHeaderBytes: publisherprotocol.MaxBytes}
 	done := make(chan error, 1)
-	go func() { done <- server.Serve(listener) }()
+	served := make(chan struct{})
+	var serveError error
+	go func() { defer close(served); serveError = server.Serve(listener); done <- serveError }()
 	defer func() {
-		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		until := a.manager.ShutdownDeadline()
+		shutdown, cancel := context.WithDeadline(context.Background(), until)
 		defer cancel()
-		_ = server.Shutdown(shutdown)
-		_ = server.Close()
+		forced := make(chan error, 1)
+		stopForce := context.AfterFunc(shutdown, func() { forced <- errors.Join(context.DeadlineExceeded, server.Close()) })
+		// fence all registrations and start every drain before waiting for any
+		// one unregister HTTP request or publication to finish.
+		_ = listener.Close()
+		a.manager.Close()
+		result = errors.Join(result, server.Shutdown(shutdown))
+		if !stopForce() {
+			result = errors.Join(result, <-forced)
+		}
+		result = errors.Join(result, server.Close())
+		<-served
+		if !failure.Only(serveError, http.ErrServerClosed) && !failure.Only(serveError, net.ErrClosed) {
+			result = errors.Join(result, serveError)
+		}
 	}()
 	if err := publisherprotocol.WriteEndpoint(path, capabilities.Owner()); err != nil {
 		return err
@@ -398,7 +414,9 @@ func (a *appRuntime) cleanupPreparation(service publisherapp.Service) error {
 	preparation := a.prepared[service.RegistrationID]
 	a.mu.Unlock()
 	if preparation.configuration.Cleanup != nil {
-		return preparation.configuration.Cleanup()
+		finish, cancel := context.WithDeadline(context.Background(), a.manager.PublicationShutdownDeadline(service.RegistrationID))
+		defer cancel()
+		return preparation.configuration.Cleanup(finish)
 	}
 	return nil
 }

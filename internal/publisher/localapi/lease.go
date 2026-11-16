@@ -46,7 +46,11 @@ func (c *LeaseClient) Close(ctx context.Context) error {
 	if c.registration.RegistrationID == "" {
 		return nil
 	}
-	err := publisherprotocol.Call(ctx, c.endpoint, "POST", "/v1/unregister", c.registration, nil)
+	request := c.registration
+	if until, ok := ctx.Deadline(); ok {
+		request.ShutdownDeadline = &until
+	}
+	err := publisherprotocol.Call(ctx, c.endpoint, "POST", "/v1/unregister", request, nil)
 	c.registration = publisherprotocol.Registration{}
 	return err
 }

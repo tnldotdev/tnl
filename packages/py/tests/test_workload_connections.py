@@ -148,6 +148,7 @@ class NativeFixture:
                 request_handle: str | None = None,
                 selection: dict[str, object] | None = None,
                 preview: bool = False,
+                interrupted: object = None,
             ) -> object:
                 if preview:
                     return fixture.preview(name, selection)
@@ -162,6 +163,9 @@ class NativeFixture:
             def close(self) -> None:
                 pass
 
+            def interrupt(self, request_handle: str) -> None:
+                pass
+
         monkeypatch.setattr(_connections, "OwnerIPC", IPC)
         self.scope = _connections._Scope(str(directory), None)
 
@@ -173,7 +177,20 @@ class NativeFixture:
             self.scope, service, source if _workload.uses_workload(source) else None
         )
 
-    def command(self, binary: Path, *args: str, input_value: object = None) -> object:
+    def command(
+        self, binary: Path, *args: str, input_value: object = None, **budget: object
+    ) -> object:
+        if "deadline" in budget:
+            assert isinstance(budget["deadline"], float)
+            assert "--shutdown-deadline" in args
+            assert (
+                0
+                <= (
+                    datetime.fromisoformat(args[args.index("--shutdown-deadline") + 1])
+                    - datetime.now(UTC)
+                ).total_seconds()
+                <= 10
+            )
         self.calls.append(args[0])
         assert not any(token in args for token in ("first", "rotated", "forged", "other"))
         if args[0] == "sdk-workload":
@@ -328,7 +345,7 @@ def test_human_alias_close_retains_the_late_owner_until_exact_cleanup_joins(
     close_attempts: list[str] = []
     close_errors: list[tnl.TnlError] = []
 
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
+    def command(binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         if args[0] in {"stop", "sdk-close"} and "--handle" in args:
             close_attempts.append(args[args.index("--handle") + 1])
         try:
@@ -444,7 +461,7 @@ def test_human_alias_close_does_not_replace_the_original_acquisition_error(
     native.failure = "denied"
     errors: list[tnl.TnlError] = []
 
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
+    def command(binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         try:
             return native.command(binary, *args, input_value=input_value)
         except tnl.TnlError as error:
@@ -753,8 +770,16 @@ def test_close_joins_an_inflight_identity_reselection_without_leaking_its_owner(
                 await pending
             assert caught.value.code == "sdk.connection_closed"
             if retry_close:
-                with pytest.raises(tnl.TnlError):
+                with pytest.raises(ExceptionGroup) as cleanup:
                     await closing
+                assert len(cleanup.value.exceptions) == 2
+                assert all(
+                    isinstance(error, tnl.TnlError)
+                    and error.code == "sdk.connection_unavailable"
+                    and str(error) == "native close did not join"
+                    for error in cleanup.value.exceptions
+                )
+                assert first not in native.closed
                 assert native.owners["other"] not in native.closed
                 native.fail_close = False
                 await handle.aclose()
@@ -933,7 +958,7 @@ def test_interrupted_preparation_retains_request_and_original_error_until_close_
     references: list[str] = []
     command = native.command
 
-    def lost(binary: Path, *args: str, input_value: object = None) -> object:
+    def lost(binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         if (
             args[0] == "sdk-prepare"
             and isinstance(input_value, dict)
@@ -991,7 +1016,9 @@ def test_unresolved_request_receipts_are_bounded_and_reclaimed_on_close(
     attempts = 0
     command = native.command
 
-    def interrupted(binary: Path, *args: str, input_value: object = None) -> object:
+    def interrupted(
+        binary: Path, *args: str, input_value: object = None, **budget: object
+    ) -> object:
         nonlocal attempts
         if args[0] == "sdk-prepare":
             attempts += 1
@@ -1021,7 +1048,7 @@ def test_interrupted_recovery_retains_receipt_without_replacing_original_ipc_err
     original = tnl.TnlError("sdk.connection_unavailable", "the entry owner is unavailable")
     command = native.command
 
-    def recovery(binary: Path, *args: str, input_value: object = None) -> object:
+    def recovery(binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         if "--recover-handle" in args:
             raise _connections._InterruptedError(
                 "sdk.connection_unavailable", "recovery reply lost"
@@ -1071,7 +1098,7 @@ def test_recovery_failure_keeps_exact_replacement_cleanup(
             raise original
         return select(name, assertion)
 
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
+    def command(binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         if "--recover-handle" in args:
             assert args[0] == "sdk-prepare" and "--retain-start-failure" in args
             recoveries.append(args[args.index("--recover-handle") + 1])
@@ -1151,7 +1178,7 @@ def test_recovery_failure_without_cleanup_reference_preserves_original_error(
     def unavailable(name: str, assertion: str | None) -> object:
         raise original
 
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
+    def command(binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         if "--recover-handle" in args:
             raise _connections._native_error(
                 "TNL_SERVER_RESPONSE_INVALID",

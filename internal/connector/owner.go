@@ -57,6 +57,7 @@ type connectorConnectionBackend struct {
 	snapshot                                               atomic.Pointer[connectorPreparedSnapshot]
 	closed                                                 bool
 	cleanupContext                                         context.Context
+	shutdownDeadline                                       func() time.Time
 	closeOnce                                              sync.Once
 	closeErr                                               error
 	operations                                             sync.WaitGroup
@@ -621,7 +622,8 @@ func (b *connectorConnectionBackend) Persistent() bool {
 func (b *connectorConnectionBackend) ownerConfig() connectorruntime.OwnerConfig {
 	config := connectorruntime.OwnerConfig{
 		Backend: b, AuthorizationDeadline: b.AuthorizationDeadline,
-		Persistent: b.Persistent(), OwnerAlive: b.OwnerAlive,
+		ShutdownDeadline: b.shutdownDeadline,
+		Persistent:       b.Persistent(), OwnerAlive: b.OwnerAlive,
 		Kubernetes: b,
 	}
 	if b.sdk != nil {

@@ -470,17 +470,17 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 			t.Fatal("uncertain allocation lost its cleanup owner", operationErr)
 		}
 		*request.Limits.Total = 99
-		cleanupErr := prepared.cleanup()
+		cleanupErr := prepared.cleanup(t.Context())
 		if combined := errors.Join(operationErr, cleanupErr); !errors.Is(combined, io.ErrUnexpectedEOF) ||
 			!errors.Is(combined, independent) || errors.Is(cleanupErr, publisherapp.ErrCleanupPermanent) {
 			t.Fatal("cleanup discarded a failure or retired transient ownership", combined)
 		}
-		if err := prepared.cleanup(); err != nil {
+		if err := prepared.cleanup(t.Context()); err != nil {
 			t.Fatal("cleanup could not retry its exact observed allocation", err)
 		}
 		completedExchanges := exchanges
 		for range 3 {
-			if err := prepared.cleanup(); err != nil {
+			if err := prepared.cleanup(t.Context()); err != nil {
 				t.Fatal("successful cleanup did not remain terminal", err)
 			}
 		}

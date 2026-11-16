@@ -81,7 +81,7 @@ func TestReconcileJoinsOldAssignmentBeforeStartingReplacement(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- (Runtime{Control: control, Member: control.assignment.Member, Private: key, PollInterval: time.Millisecond,
-			Publish: func(ctx context.Context, service controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
+			Publish: func(ctx context.Context, service controlv1.DeploymentPublisherServiceAssignment, health func(bool), _ func() time.Time) error {
 				events <- "start:" + service.Configuration.Target
 				health(true)
 				<-ctx.Done()
@@ -123,7 +123,7 @@ func TestWorkerMeasurementsKeepAcceptedDeploymentAndReplicaScope(t *testing.T) {
 	identities := make(chan observability.Identity, 1)
 	done := make(chan error, 1)
 	go func() {
-		done <- (Runtime{Control: control, Member: member, Private: key, Deployment: report, PollInterval: time.Millisecond, Publish: func(ctx context.Context, a controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
+		done <- (Runtime{Control: control, Member: member, Private: key, Deployment: report, PollInterval: time.Millisecond, Publish: func(ctx context.Context, a controlv1.DeploymentPublisherServiceAssignment, health func(bool), _ func() time.Time) error {
 			identities <- observability.IdentityFromContext(ctx)
 			health(true)
 			<-ctx.Done()
@@ -154,7 +154,7 @@ func TestLeaseExpiryStopsWorkersWhenAssignmentPollingFails(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- (Runtime{Control: control, Member: control.assignment.Member, Private: key, PollInterval: time.Millisecond,
-			Publish: func(ctx context.Context, _ controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
+			Publish: func(ctx context.Context, _ controlv1.DeploymentPublisherServiceAssignment, health func(bool), _ func() time.Time) error {
 				events <- "start"
 				health(true)
 				<-ctx.Done()
@@ -188,7 +188,7 @@ func TestSelectorRenameDoesNotRestartPublication(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- (Runtime{Control: control, Member: member, Private: key, PollInterval: time.Millisecond, Publish: func(ctx context.Context, _ controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
+		done <- (Runtime{Control: control, Member: member, Private: key, PollInterval: time.Millisecond, Publish: func(ctx context.Context, _ controlv1.DeploymentPublisherServiceAssignment, health func(bool), _ func() time.Time) error {
 			events <- "start"
 			health(true)
 			<-ctx.Done()
@@ -234,7 +234,7 @@ func TestRevokedServiceGrantRefreshesAssignmentsWithoutLosingDeployment(t *testi
 	var attempts atomic.Int32
 	done := make(chan error, 1)
 	go func() {
-		done <- (Runtime{Control: control, Member: member, Private: key, PollInterval: time.Millisecond, Publish: func(ctx context.Context, a controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
+		done <- (Runtime{Control: control, Member: member, Private: key, PollInterval: time.Millisecond, Publish: func(ctx context.Context, a controlv1.DeploymentPublisherServiceAssignment, health func(bool), _ func() time.Time) error {
 			if attempts.Add(1) == 1 {
 				return clientcontrol.ErrUnauthenticated
 			}

@@ -97,8 +97,9 @@ type connectionsSDKWorkloadOptions struct {
 	Service   string `name:"service" required:""`
 }
 type connectionsSDKStopOptions struct {
-	Registry  string `name:"registry" required:"" type:"path"`
-	ParentPID int    `name:"parent-pid" required:""`
+	Registry         string `name:"registry" required:"" type:"path"`
+	ParentPID        int    `name:"parent-pid" required:""`
+	ShutdownDeadline string `name:"shutdown-deadline"`
 }
 
 type connectionsSDKCloseOptions struct {
@@ -226,8 +227,26 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 	case "runtime connections sdk-workload":
 		return write(connector.SelectSDKWorkload(flags.SDKWorkload.Directory, flags.SDKWorkload.Service, os.Stdin))
 	case "runtime connections sdk-stop":
+		if flags.SDKStop.ShutdownDeadline != "" {
+			until, err := time.Parse(time.RFC3339Nano, flags.SDKStop.ShutdownDeadline)
+			if err != nil {
+				return connectorruntime.ErrInvalid
+			}
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithDeadline(ctx, until)
+			defer cancel()
+		}
 		return stopped(connector.StopSDK(ctx, flags.SDKStop.Registry, flags.SDKStop.ParentPID))
 	case "runtime connections sdk-close":
+		if flags.SDKClose.ShutdownDeadline != "" {
+			until, err := time.Parse(time.RFC3339Nano, flags.SDKClose.ShutdownDeadline)
+			if err != nil {
+				return connectorruntime.ErrInvalid
+			}
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithDeadline(ctx, until)
+			defer cancel()
+		}
 		return stopped(connector.CloseSDK(ctx, connector.SDKCloseOptions{Registry: flags.SDKClose.Registry, ParentPID: flags.SDKClose.ParentPID, Handle: flags.SDKClose.Handle, FailureHandle: flags.SDKClose.FailureHandle, RequestHandle: flags.SDKClose.RequestHandle}))
 	case "runtime connections status":
 		return write(connector.Status(ctx, flags.Status.Handle))

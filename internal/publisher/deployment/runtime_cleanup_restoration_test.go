@@ -18,17 +18,19 @@ import (
 // fixture. faults affect only renewal or stop; no assignment or grant is invented.
 type deploymentCleanupControl struct {
 	*deploymentControl
-	stopFailure    error
-	denyRenew      atomic.Bool
-	renewDenials   atomic.Int32
-	renewEvents    chan int32
-	requestsMu     sync.Mutex
-	starts         []controlv1.PublisherRuntimeRequest
-	stops          []controlv1.PublisherRuntimeRequest
-	stopContext    error
-	stopBudget     time.Duration
-	joined         func() bool
-	stopBeforeJoin bool
+	stopFailure      error
+	denyRenew        atomic.Bool
+	renewDenials     atomic.Int32
+	renewEvents      chan int32
+	requestsMu       sync.Mutex
+	starts           []controlv1.PublisherRuntimeRequest
+	stops            []controlv1.PublisherRuntimeRequest
+	stopContext      error
+	stopBudget       time.Duration
+	stopDeadline     time.Time
+	shutdownDeadline func() time.Time
+	joined           func() bool
+	stopBeforeJoin   bool
 }
 
 func (c *deploymentCleanupControl) PublisherRuntime(ctx context.Context, request controlv1.PublisherRuntimeRequest) (controlv1.PublisherRuntimeResponse, error) {
@@ -52,6 +54,7 @@ func (c *deploymentCleanupControl) PublisherRuntime(ctx context.Context, request
 		c.stopContext = ctx.Err()
 		if until, ok := ctx.Deadline(); ok {
 			c.stopBudget = time.Until(until)
+			c.stopDeadline = until
 		}
 	}
 	c.requestsMu.Unlock()
@@ -75,8 +78,9 @@ func (c *deploymentCleanupControl) assertOwnerStopped(t *testing.T) {
 		stop.ScopeId != start.ScopeId || stop.ExpectedEpoch != start.ExpectedEpoch+1 {
 		t.Error("shutdown changed the process owner's signed identity, scope, run or epoch")
 	}
-	if c.stopContext != nil || c.stopBudget <= 0 || c.stopBudget > 5*time.Second {
-		t.Error("process stop lost its uncanceled original five-second shutdown budget", c.stopContext, c.stopBudget)
+	if c.stopContext != nil || c.stopBudget <= 0 || c.stopBudget > 10*time.Second ||
+		c.shutdownDeadline == nil || !c.stopDeadline.Equal(c.shutdownDeadline()) {
+		t.Error("process stop lost the remaining original shutdown budget", c.stopContext, c.stopBudget)
 	}
 	if c.stopBeforeJoin {
 		t.Error("process identity stop overtook unjoined publication cleanup")
@@ -92,6 +96,9 @@ type deploymentCleanupRun struct {
 
 func startDeploymentCleanupRun(t *testing.T, runtime Runtime, release func()) *deploymentCleanupRun {
 	t.Helper()
+	deadline := sync.OnceValue(func() time.Time { return time.Now().Add(10 * time.Second) })
+	runtime.ShutdownDeadline = deadline
+	runtime.Control.(*deploymentCleanupControl).shutdownDeadline = deadline
 	ctx, cancel := context.WithCancel(t.Context())
 	run := &deploymentCleanupRun{ctx: ctx, cancel: cancel, finished: make(chan struct{})}
 	t.Cleanup(func() {
@@ -165,7 +172,7 @@ func TestDeploymentRuntimeCancellationKeepsIndependentWorkerAndStopFailures(t *t
 			control.joined = joined.Load
 			run := startDeploymentCleanupRun(t, Runtime{
 				Control: control, Member: base.assignment.Member, Private: key, PollInterval: time.Millisecond,
-				Publish: func(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, healthy func(bool)) error {
+				Publish: func(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, healthy func(bool), _ func() time.Time) error {
 					if attempts.Add(1) != 1 {
 						return errors.New("shutdown restarted the exact fixture assignment")
 					}
@@ -228,7 +235,7 @@ func TestDeploymentRuntimeReplacementKeepsJoinedFailureAndNonoverlap(t *testing.
 			control.joined = func() bool { return active.Load() == 0 && oldJoined.Load() }
 			run := startDeploymentCleanupRun(t, Runtime{
 				Control: control, Member: base.assignment.Member, Private: key, PollInterval: time.Millisecond,
-				Publish: func(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, healthy func(bool)) error {
+				Publish: func(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, healthy func(bool), _ func() time.Time) error {
 					starts.Add(1)
 					if active.Add(1) != 1 {
 						t.Error("replacement overlapped an unjoined publication")
@@ -326,7 +333,7 @@ func TestDeploymentRuntimeLeaseLossKeepsJoinedPublicationFailure(t *testing.T) {
 			until := base.expires
 			run := startDeploymentCleanupRun(t, Runtime{
 				Control: control, Member: base.assignment.Member, Private: key, PollInterval: time.Millisecond,
-				Publish: func(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, healthy func(bool)) error {
+				Publish: func(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, healthy func(bool), _ func() time.Time) error {
 					if attempts.Add(1) != 1 {
 						return errors.New("expired lease restarted the exact fixture assignment")
 					}

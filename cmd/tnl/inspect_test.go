@@ -127,7 +127,9 @@ func TestInspectListAndShowTypeAnHTTPObservation(t *testing.T) {
 		Protocol: inspection.HTTP, ReceivedAt: time.Now().UTC(), Method: "GET", Path: "/interrupted", Status: 200,
 		Origin: "local_service", Duration: time.Millisecond, Result: inspection.ResultError,
 	}))
-	recorder.Close()
+	if err := recorder.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	var listOutput bytes.Buffer
 	if err := run(t.Context(), []string{"inspect", "list", "--output=json"}, &listOutput, &bytes.Buffer{}, nil); err != nil {
 		t.Fatal(err)
@@ -226,7 +228,9 @@ func TestInspectSQLAndRedisListAndShowSummaries(t *testing.T) {
 		Protocol: "redis", ReceivedAt: time.Now().UTC().Add(2 * time.Second), Origin: "tnl",
 		RedisCommand: "PING", Result: inspection.ResultOK,
 	})
-	recorder.Close()
+	if err := recorder.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	var output bytes.Buffer
 	if err := run(t.Context(), []string{"inspect", "list", "--protocol=postgres", "--result=error", "--output=json"}, &output, &bytes.Buffer{}, nil); err != nil {
 		t.Fatal(err)

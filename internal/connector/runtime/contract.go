@@ -108,6 +108,7 @@ type Request struct {
 	SDKEnvironment    *SDKEnvironment             `json:"sdk_environment,omitempty"`
 	Deployment        *DeploymentRequest          `json:"deployment,omitempty"`
 	Selection         *ProjectDeploymentSelection `json:"selection,omitempty"`
+	ShutdownDeadline  *time.Time                  `json:"shutdown_deadline,omitempty"`
 }
 
 // selection narrows captured visitor intent; it never supplies authority.
@@ -316,7 +317,8 @@ type PreparationBackend interface {
 // OwnerConfig declares the capabilities composed into this owner. an absent
 // operation is intentionally unavailable, not inferred from the backend's type.
 type OwnerConfig struct {
-	Backend Backend
+	Backend          Backend
+	ShutdownDeadline func() time.Time
 	// refreshed authority may advance the proof horizon; the backend retains
 	// any absolute hard limit. without this source, renewal can only shorten it.
 	AuthorizationDeadline func() (time.Time, <-chan struct{})

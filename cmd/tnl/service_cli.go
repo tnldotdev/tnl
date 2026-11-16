@@ -262,12 +262,12 @@ func runServiceServeWithUserJobs(ctx context.Context, flags serviceServeCommand,
 	engine := installedjobs.Engine{Registry: registry, UserJobs: runners, Telemetry: flags.telemetry}
 	if options.User {
 		engine.Connect = runInstalledConnector
-		engine.Deployment = func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error) error {
+		engine.Deployment = func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error, deadline func() time.Time) error {
 			_, private, profile, err := registry.DeploymentIdentity(ctx, job)
 			if err != nil {
 				return err
 			}
-			return serveDeploymentPublisher(ctx, job, profile, private, telemetry, observe)
+			return serveDeploymentPublisherWithDiscovery(ctx, job, profile, private, telemetry, observe, nil, deadline)
 		}
 	}
 	return engine.Serve(ctx)

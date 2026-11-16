@@ -532,6 +532,8 @@ func StopSDK(ctx context.Context, registry string, parentPID int) error {
 }
 
 func (o sdkOperations) stopSDK(ctx context.Context, options SDKOptions) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	if options.ParentPID <= 0 || connectorruntime.VerifyDirectory(options.Registry) != nil {
 		return connectorruntime.ErrInvalid
 	}
@@ -545,8 +547,7 @@ func (o sdkOperations) stopSDK(ctx context.Context, options SDKOptions) error {
 	}); err != nil {
 		return err
 	}
-	bounded, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
+	bounded := ctx
 	errorsByOwner := make([]error, len(keys))
 	var workers sync.WaitGroup
 	for i, key := range keys {

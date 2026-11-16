@@ -15,6 +15,7 @@ import { canonicalLoopbackTarget, type CanonicalTarget } from "./target.js";
 import {
   startRuntime,
   runtimeRequest,
+  canceledRuntimeRequest,
   type RuntimeEndpoint,
   type EndpointSelection,
 } from "./local.js";
@@ -218,6 +219,8 @@ async function createPreparedServiceUntraced(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending = Promise.resolve();
   let closing: Promise<void> | undefined;
+  let shutdownUntil: string | undefined;
+  const beginShutdown = () => (shutdownUntil ??= new Date(Date.now() + 10_000).toISOString());
   const lifetime = new AbortController();
   const isClosed = () => state.phase === "closed";
   const enqueue = (operation: () => Promise<void>) => {
@@ -243,29 +246,45 @@ async function createPreparedServiceUntraced(
         replacementEndpoint.scope !== "app" ||
         replacement.service !== replacementEndpoint.service
       ) {
-        await dependencies.request(replacementEndpoint, "unregister", {
-          version: 1,
-          registration_id: replacement.registrationID,
-          owner,
-        });
-        throw new TnlError("sdk.response_invalid");
+        const failure = new TnlError("sdk.response_invalid");
+        const until = beginShutdown();
+        try {
+          await dependencies.request(
+            replacementEndpoint,
+            "unregister",
+            {
+              version: 1,
+              registration_id: replacement.registrationID,
+              owner,
+              shutdown_deadline: until,
+            },
+            AbortSignal.timeout(Math.max(0, Date.parse(until) - Date.now())),
+          );
+        } catch (cleanup) {
+          throw new TnlCleanupError(failure, cleanup);
+        }
+        throw failure;
       }
-      if (state.phase !== "closed")
+      if (state.phase !== "closed") {
+        shutdownUntil = undefined;
         state = {
           phase: "prepared",
           registration: { endpoint: replacementEndpoint, assignment: replacement },
         };
+      }
     });
-  const release = async (signal?: AbortSignal) => {
+  const release = async (signal?: AbortSignal, until = beginShutdown()) => {
     detachListener?.();
     detachListener = undefined;
     clearTimeout(timer);
     const current = state.registration;
-    try {
-      await dependencies.request(current.endpoint, "unregister", registration(current), signal);
-    } catch (error) {
-      if (!recoverable(error)) throw error;
-    }
+    const bounded = AbortSignal.timeout(Math.max(0, Date.parse(until) - Date.now()));
+    await dependencies.request(
+      current.endpoint,
+      "unregister",
+      { ...registration(current), shutdown_deadline: until },
+      signal === undefined ? bounded : AbortSignal.any([bounded, signal]),
+    );
     if (state.phase !== "closed") state = { phase: "released", registration: current };
   };
   const schedule = () => {
@@ -279,14 +298,28 @@ async function createPreparedServiceUntraced(
             await release();
             return;
           }
-          await dependencies.request(state.registration.endpoint, "renew", registration());
+          await dependencies.request(
+            state.registration.endpoint,
+            "renew",
+            registration(),
+            lifetime.signal,
+          );
         } catch (error) {
+          if (lifetime.signal.aborted && !canceledRuntimeRequest(error, lifetime.signal))
+            throw error;
           if (recoverable(error)) {
             try {
-              await reconnect();
+              await reconnect(lifetime.signal);
               if (state.phase === "prepared" && target !== undefined)
-                await dependencies.request(state.registration.endpoint, "register", registration());
-            } catch {
+                await dependencies.request(
+                  state.registration.endpoint,
+                  "register",
+                  registration(),
+                  lifetime.signal,
+                );
+            } catch (cause) {
+              if (lifetime.signal.aborted && !canceledRuntimeRequest(cause, lifetime.signal))
+                throw cause;
               /* the next renewal retries a restarting owner. */
             }
           }
@@ -305,6 +338,7 @@ async function createPreparedServiceUntraced(
     listener?: LocalHTTPServer,
     signal?: AbortSignal,
   ) => {
+    signal = signal === undefined ? lifetime.signal : AbortSignal.any([signal, lifetime.signal]);
     signal?.throwIfAborted();
     if (state.phase === "closed") throw new TnlError("sdk.registration_stale");
     if (state.phase === "released") await reconnect(signal);
@@ -337,6 +371,7 @@ async function createPreparedServiceUntraced(
   };
   const close = (signal?: AbortSignal): Promise<void> => {
     if (closing !== undefined) return closing;
+    const until = beginShutdown();
     state = { phase: "closed", registration: state.registration };
     lifetime.abort(new TnlError("sdk.registration_stale"));
     clearTimeout(timer);
@@ -348,7 +383,21 @@ async function createPreparedServiceUntraced(
         : framework === "vite"
           ? "vite.cleanup"
           : "sdk.app.cleanup",
-      () => enqueue(() => release(signal)),
+      async () => {
+        let operationFailure: unknown;
+        try {
+          await pending;
+        } catch (cause) {
+          if (!canceledRuntimeRequest(cause, lifetime.signal)) operationFailure = cause;
+        }
+        try {
+          await release(signal, until);
+        } catch (cleanup) {
+          if (operationFailure !== undefined) throw new TnlCleanupError(operationFailure, cleanup);
+          throw cleanup;
+        }
+        if (operationFailure !== undefined) throw operationFailure;
+      },
     );
     return closing;
   };

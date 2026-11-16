@@ -334,7 +334,7 @@ func TestServicePublicationUnregisterJoinsOperationBeforeDrainingInspection(t *t
 				return Configuration{
 					PrimaryRoot: primary, SharedRoot: shared,
 					Inspection: inspection.Policy{Mode: mode, Retention: time.Hour, MaxBytes: 1 << 20},
-					Cleanup: func() error {
+					Cleanup: func(context.Context) error {
 						records, err := w.Database.ListInspections(context.Background(), clientstate.InspectionFilter{Project: project, SharedProject: shared, Limit: 10})
 						cleaned <- cleanupResult{records, err}
 						return err
@@ -486,7 +486,7 @@ func TestServicePublicationFailedBindingClosesUnboundJournal(t *testing.T) {
 			cleanupCalls := 0
 			w.Configure = func(_ context.Context, service Service) (Configuration, error) {
 				return Configuration{
-					Cleanup: func() error {
+					Cleanup: func(context.Context) error {
 						cleanupCalls++
 						return tc.cleanupFailure
 					},
@@ -555,7 +555,7 @@ func TestServicePublicationRequiresOperationAndCheckBeforeJournal(t *testing.T) 
 				publication.Check = nil
 			}
 			w.Configure = func(context.Context, Service) (Configuration, error) {
-				return Configuration{Service: publication, Cleanup: func() error { cleanupCalls++; return cleanupFailure }}, nil
+				return Configuration{Service: publication, Cleanup: func(context.Context) error { cleanupCalls++; return cleanupFailure }}, nil
 			}
 			before := w.Manager.Snapshot()
 			err := w.Run(t.Context(), Service{Name: "web", Target: "http://127.0.0.1:3000"}, func(PublicationUpdate) error {
@@ -589,7 +589,7 @@ func TestServicePublicationCancellationRetainsOperationAndCleanupFailures(t *tes
 			started := make(chan struct{})
 			w.Configure = func(_ context.Context, service Service) (Configuration, error) {
 				return Configuration{
-					Cleanup: func() error {
+					Cleanup: func(context.Context) error {
 						cleanupCalls.Add(1)
 						return errors.Join(context.Canceled, cleanupFailure)
 					},

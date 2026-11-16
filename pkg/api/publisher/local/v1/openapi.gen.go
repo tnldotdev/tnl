@@ -412,10 +412,13 @@ type Readiness struct {
 
 // Registration defines model for Registration.
 type Registration struct {
-	Owner          string              `json:"owner"`
-	RegistrationID string              `json:"registration_id"`
-	Target         string              `json:"target,omitempty"`
-	Version        RegistrationVersion `json:"version"`
+	Owner          string `json:"owner"`
+	RegistrationID string `json:"registration_id"`
+
+	// ShutdownDeadline Original caller shutdown deadline. Valid only for unregister; the native owner may shorten it but never grants more than ten seconds.
+	ShutdownDeadline *time.Time          `json:"shutdown_deadline,omitempty"`
+	Target           string              `json:"target,omitempty"`
+	Version          RegistrationVersion `json:"version"`
 }
 
 // RegistrationVersion defines model for Registration.Version.

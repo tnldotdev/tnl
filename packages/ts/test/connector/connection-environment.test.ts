@@ -42,7 +42,15 @@ vi.mock("node:child_process", () => ({
     callback: (error: Error | null, stdout: string) => void,
   ) {
     const environment = { ...options.env };
+    let onClose = () => {};
+    const complete = (error: Error | null, stdout: string) => {
+      callback(error, stdout);
+      onClose();
+    };
     return {
+      once(_event: string, done: () => void) {
+        onClose = done;
+      },
       stdin: {
         on() {},
         end(input: string | undefined) {
@@ -53,11 +61,11 @@ vi.mock("node:child_process", () => ({
           });
           queueMicrotask(() => {
             if (args[2] === "sdk-workload") {
-              callback(null, JSON.stringify(workloadSelection()));
+              complete(null, JSON.stringify(workloadSelection()));
               return;
             }
             if (args[2] === "sdk-stop") {
-              callback(null, JSON.stringify({ schema: 1, state: "stopped" }));
+              complete(null, JSON.stringify({ schema: 1, state: "stopped" }));
               return;
             }
             const registry = args[args.indexOf("--registry") + 1];
@@ -74,7 +82,7 @@ vi.mock("node:child_process", () => ({
               };
               fixture.owners.set(registry, owner);
             }
-            callback(null, JSON.stringify(prepared(owner)));
+            complete(null, JSON.stringify(prepared(owner)));
           });
         },
       },

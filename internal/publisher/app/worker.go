@@ -18,7 +18,7 @@ type Configuration struct {
 	SharedRoot  string
 	// cleanup owns resources allocated before the worker starts, including when
 	// local tunnel creation fails. it runs after operation and inspection joins.
-	Cleanup func() error
+	Cleanup func(context.Context) error
 }
 
 // ServicePublication supplies an operation, not another publisher engine. the
@@ -62,13 +62,13 @@ func (w *Workers) beginPublication(ctx context.Context, service Service, cfg Con
 	return journal, nil
 }
 
-func (j *publicationJournal) close(result error, cleanup func() error) error {
-	j.recorder.Close()
-	if cleanup != nil {
-		result = errors.Join(result, cleanup())
-	}
-	finish, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (j *publicationJournal) close(result error, cleanup func(context.Context) error, until time.Time) error {
+	finish, cancel := context.WithDeadline(context.Background(), until)
 	defer cancel()
+	result = errors.Join(result, j.recorder.Close(finish))
+	if cleanup != nil {
+		result = errors.Join(result, cleanup(finish))
+	}
 	return errors.Join(result, j.tunnel.Finish(finish, result))
 }
 
@@ -101,9 +101,11 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(Publica
 		if journal != nil {
 			// operation workers have joined before recorder drain. include
 			// independent configuration cleanup failures in the terminal row.
-			result = journal.close(result, configuration.Cleanup)
+			result = journal.close(result, configuration.Cleanup, w.Manager.PublicationShutdownDeadline(service.RegistrationID))
 		} else if configuration.Cleanup != nil {
-			result = errors.Join(result, configuration.Cleanup())
+			finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), w.Manager.PublicationShutdownDeadline(service.RegistrationID))
+			defer cancel()
+			result = errors.Join(result, configuration.Cleanup(finish))
 		}
 	}()
 	publication := configuration.Service

@@ -71,7 +71,15 @@ class FakeNative(NativeRuntime):
                 raise NativeUnavailable()
             return self.snapshot()
         if operation == "unregister":
-            assert payload == self.registration
+            assert payload is not None
+            deadline = payload["shutdown_deadline"]
+            assert isinstance(deadline, str)
+            from datetime import UTC, datetime
+
+            assert 0 < (datetime.fromisoformat(deadline) - datetime.now(UTC)).total_seconds() <= 10
+            assert {
+                key: value for key, value in payload.items() if key != "shutdown_deadline"
+            } == self.registration
             self.events.append("unregister")
         return None
 
@@ -497,6 +505,14 @@ def test_asgi_setup_preserves_publication_and_cleanup_failures(
     native = FailingNative([])
     monkeypatch.setattr(_asgi, "_native", native)
     servers: list[_asgi._OwnedServer] = []
+    tunnels: list[_asgi.Publication] = []
+    original_start = _asgi.Publication.start
+
+    async def start(tunnel: _asgi.Publication) -> None:
+        tunnels.append(tunnel)
+        await original_start(tunnel)
+
+    monkeypatch.setattr(_asgi.Publication, "start", start)
     start_asgi = _asgi._start_asgi
 
     async def capture(
@@ -514,9 +530,9 @@ def test_asgi_setup_preserves_publication_and_cleanup_failures(
                 pytest.fail("publication failure was accepted")
         codes = [error.code for error in caught.value.exceptions if isinstance(error, tnl.TnlError)]
         assert codes == ["sdk.publication_failed", "sdk.request_rejected"]
-        tunnel = servers[0].tunnel
-        assert tunnel is not None and not tunnel._serve_task.done()
-        assert not tunnel._server.should_exit
+        tunnel = tunnels[0]
+        assert tunnel._serve_task.done()
+        assert tunnel._server.should_exit and not tunnel._close_complete
         native.fail_cleanup = False
         await tunnel.aclose()
         assert tunnel._serve_task.done()

@@ -29,11 +29,20 @@ vi.mock("node:child_process", () => ({
     _options: unknown,
     callback: (error: unknown, stdout?: string) => void,
   ) {
-    void native.request(binary, args).then(
-      ({ stdout }) => callback(null, stdout),
-      (error) => callback(error),
-    );
-    return { stdin: { end() {} } };
+    let onClose = () => {};
+    void native
+      .request(binary, args)
+      .then(
+        ({ stdout }) => callback(null, stdout),
+        (error) => callback(error),
+      )
+      .finally(() => onClose());
+    return {
+      once(_event: string, done: () => void) {
+        onClose = done;
+      },
+      stdin: { end() {} },
+    };
   },
 }));
 

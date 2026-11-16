@@ -1,5 +1,6 @@
 import { TnlError } from "../../errors.js";
 import type { TnlClientFactory, TnlClientOptions } from "../../project.js";
+import { cancellable, shutdownBudget } from "./cancellation.js";
 
 type Entry<Client> = {
   readonly created: Promise<Client>;
@@ -11,6 +12,7 @@ type Entry<Client> = {
 export function clientFactory<Connection, Client>(
   acquire: () => Promise<{ readonly key: string; readonly connection: Connection }>,
   options: TnlClientOptions<Connection, Client>,
+  parent?: () => number | undefined,
 ): TnlClientFactory<Client> {
   if (typeof options?.create !== "function" || typeof options.close !== "function")
     throw new TnlError("sdk.configuration_invalid");
@@ -19,6 +21,8 @@ export function clientFactory<Connection, Client>(
   const closedError = new TnlError("sdk.client_closed");
   let closed = false;
   let closing: Promise<void> | undefined;
+  let until: number | undefined;
+  const lifetime = new AbortController();
 
   const get = (): Promise<Client> => {
     if (closed) return Promise.reject(closedError);
@@ -42,7 +46,7 @@ export function clientFactory<Connection, Client>(
           if (entries.get(binding.key) === selected) entries.delete(binding.key);
         });
       }
-      const value = await entry.created;
+      const value = await cancellable(lifetime.signal, () => entry.created);
       if (closed) throw closedError;
       return value;
     });
@@ -58,13 +62,18 @@ export function clientFactory<Connection, Client>(
     close(): Promise<void> {
       closed = true;
       if (closing !== undefined) return closing;
+      const budget = shutdownBudget(Math.min(until ?? Infinity, parent?.() ?? Infinity));
+      until = budget.until;
+      const interrupt = () => lifetime.abort(budget.signal.reason);
+      budget.signal.addEventListener("abort", interrupt, { once: true });
+      if (budget.signal.aborted) interrupt();
       const attempt = (async () => {
-        await Promise.allSettled(pending);
+        await cancellable(budget.signal, () => Promise.allSettled(pending));
         const results = await Promise.allSettled(
           [...entries].map(async ([key, entry]) => {
             if (entry.closed) return;
-            const value = await entry.created;
-            await options.close(value);
+            const value = await cancellable(budget.signal, () => entry.created);
+            await cancellable(budget.signal, async () => options.close(value));
             entry.closed = true;
             if (entries.get(key) === entry) entries.delete(key);
           }),
@@ -74,7 +83,10 @@ export function clientFactory<Connection, Client>(
         );
         if (failures.length === 1) throw failures[0];
         if (failures.length > 1) throw new AggregateError(failures, "client cleanup failed");
-      })();
+      })().finally(() => {
+        budget.signal.removeEventListener("abort", interrupt);
+        budget.finish();
+      });
       closing = attempt;
       void attempt.then(
         () => {

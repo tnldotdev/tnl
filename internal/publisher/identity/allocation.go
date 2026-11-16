@@ -258,7 +258,13 @@ func (n *Native) cleanupFailedAllocation(ctx context.Context, access string, ser
 	// selection may fail because its context or a second token exchange failed.
 	// the already observed allocation remains owned until cleanup is confirmed.
 	n.selectedServiceID = ""
-	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	until := time.Now().Add(10 * time.Second)
+	if n.shutdownDeadline != nil {
+		if parent := n.shutdownDeadline(); !parent.IsZero() && parent.Before(until) {
+			until = parent
+		}
+	}
+	cleanup, cancel := context.WithDeadline(context.WithoutCancel(ctx), until)
 	defer cancel()
 	id := n.allocatedServiceID
 	err := n.deleteServiceAllocation(cleanup, access)

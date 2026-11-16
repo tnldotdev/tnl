@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
@@ -223,7 +224,7 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 			return session.store.ListenServiceAt(ctx, job.IdentityID, job.ServiceID, job.Target)
 		},
 		serve: func(ctx context.Context, listener net.Listener, job installedjobs.Job, ready func() error) error {
-			return serveConnector(ctx, session, listener, job, ready, o.Telemetry)
+			return serveConnector(ctx, session, listener, job, ready, o.Telemetry, o.ShutdownDeadline)
 		},
 		ready: func(job installedjobs.Job) error {
 			finishStartup(nil)
@@ -308,13 +309,37 @@ func runConnectorLifecycle(ctx context.Context, listener net.Listener, job insta
 	}
 }
 
-func serveConnector(ctx context.Context, session *Session, listener net.Listener, job installedjobs.Job, ready func() error, telemetry *clienttelemetry.Collector) error {
+func serveConnector(ctx context.Context, session *Session, listener net.Listener, job installedjobs.Job, ready func() error, telemetry *clienttelemetry.Collector, deadline func() time.Time) error {
 	configuration, err := connectConfiguration(ctx, session, job)
 	if err != nil {
 		return err
 	}
 	configuration.Ready = ready
 	configuration.Telemetry = telemetry
+	if deadline != nil {
+		// the stream owner retains its narrower authority and transport fences.
+		// its cleanup cannot open a new remote phase after installed shutdown.
+		finish, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		defer cancel()
+		var bounded context.Context
+		var stop context.CancelFunc
+		var once sync.Once
+		configuration.CleanupContext = func() context.Context {
+			once.Do(func() {
+				until := deadline()
+				if until.IsZero() {
+					until = time.Now().Add(10 * time.Second)
+				}
+				bounded, stop = context.WithDeadline(finish, until)
+			})
+			return bounded
+		}
+		defer func() {
+			if stop != nil {
+				stop()
+			}
+		}()
+	}
 	return connectorstream.Serve(ctx, listener, configuration)
 }
 
@@ -383,5 +408,5 @@ func (o Operations) RunInstalled(ctx context.Context, job installedjobs.Job, rea
 		return err
 	}
 	defer listener.Close()
-	return serveConnector(ctx, session, listener, job, ready, o.Telemetry)
+	return serveConnector(ctx, session, listener, job, ready, o.Telemetry, o.ShutdownDeadline)
 }

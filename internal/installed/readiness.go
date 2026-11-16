@@ -21,21 +21,22 @@ import (
 )
 
 type publicationReadiness struct {
-	ctx        context.Context
-	cancel     context.CancelCauseFunc
-	job        Job
-	service    controlv1.Service
-	attempts   uint64
-	observe    func(context.Context, Status) error
-	probe      func(context.Context, httpaccess.ReadinessRun, string, *httpaccess.ReadinessProof) error
-	localProbe func(context.Context, string) bool
-	resolver   targetplan.TargetResolver
-	targets    *targetplan.TargetBinding
-	everReady  atomic.Bool
-	mu         sync.Mutex
-	target     string
-	current    *installedReadinessRun
-	failures   error
+	ctx              context.Context
+	cancel           context.CancelCauseFunc
+	job              Job
+	service          controlv1.Service
+	attempts         uint64
+	observe          func(context.Context, Status) error
+	probe            func(context.Context, httpaccess.ReadinessRun, string, *httpaccess.ReadinessProof) error
+	localProbe       func(context.Context, string) bool
+	resolver         targetplan.TargetResolver
+	targets          *targetplan.TargetBinding
+	everReady        atomic.Bool
+	mu               sync.Mutex
+	target           string
+	current          *installedReadinessRun
+	failures         error
+	shutdownDeadline func() time.Time
 }
 
 type installedReadinessRun struct {
@@ -62,6 +63,7 @@ func newPublicationReadiness(ctx context.Context, cancel context.CancelCauseFunc
 	r := &publicationReadiness{ctx: ctx, cancel: cancel, job: job, service: service, attempts: attempts, observe: observe, probe: VerifyServiceReadiness,
 		target: job.Target, resolver: targetplan.Resolver{}}
 	r.localProbe = r.checkTarget
+	r.shutdownDeadline = sync.OnceValue(func() time.Time { return time.Now().Add(10 * time.Second) })
 	if job.Protocol == "http" && job.Project != nil {
 		r.targets = &targetplan.TargetBinding{Resolve: func(ctx context.Context) (targetplan.TargetSnapshot, error) {
 			return targetplan.ResolveTargetSnapshot(ctx, *job.Project, job.ProjectService, r.resolver)
@@ -248,7 +250,7 @@ func (r *installedReadinessRun) serve() {
 	verified := false
 	last := Status{}
 	defer func() {
-		finish, cancel := context.WithTimeout(context.WithoutCancel(r.ctx), 5*time.Second)
+		finish, cancel := context.WithDeadline(context.WithoutCancel(r.ctx), r.owner.shutdownDeadline())
 		r.err = errors.Join(r.err, r.owner.observe(finish, Status{State: JobDraining, Attempts: r.owner.attempts, RunNumber: r.run.Number, Address: r.address}))
 		cancel()
 	}()

@@ -74,6 +74,7 @@ def isolated_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
             selection: dict[str, object] | None = None,
             requested_at: str | None = None,
             request_handle: str | None = None,
+            interrupted: object = None,
         ) -> object:
             return _connections._command(
                 _connections.native_binary().resolve(strict=True),
@@ -85,6 +86,9 @@ def isolated_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
             )
 
         def close(self) -> None:
+            pass
+
+        def interrupt(self, request_handle: str) -> None:
             pass
 
     monkeypatch.setattr(_connections, "OwnerIPC", IPC)
@@ -110,7 +114,7 @@ def test_constructing_a_sibling_acquisition_does_not_prepare_it(
     monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
     calls: list[str] = []
 
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
+    def command(binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         if args[0] == "sdk-prepare":
             calls.extend(["start", "prepare"])
             return {
@@ -175,7 +179,7 @@ def test_borrowed_preparation_returns_immutable_verified_settings_and_leaves_own
     monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
     calls: list[tuple[str, ...]] = []
 
-    def command(binary: Path, *args: str) -> object:
+    def command(binary: Path, *args: str, **budget: object) -> object:
         assert binary == Path(sys.executable).resolve()
         assert args[0] == "prepare" and args[1:] == (
             "--handle",
@@ -216,7 +220,7 @@ def test_concurrent_acquisitions_share_native_startup_without_canceling_another_
     starting, release = threading.Event(), threading.Event()
     mounted = str(tmp_path / "private-handle.json")
 
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
+    def command(binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         if args[0] == "sdk-prepare":
             assert args[args.index("--directory") + 1] == str(tmp_path)
             assert args[args.index("--parent-pid") + 1] == str(os.getpid())
@@ -321,7 +325,7 @@ def test_failed_initial_service_snapshot_retains_the_shared_native_owner(
     monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
     calls: list[str] = []
 
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
+    def command(binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         if args[0] == "sdk-prepare":
             calls.extend(["start", "prepare"])
             return {
@@ -374,7 +378,7 @@ def test_known_owned_expiry_requires_await_and_coalesces_joined_replacement(
     expired = False
     run = 1
 
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
+    def command(binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         nonlocal expired, run
         # these counters describe the native fixture's selected lifecycle.
         if args[0] == "sdk-prepare":
@@ -446,7 +450,7 @@ def test_expiry_cleanup_must_acknowledge_join_before_replacement(
     deadline = datetime.now(UTC) + timedelta(minutes=5)
     expired = False
 
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
+    def command(binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         nonlocal expired
         if args[0] == "sdk-prepare":
             calls.extend(["start", "prepare"])
@@ -497,7 +501,7 @@ def test_expiry_restart_preserves_native_retained_denial_identity(
     expired = False
     denied = False
 
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
+    def command(binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         nonlocal denied
         if args[0] == "sdk-prepare":
             calls.extend(["start", "prepare"])
@@ -555,7 +559,7 @@ def test_expired_external_snapshots_never_stop_or_replace_the_owner(
     monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
     calls: list[str] = []
 
-    def command(binary: Path, *args: str) -> object:
+    def command(binary: Path, *args: str, **budget: object) -> object:
         calls.append(args[0])
         return prepared(expires_at="2020-01-01T00:00:00Z")
 
@@ -580,7 +584,7 @@ def test_snapshot_expiry_and_transient_reads_do_not_replace_a_live_owned_session
     calls: list[str] = []
     fail: str | None = None
 
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
+    def command(binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         if args[0] == "sdk-prepare" and "--recover-handle" not in args:
             calls.extend(["start", "prepare"])
             return sdk_ready(binary, tmp_path / "handle", datetime.now(UTC) + timedelta(minutes=5))

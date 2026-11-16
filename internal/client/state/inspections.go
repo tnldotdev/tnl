@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/state/clientstatedb"
@@ -50,6 +51,8 @@ func InspectionRecordFromSummary(summary inspection.Summary) InspectionRecord {
 
 // InspectionRecorder drops observations instead of blocking visitor traffic.
 type InspectionRecorder struct {
+	mu       sync.RWMutex
+	closed   bool
 	database *Database
 	items    chan InspectionRecord
 	done     chan struct{}
@@ -68,6 +71,11 @@ func (r *InspectionRecorder) Observe(record InspectionRecord) {
 	if r == nil {
 		return
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.closed {
+		return
+	}
 	select {
 	case r.items <- record:
 	default:
@@ -75,15 +83,24 @@ func (r *InspectionRecorder) Observe(record InspectionRecord) {
 }
 
 // Close drains queued records after the publisher stops and before client state closes.
-func (r *InspectionRecorder) Close() {
+func (r *InspectionRecorder) Close(ctx context.Context) error {
 	if r == nil {
-		return
+		return nil
 	}
-	close(r.items)
-	timer := time.AfterFunc(5*time.Second, r.cancel)
-	<-r.done
-	timer.Stop()
-	r.cancel()
+	r.mu.Lock()
+	if !r.closed {
+		r.closed = true
+		close(r.items)
+	}
+	r.mu.Unlock()
+	defer r.cancel()
+	select {
+	case <-r.done:
+	case <-ctx.Done():
+		r.cancel()
+		<-r.done
+	}
+	return ctx.Err()
 }
 
 func (r *InspectionRecorder) run(tunnelID, primary, project, shared, service string, policy inspection.Policy) {
@@ -97,7 +114,7 @@ func (r *InspectionRecorder) run(tunnelID, primary, project, shared, service str
 		cancel()
 	}
 	if r.ctx.Err() == nil {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		ctx, cancel := context.WithTimeout(r.ctx, time.Second)
 		defer cancel()
 		_ = r.database.pruneInspections(ctx)
 	}

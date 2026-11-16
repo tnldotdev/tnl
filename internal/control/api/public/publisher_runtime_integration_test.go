@@ -259,7 +259,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 			default:
 			}
 			return nil
-		}, Publish: func(ctx context.Context, _ controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
+		}, Publish: func(ctx context.Context, _ controlv1.DeploymentPublisherServiceAssignment, health func(bool), _ func() time.Time) error {
 			started <- struct{}{}
 			health(true)
 			<-ctx.Done()
