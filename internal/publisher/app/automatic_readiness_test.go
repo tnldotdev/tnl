@@ -275,6 +275,59 @@ func TestAutomaticReadinessBudgetCancelsProbeWithoutStoppingPublication(t *testi
 	})
 }
 
+func TestAutomaticReadinessReplacementJoinsOldProbeAndGetsFreshBudget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const budget = 250 * time.Millisecond
+		w, ready, _, probe := automaticWorkers(t, budget)
+		started := make(chan time.Time, 8)
+		canceled, release := make(chan struct{}), make(chan struct{})
+		releaseOld := sync.OnceFunc(func() { close(release) })
+		defer releaseOld()
+		finished := make(chan struct{}, 8)
+		var calls atomic.Int32
+		probe.transport = trip(func(r *http.Request) (*http.Response, error) {
+			number := calls.Add(1)
+			deadline, ok := r.Context().Deadline()
+			if !ok {
+				t.Error("automatic probe has no deadline")
+			}
+			started <- deadline
+			<-r.Context().Done()
+			if number == 1 {
+				close(canceled)
+				<-release
+			}
+			finished <- struct{}{}
+			return nil, r.Context().Err()
+		})
+		_, id := registerAutomaticService(t, w, ready)
+		<-started
+		w.Manager.TargetChanged("web", id, "http://127.0.0.1:3000")
+		<-canceled
+		synctest.Wait()
+		if calls.Load() != 1 {
+			t.Fatal("replacement started before canceled probe cleanup joined")
+		}
+		at := time.Now()
+		releaseOld()
+		<-finished
+		if deadline := <-started; deadline != at.Add(budget) {
+			t.Fatal("replacement did not receive a fresh bounded startup budget")
+		}
+		<-finished
+		synctest.Wait()
+		if time.Since(at) != budget || calls.Load() != 2 {
+			t.Fatal("replacement ignored its own finite budget")
+		}
+		// no timers or application work remain after exhaustion. an unrelated
+		// publication observation cannot silently grant another startup budget.
+		synctest.Wait()
+		if calls.Load() != 2 || !w.Manager.Snapshot().Services[0].Routable {
+			t.Fatal("exhausted replacement kept polling or stopped publication")
+		}
+	})
+}
+
 func TestAutomaticReadinessBudgetExpiresBeforeNextProbe(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const budget = 250 * time.Millisecond
@@ -573,7 +626,7 @@ func TestAutomaticReadinessCancellationIsJoined(t *testing.T) {
 	}
 }
 
-func TestAutomaticReadinessTargetChangeNeedsExplicitCheckAfterSuccess(t *testing.T) {
+func TestAutomaticReadinessTargetChangeRechecksAfterSuccess(t *testing.T) {
 	w, ready, _, probe := automaticWorkers(t, time.Second)
 	gets := make(chan string, 32)
 	probe.transport = trip(func(r *http.Request) (*http.Response, error) {
@@ -587,18 +640,12 @@ func TestAutomaticReadinessTargetChangeNeedsExplicitCheckAfterSuccess(t *testing
 	if err := observe(1, true); err != nil {
 		t.Fatal(err)
 	}
-	if service := w.Manager.Snapshot().Services[0]; service.Ready || service.Observation == nil || service.Observation.Reason != "runtime.target_changed" {
-		t.Fatalf("changed target retained readiness: %+v", service)
-	}
-	expectNoAutomaticGET(t, gets)
-	if snapshot, err := w.Check(t.Context(), []string{"web"}); err != nil || !snapshot.Services[0].Ready {
-		t.Fatalf("explicit check could not verify the changed target: %+v %v", snapshot.Services, err)
-	}
 	expectAutomaticGET(t, gets)
+	waitAutomaticReady(t, w, 1)
 	expectNoAutomaticGET(t, gets)
 }
 
-func TestAutomaticReadinessAcceptedSuccessStopsAfterImmediateInvalidation(t *testing.T) {
+func TestAutomaticReadinessAcceptedSuccessRechecksImmediateTargetReplacement(t *testing.T) {
 	w, ready, _, probe := automaticWorkers(t, time.Second)
 	gets := make(chan string, 8)
 	probe.transport = trip(func(r *http.Request) (*http.Response, error) {
@@ -606,10 +653,13 @@ func TestAutomaticReadinessAcceptedSuccessStopsAfterImmediateInvalidation(t *tes
 		return automaticResponse(200), nil
 	})
 	accepted := make(chan bool, 1)
+	var replaced atomic.Bool
 	w.acceptReadiness = func(observation Observation) bool {
 		ok := w.Manager.Observe(observation)
-		w.Manager.TargetChanged("web", observation.RegistrationID, observation.Target)
-		accepted <- ok && observation.Ready
+		if replaced.CompareAndSwap(false, true) {
+			w.Manager.TargetChanged("web", observation.RegistrationID, observation.Target)
+			accepted <- ok && observation.Ready
+		}
 		return ok
 	}
 	observe, _ := registerAutomaticService(t, w, ready)
@@ -617,12 +667,11 @@ func TestAutomaticReadinessAcceptedSuccessStopsAfterImmediateInvalidation(t *tes
 	if !<-accepted {
 		t.Fatal("probe success was not accepted before invalidation")
 	}
-	if service := w.Manager.Snapshot().Services[0]; service.Ready || service.Observation == nil || service.Observation.Reason != "runtime.target_changed" {
-		t.Fatalf("target invalidation was lost: %+v", service)
-	}
 	if err := observe(1, true); err != nil {
 		t.Fatal(err)
 	}
+	expectAutomaticGET(t, gets)
+	waitAutomaticReady(t, w, 1)
 	expectNoAutomaticGET(t, gets)
 }
 

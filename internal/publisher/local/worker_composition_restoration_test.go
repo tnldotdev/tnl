@@ -214,7 +214,7 @@ func restoredWorkerService(t *testing.T, a *appRuntime, name string, predicate f
 		}
 		select {
 		case <-deadline.C:
-			t.Fatal("configured publication did not reach its boundary within 2s")
+			t.Fatalf("configured publication did not reach its boundary within 2s: %+v", a.manager.Snapshot().Services)
 		case <-tick.C:
 		}
 	}
@@ -530,6 +530,138 @@ func TestConfiguredProbeRejectsHeldSameAddressTargetIdentity(t *testing.T) {
 	cancel()
 	if err != nil || !snapshot.Services[0].Ready || snapshot.Services[0].RunNumber != current.RunNumber {
 		t.Error("fresh explicit target check did not restore readiness on the same run", err)
+	}
+	restoredUnregister(t, a, registration)
+}
+
+func TestConfiguredPublicReplacementGetsFreshAutomaticReadinessProof(t *testing.T) {
+	if !testutil.IsolatedPublishingTest(t) {
+		return
+	}
+	var identity atomic.Value
+	identity.Store("container-one")
+	var requests atomic.Int32
+	oldEntered, newEntered := make(chan struct{}), make(chan struct{})
+	extraRequest := make(chan struct{}, 1)
+	oldRelease, newRelease := make(chan struct{}), make(chan struct{})
+	releaseOld := sync.OnceFunc(func() { close(oldRelease) })
+	releaseNew := sync.OnceFunc(func() { close(newRelease) })
+	defer releaseOld()
+	defer releaseNew()
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(publisherapp.ProbeHeader) != "" {
+			t.Error("private readiness proof reached the target")
+		}
+		// publication heartbeats have their own local target check. count only
+		// public-host GETs carried through the real visitor TLS/proof boundary.
+		if strings.HasPrefix(r.Host, "127.0.0.1:") {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		var release <-chan struct{}
+		switch requests.Add(1) {
+		case 1:
+		case 2:
+			close(oldEntered)
+			release = oldRelease
+		case 3:
+			close(newEntered)
+			release = newRelease
+		default:
+			select {
+			case extraRequest <- struct{}{}:
+			default:
+			}
+		}
+		if release != nil {
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(target.Close)
+	resolver := targetplan.TargetResolverFunc(func(context.Context, clientproject.Project, string) (string, string, error) {
+		return target.Listener.Addr().String(), identity.Load().(string), nil
+	})
+	a, f, captured := restoredConfiguredWorkers(t, config.Services{"web": {Public: new(true),
+		Target: &config.ServiceTarget{Type: "docker", Container: new("app"), Port: new(3000)}}}, nil, resolver)
+	a.workers.AutomaticReadiness = true
+	proofs := make(chan *httpaccess.ReadinessProof, 1)
+	attach := a.AttachPublication
+	a.AttachPublication = func(ctx context.Context, service publisherapp.Service, cfg *publisherservice.RunConfig) error {
+		if err := attach(ctx, service, cfg); err != nil {
+			return err
+		}
+		prepareProof := cfg.ReadinessProof
+		cfg.ReadinessProof = func(run httpaccess.ReadinessRun) *httpaccess.ReadinessProof {
+			proof := prepareProof(run)
+			proofs <- proof
+			return proof
+		}
+		return nil
+	}
+	_, digest, err := a.project.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	registration, err := a.acquire(t.Context(), publisherprotocol.Lease{Service: "web", Owner: strings.Repeat("a", 32), Pid: os.Getpid(), ConfigurationDigest: digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual := restoredWorkerReceive(t, captured, 2*time.Second).config
+	proof := restoredWorkerReceive(t, proofs, 2*time.Second)
+	current := restoredWorkerService(t, a, "web", func(s publisherapp.Service) bool { return s.Ready })
+	if requests.Load() != 1 || proof == nil || proof.HeaderValue() != "" {
+		t.Fatal("startup did not perform one proved public GET")
+	}
+	// hold a real success from the old identity while a visitor's target capture
+	// detects its replacement at the exact same listener address.
+	result := make(chan publisherapp.Snapshot, 1)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	go func() {
+		snapshot, err := a.workers.Check(ctx, []string{"web"})
+		if err != nil {
+			t.Error(err)
+		}
+		result <- snapshot
+	}()
+	restoredWorkerReceive(t, oldEntered, 2*time.Second)
+	if proof.HeaderValue() != "" {
+		t.Fatal("old public GET did not consume its renewed proof")
+	}
+	identity.Store("container-two")
+	address, selected, err := actual.ResolveHTTPTarget(httptest.NewRequest(http.MethodGet, current.PublicURL, nil))
+	if err != nil || address != target.URL || selected != "container-two" {
+		t.Fatal("visitor did not detect same-address replacement", err)
+	}
+	if changed := a.manager.Snapshot().Services[0]; changed.Ready || !changed.Routable || changed.RunNumber != current.RunNumber {
+		t.Fatal("replacement retained saved readiness or replaced its publication")
+	}
+	releaseOld()
+	stale := restoredWorkerReceive(t, result, 2*time.Second)
+	if stale.Services[0].Ready {
+		t.Fatal("held success restored readiness for the old target identity")
+	}
+	restoredWorkerReceive(t, newEntered, 2*time.Second)
+	if proof.HeaderValue() != "" || requests.Load() != 3 {
+		t.Fatal("replacement did not consume a fresh proof in its new public GET")
+	}
+	if a.manager.Snapshot().Services[0].Ready {
+		t.Fatal("replacement became ready before its new public response")
+	}
+	releaseNew()
+	ready := restoredWorkerService(t, a, "web", func(s publisherapp.Service) bool { return s.Ready })
+	if ready.RunNumber != current.RunNumber || f.Runs.Load() != 1 || ready.Observation == nil || ready.Observation.Status != http.StatusNoContent {
+		t.Fatal("fresh proved response did not restore readiness on the current run")
+	}
+	select {
+	case <-extraRequest:
+		t.Fatal("automatic readiness continued polling after replacement success")
+	case <-time.After(100 * time.Millisecond):
 	}
 	restoredUnregister(t, a, registration)
 }

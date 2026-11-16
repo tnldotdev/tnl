@@ -72,6 +72,7 @@ type Manager struct {
 	writeErr      error
 	retirementErr error
 	stopped       map[string]stoppedOutcome
+	targetChanges map[string]chan struct{}
 }
 
 func New(ctx context.Context, project string, database *clientstate.Database, services []Service, run Run) (*Manager, error) {
@@ -788,6 +789,31 @@ func (m *Manager) TargetChanged(name, id, target string) {
 	}
 	if service.invalidateTarget(time.Now().UTC()) {
 		m.emitLocked("service.readiness", service)
+		if changed := m.targetChanges[id]; changed != nil {
+			select {
+			case changed <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+
+// the run owner joins its current probe before acting on a replacement event.
+// a coalesced event means check the latest target, not replay each old identity.
+func (m *Manager) watchTargetChanges(id string) (<-chan struct{}, func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.targetChanges == nil {
+		m.targetChanges = map[string]chan struct{}{}
+	}
+	changed := make(chan struct{}, 1)
+	m.targetChanges[id] = changed
+	return changed, func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.targetChanges[id] == changed {
+			delete(m.targetChanges, id)
+		}
 	}
 }
 

@@ -138,7 +138,7 @@ func (w *Workers) Check(ctx context.Context, names []string) (Snapshot, error) {
 }
 
 // checkService reports this probe's accepted result. a later target change may
-// invalidate the journal, but cannot restart a completed automatic check.
+// invalidate the journal; the run owner then joins this check before rechecking.
 func (w *Workers) checkService(ctx context.Context, service Service) (ready bool) {
 	observation := Observation{Target: service.Target, RegistrationID: service.RegistrationID, RunNumber: service.RunNumber,
 		CheckedAt: time.Now().UTC(), Readiness: service.Readiness, Reason: "runtime.probe_failed"}
