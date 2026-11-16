@@ -305,7 +305,7 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 				if err != nil {
 					t.Fatal(err)
 				}
-				if prepared.browserLoginAvailable != (discovery.available != nil && *discovery.available) {
+				if prepared.config.BrowserLoginAvailable == nil || *prepared.config.BrowserLoginAvailable != (discovery.available != nil && *discovery.available) {
 					t.Fatal("publication ignored the advertised browser sign-in capability")
 				}
 				if err := prepared.cleanup(); err != nil {

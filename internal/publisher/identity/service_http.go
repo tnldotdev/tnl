@@ -10,11 +10,19 @@ import (
 )
 
 type serviceHTTPControl interface {
+	Discovery(context.Context) (controlv1.ControlDiscovery, error)
 	httpaccess.PolicyClient
 	httpaccess.TokenClient
 	httpaccess.ShareClient
 	httpaccess.BrowserClient
 	serviceFeedbackControl
+}
+
+func (n *Native) Discovery(ctx context.Context) (controlv1.ControlDiscovery, error) {
+	if n == nil || n.Services == nil {
+		return controlv1.ControlDiscovery{}, ErrScope
+	}
+	return n.Services.Discovery(ctx)
 }
 
 func (n *Native) ReadPublisherVisitorPolicy(ctx context.Context, request controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {

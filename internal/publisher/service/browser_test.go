@@ -29,13 +29,21 @@ import (
 
 type serviceBrowserControl struct {
 	HTTPControl
-	origin string
-	policy httpaccess.PolicyClient
-	tokens httpaccess.TokenClient
-	ip     *controlv1.VisitorPolicyIP
+	origin    string
+	policy    httpaccess.PolicyClient
+	tokens    httpaccess.TokenClient
+	ip        *controlv1.VisitorPolicyIP
+	discovery func(context.Context) (controlv1.ControlDiscovery, error)
 }
 
 func (c serviceBrowserControl) ControlURL() string { return c.origin }
+
+func (c serviceBrowserControl) Discovery(ctx context.Context) (controlv1.ControlDiscovery, error) {
+	if c.discovery != nil {
+		return c.discovery(ctx)
+	}
+	return controlv1.ControlDiscovery{BrowserLoginAvailable: new(true)}, nil
+}
 
 func (c serviceBrowserControl) ReadPublisherVisitorPolicy(ctx context.Context, request controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
 	update, err := c.policy.ReadPublisherVisitorPolicy(ctx, request, token)

@@ -50,21 +50,29 @@ var errAssignmentFixture = errors.New("assignment fixture rejected service opera
 // HTTP frontend, target connection, or joined publisher connection shutdown.
 type assignmentServiceControl struct {
 	publisheridentity.ServiceControl
-	url         string
-	service     controlv1.Service
-	preparation controlv1.ServiceRunPreparation
-	setup       controlv1.ServiceRunSetup
-	ca          *x509.Certificate
-	caKey       ed25519.PrivateKey
-	traffic     *controlv1.TrafficSelection
-	prepares    atomic.Int32
-	starts      atomic.Int32
-	closes      atomic.Int32
-	installed   chan struct{}
-	installOnce sync.Once
+	url          string
+	service      controlv1.Service
+	preparation  controlv1.ServiceRunPreparation
+	setup        controlv1.ServiceRunSetup
+	ca           *x509.Certificate
+	caKey        ed25519.PrivateKey
+	traffic      *controlv1.TrafficSelection
+	prepares     atomic.Int32
+	starts       atomic.Int32
+	closes       atomic.Int32
+	installed    chan struct{}
+	installOnce  sync.Once
+	anonymous    bool
+	browserLogin *bool
+	discoveries  atomic.Int32
 }
 
 func (f *assignmentServiceControl) ControlURL() string { return f.url }
+
+func (f *assignmentServiceControl) Discovery(context.Context) (controlv1.ControlDiscovery, error) {
+	f.discoveries.Add(1)
+	return controlv1.ControlDiscovery{BrowserLoginAvailable: f.browserLogin}, nil
+}
 
 func (f *assignmentServiceControl) GetPublisherService(_ context.Context, id, access string) (controlv1.Service, error) {
 	if id != f.service.Id || access != "exact-service-access" {
@@ -150,7 +158,7 @@ func (f *assignmentServiceControl) ReadPublisherVisitorPolicy(_ context.Context,
 	return controlv1.VisitorPolicyUpdate{AfterRevision: request.AfterRevision, Revisions: []int64{}, SnapshotRequired: request.AfterRevision == 0,
 		Policy: controlv1.VisitorPolicySnapshot{Resource: request.Resource, Issuer: f.url, Hostname: f.preparation.Hostname, Port: 443,
 			PublicEndpoint: &controlv1.VisitorPublicEndpoint{Hostname: f.preparation.Hostname, Port: 443, EndpointRevision: f.service.EndpointRevision},
-			Enabled:        true, Anonymous: true, VisitorPolicyRevision: 1, MetadataRevision: f.service.TrustRevision, KeyRevision: 1,
+			Enabled:        true, Anonymous: f.anonymous, VisitorPolicyRevision: 1, MetadataRevision: f.service.TrustRevision, KeyRevision: 1,
 			ObservedAt: now, ValidUntil: now.Add(10 * time.Second),
 			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "deployment-fixture", PublicKey: f.caKey.Public().(ed25519.PublicKey)}}}}, nil
 }
@@ -167,6 +175,24 @@ func (*assignmentServiceControl) ReportServiceRunObservations(context.Context, s
 }
 
 func TestHTTPAssignmentUsesExistingSignedServiceRunAndRetainsSavedService(t *testing.T) {
+	testHTTPAssignment(t, false, nil)
+}
+
+func TestHTTPAssignmentBrowserSignInFollowsDiscovery(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		available *bool
+	}{
+		{"available", new(true)},
+		{"disabled", new(false)},
+		{"omitted", nil},
+	} {
+		t.Run(test.name, func(t *testing.T) { testHTTPAssignment(t, true, test.available) })
+	}
+}
+
+func testHTTPAssignment(t *testing.T, restricted bool, browserLogin *bool) {
+	t.Helper()
 	if !testutil.IsolatedPublishingTest(t) {
 		return
 	}
@@ -205,7 +231,7 @@ func TestHTTPAssignmentUsesExistingSignedServiceRunAndRetainsSavedService(t *tes
 	serviceID, runID, grantID := id(opaqueid.ServicePrefix), id(opaqueid.ServiceRunPrefix), id(opaqueid.PublisherGrantPrefix)
 	const hostname = "web.production.example.test"
 	traffic := &controlv1.TrafficSelection{Connections: new(7), TotalDownloadBytes: new(int64(4096))}
-	control := &assignmentServiceControl{ca: ca, caKey: caKey, traffic: traffic, installed: make(chan struct{}),
+	control := &assignmentServiceControl{ca: ca, caKey: caKey, traffic: traffic, installed: make(chan struct{}), anonymous: !restricted, browserLogin: browserLogin,
 		service: controlv1.Service{Id: serviceID, TeamId: member.TeamId, Name: "web", Protocol: controlv1.ServiceProtocolHTTP, Enabled: true,
 			TrustRevision: 1, EndpointRevision: 1, RequirePostQuantum: true, HttpLimits: &controlv1.ProjectHTTPApplicationLimits{Total: new(1)},
 			Endpoint: &controlv1.ServiceEndpoint{Hostname: hostname, Port: 443, Public: true}},
@@ -336,9 +362,9 @@ func TestHTTPAssignmentUsesExistingSignedServiceRunAndRetainsSavedService(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	publication := publisherdeployment.AssignmentPublisher{Member: member, Private: key, State: profile, Control: publisheridentity.NativeControl{Services: control}, Authority: authority}
+	publication := publisherdeployment.AssignmentPublisher{Member: member, Private: key, State: profile, Control: publisheridentity.NativeControl{Services: control}, Authority: authority, ServerDiscovery: control}
 	assignment := controlv1.DeploymentPublisherServiceAssignment{Service: "web", ServiceId: serviceID, GrantId: grantID, TrustRevision: 1,
-		Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocolHTTP), Target: local.URL, Traffic: traffic,
+		Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocolHTTP), Target: local.URL, Traffic: traffic, Public: new(true),
 			TargetTls:          &controlv1.ProjectTargetTLS{Hostname: targetTLS.Hostname, CaPem: &targetCA, Digest: declaration.Digest},
 			RequirePostQuantum: new(true), Http: &controlv1.ProjectServiceHTTP{Limits: &controlv1.ProjectHTTPApplicationLimits{Total: new(1)}}}}
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
@@ -372,7 +398,7 @@ func TestHTTPAssignmentUsesExistingSignedServiceRunAndRetainsSavedService(t *tes
 	case <-ctx.Done():
 		t.Fatal("service assignment did not join a relay")
 	}
-	visit := func(curves []tls.CurveID) (int, string, error) {
+	visitHTTP := func(curves []tls.CurveID, path string, headers http.Header) (*http.Response, string, error) {
 		// either accepted slot can carry the same exact saved service.
 		slot := control.setup.PublisherConnections[relay.ref.ConnectionSlot]
 		header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: tunnelv1.Version,
@@ -384,12 +410,12 @@ func TestHTTPAssignmentUsesExistingSignedServiceRunAndRetainsSavedService(t *tes
 			RelayRunID: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}
 		unregister, err := relay.session.RegisterServiceCapacity(ctx, header, func(context.Context) error { return nil })
 		if err != nil {
-			return 0, "", err
+			return nil, "", err
 		}
 		defer unregister()
 		stream, err := relay.session.OpenServiceForwardingStream(ctx, header)
 		if err != nil {
-			return 0, "", err
+			return nil, "", err
 		}
 		defer stream.Close()
 		_ = stream.SetDeadline(time.Now().Add(5 * time.Second))
@@ -400,74 +426,114 @@ func TestHTTPAssignmentUsesExistingSignedServiceRunAndRetainsSavedService(t *tes
 			VisitorPolicyRevision: 1, ValidUntil: now.Add(visitortoken.PolicyLifetime).Unix(),
 		}, now)
 		if err != nil {
-			return 0, "", err
+			return nil, "", err
 		}
 		source, destination := netip.MustParseAddrPort("192.0.2.10:45123"), netip.MustParseAddrPort("203.0.113.1:443")
 		proof, err := visitortoken.SignVisitorSource(sourceKey, authority, 1, tunnelv1.VisitorSourceBinding{
 			ServiceID: serviceID, ServiceRunID: runID, RunNumber: 1, VisitorConnectionID: header.VisitorConnectionID, Source: source, Destination: destination,
 		}, now)
 		if err != nil {
-			return 0, "", err
+			return nil, "", err
 		}
 		encoded, err := proof.MarshalBinary()
 		if err != nil {
-			return 0, "", err
+			return nil, "", err
 		}
 		metadata, err := proxyproto.Encode(proxyproto.Header{Source: source, Destination: destination, VisitorSourceProof: string(encoded)})
 		if err != nil {
-			return 0, "", err
+			return nil, "", err
 		}
 		if _, err := stream.Write(metadata); err != nil {
-			return 0, "", err
+			return nil, "", err
 		}
 		connection := tls.Client(stream, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: hostname, CurvePreferences: curves})
 		defer connection.Close()
-		request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+hostname+"/", nil)
+		request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+hostname+path, nil)
+		request.Header = headers.Clone()
 		request.Close = true
 		if err := request.Write(connection); err != nil {
-			return 0, "", err
+			return nil, "", err
 		}
 		response, err := http.ReadResponse(bufio.NewReader(connection), request)
 		if err != nil {
-			return 0, "", err
+			return nil, "", err
 		}
 		defer response.Body.Close()
 		body, err := io.ReadAll(response.Body)
-		return response.StatusCode, string(body), err
+		return response, string(body), err
+	}
+	visit := func(curves []tls.CurveID) (int, string, error) {
+		response, body, err := visitHTTP(curves, "/", nil)
+		if err != nil {
+			return 0, body, err
+		}
+		return response.StatusCode, body, nil
 	}
 	if _, _, err := visit([]tls.CurveID{tls.X25519}); err == nil || applicationRequests.Load() != 0 {
 		t.Fatal("saved PQ requirement admitted a classical visitor")
 	}
-	type visitResult struct {
-		status int
-		body   string
-		err    error
-	}
-	first := make(chan visitResult, 1)
-	go func() {
-		status, body, err := visit(nil)
-		first <- visitResult{status, body, err}
-	}()
-	select {
-	case <-applicationStarted:
-	case <-done:
-		t.Fatal("service assignment ended before delivering its request", publicationErr)
-	case <-ctx.Done():
-		t.Fatal("signed service assignment did not carry visitor traffic")
-	}
-	// the final admitted request holds the total budget until its body ends.
-	// another connection must be denied without reaching the application.
-	if status, _, err := visit(nil); err != nil || status != http.StatusServiceUnavailable || applicationRequests.Load() != 1 {
-		t.Fatal("saved HTTP request limit did not apply across visitor connections", status, err)
-	}
-	finishOnce.Do(func() { close(finishApplication) })
-	select {
-	case result := <-first:
-		if result.err != nil || result.status != http.StatusOK || result.body != "deployment application" {
-			t.Fatal("signed service assignment did not finish visitor traffic", result.status, result.body, result.err)
+	if restricted {
+		path := "/settings?tab=profile"
+		response, _, err := visitHTTP(nil, path, nil)
+		if err != nil || response.StatusCode != http.StatusForbidden || response.Header.Get("Location") != "" {
+			t.Fatal("restricted API request started browser sign-in", response, err)
 		}
-	case <-ctx.Done():
-		t.Fatal("admitted request did not finish")
+		response, _, err = visitHTTP(nil, path, http.Header{
+			"Sec-Fetch-Mode": {"navigate"}, "Sec-Fetch-Dest": {"document"}, "Accept": {"text/html"},
+		})
+		want := http.StatusForbidden
+		if browserLogin != nil && *browserLogin {
+			want = http.StatusSeeOther
+		}
+		if err != nil || response.StatusCode != want {
+			t.Fatal("browser navigation ignored the advertised sign-in capability", response, err)
+		}
+		if want == http.StatusSeeOther {
+			if response.Header.Get("Location") != "/__tnl/team/login?return=%2Fsettings%3Ftab%3Dprofile" {
+				t.Fatal("browser sign-in lost the exact return path", response.Header)
+			}
+			cookies := response.Cookies()
+			if len(cookies) != 1 || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].Domain != "" {
+				t.Fatal("browser sign-in did not set its secure host-only attempt cookie", cookies)
+			}
+		} else if response.Header.Get("Location") != "" || len(response.Cookies()) != 0 {
+			t.Fatal("unavailable browser sign-in sent a redirect or attempt cookie", response.Header)
+		}
+		if applicationRequests.Load() != 0 {
+			t.Fatal("restricted visitor reached the application")
+		}
+	} else {
+		type visitResult struct {
+			status int
+			body   string
+			err    error
+		}
+		first := make(chan visitResult, 1)
+		go func() {
+			status, body, err := visit(nil)
+			first <- visitResult{status, body, err}
+		}()
+		select {
+		case <-applicationStarted:
+		case <-done:
+			t.Fatal("service assignment ended before delivering its request", publicationErr)
+		case <-ctx.Done():
+			t.Fatal("signed service assignment did not carry visitor traffic")
+		}
+		// the final admitted request holds the total budget until its body ends.
+		// another connection must be denied without reaching the application.
+		if status, _, err := visit(nil); err != nil || status != http.StatusServiceUnavailable || applicationRequests.Load() != 1 {
+			t.Fatal("saved HTTP request limit did not apply across visitor connections", status, err)
+		}
+		finishOnce.Do(func() { close(finishApplication) })
+		select {
+		case result := <-first:
+			if result.err != nil || result.status != http.StatusOK || result.body != "deployment application" {
+				t.Fatal("signed service assignment did not finish visitor traffic", result.status, result.body, result.err)
+			}
+		case <-ctx.Done():
+			t.Fatal("admitted request did not finish")
+		}
 	}
 	cancel()
 	select {
@@ -478,7 +544,7 @@ func TestHTTPAssignmentUsesExistingSignedServiceRunAndRetainsSavedService(t *tes
 	case <-time.After(10 * time.Second):
 		t.Fatal("service assignment did not join cleanup")
 	}
-	if control.prepares.Load() != 1 || control.starts.Load() != 1 || control.closes.Load() != 1 || exchanges.Load() == 0 || healthy.Load() || !control.service.Enabled {
+	if control.prepares.Load() != 1 || control.starts.Load() != 1 || control.closes.Load() != 1 || control.discoveries.Load() != 1 || exchanges.Load() == 0 || healthy.Load() || !control.service.Enabled {
 		t.Fatal("service assignment replaced its run, lost signed access, retained health, or deleted its saved service")
 	}
 }

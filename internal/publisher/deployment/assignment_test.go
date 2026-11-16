@@ -37,6 +37,28 @@ func TestPublicHTTPAssignmentRequiresServerDiscovery(t *testing.T) {
 	}
 }
 
+func TestAssignmentBrowserDiscoveryDoesNotGateOtherServices(t *testing.T) {
+	for _, protocol := range []controlv1.ServiceProtocol{controlv1.ServiceProtocolHTTP, "postgres", "mysql", "tcp", "kubernetes"} {
+		t.Run(string(protocol), func(t *testing.T) {
+			for _, public := range []bool{false, true} {
+				if protocol == controlv1.ServiceProtocolHTTP && public {
+					continue
+				}
+				p := AssignmentPublisher{Member: controlv1.DeploymentPublisherIdentity{DeploymentId: "deployment-one", DeploymentName: "production"},
+					ServerDiscovery: serverDiscoveryFunc(func(context.Context) (controlv1.ControlDiscovery, error) {
+						t.Fatal("unrelated service queried browser discovery")
+						return controlv1.ControlDiscovery{}, nil
+					})}
+				assignment := controlv1.DeploymentPublisherServiceAssignment{TrustRevision: 1,
+					Configuration: controlv1.ProjectServiceConfiguration{Protocol: &protocol, Target: "127.0.0.1:3000", Public: &public}}
+				if err := p.Publish(t.Context(), assignment, nil); err == nil || errors.Is(err, ErrAssignment) {
+					t.Fatal("unrelated service did not reach its independent identity validation", err)
+				}
+			}
+		})
+	}
+}
+
 func TestAssignmentPublisherRejectsInvalidAssignmentBeforeIdentityPreparation(t *testing.T) {
 	for _, test := range []struct {
 		name   string

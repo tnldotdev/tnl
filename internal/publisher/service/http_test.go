@@ -74,7 +74,7 @@ func serviceHTTPConfiguredFixture(t *testing.T, target http.Handler, h2, inline 
 	if err := header.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	frontend := HTTP{Control: serviceHTTPControl{}, Subject: scope, RunID: header.ServiceRunID, Number: 1, Token: credentials.ServiceRunToken("run-token"), Hostname: update.View.Hostname, Port: update.View.Port, Header: header, Source: netip.MustParseAddrPort("192.0.2.1:1234"), Policy: policy, ReserveCapacity: func(context.Context) error { return nil }}
+	frontend := HTTP{Control: serviceHTTPControl{}, PublicEndpoint: true, Subject: scope, RunID: header.ServiceRunID, Number: 1, Token: credentials.ServiceRunToken("run-token"), Hostname: update.View.Hostname, Port: update.View.Port, Header: header, Source: netip.MustParseAddrPort("192.0.2.1:1234"), Policy: policy, ReserveCapacity: func(context.Context) error { return nil }}
 	frontend.preparations = make(chan struct{}, 16)
 	if configure != nil {
 		configure(&frontend)
@@ -108,6 +108,10 @@ type serviceHTTPShareControl struct {
 
 type serviceHTTPControl struct {
 	HTTPControl
+}
+
+func (serviceHTTPControl) Discovery(context.Context) (controlv1.ControlDiscovery, error) {
+	return controlv1.ControlDiscovery{BrowserLoginAvailable: new(true)}, nil
 }
 
 func (c serviceHTTPShareControl) RedeemServiceShare(ctx context.Context, service, run string, request controlv1.RedeemServiceShareRequest, token credentials.ServiceRunToken) (controlv1.ShareRedemption, error) {

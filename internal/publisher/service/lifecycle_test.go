@@ -47,6 +47,10 @@ type lifecycleControl struct {
 
 func (*lifecycleControl) ControlURL() string { return "https://control.example.test" }
 
+func (*lifecycleControl) Discovery(context.Context) (controlv1.ControlDiscovery, error) {
+	return controlv1.ControlDiscovery{BrowserLoginAvailable: new(true)}, nil
+}
+
 func (f *lifecycleControl) ReportServiceRunObservations(_ context.Context, service, run string, number int64, token credentials.ServiceRunToken, _ serviceaudit.Batch) error {
 	if service != f.prep.ServiceId || run != f.prep.ServiceRunId || number != f.prep.RunNumber || token.String() != f.setup.RunToken {
 		return ErrPrivateStream

@@ -44,6 +44,17 @@ func (p AssignmentPublisher) Publish(ctx context.Context, assignment controlv1.D
 	if assignment.Configuration.Protocol == nil || !assignment.Configuration.Protocol.Valid() || assignment.Configuration.Target == "app" || assignment.TrustRevision < 1 || p.Member.DeploymentId == "" || p.Member.DeploymentName == "" || p.Member.DeploymentName == "local" {
 		return ErrAssignment
 	}
+	var browserLogin *bool
+	if *assignment.Configuration.Protocol == controlv1.ServiceProtocolHTTP && assignment.Configuration.Public != nil && *assignment.Configuration.Public {
+		if p.ServerDiscovery == nil {
+			return ErrAssignment
+		}
+		server, err := p.ServerDiscovery.Discovery(ctx)
+		if err != nil {
+			return err
+		}
+		browserLogin = new(server.BrowserLoginAvailable != nil && *server.BrowserLoginAvailable)
+	}
 	identity := authorityv1.PublisherEnrollmentResult{ClientId: p.Member.PublisherIdentityId, KeyId: p.Member.KeyId, TeamId: p.Member.TeamId, GrantId: assignment.GrantId, Kind: authorityv1.Service, ServiceId: &assignment.ServiceId}
 	native, err := publisheridentity.NewNative(p.Control, p.Authority, identity, p.Private)
 	if err != nil {
@@ -71,7 +82,7 @@ func (p AssignmentPublisher) Publish(ctx context.Context, assignment controlv1.D
 	if health != nil {
 		defer health(false)
 	}
-	run := publisherservice.RunConfig{Telemetry: p.Telemetry, Control: native, State: p.State, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Metadata: publisheridentity.ServiceMetadata(service), ObserveReadiness: func(status publisherservice.RunStatus) {
+	run := publisherservice.RunConfig{Telemetry: p.Telemetry, Control: native, State: p.State, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Metadata: publisheridentity.ServiceMetadata(service), BrowserLoginAvailable: browserLogin, ObserveReadiness: func(status publisherservice.RunStatus) {
 		if health != nil {
 			health(status.Ready)
 		}

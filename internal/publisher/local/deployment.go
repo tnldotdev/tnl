@@ -19,13 +19,12 @@ import (
 )
 
 type deploymentInvocation struct {
-	native                *publisheridentity.Native
-	profile               *clientstate.Store
-	service               controlv1.Service
-	config                publisherservice.RunConfig
-	cleanup               func() error
-	expiresAt             time.Time
-	browserLoginAvailable bool
+	native    *publisheridentity.Native
+	profile   *clientstate.Store
+	service   controlv1.Service
+	config    publisherservice.RunConfig
+	cleanup   func() error
+	expiresAt time.Time
 }
 
 // deployment authority never selects local configuration or a publisher file.
@@ -55,7 +54,7 @@ func (a *appRuntime) prepareDeploymentInvocation(ctx context.Context, r publishe
 	if err != nil {
 		return result, err
 	}
-	result.browserLoginAvailable = discovery.BrowserLoginAvailable != nil && *discovery.BrowserLoginAvailable
+	browserLoginAvailable := discovery.BrowserLoginAvailable != nil && *discovery.BrowserLoginAvailable
 	authority, err := clientauthority.New(credential.ControlURL, nil, "")
 	if err != nil {
 		return result, err
@@ -87,7 +86,7 @@ func (a *appRuntime) prepareDeploymentInvocation(ctx context.Context, r publishe
 		}
 		result.config = publisherservice.RunConfig{Control: native, Access: native.Access, State: result.profile,
 			PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
-			ServiceID: service.Id, Target: target.Host, Metadata: publisheridentity.ServiceMetadata(*service)}
+			ServiceID: service.Id, Target: target.Host, Metadata: publisheridentity.ServiceMetadata(*service), BrowserLoginAvailable: &browserLoginAvailable}
 		// named publication borrows a retained service; it never owns deletion.
 		result.cleanup = invocationCleanup(nil, result.expiresAt)
 		return result, nil
@@ -104,6 +103,7 @@ func (a *appRuntime) prepareDeploymentInvocation(ctx context.Context, r publishe
 	}
 	if err == nil {
 		result.native, result.service, result.config = prepared.Publisher(), prepared.Service, prepared.Config
+		result.config.BrowserLoginAvailable = &browserLoginAvailable
 	}
 	return result, err
 }

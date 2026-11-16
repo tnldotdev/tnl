@@ -34,6 +34,7 @@ import (
 )
 
 type HTTPControl interface {
+	Discovery(context.Context) (controlv1.ControlDiscovery, error)
 	httpaccess.PolicyClient
 	httpaccess.TokenClient
 	httpaccess.BrowserClient
@@ -53,33 +54,35 @@ type HTTPRun struct {
 // http binds each request to one trusted forwarding header. policy and
 // browser credential renewal are prepared once by the service run owner.
 type HTTP struct {
-	AuditSink       serviceaudit.Sink
-	InspectionMode  inspection.Mode
-	ObserveSummary  inspection.Observer
-	AdmitRequest    func(*http.Request) error
-	ReadinessProof  *httpaccess.ReadinessProof
-	ResponseHooks   httpstream.ResponseHooks
-	Feedback        bool
-	PreviewID       string
-	ProjectService  string
-	ProjectRoot     string
-	Demo            bool
-	Control         HTTPControl
-	Subject         visitorscope.Scope
-	RunID           string
-	Number          int64
-	Token           credentials.ServiceRunToken
-	Hostname        string
-	Port            uint16
-	Header          tunnelv1.ServiceForwardingHeader
-	Source          netip.AddrPort
-	Requests        *requestlimit.HTTP
-	Policy          *visitorlease.Lease
-	ReserveCapacity func(context.Context) error
-	browser         *httpaccess.Browser
-	feedback        *feedbackRuntime
-	probes          *requestlimit.HTTP
-	preparations    chan struct{}
+	AuditSink             serviceaudit.Sink
+	InspectionMode        inspection.Mode
+	ObserveSummary        inspection.Observer
+	AdmitRequest          func(*http.Request) error
+	ReadinessProof        *httpaccess.ReadinessProof
+	ResponseHooks         httpstream.ResponseHooks
+	Feedback              bool
+	PreviewID             string
+	ProjectService        string
+	ProjectRoot           string
+	Demo                  bool
+	PublicEndpoint        bool
+	BrowserLoginAvailable *bool
+	Control               HTTPControl
+	Subject               visitorscope.Scope
+	RunID                 string
+	Number                int64
+	Token                 credentials.ServiceRunToken
+	Hostname              string
+	Port                  uint16
+	Header                tunnelv1.ServiceForwardingHeader
+	Source                netip.AddrPort
+	Requests              *requestlimit.HTTP
+	Policy                *visitorlease.Lease
+	ReserveCapacity       func(context.Context) error
+	browser               *httpaccess.Browser
+	feedback              *feedbackRuntime
+	probes                *requestlimit.HTTP
+	preparations          chan struct{}
 }
 
 func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
@@ -90,6 +93,17 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
 	controlURL, err := naming.CanonicalControlURL(f.Control.ControlURL())
 	if err != nil {
 		return HTTP{}, nil, servicestream.ErrEndpoint
+	}
+	if f.PublicEndpoint {
+		if f.BrowserLoginAvailable == nil {
+			discovery, err := f.Control.Discovery(ctx)
+			if err != nil {
+				return HTTP{}, nil, err
+			}
+			f.BrowserLoginAvailable = new(discovery.BrowserLoginAvailable != nil && *discovery.BrowserLoginAvailable)
+		} else {
+			f.BrowserLoginAvailable = new(*f.BrowserLoginAvailable)
+		}
 	}
 	if f.Demo {
 		// control creates or recovers this exact run's preview. never substitute
@@ -239,7 +253,7 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 			_, guard, guarded, err := httpaccess.AuthorizeRequest(w, r, f.Policy, tokens)
 			if err != nil {
 				reason = "authorization"
-				if f.browser.RedirectRestricted(w, r, true) {
+				if f.browser.RedirectRestricted(w, r, f.BrowserLoginAvailable != nil && *f.BrowserLoginAvailable) {
 					return
 				}
 				servicestream.DenyHTTP(w, r, servicestream.HTTPDecisionStatus(err))

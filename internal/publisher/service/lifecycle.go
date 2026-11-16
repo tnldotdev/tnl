@@ -76,6 +76,9 @@ type RunConfig struct {
 	Feedback                               bool
 	PreviewID, ProjectService, ProjectRoot string
 	Demo                                   bool
+	// nil asks the public HTTP owner to observe discovery. a nonnil value
+	// captures an earlier successful observation, including disabled or omitted.
+	BrowserLoginAvailable *bool
 	// http response hooks are built once from validated run facts, not per visitor.
 	// inline applications do not use upstream response hooks.
 	HTTPResponseHooks func(HTTPRun) httpstream.ResponseHooks
