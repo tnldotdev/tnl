@@ -19,6 +19,9 @@ export const createDeploymentPublisherEnrollmentRequestSchema = z.strictObject({
   expires_in: z.int().gte(60).lte(86400).optional().default(600),
 });
 
+/**
+ * An explicit address and optional publisher-to-target TLS. Declared Kubernetes services require tls; an empty tls object uses verified system roots and the address hostname.
+ */
 export const deploymentTargetSchema = z.strictObject({
   address: z.string().min(1).max(8192),
   tls: deploymentTargetTlsSchema.optional(),

@@ -53,6 +53,9 @@ export type DeploymentPublisherPage = {
   next_cursor?: string;
 };
 
+/**
+ * An explicit address and optional publisher-to-target TLS. Declared Kubernetes services require tls; an empty tls object uses verified system roots and the address hostname.
+ */
 export type DeploymentTarget = {
   /**
    * Explicit host:port, or an HTTP origin for a declared HTTP service. Does not evaluate local configuration or discover cloud resources.
