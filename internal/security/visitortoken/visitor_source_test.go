@@ -87,7 +87,9 @@ func TestVisitorSourceProofBindsRunProcessSequenceAndTrustedEndpoints(t *testing
 
 func TestVisitorSourceDelegationCannotExtendAuthorityOrBecomeAMaster(t *testing.T) {
 	master, proof, binding, now := sourceProofFixture(t)
-	for _, at := range []time.Time{now.Add(PolicyLifetime), now.Add(time.Minute), now.Add(-time.Second)} {
+	// a receiver's earlier authority-time estimate is not a shared-clock
+	// not-before bound. expiry remains fixed at the actual delegation deadline.
+	for _, at := range []time.Time{now.Add(PolicyLifetime), now.Add(time.Minute)} {
 		if err := VerifyVisitorSource(master, proof, binding, 3, at); !errors.Is(err, ErrVisitorSource) {
 			t.Fatal("proof escaped its original delegation deadline", err)
 		}

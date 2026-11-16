@@ -185,6 +185,18 @@ func TestTokenExpiryIsIndependentOfPolicyFreshness(t *testing.T) {
 	}
 }
 
+func TestVisitorTokenFutureIssuanceStillRequiresItsAuthorityClock(t *testing.T) {
+	key, permission, view, now := tokenFixture(t)
+	issuedAt := now.Add(time.Second)
+	token := issueToken(t, key, permission, view, issuedAt)
+	if _, err := VerifyBearer(token, view, now); !errors.Is(err, ErrToken) {
+		t.Fatal("token issued after the current authority time was accepted", err)
+	}
+	if _, err := VerifyBearer(token, view, issuedAt); err != nil {
+		t.Fatal("token remained unavailable after its real issuance time", err)
+	}
+}
+
 func TestBearerRenewalProofDoesNotAuthorizeSupersededOrExpiredPermission(t *testing.T) {
 	key, permission, view, now := tokenFixture(t)
 	permission.ExpiresAt = now.Add(2 * time.Second)

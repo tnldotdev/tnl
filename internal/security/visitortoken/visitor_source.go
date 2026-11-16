@@ -77,9 +77,12 @@ func VerifyVisitorSourceAuthority(master [32]byte, authority tunnelv1.VisitorSou
 // cannot roll back the publisher's newer access policy. a future delegation may
 // not outrun the policy the publisher has actually installed.
 func VerifyVisitorSource(master [32]byte, proof tunnelv1.VisitorSourceProof, binding tunnelv1.VisitorSourceBinding, policyRevision int64, now time.Time) error {
-	if policyRevision < 1 || proof.Authority.VisitorPolicyRevision > policyRevision || proof.ObservedAt > now.UnixMicro() {
+	if policyRevision < 1 || proof.Authority.VisitorPolicyRevision > policyRevision {
 		return ErrVisitorSource
 	}
+	// ingress and publisher spend their own control-request latency, so their
+	// authority-time estimates cannot order this observation against receipt.
+	// both the signed observation and receipt must still precede delegation expiry.
 	if err := VerifyVisitorSourceAuthority(master, proof.Authority, now); err != nil {
 		return err
 	}
