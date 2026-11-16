@@ -38,6 +38,9 @@ func normalizeDeploymentTarget(ctx context.Context, name, protocol string, input
 	}
 	s.Target = address
 	tls := input.TLS
+	if protocol == "kubernetes" && tls == nil {
+		return s, ErrProjectConfigurationInvalid
+	}
 	if protocol == "http" && strings.HasPrefix(input.Address, "https://") && tls == nil {
 		tls = &DeploymentTargetTLS{}
 	}

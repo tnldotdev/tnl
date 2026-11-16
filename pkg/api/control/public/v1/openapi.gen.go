@@ -2587,7 +2587,7 @@ type DeploymentSettings struct {
 	Public      *bool   `json:"public,omitempty"`
 }
 
-// DeploymentTarget defines model for DeploymentTarget.
+// DeploymentTarget An explicit address and optional publisher-to-target TLS. Declared Kubernetes services require tls; an empty tls object uses verified system roots and the address hostname.
 type DeploymentTarget struct {
 	// Address Explicit host:port, or an HTTP origin for a declared HTTP service. Does not evaluate local configuration or discover cloud resources.
 	Address string `json:"address"`

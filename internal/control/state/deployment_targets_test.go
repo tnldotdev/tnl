@@ -2,12 +2,36 @@ package state
 
 import (
 	"crypto/x509"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/security/rdsroots"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 )
+
+func TestDeploymentKubernetesTargetRequiresTLS(t *testing.T) {
+	if _, err := normalizeDeploymentTarget(t.Context(), "kube", "kubernetes", DeploymentTarget{Address: "cluster.example:6443"}); !errors.Is(err, ErrProjectConfigurationInvalid) {
+		t.Fatal("Kubernetes target without verified TLS accepted", err)
+	}
+	service, err := normalizeDeploymentTarget(t.Context(), "kube", "kubernetes", DeploymentTarget{
+		Address: "cluster.example:6443", TLS: &DeploymentTargetTLS{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.Target != "cluster.example:6443" || service.TargetTLS == nil || service.TargetTLS.Hostname != "cluster.example" {
+		t.Fatal("Kubernetes target lost its captured TLS trust", service)
+	}
+	for _, protocol := range []string{"http", "tcp", "postgres", "mysql"} {
+		t.Run(protocol, func(t *testing.T) {
+			service, err := normalizeDeploymentTarget(t.Context(), "service", protocol, DeploymentTarget{Address: "target.internal:1234"})
+			if err != nil || service.TargetTLS != nil {
+				t.Fatal("non-Kubernetes protocol required or enabled target TLS", service, err)
+			}
+		})
+	}
+}
 
 func TestDeploymentTargetUsesCapturedTrustWithoutDiscovery(t *testing.T) {
 	for _, protocol := range []string{"postgres", "mysql"} {

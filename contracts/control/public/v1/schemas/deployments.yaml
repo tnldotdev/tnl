@@ -10,6 +10,7 @@ schemas:
     type: object
     additionalProperties: false
     required: [address]
+    description: An explicit address and optional publisher-to-target TLS. Declared Kubernetes services require tls; an empty tls object uses verified system roots and the address hostname.
     properties:
       address:
         type: string

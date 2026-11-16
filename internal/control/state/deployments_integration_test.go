@@ -154,6 +154,55 @@ func TestIntegrationDeploymentCRUDSharesSavedBindingsWithApply(t *testing.T) {
 	}
 }
 
+func TestIntegrationDeploymentRejectsKubernetesTargetWithoutTLS(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "deployment_kubernetes_tls")
+	ctx := t.Context()
+	r := appliedProjectRequest(t, d, now)
+	r.Deployment = "local"
+	r.Configuration = ProjectConfiguration{}
+	r.ServiceDeclarations = map[string]string{"kube": "kubernetes"}
+	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	scope := DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID}
+	request := CreateDeploymentRequest{DeploymentScope: scope, Name: "customer", IdempotencyKey: "customer", Now: now,
+		Targets: map[string]DeploymentTarget{"kube": {Address: "cluster.example:6443"}}}
+	if _, err := d.CreateDeployment(ctx, request); !errors.Is(err, ErrProjectConfigurationInvalid) {
+		t.Fatal("created an unpublishable Kubernetes deployment", err)
+	}
+	if _, err := d.GetDeployment(ctx, scope, "customer"); !errors.Is(err, ErrDeploymentNotFound) {
+		t.Fatal("rejected creation left a saved deployment", err)
+	}
+	request.Targets["kube"] = DeploymentTarget{Address: "cluster.example:6443", TLS: &DeploymentTargetTLS{}}
+	created, err := d.CreateDeployment(ctx, request)
+	if err != nil {
+		t.Fatal("rejected creation reserved its name or request key", err)
+	}
+	enrollment, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "customer", r.ActorID, 1, time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replica := enrollAppliedGroup(t, d, r, enrollment, now)
+	update := UpdateDeploymentRequest{DeploymentScope: scope, Selector: created.ID, ExpectedRevision: created.Revision, Now: now,
+		Targets: map[string]DeploymentTarget{"kube": {Address: "replacement.example:6443"}}}
+	if _, err := d.UpdateDeployment(ctx, update); !errors.Is(err, ErrProjectConfigurationInvalid) {
+		t.Fatal("replaced a working Kubernetes target with an unpublishable one", err)
+	}
+	current, err := d.GetDeployment(ctx, scope, created.ID)
+	if err != nil || !reflect.DeepEqual(current, created) {
+		t.Fatal("rejected update changed the saved deployment", current, err)
+	}
+	assignments, err := d.GetPublisherGroupAssignments(ctx, replica.lease.AccessToken, now)
+	if err != nil || !reflect.DeepEqual(assignments, replica.assignments) {
+		t.Fatal("rejected update changed publisher assignments or grants", err)
+	}
+	update.Targets["kube"] = DeploymentTarget{Address: "replacement.example:6443", TLS: &DeploymentTargetTLS{}}
+	updated, err := d.UpdateDeployment(ctx, update)
+	if err != nil || updated.Revision != created.Revision+1 || updated.Services["kube"].ID != created.Services["kube"].ID || updated.Targets["kube"].TLS == nil || updated.Targets["kube"].TLS.Hostname != "replacement.example" {
+		t.Fatal("verified replacement did not preserve the binding and capture new trust", updated, err)
+	}
+}
+
 func TestIntegrationDeploymentSavedConfigurationConsumers(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "deployment_consumers")
 	ctx := t.Context()
@@ -195,7 +244,7 @@ func TestIntegrationDeploymentSavedConfigurationConsumers(t *testing.T) {
 		t.Fatal("visitor lost current EKS facts", approved, err)
 	}
 	_, err = d.UpdateDeployment(ctx, UpdateDeploymentRequest{DeploymentScope: scope, Selector: production.ID, ExpectedRevision: production.Revision, Now: now,
-		Targets: map[string]DeploymentTarget{"kube": {Address: "new-kube.internal:6443"}}})
+		Targets: map[string]DeploymentTarget{"kube": {Address: "new-kube.internal:6443", TLS: &DeploymentTargetTLS{}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

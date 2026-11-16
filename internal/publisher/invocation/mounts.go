@@ -74,7 +74,7 @@ func ProjectMounts(ctx context.Context, project clientproject.Project, service s
 			}
 		}
 		trustTarget := normalized
-		if trustTarget == "" && definition.Target != nil && definition.Target.TLS != nil && config.TargetType(definition) != "app" && resolve != nil {
+		if trustTarget == "" && definition.Target != nil && definition.Target.TLS != nil && resolve != nil {
 			var err error
 			trustTarget, _, err = resolve(ctx)
 			if err != nil {
