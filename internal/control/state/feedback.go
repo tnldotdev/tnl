@@ -162,17 +162,16 @@ type FeedbackEventPage struct {
 }
 
 type CreateFeedbackRequest struct {
-	PreviewID         string
-	Service           string
-	PagePath          string
-	PageTitle         string
-	ReportText        string
-	AuthorDisplayName string
-	Anchor            json.RawMessage
-	Evidence          json.RawMessage
-	SourceAtReport    json.RawMessage
-	IdempotencyKey    string
-	Actor             FeedbackActor
+	PreviewID      string
+	Service        string
+	PagePath       string
+	PageTitle      string
+	ReportText     string
+	Anchor         json.RawMessage
+	Evidence       json.RawMessage
+	SourceAtReport json.RawMessage
+	IdempotencyKey string
+	Actor          FeedbackActor
 }
 
 type AppendFeedbackRequest struct {
@@ -192,7 +191,6 @@ func (d *Database) CreateFeedback(ctx context.Context, auth ServiceHTTPRun, requ
 	}
 	if !opaqueid.Valid(request.PreviewID, opaqueid.PreviewPrefix) || !naming.ValidServiceName(request.Service) ||
 		!validFeedbackPath(request.PagePath) || len([]rune(request.PageTitle)) > 256 || !validFeedbackText(request.ReportText, 4000) ||
-		request.AuthorDisplayName != "" && !validFeedbackText(request.AuthorDisplayName, 64) ||
 		!validFeedbackKey(request.IdempotencyKey) ||
 		request.Actor.Kind != "reviewer" {
 		return FeedbackThread{}, ErrFeedbackInvalid
@@ -247,13 +245,10 @@ func (d *Database) CreateFeedback(ctx context.Context, auth ServiceHTTPRun, requ
 	if err := requireFeedbackAuthor(ctx, queries, scope.TeamID.String, scope.GuestID.String, actor); err != nil {
 		return FeedbackThread{}, err
 	}
-	if actor.identityID != "" {
-		request.AuthorDisplayName = actor.displayName
-	}
 	digestInput, err := json.Marshal(struct {
 		PreviewID, Service, PagePath, PageTitle, ReportText, AuthorDisplayName, AuthorIdentityID string
 		Anchor, Evidence, SourceAtReport                                                         json.RawMessage
-	}{request.PreviewID, request.Service, request.PagePath, request.PageTitle, request.ReportText, request.AuthorDisplayName,
+	}{request.PreviewID, request.Service, request.PagePath, request.PageTitle, request.ReportText, actor.displayName,
 		actor.identityID, request.Anchor, request.Evidence, request.SourceAtReport})
 	if err != nil {
 		return FeedbackThread{}, ErrFeedbackInvalid
@@ -267,7 +262,7 @@ func (d *Database) CreateFeedback(ctx context.Context, auth ServiceHTTPRun, requ
 		ID: id, PreviewID: request.PreviewID, TeamID: scope.TeamID,
 		ServiceID: scope.ServiceID, ServiceRunID: auth.RunID,
 		RunNumber: auth.Number, Service: request.Service, PagePath: request.PagePath, PageTitle: request.PageTitle,
-		ReportText: request.ReportText, AuthorDisplayName: nullableText(request.AuthorDisplayName),
+		ReportText: request.ReportText, AuthorDisplayName: nullableText(actor.displayName),
 		AuthorIdentityID: nullableText(actor.identityID), AuthorVerified: actor.identityID != "",
 		Anchor: request.Anchor, Evidence: request.Evidence, SourceAtReport: request.SourceAtReport,
 		CreatedAt: timestamptz(now), StateUpdatedAt: timestamptz(now),

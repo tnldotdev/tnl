@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -34,7 +35,7 @@ func TestIntegrationFeedbackCombinedBrowserShareUsesVerifiedAuthor(t *testing.T)
 	share := f.share(t, preview.ID, "combined-share", secret, f.service)
 	auth := f.auth()
 	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", ServiceRun: &auth, BrowserCookieSecret: browser, ShareID: share.ID, ShareSecret: secret, IdentityID: "forged identity", DisplayName: "forged name", TeamMember: true, VisitAllowed: true}
-	thread, err := d.CreateFeedback(t.Context(), auth, CreateFeedbackRequest{PreviewID: preview.ID, Service: "web", PagePath: "/", ReportText: "combined access", AuthorDisplayName: "unverified supplied name", Anchor: json.RawMessage(`null`), Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`), SourceAtReport: feedbackTestSource(t), IdempotencyKey: "combined-report", Actor: actor}, now)
+	thread, err := d.CreateFeedback(t.Context(), auth, CreateFeedbackRequest{PreviewID: preview.ID, Service: "web", PagePath: "/", ReportText: "combined access", Anchor: json.RawMessage(`null`), Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`), SourceAtReport: feedbackTestSource(t), IdempotencyKey: "combined-report", Actor: actor}, now)
 	if err != nil || thread.AuthorIdentityID != identity || thread.AuthorDisplayName != "Verified reviewer" || !thread.AuthorVerified {
 		t.Fatal("combined feedback trusted submitted author facts", thread, err)
 	}
@@ -64,6 +65,20 @@ func feedbackTestSource(t *testing.T) json.RawMessage {
 	return source
 }
 
+func feedbackBrowserSecret(t *testing.T, ctx context.Context, f serviceHTTPFixture, preview, identity string) []byte {
+	t.Helper()
+	handoff, _ := f.browser(t, preview, identity)
+	session, err := f.database.RedeemServiceBrowserHandoff(ctx, f.auth(), handoff.Token, f.now)
+	if err != nil {
+		t.Fatal("redeem feedback author handoff", err)
+	}
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(session.CookieSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
 func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	f := newServiceHTTPFixture(t)
 	database, now := f.database, f.now
@@ -81,10 +96,12 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	}
 	auth := f.auth()
 	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", ShareID: share.ID, CookieSecret: cookie, ServiceRun: &auth, DisplayName: "forged verified author", TeamMember: true, VisitAllowed: true}
+	identity := finalVisitorIdentity(t, database, now, "feedback-author@example.test")
+	actor.BrowserCookieSecret = feedbackBrowserSecret(t, t.Context(), f, preview.ID, identity)
 	source := feedbackTestSource(t)
 	request := CreateFeedbackRequest{
 		PreviewID: preview.ID, Service: "web", PagePath: "/settings/profile", PageTitle: "Profile settings",
-		ReportText: "Save says it worked, but changes disappear after reload.", AuthorDisplayName: "Sam",
+		ReportText:     "Save says it worked, but changes disappear after reload.",
 		Anchor:         json.RawMessage(`{"schema_version":1,"selectors":["[data-testid=save]"],"x":0.5,"y":0.5}`),
 		Evidence:       json.RawMessage(`{"schema_version":1,"element":{"role":"button","label":"Save changes","html":"<button onclick='steal()' data-testid='save'>Save</button><script>steal()</script>"},"actions":[{"type":"click","label":"Save changes"}],"failed_requests":[{"method":"POST","path":"/api/profile","status":500,"duration_ms":184}]}`),
 		SourceAtReport: source, IdempotencyKey: "first-report", Actor: actor,
@@ -98,7 +115,9 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	if err != nil || len(firstPage.Events) != 1 || firstPage.Events[0].Type != FeedbackCreated || firstPage.Events[0].Cursor == 0 {
 		t.Fatalf("initial event = %+v, %v", firstPage, err)
 	}
-	if thread.AuthorVerified || thread.AuthorIdentityID != "" || firstPage.Events[0].AuthorDisplayName != "" || firstPage.Events[0].AuthorVerified || firstPage.Events[0].ActorReference != share.ID {
+	if !thread.AuthorVerified || thread.AuthorIdentityID != identity || thread.AuthorDisplayName == actor.DisplayName ||
+		firstPage.Events[0].AuthorDisplayName != thread.AuthorDisplayName || !firstPage.Events[0].AuthorVerified ||
+		firstPage.Events[0].ActorReference != "identity:"+identity {
 		t.Fatal("submitted reviewer assertions reached persistence", thread, firstPage.Events[0])
 	}
 	retry, err := database.CreateFeedback(t.Context(), f.auth(), request, now.Add(time.Second))
@@ -218,6 +237,7 @@ func TestIntegrationFeedbackCursorsOrderConcurrentReports(t *testing.T) {
 	f.service = f.local(t, "web", &config.HTTPService{Access: &config.Access{Mode: "anonymous"}})
 	f.run = f.publish(t, f.service)
 	preview := f.preview(t, "concurrent-reports", f.service)
+	browser := feedbackBrowserSecret(t, t.Context(), f, preview.ID, f.project.ActorID)
 	started := make(chan struct{})
 	results := make(chan error, 2)
 	source := feedbackTestSource(t)
@@ -229,7 +249,7 @@ func TestIntegrationFeedbackCursorsOrderConcurrentReports(t *testing.T) {
 				ReportText:     "The settings save is inconsistent",
 				Evidence:       json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`),
 				SourceAtReport: source, IdempotencyKey: key,
-				Actor: FeedbackActor{Kind: "reviewer", VisitAllowed: true, SourceIP: "192.0.2.9"},
+				Actor: FeedbackActor{Kind: "reviewer", VisitAllowed: true, SourceIP: "192.0.2.9", BrowserCookieSecret: browser},
 			}, f.now)
 			results <- err
 		}()

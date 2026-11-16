@@ -352,7 +352,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 			BrowserCookieSecret: browserRaw, ShareID: share.ID, CookieSecret: shareRaw}
 		thread, err := d.CreateFeedback(t.Context(), a, CreateFeedbackRequest{
 			PreviewID: preview.ID, Service: "a", PagePath: "/", ReportText: "The label is unclear",
-			AuthorDisplayName: "spoofed", Anchor: json.RawMessage(`null`),
+			Anchor:         json.RawMessage(`null`),
 			Evidence:       json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`),
 			SourceAtReport: feedbackTestSource(t), IdempotencyKey: "outside-report", Actor: actor,
 		}, now)

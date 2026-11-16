@@ -29,8 +29,9 @@ func TestIntegrationDemoFeedbackCleanupAndRetainedProjectFeedback(t *testing.T) 
 				t.Fatalf("demo preview retry = %+v, %v", retry, err)
 			}
 			project := f.preview(t, "real-project", f.service)
+			browser := feedbackBrowserSecret(t, ctx, f, demo.ID, f.project.ActorID)
 			create := func(preview Preview, key string) FeedbackThread {
-				thread, err := d.CreateFeedback(ctx, f.auth(), CreateFeedbackRequest{PreviewID: preview.ID, Service: "demo", PagePath: "/", ReportText: "A suggestion", Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`), SourceAtReport: feedbackTestSource(t), IdempotencyKey: key, Actor: FeedbackActor{Kind: "reviewer", VisitAllowed: true, SourceIP: "192.0.2.9"}}, now)
+				thread, err := d.CreateFeedback(ctx, f.auth(), CreateFeedbackRequest{PreviewID: preview.ID, Service: "demo", PagePath: "/", ReportText: "A suggestion", Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`), SourceAtReport: feedbackTestSource(t), IdempotencyKey: key, Actor: FeedbackActor{Kind: "reviewer", VisitAllowed: true, SourceIP: "192.0.2.9", BrowserCookieSecret: browser}}, now)
 				if err != nil {
 					t.Fatal(err)
 				}

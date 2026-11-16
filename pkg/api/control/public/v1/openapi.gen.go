@@ -1888,7 +1888,7 @@ type AppendFeedbackEventRequest struct {
 
 // AppendReviewerFeedbackEventRequest defines model for AppendReviewerFeedbackEventRequest.
 type AppendReviewerFeedbackEventRequest struct {
-	// Access Browser identity and visitor access are independent. Control rechecks the supplied browser and share proofs, current service policy, and feedback policy; visit_allowed is an observation, not authority.
+	// Access Browser identity and visitor access are independent. Feedback writes require a current browser_cookie_secret for verified authorship, including guest previews. Control also rechecks current preview permission and team feedback restrictions; visit_allowed is an observation, not authority. Share, bearer, and connector proofs supply visit permission only.
 	Access    FeedbackReviewerAccess `json:"access"`
 	Evidence  *FeedbackEvidence      `json:"evidence,omitempty"`
 	RunNumber int64                  `json:"run_number,string"`
@@ -2376,7 +2376,7 @@ type CreateDeploymentRequest struct {
 
 // CreateFeedbackReportRequest defines model for CreateFeedbackReportRequest.
 type CreateFeedbackReportRequest struct {
-	// Access Browser identity and visitor access are independent. Control rechecks the supplied browser and share proofs, current service policy, and feedback policy; visit_allowed is an observation, not authority.
+	// Access Browser identity and visitor access are independent. Feedback writes require a current browser_cookie_secret for verified authorship, including guest previews. Control also rechecks current preview permission and team feedback restrictions; visit_allowed is an observation, not authority. Share, bearer, and connector proofs supply visit permission only.
 	Access    FeedbackReviewerAccess `json:"access"`
 	Anchor    *FeedbackAnchor        `json:"anchor,omitempty"`
 	Evidence  FeedbackEvidence       `json:"evidence"`
@@ -2384,8 +2384,7 @@ type CreateFeedbackReportRequest struct {
 	PageTitle *string                `json:"page_title,omitempty"`
 	PreviewId PreviewID              `json:"preview_id"`
 	Report    struct {
-		DisplayName *string `json:"display_name,omitempty"`
-		Text        string  `json:"text"`
+		Text string `json:"text"`
 	} `json:"report"`
 	RunNumber int64  `json:"run_number,string"`
 	Service   string `json:"service"`
@@ -2842,7 +2841,7 @@ type FeedbackReport struct {
 	Text      string          `json:"text"`
 }
 
-// FeedbackReviewerAccess Browser identity and visitor access are independent. Control rechecks the supplied browser and share proofs, current service policy, and feedback policy; visit_allowed is an observation, not authority.
+// FeedbackReviewerAccess Browser identity and visitor access are independent. Feedback writes require a current browser_cookie_secret for verified authorship, including guest previews. Control also rechecks current preview permission and team feedback restrictions; visit_allowed is an observation, not authority. Share, bearer, and connector proofs supply visit permission only.
 type FeedbackReviewerAccess struct {
 	BrowserCookieSecret *string  `json:"browser_cookie_secret,omitempty"`
 	CookieSecret        *string  `json:"cookie_secret,omitempty"`
@@ -3051,7 +3050,7 @@ type PreviewPage struct {
 
 // PreviewPageFeedbackRequest defines model for PreviewPageFeedbackRequest.
 type PreviewPageFeedbackRequest struct {
-	// Access Browser identity and visitor access are independent. Control rechecks the supplied browser and share proofs, current service policy, and feedback policy; visit_allowed is an observation, not authority.
+	// Access Browser identity and visitor access are independent. Feedback writes require a current browser_cookie_secret for verified authorship, including guest previews. Control also rechecks current preview permission and team feedback restrictions; visit_allowed is an observation, not authority. Share, bearer, and connector proofs supply visit permission only.
 	Access    FeedbackReviewerAccess `json:"access"`
 	Cursor    *FeedbackID            `json:"cursor,omitempty"`
 	PagePath  *string                `json:"page_path,omitempty"`
@@ -3663,7 +3662,7 @@ type ReviewerFeedbackEventInputType string
 
 // ReviewerFeedbackReadRequest defines model for ReviewerFeedbackReadRequest.
 type ReviewerFeedbackReadRequest struct {
-	// Access Browser identity and visitor access are independent. Control rechecks the supplied browser and share proofs, current service policy, and feedback policy; visit_allowed is an observation, not authority.
+	// Access Browser identity and visitor access are independent. Feedback writes require a current browser_cookie_secret for verified authorship, including guest previews. Control also rechecks current preview permission and team feedback restrictions; visit_allowed is an observation, not authority. Share, bearer, and connector proofs supply visit permission only.
 	Access      FeedbackReviewerAccess `json:"access"`
 	AfterCursor *int64                 `json:"after_cursor,omitempty,string"`
 	PreviewId   PreviewID              `json:"preview_id"`

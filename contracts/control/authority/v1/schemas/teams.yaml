@@ -24,11 +24,12 @@ schemas:
           description: Unix seconds of actual company authentication; not token refresh time,
         }
   TeamFeedbackPolicy:
+    description: Feedback always requires a signed-in identity and current preview access. A team may additionally require current team membership.
     type: object
     additionalProperties: false
     required: [authors]
     properties:
-      authors: { type: string, enum: [anyone, signed_in, team_members], default: anyone }
+      authors: { type: string, enum: [signed_in, team_members], default: signed_in }
   TeamID:
     $ref: "../openapi.yaml#/components/schemas/ResourceID"
   TeamRole:

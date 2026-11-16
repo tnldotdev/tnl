@@ -1,7 +1,7 @@
 /** @jsxImportSource preact */
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { userEvent } from "@testing-library/user-event";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { FeedbackAPI } from "./api.ts";
 import { Toolbar } from "./toolbar.tsx";
 import type { FeedbackEvent, Summary, Thread } from "./model.ts";
@@ -74,6 +74,18 @@ async function openThread(user: ReturnType<typeof userEvent.setup>): Promise<voi
   await user.click(await screen.findByRole("button", { name: `View ${report.report.text}` }));
   await screen.findByRole("button", { name: "Resolve", exact: true });
 }
+beforeEach(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        signed_in: true,
+        display_name: "Sam",
+        team_member: false,
+      }),
+    ),
+  );
+});
 afterEach(() => {
   act(() => cleanup());
   document.body.replaceChildren();
@@ -140,7 +152,40 @@ test("a signed-in visitor sends feedback under the account name instead of an un
   );
   await user.click(screen.getByRole("button", { name: "send feedback" }));
   await waitFor(() => expect(api.report).toHaveBeenCalledTimes(1));
-  expect(vi.mocked(api.report).mock.calls[0]?.[0].display_name).toBe("");
+  expect(vi.mocked(api.report).mock.calls[0]?.[0]).not.toHaveProperty("display_name");
+});
+
+test("signed-out visitors can draft and read historical feedback but cannot submit or change a thread", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>().mockResolvedValue(Response.json({ signed_in: false })),
+  );
+  const api = fixture([{ ...report }]);
+  const { user } = mount(api);
+  await screen.findByRole("link", { name: "[ sign in ]", exact: true });
+  await openDraft(user, appButton());
+  expect(screen.queryByRole("textbox", { name: /name \(optional/i })).toBeNull();
+  await user.type(
+    screen.getByRole("textbox", { name: "Feedback", exact: true }),
+    "keep this draft",
+  );
+  const signIn = screen.getByRole("link", { name: "sign in in another tab" });
+  expect(signIn.getAttribute("target")).toBe("_blank");
+  expect(
+    (screen.getByRole("button", { name: "send feedback", exact: true }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  expect(api.report).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "cancel", exact: true }));
+  await openThread(user);
+  expect(screen.getByText("anonymous")).toBeTruthy();
+  expect(
+    (screen.getByRole("button", { name: "Resolve", exact: true }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  expect((screen.getByRole("textbox", { name: "Reply" }) as HTMLTextAreaElement).disabled).toBe(
+    true,
+  );
+  expect(api.append).not.toHaveBeenCalled();
 });
 
 test("placement creates only a local draft, prevents app activation, and sends subtle context", async () => {

@@ -434,7 +434,7 @@ schemas:
   FeedbackReviewerAccess:
     type: object
     additionalProperties: false
-    description: Browser identity and visitor access are independent. Control rechecks the supplied browser and share proofs, current service policy, and feedback policy; visit_allowed is an observation, not authority.
+    description: Browser identity and visitor access are independent. Feedback writes require a current browser_cookie_secret for verified authorship, including guest previews. Control also rechecks current preview permission and team feedback restrictions; visit_allowed is an observation, not authority. Share, bearer, and connector proofs supply visit permission only.
     required: [visit_allowed]
     properties:
       source_ip:
@@ -484,8 +484,6 @@ schemas:
         required: [text]
         properties:
           text:
-            type: string
-          display_name:
             type: string
       anchor:
         $ref: "../openapi.yaml#/components/schemas/FeedbackAnchor"

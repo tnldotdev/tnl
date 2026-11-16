@@ -17,6 +17,7 @@ export function ReportForm({
   target,
   saved,
   cancel,
+  signedIn,
   browserName,
 }: {
   api: FeedbackAPI;
@@ -26,10 +27,10 @@ export function ReportForm({
   target?: AnchorTarget | undefined;
   saved: (thread: Thread) => void;
   cancel: () => void;
+  signedIn: boolean;
   browserName?: string | undefined;
 }) {
   const [text, setText] = useState("");
-  const [name, setName] = useState("");
   const [includeActivity, setIncludeActivity] = useState(true);
   const [activity] = useState(() => actions().slice(-20));
   const [draftKey] = useState(() => crypto.randomUUID());
@@ -53,8 +54,6 @@ export function ReportForm({
     mutationFn: async (input: ReportInput) => {
       if (new TextEncoder().encode(input.text).length > 4000)
         throw new FeedbackError("text_too_long");
-      if (new TextEncoder().encode(input.display_name).length > 64)
-        throw new FeedbackError("name_too_long");
       return api.report(input, key.current(input), signal);
     },
     onSuccess: (thread) => {
@@ -62,10 +61,10 @@ export function ReportForm({
     },
   });
   function submit(): void {
+    if (!signedIn) return;
     send.mutate({
       schema_version: 1,
       text: text.trim(),
-      display_name: browserName ? "" : name.trim(),
       page_path: path,
       page_title: boundedText(document.title, 256),
       ...(target ? { anchor: target.anchor } : {}),
@@ -81,7 +80,7 @@ export function ReportForm({
       )}
       {!target && <small>on this page</small>}
       {send.error && <p role="alert">{safeFeedbackMessage(send.error)}</p>}
-      <FeedbackSignIn error={send.error} path={path} />
+      <FeedbackSignIn error={send.error} path={path} required={!signedIn} />
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -100,19 +99,7 @@ export function ReportForm({
               onInput={(event) => setText(event.currentTarget.value)}
             />
           </label>
-          {browserName ? (
-            <small>posting as {browserName}</small>
-          ) : (
-            <label class="display-name">
-              Name (optional, unverified)
-              <input
-                maxLength={64}
-                placeholder="name (optional)"
-                value={name}
-                onInput={(event) => setName(event.currentTarget.value)}
-              />
-            </label>
-          )}
+          {signedIn && browserName && <small>posting as {browserName}</small>}
           <EvidenceView evidence={evidence} />
           <label class="activity-choice">
             <input
@@ -133,7 +120,9 @@ export function ReportForm({
             <button
               type="submit"
               disabled={
-                !text.trim() || (includeActivity && (failures.isPending || failures.isError))
+                !signedIn ||
+                !text.trim() ||
+                (includeActivity && (failures.isPending || failures.isError))
               }
             >
               {send.isPending ? "sending…" : "send feedback"}

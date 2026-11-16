@@ -387,7 +387,6 @@ func (e PublisherTokenResponseTokenType) Valid() bool {
 
 // Defines values for TeamFeedbackPolicyAuthors.
 const (
-	Anyone      TeamFeedbackPolicyAuthors = "anyone"
 	SignedIn    TeamFeedbackPolicyAuthors = "signed_in"
 	TeamMembers TeamFeedbackPolicyAuthors = "team_members"
 )
@@ -395,8 +394,6 @@ const (
 // Valid indicates whether the value is a known member of the TeamFeedbackPolicyAuthors enum.
 func (e TeamFeedbackPolicyAuthors) Valid() bool {
 	switch e {
-	case Anyone:
-		return true
 	case SignedIn:
 		return true
 	case TeamMembers:
@@ -942,7 +939,7 @@ type Team struct {
 	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
-// TeamFeedbackPolicy defines model for TeamFeedbackPolicy.
+// TeamFeedbackPolicy Feedback always requires a signed-in identity and current preview access. A team may additionally require current team membership.
 type TeamFeedbackPolicy struct {
 	Authors TeamFeedbackPolicyAuthors `json:"authors"`
 }

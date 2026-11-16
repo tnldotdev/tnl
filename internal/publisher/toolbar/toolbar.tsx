@@ -234,6 +234,7 @@ function FeedbackLayer({
             document={document}
             actions={() => actions.current}
             target={draft.target}
+            signedIn={browserStatus.data?.signed_in === true}
             browserName={
               browserStatus.data?.signed_in ? browserStatus.data.display_name : undefined
             }
@@ -311,7 +312,12 @@ function FeedbackLayer({
               the element is no longer on this page; the conversation is still here
             </p>
           )}
-          <ThreadView key={current.id} api={api} id={current.id} />
+          <ThreadView
+            key={current.id}
+            api={api}
+            id={current.id}
+            signedIn={browserStatus.data?.signed_in === true}
+          />
         </Popover>
       )}
       {listOpen && (

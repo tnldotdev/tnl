@@ -34,6 +34,16 @@ func TestFeedbackInputsExcludeOutputOnlyAndReviewerUpdateEvents(t *testing.T) {
 	}
 }
 
+func TestFeedbackReportCannotSupplyAnUnverifiedAuthor(t *testing.T) {
+	h := &handler{}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"run_number":"1","report":{"text":"report","display_name":"forged author"}}`))
+	h.CreateFeedbackReport(response, request, "svc_example", "srun_example", controlv1.CreateFeedbackReportParams{})
+	if response.Code != http.StatusBadRequest {
+		t.Fatal("report input retained an unverified author choice", response.Code)
+	}
+}
+
 func (s *feedbackStoreStub) GetFeedback(_ context.Context, _ string) (controlstate.FeedbackThread, error) {
 	return s.thread, nil
 }

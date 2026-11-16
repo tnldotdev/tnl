@@ -299,6 +299,7 @@ func TestFeedbackPublisherContractKeepsSourceAndScopeOutOfBrowserInput(t *testin
 		t.Fatal("thread event read lost the run binding or cursor", err)
 	}
 	for _, forged := range []string{
+		`{"schema_version":1,"text":"forged","page_path":"/","display_name":"unverified","evidence":{"schema_version":1,"actions":[],"failed_requests":[]}}`,
 		`{"schema_version":1,"text":"forged","page_path":"/","preview_id":"other","evidence":{"schema_version":1,"actions":[],"failed_requests":[]}}`,
 		`{"schema_version":1,"text":"forged","page_path":"/","service_id":"other","evidence":{"schema_version":1,"actions":[],"failed_requests":[]}}`,
 		`{"schema_version":1,"text":"forged","page_path":"/","service_run_id":"other","run_number":"99","evidence":{"schema_version":1,"actions":[],"failed_requests":[]}}`,

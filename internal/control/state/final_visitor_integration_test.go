@@ -211,10 +211,9 @@ func TestIntegrationFinalVisitorBrowserIdentityFeedbackAuthorPolicyAndSessionRev
 	auth = f.auth()
 	cookie, issued = finalBrowserSession(t, f, preview.ID, visitor)
 	ip := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", ServiceRun: &auth}
-	report := CreateFeedbackRequest{PreviewID: preview.ID, Service: "web", PagePath: "/", ReportText: "immutable report", AuthorDisplayName: "anonymous name", Anchor: json.RawMessage(`null`), Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`), SourceAtReport: feedbackTestSource(t), IdempotencyKey: "anonymous", Actor: ip}
-	anonymous, err := d.CreateFeedback(t.Context(), auth, report, f.now)
-	if err != nil || anonymous.AuthorVerified {
-		t.Fatal(anonymous, err)
+	report := CreateFeedbackRequest{PreviewID: preview.ID, Service: "web", PagePath: "/", ReportText: "immutable report", Anchor: json.RawMessage(`null`), Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`), SourceAtReport: feedbackTestSource(t), IdempotencyKey: "anonymous", Actor: ip}
+	if _, err := d.CreateFeedback(t.Context(), auth, report, f.now); !errors.Is(err, ErrVisitorSignIn) {
+		t.Fatal("anonymous feedback bypassed required sign-in", err)
 	}
 	if _, err = d.SetTeamFeedbackPolicy(t.Context(), owner, f.project.TeamID, "signed_in", f.now); err != nil {
 		t.Fatal(err)

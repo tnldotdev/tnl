@@ -19,7 +19,7 @@ type teamFeedbackGetCommand struct {
 }
 type teamFeedbackSetCommand struct {
 	scopedTeamFlags `embed:""`
-	Authors         string           `arg:"" name:"authors" enum:"anyone,signed_in,team_members" required:""`
+	Authors         string           `arg:"" name:"authors" enum:"signed_in,team_members" required:""`
 	Output          statusOutputMode `name:"output" enum:"human,json" default:"human"`
 }
 

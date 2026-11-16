@@ -68,7 +68,7 @@ CREATE TABLE control.teams (
     ingress_pool_id text NOT NULL DEFAULT 'ingress-a' REFERENCES control.ingress_pools(id) ON DELETE RESTRICT,
     default_domain_id text,
     policy_revision bigint NOT NULL DEFAULT 1 CHECK (policy_revision >= 1),
-    feedback_authors text NOT NULL DEFAULT 'anyone' CHECK (feedback_authors IN ('anyone', 'signed_in', 'team_members')),
+    feedback_authors text NOT NULL DEFAULT 'signed_in' CHECK (feedback_authors IN ('signed_in', 'team_members')),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     creation_idempotency_key text,
     creation_request_digest bytea,

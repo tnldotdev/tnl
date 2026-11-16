@@ -7,8 +7,7 @@ export type FeedbackErrorCode =
   | "unavailable"
   | "response_invalid"
   | "input_invalid"
-  | "text_too_long"
-  | "name_too_long";
+  | "text_too_long";
 const definitions: Record<FeedbackErrorCode, { retryable: boolean; message: string }> = {
   sign_in_required: {
     retryable: false,
@@ -31,7 +30,6 @@ const definitions: Record<FeedbackErrorCode, { retryable: boolean; message: stri
     message: "feedback input is invalid; check the report and try again",
   },
   text_too_long: { retryable: false, message: "feedback must be at most 4000 bytes" },
-  name_too_long: { retryable: false, message: "the name must be at most 64 bytes" },
 };
 export class FeedbackError extends Error {
   readonly code: FeedbackErrorCode;

@@ -21,7 +21,7 @@ func (d *Database) GetTeamFeedbackPolicy(ctx context.Context, identityID, teamID
 	return TeamFeedbackPolicy{Authors: authors}, err
 }
 func (d *Database) SetTeamFeedbackPolicy(ctx context.Context, identityID, teamID, authors string, now time.Time) (result TeamFeedbackPolicy, retErr error) {
-	if authors != "anyone" && authors != "signed_in" && authors != "team_members" {
+	if authors != "signed_in" && authors != "team_members" {
 		return result, ErrAuthorityInvalid
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -43,12 +43,15 @@ func (d *Database) SetTeamFeedbackPolicy(ctx context.Context, identityID, teamID
 	return TeamFeedbackPolicy{Authors: authors}, tx.Commit(ctx)
 }
 func requireFeedbackAuthor(ctx context.Context, q *controlstatedb.Queries, teamID, guestID string, actor authorizedFeedbackActor) error {
+	if actor.identityID == "" {
+		return ErrVisitorSignIn
+	}
 	if guestID != "" {
 		if teamID != "" {
 			return ErrFeedbackAccess
 		}
 		// the exact guest service run and reviewer share were already checked
-		// in this transaction. trial feedback has no team author policy.
+		// in this transaction. trial feedback still requires a signed-in author.
 		return nil
 	}
 	if teamID == "" {
@@ -58,11 +61,8 @@ func requireFeedbackAuthor(ctx context.Context, q *controlstatedb.Queries, teamI
 	if err != nil {
 		return err
 	}
-	if authors == "anyone" {
+	if authors == "signed_in" {
 		return nil
-	}
-	if actor.identityID == "" {
-		return ErrVisitorSignIn
 	}
 	if authors == "team_members" {
 		_, err = q.VisitorCurrentMembership(ctx, controlstatedb.VisitorCurrentMembershipParams{TeamID: teamID, IdentityID: actor.identityID})
@@ -71,5 +71,5 @@ func requireFeedbackAuthor(ctx context.Context, q *controlstatedb.Queries, teamI
 		}
 		return err
 	}
-	return nil
+	return ErrFeedbackAccess
 }

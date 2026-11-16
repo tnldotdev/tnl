@@ -141,7 +141,7 @@ func TestIntegrationNonmemberWithAnonymousAccessPostsVerifiedFeedback(t *testing
 		IdentityID: identityID, DisplayName: "forged", BrowserCookieSecret: raw}
 	request := CreateFeedbackRequest{
 		PreviewID: preview.ID, Service: "web", PagePath: "/", ReportText: "The label is unclear",
-		AuthorDisplayName: "not sam", Anchor: json.RawMessage(`null`),
+		Anchor:         json.RawMessage(`null`),
 		Evidence:       json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`),
 		SourceAtReport: feedbackTestSource(t), IdempotencyKey: "signed-report", Actor: actor,
 	}

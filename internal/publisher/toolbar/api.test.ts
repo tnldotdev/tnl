@@ -76,6 +76,7 @@ test("shared Go wire fixtures produce a readable report and a bounded browser su
   const wire = feedbackThreadSchema.parse(fixture("thread"));
   const event = feedbackEventSchema.parse(fixture("event"));
   const input = reportInputSchema.parse(fixture("report-request"));
+  expect(reportInputSchema.safeParse({ ...input, display_name: "unverified" }).success).toBe(false);
   const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(wire));
   const api = createFeedbackAPI(fetcher);
   const thread = await api.report(input, "fixture-report", new AbortController().signal);

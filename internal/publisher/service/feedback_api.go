@@ -171,9 +171,6 @@ func (f *feedbackRuntime) create(response http.ResponseWriter, request *http.Req
 		RunNumber: f.number, Service: f.service,
 	}
 	body.Report.Text = input.Text
-	if input.DisplayName != nil && *input.DisplayName != "" {
-		body.Report.DisplayName = input.DisplayName
-	}
 	created, err := f.client.CreateFeedbackReport(request.Context(), f.serviceID, f.runID, key, body, f.token)
 	f.writeResult(response, created, err)
 }

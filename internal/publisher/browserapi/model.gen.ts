@@ -194,10 +194,12 @@ export const browserAccessStatusSchema = z.strictObject({
   reason: z.enum(["TNL_VISITOR_ACCESS_DENIED"]).optional(),
 });
 
+/**
+ * Submit feedback with a current signed-in browser session and preview permission. Control derives the verified author; a share or visitor token alone cannot author feedback.
+ */
 export const browserFeedbackReportRequestSchema = z.strictObject({
   schema_version: reviewSchemaVersionSchema,
   text: z.string().min(1).max(4000),
-  display_name: z.string().max(64).optional(),
   page_path: z.string().min(1).max(2048).regex(/^\//),
   page_title: z.string().max(256).optional(),
   anchor: feedbackAnchorSchema.optional(),

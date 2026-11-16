@@ -56,6 +56,7 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
   let id = "fb_0123456789abcdefghijkl";
   let messageCount = 12;
   let cursor = 1;
+  let signedIn = true;
   const reports: unknown[] = [];
   // clicking submit must not imply that the asynchronous report was saved.
   const acceptReport = Promise.withResolvers<void>();
@@ -82,10 +83,15 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
   });
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://localhost");
-    // matches the no-cookie response in ../httpaccess/browser.go.
+    // matches the browser status responses in ../httpaccess/browser.go.
     if (url.pathname === "/__tnl/team/session" && request.method === "GET") {
       response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify({ signed_in: false }) + "\n");
+      response.end(
+        JSON.stringify({
+          signed_in: signedIn,
+          ...(signedIn ? { display_name: "Sam", team_member: false } : {}),
+        }) + "\n",
+      );
       return;
     }
     if (url.pathname === "/__tnl/feedback/fira-code.woff2") {
@@ -321,6 +327,8 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
     expect(errors).toEqual([]);
     expect(counts.session_responses).toBeGreaterThan(0);
     // the real consumer renders sign-in only after parsing a valid signed-out response.
+    signedIn = false;
+    await page.reload();
     phase("wait for parsed signed-out session");
     await expect
       .poll(() => page.getByRole("link", { name: "[ sign in ]", exact: true }).count())

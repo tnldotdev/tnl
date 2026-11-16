@@ -227,4 +227,93 @@ func TestIntegrationShareReviewerSignInRetainsShareVisitorPermission(t *testing.
 	if err != nil || identity.IdentityId != reviewer.Identity.Identity.Id || identity.VisitAllowed {
 		t.Fatal("share reviewer's sign-in identity was mistaken for visitor access", err)
 	}
+	report := controlv1.CreateFeedbackReportRequest{
+		PreviewId: preview.ID, RunNumber: auth.Number, Service: "reviewer", PagePath: "/settings",
+		Evidence:       controlv1.FeedbackEvidence{SchemaVersion: 1},
+		SourceAtReport: controlv1.SourceState{SchemaVersion: 1, ChangedFiles: []controlv1.SourceFileState{}},
+		Access: controlv1.FeedbackReviewerAccess{SourceIp: new("192.0.2.9"), VisitAllowed: true,
+			ShareId: &share.ID, CookieSecret: &shareSession.CookieSecret},
+	}
+	report.Report.Text = "Feedback from the shared preview"
+	if _, err := client.CreateFeedbackReport(ctx, service.ID, auth.RunID, "share-without-author", report, auth.Token); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+		t.Fatal("share-only API submission bypassed required sign-in", err)
+	}
+	report.Access.BrowserCookieSecret = &installed.CookieSecret
+	withoutShare := report
+	withoutShare.Access.ShareId, withoutShare.Access.CookieSecret = nil, nil
+	var problem *clientcontrol.ProblemError
+	if _, err := client.CreateFeedbackReport(ctx, service.ID, auth.RunID, "identity-without-access", withoutShare, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
+		t.Fatal("sign-in alone authorized a feedback report", err)
+	}
+	thread, err := client.CreateFeedbackReport(ctx, service.ID, auth.RunID, "signed-share-report", report, auth.Token)
+	if err != nil || thread.Report.Author == nil || !thread.Report.Author.Verified ||
+		thread.Report.Author.IdentityId == nil || *thread.Report.Author.IdentityId != reviewer.Identity.Identity.Id ||
+		thread.Report.Author.DisplayName != reviewer.Identity.Identity.DisplayName {
+		t.Fatal("API report lost the authenticated reviewer snapshot", err)
+	}
+	reply := controlv1.AppendReviewerFeedbackEventRequest{RunNumber: auth.Number, Type: controlv1.ReviewerFeedbackInputReply,
+		Text: new("A signed-in follow-up"), Access: report.Access}
+	reply.Access.BrowserCookieSecret = nil
+	if _, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "anonymous-reply", reply, auth.Token); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+		t.Fatal("share-only API reply bypassed required sign-in", err)
+	}
+	reply.Access = report.Access
+	event, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "signed-reply", reply, auth.Token)
+	if err != nil || event.Author == nil || !event.Author.Verified || event.Author.IdentityId == nil ||
+		*event.Author.IdentityId != reviewer.Identity.Identity.Id {
+		t.Fatal("API reply lost its verified author", err)
+	}
+	if _, err := f.d.SetTeamFeedbackPolicy(ctx, p.IdentityID, m.TeamId, "team_members", f.now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreateFeedbackReport(ctx, service.ID, auth.RunID, "team-members-only", report, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
+		t.Fatal("signed-in share reviewer bypassed team-only feedback", err)
+	}
+	if _, err := f.d.SetTeamFeedbackPolicy(ctx, p.IdentityID, m.TeamId, "signed_in", f.now); err != nil {
+		t.Fatal(err)
+	}
+	// these are the same management mutations sent by tnl feedback commands.
+	write := controlv1.AppendFeedbackEventRequest{Type: controlv1.FeedbackInputReply, Text: new("CLI reply")}
+	if _, err := client.AppendFeedbackEvent(ctx, thread.Id, "unsigned-cli", write); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+		t.Fatal("CLI/API mutation accepted no control identity", err)
+	}
+	for _, test := range []struct {
+		name, token string
+		allowed     bool
+	}{
+		{"outside", reviewer.AccessToken, false},
+		{"owner", owner.AccessToken, true},
+	} {
+		cli, err := clientcontrol.New(f.server.URL, f.server.Client(), credentials.AccessToken(test.token))
+		if err != nil {
+			t.Fatal(err)
+		}
+		event, err := cli.AppendFeedbackEvent(ctx, thread.Id, test.name+"-cli", write)
+		if test.allowed {
+			if err != nil || event.Author == nil || !event.Author.Verified || event.Author.IdentityId == nil || *event.Author.IdentityId != p.IdentityID {
+				t.Fatal("authorized CLI/API mutation lost its verified author", err)
+			}
+		} else if !errors.Is(err, clientcontrol.ErrNotFound) {
+			t.Fatal("unrelated signed-in CLI/API actor gained management access", err)
+		}
+	}
+	if _, err := f.d.RevokeShare(ctx, share.ID, p.IdentityID, f.now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreateFeedbackReport(ctx, service.ID, auth.RunID, "revoked-report", report, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
+		t.Fatal("verified browser author replaced revoked preview permission", err)
+	}
+	if _, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "revoked-reply", reply, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
+		t.Fatal("verified browser author bypassed current reply permission", err)
+	}
+	if err := f.d.RevokeControlSession(ctx, p, f.now); err != nil {
+		t.Fatal(err)
+	}
+	cli, err := clientcontrol.New(f.server.URL, f.server.Client(), credentials.AccessToken(owner.AccessToken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cli.AppendFeedbackEvent(t.Context(), thread.Id, "revoked-cli", write); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+		t.Fatal("revoked CLI/API session retained feedback authority", err)
+	}
 }

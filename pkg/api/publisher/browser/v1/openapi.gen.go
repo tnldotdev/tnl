@@ -131,13 +131,12 @@ type BrowserFeedbackEvidence struct {
 	SchemaVersion externalRef0.ReviewSchemaVersion `json:"schema_version"`
 }
 
-// BrowserFeedbackReportRequest defines model for BrowserFeedbackReportRequest.
+// BrowserFeedbackReportRequest Submit feedback with a current signed-in browser session and preview permission. Control derives the verified author; a share or visitor token alone cannot author feedback.
 type BrowserFeedbackReportRequest struct {
-	Anchor      *externalRef0.FeedbackAnchor  `json:"anchor,omitempty"`
-	DisplayName *string                       `json:"display_name,omitempty"`
-	Evidence    externalRef0.FeedbackEvidence `json:"evidence"`
-	PagePath    string                        `json:"page_path"`
-	PageTitle   *string                       `json:"page_title,omitempty"`
+	Anchor    *externalRef0.FeedbackAnchor  `json:"anchor,omitempty"`
+	Evidence  externalRef0.FeedbackEvidence `json:"evidence"`
+	PagePath  string                        `json:"page_path"`
+	PageTitle *string                       `json:"page_title,omitempty"`
 
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and service run numbers.
 	SchemaVersion externalRef0.ReviewSchemaVersion `json:"schema_version"`

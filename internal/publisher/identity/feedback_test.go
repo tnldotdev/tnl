@@ -95,7 +95,7 @@ func TestServiceFeedbackForwardingRetainsSelectedRunCredentialAndBody(t *testing
 		ChangedFiles: []controlv1.SourceFileState{}}
 	report := controlv1.CreateFeedbackReportRequest{RunNumber: number, PreviewId: preview, PagePath: "/settings", PageTitle: new("settings"),
 		Service: scope.service.Name, Access: access, Evidence: evidence, SourceAtReport: source}
-	report.Report.Text, report.Report.DisplayName = "original report", new("original reviewer")
+	report.Report.Text = "original report"
 	page := controlv1.PreviewPageFeedbackRequest{RunNumber: number, PreviewId: preview, Access: access,
 		Cursor: &feedback, PagePath: new("/settings"), State: new(controlv1.Open)}
 	appendEvent := controlv1.AppendReviewerFeedbackEventRequest{RunNumber: number, Access: access, Evidence: &evidence, SourceState: &source,

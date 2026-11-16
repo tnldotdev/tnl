@@ -166,15 +166,11 @@ func (h *handler) CreateFeedbackReport(response http.ResponseWriter, request *ht
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid source state")
 		return
 	}
-	displayName := ""
-	if body.Report.DisplayName != nil {
-		displayName = *body.Report.DisplayName
-	}
 	thread, err := h.feedback.CreateFeedback(request.Context(), auth, controlstate.CreateFeedbackRequest{
 		PageTitle: optionalFeedbackString(body.PageTitle),
 		PreviewID: body.PreviewId, Service: body.Service, PagePath: body.PagePath,
-		ReportText: body.Report.Text, AuthorDisplayName: displayName,
-		Anchor: anchor, Evidence: evidence, SourceAtReport: source,
+		ReportText: body.Report.Text,
+		Anchor:     anchor, Evidence: evidence, SourceAtReport: source,
 		IdempotencyKey: request.Header.Get("Idempotency-Key"), Actor: actor,
 	}, time.Now())
 	if err != nil {
