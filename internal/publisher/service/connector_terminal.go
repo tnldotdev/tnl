@@ -8,6 +8,7 @@ import (
 	"time"
 
 	quic "github.com/quic-go/quic-go"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -34,6 +35,8 @@ func connectorAdmissionRoutineError(err error) bool {
 		return cause != nil && (cause.err == visitortoken.ErrToken || cause.err == visitortoken.ErrBinding)
 	case *connectorRenewalProofRefusal:
 		return cause != nil && cause.err == visitortoken.ErrBinding
+	case *visitorlease.ConnectorPolicyRefusal:
+		return cause != nil
 	case interface{ Unwrap() []error }:
 		children := cause.Unwrap()
 		if len(children) == 0 {

@@ -475,7 +475,11 @@ func startWorkloadPublishers(t *testing.T, f *privateSeparatedFixture, group, tr
 		}
 		ready, done := make(chan struct{}), make(chan error, 1)
 		go func() {
-			done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: control, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: assignment.Configuration.Target, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: time.Second, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp})
+			err := publisherservice.Publish(ctx, publisherservice.RunConfig{Control: control, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: assignment.Configuration.Target, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: time.Second, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp})
+			if ctx.Err() == nil {
+				t.Logf("workload publisher service=%s protocol=%s ended before cleanup: %v", service.Id, service.Protocol, err)
+			}
+			done <- err
 		}()
 		t.Cleanup(func() {
 			cancel()
