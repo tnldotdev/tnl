@@ -26,15 +26,16 @@ import (
 // this transport script serves a framed hello and optionally loses one activation
 // reply. it models neither recovery, publisher authorization, nor packet forwarding.
 type legRetryScript struct {
-	response     tunnelv1.MessageType
-	code         tunnelv1.ErrorCode
-	readErr      error
-	closeErr     error
-	closeEntered chan struct{}
-	closeRelease <-chan struct{}
-	clearEntered chan struct{}
-	clearRelease <-chan struct{}
-	activation   bool
+	response       tunnelv1.MessageType
+	code           tunnelv1.ErrorCode
+	readErr        error
+	closeErr       error
+	closeEntered   chan struct{}
+	closeRelease   <-chan struct{}
+	clearEntered   chan struct{}
+	clearRelease   <-chan struct{}
+	activation     bool
+	activationGate *fixtureTLSGate
 }
 
 type legRetrySession struct {
@@ -99,6 +100,14 @@ func newLegRetrySession(t *testing.T, ctx context.Context, pair controlv1.Connec
 				return
 			}
 			s.activation <- *request.ConnectorLegBinding
+			if gate := script.activationGate; gate != nil {
+				close(gate.entered)
+				select {
+				case <-gate.release:
+				case <-ctx.Done():
+					return
+				}
+			}
 			_, s.serveErr = remote.Write([]byte{0})
 			return
 		}

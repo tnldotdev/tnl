@@ -474,8 +474,15 @@ func setHandshakeDeadline(ctx context.Context, connection net.Conn) error {
 }
 
 func setupDeadline(ctx context.Context, connection net.Conn) (func(bool) error, error) {
+	return setupDeadlineObserved(ctx, connection, nil)
+}
+
+func setupDeadlineObserved(ctx context.Context, connection net.Conn, interruptedBy *controlDeadlineStop) (func(bool) error, error) {
 	setupCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	if err := context.Cause(setupCtx); err != nil {
+		if deadline, ok := setupCtx.Deadline(); !ok || deadline.After(time.Now()) {
+			interruptedBy.beforeIO(err)
+		}
 		cancel()
 		return nil, err
 	}
@@ -486,6 +493,7 @@ func setupDeadline(ctx context.Context, connection net.Conn) (func(bool) error, 
 	}
 	interrupted := make(chan struct{})
 	stop := context.AfterFunc(setupCtx, func() {
+		interruptedBy.interrupt(context.Cause(setupCtx), deadline)
 		_ = connection.SetDeadline(time.Now())
 		close(interrupted)
 	})

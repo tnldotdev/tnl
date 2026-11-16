@@ -253,6 +253,21 @@ func connectorOwnedCancellationOnly(err, cause error) bool {
 	if connectorRetryVeto(err) {
 		return false
 	}
+	if attempt, ok := err.(*connectorLegAttemptError); ok {
+		if attempt.count == 0 || attempt.cleanup != nil || !connectorOwnedCancellationOnly(attempt.context, cause) {
+			return false
+		}
+		for _, candidate := range attempt.candidates[:attempt.count] {
+			if candidate.stage != connectorAttemptConnect && candidate.stage != connectorAttemptHello && candidate.stage != connectorAttemptActivation ||
+				candidate.cleanup != nil || !connectorOwnedCancellationOnly(candidate.cause, cause) {
+				return false
+			}
+		}
+		return true
+	}
+	if tunnel.ConnectorActivationStopped(err, cause) {
+		return true
+	}
 	if failure.Only(err, cause) || failure.Only(err, context.Canceled) {
 		return true
 	}
