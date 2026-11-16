@@ -118,9 +118,10 @@ func (f *assignmentServiceControl) HeartbeatServiceRun(ctx context.Context, id, 
 	case <-ctx.Done():
 		return controlv1.ServiceRunState{}, ctx.Err()
 	}
+	now := time.Now()
 	return controlv1.ServiceRunState{ServiceId: id, ServiceRunId: run, RunNumber: f.setup.RunNumber, State: controlv1.ServiceRunStateStateReady,
 		EndpointRevision: f.service.EndpointRevision, PublicEndpointReady: f.service.Endpoint.Public,
-		PublisherExpiresAt: time.Now().Add(time.Minute), PublisherConnections: f.setup.PublisherConnections}, nil
+		ObservedAt: now, PublisherExpiresAt: now.Add(time.Minute), PublisherConnections: f.setup.PublisherConnections}, nil
 }
 
 func (f *assignmentServiceControl) CreateServiceCertificateIssuance(_ context.Context, service, run string, number int64, token credentials.ServiceRunToken, csr []byte, _ string) (controlv1.ServiceCertificateIssuance, error) {
