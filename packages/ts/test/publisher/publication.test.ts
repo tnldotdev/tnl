@@ -445,6 +445,82 @@ test("close interrupts status polling and joins unregister without waiting for i
   expect(unregistered).toBe(true);
 });
 
+test.each(["canceled", "independent"] as const)(
+  "shutdown recovery preserves %s operation and cleanup provenance",
+  async (outcome) => {
+    const app = createServer();
+    await new Promise<void>((resolve) => app.listen(0, "127.0.0.1", resolve));
+    const poll = Promise.withResolvers<void>();
+    const recovering = Promise.withResolvers<void>();
+    const operation = new TnlError("sdk.dev_unavailable");
+    const cleanup = new Error("independent unregister failure");
+    let service = "",
+      target = "",
+      starts = 0,
+      statuses = 0;
+    const handle = await publishServer(
+      app,
+      {},
+      {
+        start: async (_directory, _binary, selection, signal): Promise<RuntimeEndpoint> => {
+          if (++starts > 1) {
+            if (signal === undefined) throw new Error("recovery has no lifetime");
+            recovering.resolve();
+            return new Promise<never>((_resolve, reject) => {
+              signal.addEventListener(
+                "abort",
+                () => reject(outcome === "independent" ? operation : signal.reason),
+                { once: true },
+              );
+            });
+          }
+          service = selection?.invocationID ?? "";
+          return {
+            version: 1,
+            url: "http://127.0.0.1:12345",
+            capability: "b".repeat(64),
+            owner_id: "a".repeat(32),
+            scope: "invocation",
+            invocation_id: invocationIDSchema.parse(service),
+          };
+        },
+        request: async (_endpoint, name, value) => {
+          if (name === "publications/register") {
+            const body = invocationSchema.parse(value);
+            target = body.target;
+            return { version: 1, registration_id: id, owner: body.owner, target };
+          }
+          if (name === "status") {
+            if (++statuses > 1) throw new TnlError("sdk.registration_stale");
+            return snapshot(service, target);
+          }
+          if (name === "unregister" && outcome === "independent") throw cleanup;
+          return undefined;
+        },
+        pause: async (milliseconds) => {
+          if (milliseconds === 250) await poll.promise;
+        },
+      },
+    );
+    try {
+      poll.resolve();
+      await recovering.promise;
+      if (outcome === "independent") {
+        await expect(handle.close()).rejects.toMatchObject({
+          code: "sdk.cleanup_failed",
+          errors: [operation, cleanup],
+        });
+      } else {
+        await handle.close();
+        await handle.wait();
+      }
+      expect(app.listening).toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => app.close(() => resolve()));
+    }
+  },
+);
+
 test("explicit publisher file is passed only to native and never enters status", async () => {
   let service = "";
   let target = "";

@@ -154,33 +154,56 @@ async function localConnection(
   name: string,
   protocol: ServiceProtocol,
   environment: NodeJS.ProcessEnv,
+  signal: AbortSignal,
 ) {
-  const value = await new Promise<string>((resolve, reject) => {
-    execFile(
-      binary,
-      [
-        "runtime",
-        "connections",
-        "local",
-        "--directory",
-        directory,
-        "--service",
-        name,
-        "--protocol",
-        protocol,
-      ],
-      {
-        encoding: "utf8",
-        timeout: 15_000,
-        maxBuffer: 2 << 20,
-        env: environment,
-      },
-      (error, stdout) => {
-        if (error !== null) reject(new TnlError("sdk.local_connection_unavailable"));
-        else resolve(stdout);
-      },
-    );
-  });
+  signal.throwIfAborted();
+  let exited: Promise<void> | undefined;
+  let value: string;
+  try {
+    value = await new Promise<string>((resolve, reject) => {
+      const child = execFile(
+        binary,
+        [
+          "runtime",
+          "connections",
+          "local",
+          "--directory",
+          directory,
+          "--service",
+          name,
+          "--protocol",
+          protocol,
+        ],
+        {
+          encoding: "utf8",
+          timeout: 15_000,
+          maxBuffer: 2 << 20,
+          env: environment,
+          signal,
+          killSignal: "SIGKILL",
+        },
+        (error, stdout) => {
+          if (error !== null) reject(error);
+          else resolve(stdout);
+        },
+      );
+      exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
+    });
+  } catch (cause) {
+    if (
+      signal.aborted &&
+      (cause === signal.reason ||
+        (cause instanceof Error &&
+          cause.name === "AbortError" &&
+          "code" in cause &&
+          cause.code === "ABORT_ERR" &&
+          cause.cause === signal.reason))
+    )
+      throw signal.reason;
+    throw new TnlError("sdk.local_connection_unavailable");
+  } finally {
+    await exited;
+  }
   try {
     const snapshot = localConnectionSchema.parse(JSON.parse(value));
     if (snapshot.protocol !== protocol) throw new Error("protocol changed during selection");
@@ -263,6 +286,7 @@ export function createClient<const Services extends ServiceFacts = Record<never,
       const requests = new Set<Promise<unknown>>();
       const httpFetches = new Map<string, TnlFetch & { close(): Promise<void> }>();
       const httpLifetime = new AbortController();
+      const selectionLifetime = new AbortController();
       const publications = new Set<Publication>();
       const failedPublications = new Set<() => Promise<void>>();
       const publicationLifetime = new AbortController();
@@ -315,26 +339,29 @@ export function createClient<const Services extends ServiceFacts = Record<never,
               const fetch: TnlFetch = async (input, init) => {
                 if (closed) throw closedError;
                 managed ??= import("./connection.js").then(({ managedFetch }) =>
-                  managedFetch(origin, async () =>
-                    ssl === false
-                      ? {
-                          protocol: "http" as const,
-                          host: snapshot.host,
-                          port: snapshot.port,
-                          url: origin as `http://${string}`,
-                          ssl: false as const,
-                          expires: Number.MAX_SAFE_INTEGER,
-                          transportID: snapshot.binding,
-                        }
-                      : ({
-                          protocol: "http",
-                          host: snapshot.host,
-                          port: snapshot.port,
-                          url: origin as `https://${string}`,
-                          ssl,
-                          expires: Number.MAX_SAFE_INTEGER,
-                          transportID: snapshot.binding,
-                        } as ConnectionSnapshot),
+                  managedFetch(
+                    origin,
+                    async () =>
+                      ssl === false
+                        ? {
+                            protocol: "http" as const,
+                            host: snapshot.host,
+                            port: snapshot.port,
+                            url: origin as `http://${string}`,
+                            ssl: false as const,
+                            expires: Number.MAX_SAFE_INTEGER,
+                            transportID: snapshot.binding,
+                          }
+                        : ({
+                            protocol: "http",
+                            host: snapshot.host,
+                            port: snapshot.port,
+                            url: origin as `https://${string}`,
+                            ssl,
+                            expires: Number.MAX_SAFE_INTEGER,
+                            transportID: snapshot.binding,
+                          } as ConnectionSnapshot),
+                    () => shutdownUntil,
                   ),
                 );
                 const signal =
@@ -382,6 +409,7 @@ export function createClient<const Services extends ServiceFacts = Record<never,
                 service,
                 protocol,
                 environment,
+                selectionLifetime.signal,
               ).then((value) => ({
                 key: value.key,
                 connection: connectionSettings(value.snapshot),
@@ -575,6 +603,7 @@ export function createClient<const Services extends ServiceFacts = Record<never,
           closed = true;
           shutdownUntil ??= Date.now() + 10_000;
           closing ??= (async () => {
+            selectionLifetime.abort(closedError);
             httpLifetime.abort(closedError);
             const stoppingPublications = [...publications].map((publication) =>
               publication.close(),

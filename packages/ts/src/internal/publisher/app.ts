@@ -185,9 +185,20 @@ async function createPreparedServiceUntraced(
   };
   const endpoint = await dependencies.start(directory, undefined, selection, signal);
   signal?.throwIfAborted();
-  const assignment = parsePreparedAssignment(
-    await dependencies.request(endpoint, "prepare", prepareRequest, signal),
-  );
+  let shutdownUntil: string | undefined;
+  const beginShutdown = () => (shutdownUntil ??= new Date(Date.now() + 10_000).toISOString());
+  const captureShutdown = () => {
+    beginShutdown();
+  };
+  signal?.addEventListener("abort", captureShutdown, { once: true });
+  let assignment: Assignment;
+  try {
+    assignment = parsePreparedAssignment(
+      await dependencies.request(endpoint, "prepare", prepareRequest, signal),
+    );
+  } finally {
+    signal?.removeEventListener("abort", captureShutdown);
+  }
   if (signal?.aborted) {
     try {
       await dependencies.request(
@@ -197,8 +208,9 @@ async function createPreparedServiceUntraced(
           version: 1,
           registration_id: assignment.registrationID,
           owner,
+          shutdown_deadline: beginShutdown(),
         },
-        AbortSignal.timeout(3_000),
+        AbortSignal.timeout(Math.max(0, Date.parse(beginShutdown()) - Date.now())),
       );
     } catch (cleanupError) {
       throw new TnlCleanupError(signal.reason, cleanupError);
@@ -219,8 +231,6 @@ async function createPreparedServiceUntraced(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending = Promise.resolve();
   let closing: Promise<void> | undefined;
-  let shutdownUntil: string | undefined;
-  const beginShutdown = () => (shutdownUntil ??= new Date(Date.now() + 10_000).toISOString());
   const lifetime = new AbortController();
   const isClosed = () => state.phase === "closed";
   const enqueue = (operation: () => Promise<void>) => {

@@ -143,6 +143,64 @@ test("an optional preparation that finishes after its deadline releases its rese
   expect(process.listenerCount("beforeExit")).toBe(beforeExitListeners);
 });
 
+test.each(["confirmed", "independent failure"] as const)(
+  "late preparation compensation carries the original stop deadline with %s",
+  async (outcome) => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const controller = new AbortController();
+    const entered = Promise.withResolvers<void>();
+    const reply = Promise.withResolvers<void>();
+    const stopped = new TnlError("sdk.dev_unavailable");
+    const cleanup = new Error("independent compensation failure");
+    let compensation: unknown;
+    let cleanupSignal: AbortSignal | undefined;
+    const preparing = createPreparedService(
+      {},
+      "vite",
+      {
+        start: async () => testEndpoint,
+        request: async (_endpoint, name, value, signal) => {
+          if (name === "prepare") {
+            entered.resolve();
+            await reply.promise;
+            return assignment();
+          }
+          if (name === "unregister") {
+            compensation = value;
+            cleanupSignal = signal;
+            if (outcome === "independent failure") throw cleanup;
+          }
+          return undefined;
+        },
+      },
+      () => {},
+      controller.signal,
+    ).catch((cause: unknown) => cause);
+    try {
+      await entered.promise;
+      const firstStop = Date.now();
+      controller.abort(stopped);
+      await vi.advanceTimersByTimeAsync(1_000);
+      reply.resolve();
+      const result = await preparing;
+      expect(compensation).toMatchObject({
+        shutdown_deadline: new Date(firstStop + 10_000).toISOString(),
+      });
+      expect(cleanupSignal?.aborted).toBe(false);
+      expect(timeout).toHaveBeenLastCalledWith(9_000);
+      if (outcome === "independent failure")
+        expect(result).toMatchObject({ code: "sdk.cleanup_failed", errors: [stopped, cleanup] });
+      else expect(result).toBe(stopped);
+    } finally {
+      reply.resolve();
+      await preparing;
+      timeout.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);
+
 test("independent SDK copies share preparation and framework callbacks through close and reprepare", async () => {
   const first = await import("../../dist/internal/publisher/app.js");
   vi.resetModules();

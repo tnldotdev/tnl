@@ -19,19 +19,27 @@ const native = vi.hoisted(() => ({
   wait: false,
   queued: [] as (() => void)[],
 }));
-vi.mock("node:child_process", () => ({
-  execFile: (
-    _binary: string,
-    args: string[],
-    _options: unknown,
-    callback: (error: Error | null, stdout: string) => void,
-  ) => {
-    native.calls.push(args);
-    const reply = () => callback(native.error, JSON.stringify(native.reply));
-    if (native.wait) native.queued.push(reply);
-    else reply();
-  },
-}));
+vi.mock("node:child_process", async () => {
+  const { EventEmitter } = await import("node:events");
+  return {
+    execFile: (
+      _binary: string,
+      args: string[],
+      _options: unknown,
+      callback: (error: Error | null, stdout: string) => void,
+    ) => {
+      native.calls.push(args);
+      const child = new EventEmitter();
+      const reply = () => {
+        callback(native.error, JSON.stringify(native.reply));
+        queueMicrotask(() => child.emit("close"));
+      };
+      if (native.wait) native.queued.push(reply);
+      else reply();
+      return child;
+    },
+  };
+});
 vi.mock("../../src/internal/native/launcher.js", () => ({
   resolveNativeBinary: () => "/fixture/tnl",
 }));

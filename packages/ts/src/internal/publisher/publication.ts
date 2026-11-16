@@ -577,6 +577,10 @@ async function publishServerUntraced(
             await recover();
             continue;
           } catch (restartError) {
+            if (closed || terminal) {
+              if (!canceledRuntimeRequest(restartError, lifetime.signal)) throw restartError;
+              break;
+            }
             if (
               restartError instanceof TnlError &&
               (restartError.code === "sdk.dev_unavailable" ||
