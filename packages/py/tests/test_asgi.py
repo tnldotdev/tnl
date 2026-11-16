@@ -236,6 +236,61 @@ def test_default_selection_omits_credentials_and_explicit_file_is_sent_only_to_n
     asyncio.run(scenario())
 
 
+def test_asgi_default_and_explicit_telemetry_choices_survive_owner_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TNL_NO_TELEMETRY", raising=False)
+
+    class RecordingNative(FakeNative):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.choices: list[object] = []
+            self.recovered = asyncio.Event()
+
+        async def request(
+            self, endpoint: Endpoint, operation: str, payload: dict[str, object] | None = None
+        ) -> object:
+            if operation == "publications/register":
+                assert payload is not None
+                self.choices.append(payload["telemetry_disabled"])
+            result = await super().request(endpoint, operation, payload)
+            if operation == "publications/register" and len(self.choices) == 2:
+                self.recovered.set()
+            return result
+
+    async def scenario() -> None:
+        async def endpoint(request: Request) -> PlainTextResponse:
+            return PlainTextResponse("app")
+
+        enabled_native, disabled_native, environment_native = (
+            RecordingNative(),
+            RecordingNative(),
+            RecordingNative(),
+        )
+        monkeypatch.setattr(_asgi, "_native", enabled_native)
+        async with await start_publication(tnl.handler(endpoint)) as enabled:
+            monkeypatch.setattr(_asgi, "_native", disabled_native)
+            async with await start_publication(tnl.handler(endpoint), telemetry=False) as disabled:
+                monkeypatch.setenv("TNL_NO_TELEMETRY", "true")
+                monkeypatch.setattr(_asgi, "_native", environment_native)
+                async with await start_publication(tnl.handler(endpoint)) as environment:
+                    # status loss drives actual owner rediscovery after the
+                    # process environment has changed for the enabled sibling.
+                    natives = (enabled_native, disabled_native, environment_native)
+                    for native in natives:
+                        native.fail_status = True
+                    async with asyncio.timeout(2):
+                        await asyncio.gather(*(native.recovered.wait() for native in natives))
+                    assert enabled_native.choices == [False, False]
+                    assert disabled_native.choices == [True, True]
+                    assert environment_native.choices == [True, True]
+                    assert all(native.starts == 2 for native in natives)
+                    assert enabled.url == disabled.url == environment.url == _public_url
+                assert enabled_native.choices == [False, False]
+
+    asyncio.run(scenario())
+
+
 def test_invalid_explicit_selection_never_starts_native(monkeypatch: pytest.MonkeyPatch) -> None:
     async def scenario() -> None:
         native = FakeNative([])

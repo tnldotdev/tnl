@@ -196,8 +196,8 @@ func restoredPublisherCollector(t *testing.T) *restoredPublisherTelemetry {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := state.SetTelemetryEnabled(t.Context(), true); err != nil {
-		t.Fatal(err)
+	if enabled, err := state.TelemetryEnabled(t.Context()); err != nil || !enabled {
+		t.Fatal("fresh installed-publisher state did not default telemetry on", err)
 	}
 	if err := state.Close(); err != nil {
 		t.Fatal(err)

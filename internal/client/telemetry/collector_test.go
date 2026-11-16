@@ -137,6 +137,49 @@ func TestTelemetryLaterSenderKeepsOriginalMetadata(t *testing.T) {
 	}
 }
 
+func TestTelemetryPersistedOptOutPreventsNewCollectionAcrossCollectorRestarts(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	var deliveries int
+	client := &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
+		deliveries++
+		return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody}, nil
+	})}
+	first := collectorForTest(t, Config{Root: root, Client: client})
+	first.Report(Demo())
+	flushForTest(t, first)
+	if deliveries != 1 {
+		t.Fatal("fresh client state did not deliver telemetry by default")
+	}
+	if err := first.state.SetTelemetryEnabled(t.Context(), false); err != nil {
+		t.Fatal(err)
+	}
+	first.refreshPreference()
+	first.Report(Demo())
+	flushForTest(t, first)
+	first.Close(context.Background())
+	for range 2 {
+		restarted := collectorForTest(t, Config{Root: root, Client: client})
+		if restarted.preference.Load().Enabled {
+			t.Fatal("collector restart reset the saved opt-out")
+		}
+		restarted.Report(Demo())
+		if len(restarted.queue) != 0 {
+			t.Fatal("saved opt-out still collected a new event")
+		}
+		scope := restarted.BeginScope("publisher")
+		scope.Record(api.RelayConnect, api.Quic, api.Succeeded, time.Millisecond)
+		scope.Close()
+		flushForTest(t, restarted)
+		if rows, err := restarted.state.PendingTelemetryEvents(t.Context(), 25); err != nil || len(rows) != 0 {
+			t.Fatal("saved opt-out retained new events", err)
+		}
+		restarted.Close(context.Background())
+	}
+	if deliveries != 1 {
+		t.Fatal("a saved opt-out delivered new telemetry")
+	}
+}
+
 func TestTelemetryPreferenceFencesRapidOffOnAndScopeCounters(t *testing.T) {
 	c := collectorForTest(t, Config{})
 	scope := c.BeginScope("publisher")

@@ -6,6 +6,7 @@ import { publishServer, publishFetch } from "../../src/internal/publisher/public
 import { parseStatus } from "../../src/internal/publisher/status.js";
 import { runtimeRequest, type RuntimeEndpoint } from "../../src/internal/publisher/local.js";
 import { invocationIDSchema } from "../../src/internal/values.js";
+import { withProcessEnvironment } from "../helpers/environment.js";
 
 const invocationSchema = z.looseObject({
   invocation_id: z.string(),
@@ -337,6 +338,64 @@ test("default invocation rediscovery retains automatic publisher selection after
   expect(ids[0]).toBe(ids[1]);
   await handle.close();
 });
+
+test.each(["default", "option-off", "environment-off"] as const)(
+  "publication %s telemetry choice survives native owner replacement",
+  async (choice) => {
+    await withProcessEnvironment(
+      { TNL_NO_TELEMETRY: choice === "environment-off" ? "true" : undefined },
+      async () => {
+        let starts = 0;
+        let service = "";
+        let target = "";
+        const choices: boolean[] = [];
+        const handle = await publishFetch(
+          () => new Response("app"),
+          choice === "option-off" ? { telemetry: false } : {},
+          {
+            start: async (_directory, _binary, selection): Promise<RuntimeEndpoint> => {
+              starts++;
+              service = selection?.invocationID ?? "";
+              return {
+                version: 1,
+                url: "http://127.0.0.1:12345",
+                capability: String(starts).repeat(64),
+                owner_id: "a".repeat(32),
+                scope: "invocation",
+                invocation_id: invocationIDSchema.parse(service),
+              };
+            },
+            request: async (_endpoint, operation, body) => {
+              if (operation === "publications/register") {
+                const payload = invocationSchema.parse(body);
+                choices.push(z.boolean().parse(payload.telemetry_disabled));
+                target = payload.target;
+                return {
+                  version: 1,
+                  registration_id: `reg_${String(starts).repeat(32)}`,
+                  owner: payload.owner,
+                  target,
+                };
+              }
+              if (operation === "status") {
+                if (starts === 1) throw new TnlError("sdk.registration_stale");
+                return snapshot(service, target, `reg_${String(starts).repeat(32)}`);
+              }
+              return undefined;
+            },
+            pause: () => new Promise<void>(() => {}),
+          },
+        );
+        try {
+          expect(starts).toBe(2);
+          expect(choices).toEqual([choice !== "default", choice !== "default"]);
+        } finally {
+          await handle.close();
+        }
+      },
+    );
+  },
+);
 
 test("close interrupts status polling and joins unregister without waiting for its next timer", async () => {
   let service = "";

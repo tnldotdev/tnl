@@ -48,6 +48,31 @@ vi.mock("../../dist/internal/publisher/app.js", async (importOriginal) => {
   };
 });
 
+test.each(["default", "option-off", "environment-off"] as const)(
+  "Next sends its %s telemetry choice through normal preparation",
+  async (choice) => {
+    const bootstrap = await startTestBootstrap();
+    await withProcessEnvironment(
+      {
+        ...bootstrap.environment,
+        TNL_NO_TELEMETRY: choice === "environment-off" ? "true" : undefined,
+        __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3200",
+      },
+      async () => {
+        await withTnl({}, choice === "option-off" ? { telemetry: false } : {})(
+          developmentPhase,
+          context,
+        );
+        expect(bootstrap.requests[0]?.body).toMatchObject({
+          framework: "next",
+          telemetry_disabled: choice !== "default",
+        });
+        expect(bootstrap.requests.some(({ path }) => path === "/v1/register")).toBe(true);
+      },
+    );
+  },
+);
+
 test.each([
   [401, "runtime.authentication_required"],
   [400, "TNL_CLIENT_SERVER_UNAVAILABLE"],

@@ -67,6 +67,26 @@ const buildEnvironment: ConfigEnv = {
   mode: "production",
 };
 
+test.each(["default", "option-off", "environment-off"] as const)(
+  "Vite sends its %s telemetry choice through normal preparation",
+  async (choice) => {
+    const bootstrap = await startTestBootstrap();
+    await withProcessEnvironment(
+      {
+        ...bootstrap.environment,
+        TNL_NO_TELEMETRY: choice === "environment-off" ? "true" : undefined,
+      },
+      async () => {
+        await runConfigHook(tnl(choice === "option-off" ? { telemetry: false } : {}), {});
+        expect(bootstrap.requests[0]?.body).toMatchObject({
+          framework: "vite",
+          telemetry_disabled: choice !== "default",
+        });
+      },
+    );
+  },
+);
+
 describe("tnl", () => {
   test("allows only the selected connector-only canonical hostname", async () => {
     const selected = testPrivateAssignment();

@@ -9,6 +9,7 @@ import * as z from "zod";
 import {
   createPreparedService,
   parseAssignment,
+  reportFrameworkTarget,
   runtimeRequest,
   startRuntime,
 } from "../../dist/internal/publisher/app.js";
@@ -25,27 +26,43 @@ import { withProcessEnvironment } from "../helpers/environment.js";
 
 afterEach(() => vi.useRealTimers());
 
-test("publication telemetry opt-out stays on its own preparation", async () => {
-  vi.stubEnv("TNL_NO_TELEMETRY", "0");
-  const requests: unknown[] = [];
-  const dependencies = {
-    start: async () => testEndpoint,
-    request: async (_endpoint: RuntimeEndpoint, operation: string, body?: unknown) => {
-      if (operation === "prepare") {
-        requests.push(body);
-        return assignment();
-      }
-      return undefined;
-    },
-  };
-  const disabled = await createPreparedService({ telemetry: false }, "node", dependencies);
-  const enabled = await createPreparedService({ telemetry: true }, "node", dependencies);
-  onTestFinished(() => disabled.close());
-  onTestFinished(() => enabled.close());
-  expect(requests).toHaveLength(2);
-  expect(requests[0]).toMatchObject({ telemetry_disabled: true });
-  expect(requests[1]).toMatchObject({ telemetry_disabled: false });
-});
+test.each(["node", "bun", "vite", "next"] as const)(
+  "%s default telemetry and opt-out stay independent across owner rediscovery",
+  async (framework) => {
+    vi.stubEnv("TNL_NO_TELEMETRY", undefined);
+    const requests: unknown[] = [];
+    let failRegistration = false;
+    const dependencies = {
+      start: async () => testEndpoint,
+      request: async (_endpoint: RuntimeEndpoint, operation: string, body?: unknown) => {
+        if (operation === "prepare") {
+          requests.push(body);
+          return assignment();
+        }
+        if (operation === "register" && failRegistration) {
+          failRegistration = false;
+          throw new TnlError("sdk.registration_stale");
+        }
+        return undefined;
+      },
+    };
+    const disabled = await createPreparedService({ telemetry: false }, framework, dependencies);
+    const enabled = await createPreparedService({}, framework, dependencies);
+    onTestFinished(() => disabled.close());
+    onTestFinished(() => enabled.close());
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toMatchObject({ telemetry_disabled: true });
+    expect(requests[1]).toMatchObject({ telemetry_disabled: false });
+    vi.stubEnv("TNL_NO_TELEMETRY", "true");
+    failRegistration = true;
+    await reportFrameworkTarget(disabled, "http://127.0.0.1:3200");
+    failRegistration = true;
+    await reportFrameworkTarget(enabled, "http://127.0.0.1:3201");
+    expect(requests).toHaveLength(4);
+    expect(requests[2]).toMatchObject({ telemetry_disabled: true });
+    expect(requests[3]).toMatchObject({ telemetry_disabled: false });
+  },
+);
 
 test("an optional preparation that finishes after its deadline releases its reservation", async () => {
   const beforeExitListeners = process.listenerCount("beforeExit");
