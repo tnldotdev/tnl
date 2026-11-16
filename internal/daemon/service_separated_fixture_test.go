@@ -310,9 +310,22 @@ func (f *privateSeparatedFixture) connectors() (muxsession.Connector, muxsession
 }
 
 func privateDisabledConnector() muxsession.Connector {
-	return muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
-		return nil, errors.New("transport disabled by private runtime workload")
-	})
+	return muxsession.DisabledConnector{}
+}
+
+func TestPrivateDisabledConnectorRetainsConfigurationAndStop(t *testing.T) {
+	disabled := privateDisabledConnector()
+	session, err := disabled.Connect(t.Context(), muxsession.Endpoint{})
+	if session != nil || err != muxsession.ErrConnectorDisabled {
+		t.Fatal("omitted runtime transport became a failed dial", err)
+	}
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cause := errors.New("runtime owner stopped before dialing")
+	cancel(cause)
+	session, err = disabled.Connect(ctx, muxsession.Endpoint{})
+	if session != nil || err != cause {
+		t.Fatal("omitted runtime transport replaced its exact entry stop", err)
+	}
 }
 
 func serviceRuntimeTLS(t *testing.T, ca *testCertificateAuthority, hostname string) *tls.Config {
