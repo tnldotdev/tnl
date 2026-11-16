@@ -329,20 +329,20 @@ Also explain the accepted surprises:
 
 ### tests still missing
 
-| Test                                                      | What it needs to exercise                                                                                                  | Refs / scope                     |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| Public Vite/Next hot reload                               | Real framework edit and update through the actual public endpoint, not local sockets or fake Ready responses               | Required by P77                  |
-| Two runs, held visitors, and audits                       | Select both through the same ingress, hold real TLS traffic, reject overflow, finish both, correlate their audit histories | G039; pieces exist separately    |
-| Replacement checks and browser review                     | Real readiness proof during replacement; sign-in/share/feedback/restart/creator-revocation flow                            | W05/W07                          |
-| Competing transport claims                                | Real QUIC/TCP candidates reaching the durable claim operation                                                              | G154                             |
-| Certificate install retry                                 | First installation timestamp survives acknowledgment retry                                                                 | G183                             |
-| Temporary-service DNS expiry                              | Real managed expiry creates claimable DNS-removal work                                                                     | G200/C27                         |
-| Certificate creation failures                             | Actual creation with wrong/expired permission, maintenance rules, retries, and audit rollback                              | G207                             |
-| Access update rollback                                    | Actual access change and policy invalidation roll back together                                                            | G271/C08                         |
-| Ordinary-member publication                               | Built CLI publishes its own app while broad inventory is denied                                                            | G357; P42 remains pending        |
-| Public workload renewals/outage                           | Original public stream survives permitted renewals/outage and stops at its earliest actual expiry                          | W02; broader P93 remains pending |
-| Role/read-race/input limits                               | Missing security-sensitive cases at their real owning operations                                                           | G415/G419/G420                   |
-| Crash-time temporary URL continuity / manual certificates | Real supported workflow, if we choose to promise it                                                                        | Conditional on P04/P99           |
+| Test                                  | What it needs to exercise                                                                                                  | Refs / scope                     |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| Public Vite/Next hot reload           | Real framework edit and update through the actual public endpoint, not local sockets or fake Ready responses               | Required by P77                  |
+| Two runs, held visitors, and audits   | Select both through the same ingress, hold real TLS traffic, reject overflow, finish both, correlate their audit histories | G039; pieces exist separately    |
+| Replacement checks and browser review | Real readiness proof during replacement; sign-in/share/feedback/restart/creator-revocation flow                            | W05/W07                          |
+| Competing transport claims            | Real QUIC/TCP candidates reaching the durable claim operation                                                              | G154                             |
+| Certificate install retry             | First installation timestamp survives acknowledgment retry                                                                 | G183                             |
+| Temporary-service DNS expiry          | Real managed expiry creates claimable DNS-removal work                                                                     | G200/C27                         |
+| Certificate creation failures         | Actual creation with wrong/expired permission, maintenance rules, retries, and audit rollback                              | G207                             |
+| Access update rollback                | Actual access change and policy invalidation roll back together                                                            | G271/C08                         |
+| Ordinary-member publication           | Built CLI publishes its own app while broad inventory is denied                                                            | G357; P42 remains pending        |
+| Public workload renewals/outage       | Original public stream survives permitted renewals/outage and stops at its earliest actual expiry                          | W02; broader P93 remains pending |
+| Role/read-race/input limits           | Missing security-sensitive cases at their real owning operations                                                           | G415/G419/G420                   |
+| Crash-time temporary URL continuity   | Real owner crash and restart, if we choose to promise the same temporary URL                                               | Conditional on P04               |
 
 ### final check list
 
