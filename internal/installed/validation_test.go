@@ -81,44 +81,6 @@ func requireScopeFailure(t *testing.T, err error) {
 	}
 }
 
-func TestInstalledJobKindProtocolMatrix(t *testing.T) {
-	for _, kind := range []Kind{KindService, KindConnector, KindDeployment} {
-		name := string(kind)
-		t.Run(name, func(t *testing.T) {
-			for _, protocol := range []config.ProtocolName{"", config.ProtocolHTTP, config.ProtocolTCP, config.ProtocolMySQL, config.ProtocolPostgres, config.ProtocolKubernetes, "redis", "HTTP"} {
-				t.Run(string(protocol), func(t *testing.T) {
-					registry := userRegistry(t)
-					job, identity, key := kindFixture(t, kind)
-					job.Protocol = protocol
-					if kind == KindService && protocol == config.ProtocolHTTP {
-						job.Target = "http://127.0.0.1:3000"
-					}
-					if kind == KindService && protocol == config.ProtocolKubernetes {
-						job.Target = "https://127.0.0.1:6443"
-						job.Trust = capturedTrust(t, "cluster.example", nil)
-					}
-					privateProtocol := protocol.Valid()
-					valid := kind == KindDeployment && protocol == "" ||
-						(kind == KindService || kind == KindConnector) && privateProtocol
-					err := installKind(t, registry, kind, job, identity, key)
-					if !valid {
-						requireScopeFailure(t, err)
-					} else if err != nil {
-						t.Fatal(err)
-					}
-					jobs, err := registry.List(t.Context())
-					if err != nil {
-						t.Fatal(err)
-					}
-					if !valid && len(jobs) != 0 || valid && (len(jobs) != 1 || jobs[0].Kind != kind || jobs[0].Protocol != protocol) {
-						t.Fatalf("installation crossed the kind/protocol boundary: %+v", jobs)
-					}
-				})
-			}
-		})
-	}
-}
-
 func TestInstalledPublisherProviderRegions(t *testing.T) {
 	for _, kind := range []Kind{KindService} {
 		registry := userRegistry(t)

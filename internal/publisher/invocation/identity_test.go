@@ -37,7 +37,7 @@ type serviceSetupFixture struct {
 	saved, parent                                   controlv1.Service
 	declaration                                     controlv1.ProjectServiceConfiguration
 	identity                                        authorityv1.PublisherEnrollmentResult
-	enrollment                                      string
+	enrollment, enrollmentKey                       string
 	public                                          ed25519.PublicKey
 	requests, creates, updates, changes, gets, runs int
 	enrollments, redemptions                        int
@@ -226,8 +226,9 @@ func (f *serviceSetupFixture) serve(r *http.Request) (*http.Response, error) {
 			f.t.Error("service enrollment widened the actual grant", body)
 		}
 		f.enrollments++
+		f.enrollmentKey = f.enrollment + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 		return serviceTestResponse(r, 201, controlv1.PublisherEnrollment{Id: f.enrollment,
-			EnrollmentKey: f.enrollment + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+			EnrollmentKey: f.enrollmentKey,
 			ExpiresAt:     time.Now().Add(time.Minute), TeamId: f.saved.TeamId, Kind: "service", ServiceId: &f.saved.Id,
 			Protocols: new(controlv1.PublisherServiceProtocols{controlv1.ServiceProtocolHTTP})}), nil
 	case "POST /v1/publisher-enrollments/redeem":
@@ -235,8 +236,8 @@ func (f *serviceSetupFixture) serve(r *http.Request) (*http.Response, error) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			return nil, err
 		}
-		if token != "" {
-			f.t.Error("redemption used management authority")
+		if token != "" || f.enrollmentKey == "" || body.EnrollmentKey != f.enrollmentKey {
+			f.t.Error("redemption changed its issued key or used management authority")
 		}
 		var err error
 		f.public, err = base64.RawURLEncoding.DecodeString(body.PublicKey)

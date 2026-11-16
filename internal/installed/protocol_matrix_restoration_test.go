@@ -6,7 +6,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
-func TestInstalledProtocolMatrixRestorationUsesClosedLiterals(t *testing.T) {
+func TestInstalledJobKindProtocolMatrix(t *testing.T) {
 	// these expected values are independent of protocol.Valid and the validator.
 	// kubernetes connectors serve kubeconfig clients; kubeconfig is not a job kind.
 	protocols := []struct {

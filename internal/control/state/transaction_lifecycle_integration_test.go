@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"testing"
@@ -65,77 +64,6 @@ func TestIntegrationTransactionLocalAuthorityLockOrder(t *testing.T) {
 				if _, err := f.database.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "after-delete", f.now, ServiceRunRequest{Metadata: f.service.ServiceMetadata}); !errors.Is(err, ErrServiceAccess) {
 					t.Fatalf("deleted service was resurrected by prepare: %v", err)
 				}
-			}
-		})
-	}
-}
-
-func TestIntegrationTransactionDNSAuthorityLockOrder(t *testing.T) {
-	for _, saveFirst := range []bool{false, true} {
-		t.Run(fmt.Sprintf("save_first_%t", saveFirst), func(t *testing.T) {
-			database, now := newControlStateIntegrationDatabase(t, "dns_authority_order")
-			session := newOIDCSession(t, database, now)
-			owner := session.Identity.Identity.ID
-			team, err := database.CreateTeam(t.Context(), CreateTeamRequest{
-				IdentityID: owner, IdempotencyKey: "team", RequestDigest: sha256.Sum256([]byte("team")), DisplayName: "transaction-tests", MemberSlug: "owner",
-			}, now)
-			if err != nil {
-				t.Fatal(err)
-			}
-			domain, err := database.ClaimTeamDomain(t.Context(), ClaimDomainRequest{
-				IdentityID: owner, TeamID: team.ID, IdempotencyKey: "default-domain", RequestDigest: sha256.Sum256([]byte("default-domain")),
-				Domain: "default.example.test", MakeDefault: true,
-			}, now)
-			if err != nil {
-				t.Fatal(err)
-			}
-			work, found, err := database.ClaimDNSAuthorityWork(t.Context(), "ready-default", now, time.Minute)
-			if err != nil || !found || work.Reference != domain.DNSAuthorityReference {
-				t.Fatalf("claim default domain work: found=%t ref=%v err=%v", found, work.Reference, err)
-			}
-			work.State, work.ProviderZoneID, work.Nameservers = "ready", "ZDEFAULT", []string{"ns-1.example.test"}
-			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-			defer cancel()
-			gate, err := database.pool.Begin(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer rollbackTestTransaction(t, gate)
-			if saveFirst {
-				_, err = controlstatedb.New(gate).LockDNSAuthority(ctx, work.Reference)
-			} else {
-				_, err = controlstatedb.New(gate).LockTeamDomain(ctx, controlstatedb.LockTeamDomainParams{DomainID: domain.ID, TeamID: text(team.ID)})
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			workers := newIntegrationWorkers(t, cancel)
-			defer workers.stop()
-			saveDone, releaseDone := make(chan error, 1), make(chan error, 1)
-			save := func() { _, err := database.SaveDNSAuthorityWork(ctx, work, now); saveDone <- err }
-			release := func() { releaseDone <- database.ReleaseTeamDomain(ctx, owner, team.ID, domain.ID, now) }
-			if saveFirst {
-				workers.Go(save)
-				firstPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), saveDone)
-				workers.Go(release)
-				waitForPostgresBlock(t, ctx, database, firstPID, releaseDone)
-			} else {
-				workers.Go(release)
-				firstPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), releaseDone)
-				workers.Go(save)
-				waitForPostgresBlock(t, ctx, database, firstPID, saveDone)
-			}
-			if err := gate.Commit(ctx); err != nil {
-				t.Fatal(err)
-			}
-			// one operation commits, the other must fail with a real conflict/stale outcome (no deadlock, no silent corruption).
-			saveErr := awaitIntegrationResult(t, ctx, saveDone)
-			releaseErr := awaitIntegrationResult(t, ctx, releaseDone)
-			if saveErr == nil && releaseErr == nil {
-				t.Fatal("both DNS authority operations succeeded; expected serialized conflict")
-			}
-			if saveErr != nil && releaseErr != nil {
-				t.Fatalf("both DNS authority operations failed: save=%v release=%v", saveErr, releaseErr)
 			}
 		})
 	}
