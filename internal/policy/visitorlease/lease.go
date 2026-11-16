@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
@@ -110,12 +111,23 @@ func (l *Lease) Apply(request Request, update Update) error {
 func (l *Lease) applyLocked(request Request, update Update, now time.Time) error {
 	view := update.View
 	duration := view.ValidUntil.Sub(view.ObservedAt)
+	deadline, deadlineErr := controloutage.LocalDeadline(request.StartedAt, view.ObservedAt, view.ValidUntil, now)
+	observedAt := request.StartedAt
 	if l.phase == leaseClosed || request.epoch != l.epoch || request.sequence <= l.applied || request.sequence > l.sequence || request.StartedAt.IsZero() || now.Before(request.StartedAt) ||
 		(!request.Deadline.IsZero() && !now.Before(request.Deadline)) ||
 		(l.revision > 0 && view.ObservedAt.Before(l.update.View.ControlTime)) ||
 		view.Scope != l.scope || view.VisitorPolicyRevision < l.revision || update.KeyRevision < l.keyRevision || update.KeyRevision < 1 || view.VisitorPolicyRevision < 1 ||
-		duration <= 0 || duration > visitortoken.PolicyLifetime || !now.Before(request.StartedAt.Add(duration)) || !view.ValidVerificationKeys() {
+		deadlineErr != nil || duration > visitortoken.PolicyLifetime || !view.ValidVerificationKeys() {
 		return ErrUpdate
+	}
+	if l.revision > 0 && view.ObservedAt.Equal(l.update.View.ControlTime) {
+		// repeated evidence may carry a learned denial, but cannot acquire a
+		// later local deadline merely by arriving in another request.
+		observedAt = l.update.View.ObservedAt
+		deadline = earlier(observedAt.Add(duration), l.update.View.ValidUntil)
+		if !now.Before(deadline) {
+			return ErrUpdate
+		}
 	}
 	if request.Snapshot && !update.Snapshot {
 		return ErrUpdate
@@ -148,7 +160,7 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 		update.PublicEndpoint = &endpoint
 	}
 	view.ControlTime = view.ObservedAt
-	view.ObservedAt, view.ValidUntil = request.StartedAt, request.StartedAt.Add(duration)
+	view.ObservedAt, view.ValidUntil = observedAt, deadline
 	update.View, update.Events = view, nil
 	l.update, l.revision, l.keyRevision, l.applied, l.phase = update, view.VisitorPolicyRevision, update.KeyRevision, request.sequence, leaseCurrent
 	l.notifyLocked()

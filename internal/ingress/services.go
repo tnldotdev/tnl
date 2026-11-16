@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
@@ -158,8 +159,8 @@ func (s *Server) RefreshServices(ctx context.Context) error {
 func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, snapshot ingressv1.IngressServices) error {
 	duration := snapshot.ValidUntil.Sub(snapshot.ObservedAt)
 	now := time.Now()
-	if started.IsZero() || now.Before(started) || duration <= 0 || duration > visitortoken.PolicyLifetime ||
-		!now.Before(started.Add(duration)) || !lease.LeaseExpiresAt.After(now) || lease.Draining {
+	snapshotDeadline, err := controloutage.LocalDeadline(started, snapshot.ObservedAt, snapshot.ValidUntil, now)
+	if err != nil || duration > visitortoken.PolicyLifetime || !lease.LeaseExpiresAt.After(now) || lease.Draining {
 		return ErrServiceAdmission
 	}
 	runs := make(map[string]*serviceRoute, len(snapshot.Runs))
@@ -224,7 +225,7 @@ func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, 
 	r.mu.Lock()
 	now = time.Now()
 	if r.closed || started.Before(r.startedAt) || !snapshot.ObservedAt.After(r.observedAt) ||
-		!now.Before(started.Add(duration)) || !lease.LeaseExpiresAt.After(now) ||
+		!now.Before(snapshotDeadline) || !lease.LeaseExpiresAt.After(now) ||
 		r.lease.IngressLeaseRevision > lease.IngressLeaseRevision {
 		r.mu.Unlock()
 		return ErrServiceAdmission
@@ -261,7 +262,7 @@ func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, 
 		route.sequence = counter
 	}
 	r.lease, r.startedAt, r.observedAt, r.runs, r.endpoints = cloneIngressLease(lease), started, snapshot.ObservedAt, runs, endpoints
-	r.validUntil = privateMinTime(started.Add(duration), lease.LeaseExpiresAt)
+	r.validUntil = privateMinTime(snapshotDeadline, lease.LeaseExpiresAt)
 	r.stopping = append(r.stopping, r.expireVisitorsLocked(now)...)
 	close(r.updated)
 	r.updated = make(chan struct{})
