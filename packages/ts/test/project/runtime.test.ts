@@ -156,16 +156,15 @@ describe("root runtime", () => {
     },
   );
 
-  test("unprepared projects fail while absent optional services stay undefined", async () => {
+  test("unprepared metadata fails while absent optional services stay undefined", async () => {
     vi.stubEnv("TNL_PROJECT_RUNTIME", undefined);
     vi.resetModules();
     const unprepared = await import("@tnldotdev/tnl");
     expect(() => unprepared.tnl.services).toThrow(
       expect.objectContaining({ code: "sdk.service_unprepared" }),
     );
-    await expect(unprepared.tnl.connect("api" as never)).rejects.toMatchObject({
-      code: "sdk.native_missing",
-    });
+    expect(Reflect.has(unprepared.tnl, "connect")).toBe(false);
+    expect(Reflect.has(unprepared.tnl, "client")).toBe(false);
     vi.stubEnv("TNL_PROJECT_RUNTIME", JSON.stringify({ ...project, dev: true }));
     vi.resetModules();
     const prepared = await import("@tnldotdev/tnl");

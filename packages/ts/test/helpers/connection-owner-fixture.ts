@@ -17,7 +17,18 @@ export const connectionFixturePlan = z.object({
   authorization: z.enum(["allow", "deny"]).default("allow"),
 });
 export const connectionFixtureEvent = z.object({
-  event: z.enum(["start", "ready", "stop", "closed", "blocked", "read", "read-canceled"]),
+  event: z.enum([
+    "start",
+    "ready",
+    "stop",
+    "closed",
+    "blocked",
+    "read",
+    "read-canceled",
+    "read-request",
+    "read-event-blocked",
+    "read-waiting",
+  ]),
   pid: z.number().int().positive(),
   file: z.string().optional(),
 });
@@ -71,6 +82,8 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
       let release: (() => void) | undefined;
       let held: Promise<void> | undefined;
       let heldRead = false;
+      let releaseReadEvent: (() => void) | undefined;
+      let readEventGate: Promise<void> | undefined;
       let finishStop: (() => void) | undefined;
       let stopGate: Promise<void> | undefined;
       let stopping: Promise<void> | undefined;
@@ -138,6 +151,13 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
             release?.();
             held = undefined;
             heldRead = false;
+          } else if (operation === "/fixture/hold-read-event") {
+            readEventGate = new Promise<void>((resolve) => {
+              releaseReadEvent = resolve;
+            });
+          } else if (operation === "/fixture/release-read-event") {
+            releaseReadEvent?.();
+            readEventGate = undefined;
           } else if (operation === "/fixture/release-stop") {
             finishStop?.();
           } else if (operation === "/fixture/release-cleanup") {
@@ -152,14 +172,25 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
             operation === "/v1/connections/prepared" ||
             operation === "/v1/connections/prepare"
           ) {
-            if (held === undefined || !heldRead) await event("read");
+            const recordRead = held === undefined || !heldRead;
+            // claim the held observation before event recording can yield.
             if (held !== undefined) heldRead = true;
+            const gate = readEventGate;
+            if (gate !== undefined) {
+              await event("read-request");
+              if (recordRead) {
+                await event("read-event-blocked");
+                await gate;
+              }
+            }
+            if (recordRead) await event("read");
             response.once("close", () => {
               if (!response.writableEnded) void event("read-canceled").catch(() => {});
             });
             let timer: ReturnType<typeof setTimeout> | undefined;
             if (held !== undefined) timer = setTimeout(() => response.destroy(), 5000);
             try {
+              if (gate !== undefined) await event("read-waiting");
               await held;
             } finally {
               if (timer !== undefined) clearTimeout(timer);
@@ -193,6 +224,7 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
         })().catch(() => response.destroy());
       });
       const close = async () => {
+        releaseReadEvent?.();
         release?.();
         await cleanupGate;
         const closed = new Promise<void>((resolve) => owner.close(() => resolve()));

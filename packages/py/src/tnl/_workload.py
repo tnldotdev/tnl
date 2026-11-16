@@ -15,6 +15,16 @@ type TokenSource = Callable[[], str | Awaitable[str]]
 _configuration: tuple[str, TokenSource | None, str | None] | None = None
 
 
+@dataclass(frozen=True, repr=False)
+class Source:
+    configuration: tuple[str, TokenSource | None, str | None] | None
+    environment: dict[str, str]
+
+
+def capture_workload() -> Source:
+    return Source(_configuration, dict(os.environ))
+
+
 def configure_workload(
     name: str, *, token: TokenSource | None = None, token_file: str | None = None
 ) -> None:
@@ -29,16 +39,18 @@ def configure_workload(
     _configuration = selected
 
 
-def uses_workload() -> bool:
-    return os.environ.get("TNL_CONNECTION_HANDLE") is None and (
-        _configuration is not None
-        or "TNL_WORKLOAD" in os.environ
-        or os.environ.get("VERCEL") == "1"
-        or bool(os.environ.get("FLY_APP_NAME"))
-        or bool(os.environ.get("K_SERVICE"))
-        or bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
-        or os.environ.get("GITLAB_CI") == "true"
-        or os.environ.get("GITHUB_ACTIONS") == "true"
+def uses_workload(source: Source | None = None) -> bool:
+    source = capture_workload() if source is None else source
+    environment = source.environment
+    return environment.get("TNL_CONNECTION_HANDLE") is None and (
+        source.configuration is not None
+        or "TNL_WORKLOAD" in environment
+        or environment.get("VERCEL") == "1"
+        or bool(environment.get("FLY_APP_NAME"))
+        or bool(environment.get("K_SERVICE"))
+        or bool(environment.get("KUBERNETES_SERVICE_HOST"))
+        or environment.get("GITLAB_CI") == "true"
+        or environment.get("GITHUB_ACTIONS") == "true"
     )
 
 
@@ -60,19 +72,24 @@ class Selection:
 
 
 async def select_workload(
-    service: str, preview: Callable[[str, dict[str, object]], object]
+    service: str,
+    preview: Callable[[str, dict[str, object]], object],
+    source: Source | None = None,
+    expected: dict[str, str] | None = None,
 ) -> Selection:
-    configuration = _configuration
+    source = capture_workload() if source is None else source
+    configuration, environment = source.configuration, source.environment
     request: dict[str, object] = {
+        **({"selection": dict(expected)} if expected is not None else {}),
         "runtime": {
-            **({"workload": os.environ["TNL_WORKLOAD"]} if "TNL_WORKLOAD" in os.environ else {}),
-            "vercel": os.environ.get("VERCEL", ""),
-            "fly_app_name": os.environ.get("FLY_APP_NAME", ""),
-            "github_actions": os.environ.get("GITHUB_ACTIONS", ""),
-            "cloud_run_service": os.environ.get("K_SERVICE", ""),
-            "kubernetes_service_host": os.environ.get("KUBERNETES_SERVICE_HOST", ""),
-            "gitlab_ci": os.environ.get("GITLAB_CI", ""),
-        }
+            **({"workload": environment["TNL_WORKLOAD"]} if "TNL_WORKLOAD" in environment else {}),
+            "vercel": environment.get("VERCEL", ""),
+            "fly_app_name": environment.get("FLY_APP_NAME", ""),
+            "github_actions": environment.get("GITHUB_ACTIONS", ""),
+            "cloud_run_service": environment.get("K_SERVICE", ""),
+            "kubernetes_service_host": environment.get("KUBERNETES_SERVICE_HOST", ""),
+            "gitlab_ci": environment.get("GITLAB_CI", ""),
+        },
     }
     if configuration is not None:
         name, callback, token_file = configuration
@@ -109,10 +126,10 @@ async def select_workload(
         policy,
         request,
         {
-            "github_actions": os.environ.get("GITHUB_ACTIONS", ""),
-            "github_request_url": os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL", ""),
+            "github_actions": environment.get("GITHUB_ACTIONS", ""),
+            "github_request_url": environment.get("ACTIONS_ID_TOKEN_REQUEST_URL", ""),
             "github_request_token": os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", ""),
-            "vercel_token_file": os.environ.get("VERCEL_OIDC_TOKEN_FILE", ""),
+            "vercel_token_file": environment.get("VERCEL_OIDC_TOKEN_FILE", ""),
             "vercel_token": os.environ.get("VERCEL_OIDC_TOKEN", ""),
             **(
                 {"token_env": token_env, "token_value": os.environ.get(token_env, "")}

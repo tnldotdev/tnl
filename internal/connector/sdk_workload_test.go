@@ -91,6 +91,46 @@ func TestConnectionSDKNativeWorkloadCurrentEnvironmentAndRecoveryFence(t *testin
 	}
 }
 
+func TestConnectionSDKWorkloadCapturedSelectionRejectsBeforeProviderOrOwnerWork(t *testing.T) {
+	f, _ := sdkWorkloadFixture(t, "github", workloadmanifest.Acquisition{Method: "github-actions", Audience: "https://control.example"})
+	request := connectorruntime.SDKWorkloadRequest{Name: "job", Callback: true}
+	for _, selection := range []connectorruntime.ProjectDeploymentSelection{
+		{Project: "other/project", Name: "production"},
+		{Project: "team/other", Name: "production"},
+		{Project: "team/project", Name: "staging"},
+	} {
+		request.Selection = &selection
+		input, _ := json.Marshal(map[string]any{"schema": 1, "sdk_workload": request})
+		if _, err := SelectSDKWorkload(f.options.Directory, "db", bytes.NewReader(input)); !errors.Is(err, connectorruntime.ErrUnauthorized) {
+			t.Fatal("preview accepted another captured selection", err)
+		}
+		selected, err := workloadmanifest.Select(f.options.Directory, "job", "db", workloadmanifest.Runtime{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		input, _ = json.Marshal(map[string]any{"schema": 1, "sdk_workload": request, "sdk_workload_policy": selected.Policy, "assertion": "first"})
+		if _, err := f.operations.prepareSDK(t.Context(), f.options, bytes.NewReader(input)); !errors.Is(err, connectorruntime.ErrUnauthorized) {
+			t.Fatal("preparation accepted another captured selection", err)
+		}
+	}
+	if f.identified != 0 || f.started != 0 {
+		t.Fatal("rejected captured selection crossed the provider/owner boundary")
+	}
+	request.Selection = &connectorruntime.ProjectDeploymentSelection{Project: "team/project", Name: "production"}
+	input, _ := json.Marshal(map[string]any{"schema": 1, "sdk_workload": request})
+	preview, err := SelectSDKWorkload(f.options.Directory, "db", bytes.NewReader(input))
+	if err != nil {
+		t.Fatal("matching captured selection was rejected", err)
+	}
+	input, _ = json.Marshal(map[string]any{"schema": 1, "sdk_workload": request, "sdk_workload_policy": preview.Policy, "assertion": "first"})
+	if _, err := f.operations.prepareSDK(t.Context(), f.options, bytes.NewReader(input)); err != nil {
+		t.Fatal(err)
+	}
+	if f.identified == 0 || f.started != 1 {
+		t.Fatal("matching selection did not use the existing verified owner")
+	}
+}
+
 func TestConnectionSDKWorkloadSourcesAndTokenFileRotation(t *testing.T) {
 	f, _ := sdkWorkloadFixture(t, "github", workloadmanifest.Acquisition{Method: "github-actions", Audience: "https://control.example"})
 	request := connectorruntime.SDKWorkloadRequest{Name: "job", TokenFile: "current.jwt"}

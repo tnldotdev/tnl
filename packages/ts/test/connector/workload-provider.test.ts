@@ -59,11 +59,14 @@ test.each([
 );
 
 test("native selection receives hints and current private provider inputs without SDK acquisition", async () => {
-  const { selectWorkload, configureWorkload } =
+  const { selectWorkload, configureWorkload, captureWorkload } =
     await import("../../src/internal/connector/workload/provider.js");
   configureWorkload({ name: "worker", tokenFile: "current.jwt" });
   vi.stubEnv("TNL_WORKLOAD", "");
   vi.stubEnv("GITHUB_ACTIONS", "true");
+  vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://provider.example/token");
+  const source = captureWorkload();
+  vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://other.example/token");
   const preview = vi.fn(async () => ({
     schema: 1,
     name: "worker",
@@ -74,9 +77,10 @@ test("native selection receives hints and current private provider inputs withou
   }));
   for (const token of ["first-private-bearer", "rotated-private-bearer"]) {
     vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", token);
-    const selected = await selectWorkload(preview);
+    const selected = await selectWorkload(preview, undefined, source);
     expect(selected.assertion).toBeUndefined();
     expect(selected.sdk_environment?.github_request_token).toBe(token);
+    expect(selected.sdk_environment?.github_request_url).toBe("https://provider.example/token");
     expect(selected.sdk_workload).toMatchObject({
       name: "worker",
       token_file: "current.jwt",
@@ -85,6 +89,53 @@ test("native selection receives hints and current private provider inputs withou
     });
     expect(JSON.stringify(preview.mock.calls)).not.toContain(token);
   }
+});
+
+test("captured sources retain selection and configuration while callbacks remain request-scoped", async () => {
+  const { configureWorkload, captureWorkload, usesWorkload, selectWorkload } =
+    await import("../../src/internal/connector/workload/provider.js");
+  const storage = new AsyncLocalStorage<string>();
+  const original = vi.fn(async () => storage.getStore() ?? "");
+  configureWorkload({ name: "worker", token: original });
+  vi.stubEnv("TNL_WORKLOAD", "worker");
+  vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "captured-private-bearer");
+  const source = captureWorkload();
+  vi.stubEnv("TNL_STATE_DIR", "/other/state");
+  vi.stubEnv("TNL_WORKLOAD", "wrong-workload");
+  vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "rotated-private-bearer");
+  configureWorkload({ name: "wrong", token: async () => "wrong-private-assertion" });
+  vi.stubEnv("TNL_CONNECTION_HANDLE", "/wrong/job/handle");
+  expect(usesWorkload(undefined, source)).toBe(true);
+  const preview = vi.fn(async () => ({
+    schema: 1,
+    name: "worker",
+    directory,
+    manifest: path.join(directory, ".tnl/generated/workloads.json"),
+    policy: "a".repeat(64),
+    source: "callback",
+  }));
+  const values = await Promise.all(
+    ["first", "second"].map((assertion) =>
+      storage.run(assertion, () =>
+        selectWorkload(preview, undefined, source, { project: "acme/shop", name: "production" }),
+      ),
+    ),
+  );
+  expect(values.map((value) => value.assertion)).toEqual(["first", "second"]);
+  expect(
+    values.every(
+      (value) => value.sdk_environment?.github_request_token === "rotated-private-bearer",
+    ),
+  ).toBe(true);
+  for (const value of values) {
+    expect(value.sdk_workload).toMatchObject({
+      selection: { project: "acme/shop", name: "production" },
+      name: "worker",
+      runtime: { workload: "worker" },
+    });
+    expect(JSON.stringify(value)).not.toContain("wrong-private");
+  }
+  expect(original).toHaveBeenCalledTimes(2);
 });
 
 test("Vercel request context precedes native fallback and never invokes development refresh", async () => {

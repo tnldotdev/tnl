@@ -11,6 +11,7 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	"github.com/tnldotdev/tnl/internal/config"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 )
 
 func TestWorkloadManifestWithoutGitOrRuntimeConfig(t *testing.T) {
@@ -40,6 +41,9 @@ func TestWorkloadManifestWithoutGitOrRuntimeConfig(t *testing.T) {
 	}
 	if scope.TeamID != "acme" || scope.Workload != "storefront" || scope.ProjectKey != "project-store" || scope.SourceID != strings.Repeat("a", 64) || scope.WorktreeKey != "deployment" || len(scope.Services) != 2 || config.Protocol(project.Config.Services["models"]) != "postgres" {
 		t.Fatal("deployment context changed")
+	}
+	if !scope.MatchesSelection(&connectorruntime.ProjectDeploymentSelection{Project: "acme/project-store", Name: "production"}) {
+		t.Fatal("manifest lost its captured project and deployment")
 	}
 	var wire map[string]any
 	if json.Unmarshal(data, &wire) != nil {

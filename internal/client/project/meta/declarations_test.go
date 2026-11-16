@@ -74,7 +74,7 @@ export default defineConfig(({worktree}) => ({
   webhooks: { stripe: { service: "web", path: "/hooks/stripe", provider: "stripe", methods: ["POST"] } },
   workloads: { deploy: { deployment: "production", github: { workflow: ".github/workflows/deploy.yml", branch: "main", events: ["push"] }, services: ["db"] } },
 }));`
-			usage := `import { tnl } from "@tnldotdev/tnl";
+			usage := `import { createClient, tnl } from "@tnldotdev/tnl";
 tnl.services.db.protocol satisfies "postgres" | "mysql";
 tnl.services.web.paths["/api"].service satisfies "api";
 tnl.aliases!.review.service satisfies "web";
@@ -84,8 +84,8 @@ tnl.services.db.port satisfies number;
 // @ts-expect-error endpoints are runtime values, not literals from this checkout.
 tnl.services.db.port satisfies 5432;
 // @ts-expect-error unknown configured service.
-tnl.connect("missing");
-const connection = await tnl.connect("db");
+createClient({project: "team/project", services: {db: {protocol: "postgres"}}}).deployment("production").connect("missing");
+const connection = await createClient({project: "team/project", services: {db: {protocol: "postgres"}}}).deployment("production").connect("db");
 connection.ssl.servername satisfies string;
 connection.ssl.rejectUnauthorized satisfies true;
 connection.ssl.ca satisfies string | undefined;

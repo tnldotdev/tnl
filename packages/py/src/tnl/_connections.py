@@ -15,21 +15,17 @@ import threading
 import time
 import uuid
 import weakref
-from collections.abc import Awaitable, Callable, Generator, Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Literal, cast
+from typing import ClassVar, Literal, cast
 from urllib.parse import urlsplit
 
 from ._connection_ipc import OwnerIPC, _InterruptedError
 from ._native import native_binary
 from ._protocol import TnlError, hostname, service_name
-from ._workload import Selection, select_workload, uses_workload
-
-if TYPE_CHECKING:
-    from ._client import ClientFactory
+from ._workload import Selection, Source, select_workload
 
 _MAX_BYTES = 128 << 10
 _TIMEOUT = 65.0
@@ -38,11 +34,9 @@ _TIMEOUT = 65.0
 def _error(code: str) -> TnlError:
     messages = {
         "invalid": "the connector connection response is invalid; update the tnl wheel",
-        "input": "select a declared service name and an existing project directory",
-        "not_prepared": "prepare connections first or await tnl.connect(service)",
-        "unavailable": "connector connection failed; check the prepared handle and tnl sign-in",
-        "expired": "the connection snapshot or owner expired; await the handle for fresh settings",
-        "closed": "the connection handle is closed; create a new handle",
+        "unavailable": "connection failed; check the credential, workload, or job connector",
+        "expired": "the connection expired; prepare the deployment connection again",
+        "closed": "the deployment connection is closed; create a new deployment handle",
     }
     return TnlError("sdk.connection_" + code, messages[code])
 
@@ -145,7 +139,6 @@ class KubernetesConnection(_TLSConnection):
 type Connection = (
     PostgresConnection | MySQLConnection | TCPConnection | HTTPConnection | KubernetesConnection
 )
-type _TLSConnections = PostgresConnection | MySQLConnection | HTTPConnection | KubernetesConnection
 
 
 def _object(value: object, allowed: set[str]) -> dict[str, object]:
@@ -456,30 +449,16 @@ class _Session:
                 self.scope.pending -= 1
                 self.changed.notify_all()
 
-    def read(self, *, service: str) -> Connection:
-        if self.creator_pid != os.getpid() or self.closed:
-            raise _error("closed")
-        selected = self
-        if not uses_workload():
-            # human reads may use the latest already-prepared owner. cleanup
-            # still holds this handle's exact observed owner, never that alias.
-            with self.scope.lock:
-                selected = self.scope.selected
-            if self.handle is None and self.attached is None and selected.handle is not None:
-                with self.changed:
-                    self.attached = selected
-        if selected.handle is None:
-            raise _error("not_prepared")
-        if selected.closed:
-            raise _error("closed")
-        if selected.expires_at is not None and selected.expires_at <= datetime.now(UTC):
-            raise _error("expired")
-        return _prepared(
-            _command(
-                self.scope.binary(), "read", "--handle", selected.handle, "--service", service
-            ),
-            service,
-        )
+    def cleanup_targets(self) -> set[_Session]:
+        with self.changed:
+            if self.joined:
+                return set()
+            if self.pending or any((self.handle, self.failure_handle, self.request_handle)):
+                return {self}
+            children = self.failed | self.preparations
+            if self.attached is not None:
+                children = children | {self.attached}
+        return {target for child in children for target in child.cleanup_targets()}
 
     def close(self) -> None:
         # forked children must not acquire inherited locks or stop a parent owner.
@@ -491,21 +470,6 @@ class _Session:
             self._close()
         finally:
             self.cleanup_lock.release()
-
-    def cleanup_references(self) -> set[_Session]:
-        # aliases do not add a cleanup capability. retain pending work itself so
-        # its close can join whatever native eventually selects for that request.
-        if self.creator_pid != os.getpid():
-            return set()
-        with self.changed:
-            if self.joined:
-                return set()
-            children = self.failed | self.preparations
-            if self.attached is not None:
-                children = children | {self.attached}
-            if self.pending or not children:
-                return {self}
-        return {reference for child in children for reference in child.cleanup_references()}
 
     def _close(self) -> None:
         deadline = time.monotonic() + _TIMEOUT
@@ -580,10 +544,16 @@ class _FailureObservation:
 
 class _Scope:
     def __init__(
-        self, directory: str, mounted: str | None, *, deployment: dict[str, object] | None = None
+        self,
+        directory: str,
+        mounted: str | None,
+        *,
+        deployment: dict[str, object] | None = None,
+        selection: dict[str, str] | None = None,
     ) -> None:
         self.directory, self.mounted = directory, mounted
         self.deployment = deployment
+        self.selection = None if selection is None else dict(selection)
         self.creator_pid = os.getpid()
         self.registry: str | None = None
         self._binary: Path | None = None
@@ -599,6 +569,7 @@ class _Scope:
         self.selected = _Session(self, mounted)
         if mounted is not None:
             self.handles[mounted] = self.selected
+        _scopes.add(self)
 
     def binary(self) -> Path:
         with self.lock:
@@ -610,7 +581,6 @@ class _Scope:
         self, service: str, selection: Selection | None, requester: _Session | None = None
     ) -> tuple[Connection, _Session]:
         requested_at = datetime.now(UTC).isoformat()
-        binary = self.binary()
         if self.mounted is not None:
             assert self.selected is not None
             with self.selected.lock:
@@ -618,7 +588,13 @@ class _Scope:
                     raise _error("closed")
                 if self.selected.ipc is None:
                     self.selected.ipc = OwnerIPC(self.mounted)
-            return _prepared(self.selected.ipc.prepare(service), service), self.selected
+            expected: dict[str, object] | None = (
+                None if self.selection is None else {"selection": self.selection}
+            )
+            return _prepared(
+                self.selected.ipc.prepare(service, selection=expected), service
+            ), self.selected
+        binary = self.binary()
         with self.lock:
             if self.registry is None:
                 self.registry = str(Path(tempfile.mkdtemp(prefix="tnl-sdk-")).resolve())
@@ -945,6 +921,10 @@ class _Scope:
                 self.registry = None
 
     def stop(self) -> None:
+        if self.creator_pid != os.getpid():
+            return
+        if self.mounted is not None and self.selected.ipc is not None:
+            self.selected.ipc.close()
         if self.registry is not None:
             stopped = _object(
                 _command(
@@ -980,60 +960,40 @@ class _Scope:
             pass
 
 
-_sessions: dict[tuple[str, str | None, str | None, str | None], _Scope] = {}
-_sessions_lock = threading.Lock()
+_scopes: weakref.WeakSet[_Scope] = weakref.WeakSet()
 
 
 def _after_fork() -> None:
-    global _sessions_lock
     # close only this process's duplicate socket descriptors, without IPC or any
     # inherited locks. existing handle/atexit references are fenced by creator PID.
-    for scope in _sessions.values():
+    for scope in _scopes:
         if scope.entry is not None:
             scope.entry[1].discard_inherited()
         for session in scope.handles.values():
             if session.ipc is not None:
                 session.ipc.discard_inherited()
-    _sessions.clear()
-    _sessions_lock = threading.Lock()
 
 
 os.register_at_fork(after_in_child=_after_fork)
 
 
-class ConnectionHandle[C: Connection]:
-    """a lazy native handle; await for one coherent, non-awaitable snapshot."""
+class ConnectionAcquisition:
+    """join selections for one service inside an explicitly owned native scope."""
 
-    def __init__(
-        self, session: _Session, protocol: str | None = None, service: str | None = None
-    ) -> None:
+    def __init__(self, scope: _Scope, service: str, workload: Source | None = None) -> None:
+        service_name(service)
+        session = scope.selected
+        self._workload = workload
         self._session = session
-        # pending selections belong to this handle, not aliases of its current
-        # native owner. reuse the session's joined, retryable cleanup boundary.
+        # retain every pending selection until its worker and cleanup have joined.
         self._lifetime = _Session(session.scope)
         self._lifetime.attached = session
-        self._protocol = protocol
-        assert service is not None
         self._service = service
-        self._verified_workload = False
 
     def __repr__(self) -> str:
-        return "<tnl connection handle (private)>"
+        return "<tnl connection acquisition (private)>"
 
-    def snapshot(self) -> C:
-        """read a prepared owner's current snapshot, without startup or sign-in."""
-        if self._lifetime.closed:
-            raise _error("closed")
-        if uses_workload() and (not self._verified_workload or self._session.handle is None):
-            raise _error("not_prepared")
-        return self._check(self._session.read(service=self._service))
-
-    def _check(self, connection: Connection) -> C:
-        if self._protocol is not None and connection.protocol != self._protocol:
-            raise _error("invalid")
-        return cast(C, connection)
-
-    async def _prepare(self) -> C:
+    async def prepare(self) -> Connection:
         if (
             self._session.creator_pid != os.getpid()
             or self._lifetime.closed
@@ -1042,8 +1002,13 @@ class ConnectionHandle[C: Connection]:
             raise _error("closed")
         unprepared = self._session if self._session.handle is None else None
         selection = None
-        if self._session.scope.deployment is None and uses_workload():
-            selection = await select_workload(self._service, self._session.scope.workload)
+        if self._workload is not None:
+            selection = await select_workload(
+                self._service,
+                self._session.scope.workload,
+                self._workload,
+                self._session.scope.selection,
+            )
         with self._lifetime.changed:
             if self._lifetime.closed:
                 raise _error("closed")
@@ -1059,13 +1024,12 @@ class ConnectionHandle[C: Connection]:
             # preparation for close, including a selection not returned yet.
             raise
         except BaseException:
-            with preparation.changed:
-                retained = preparation.attached is not None or any(
-                    not failed.joined for failed in preparation.failed
-                )
-            if not retained:
-                with self._lifetime.changed:
-                    self._lifetime.preparations.discard(preparation)
+            # the worker has finished. retain its exact capabilities once, not
+            # another wrapper for every observation of the same native failure.
+            targets = preparation.cleanup_targets()
+            with self._lifetime.changed:
+                self._lifetime.failed.update(targets)
+                self._lifetime.preparations.discard(preparation)
             raise
         with self._lifetime.changed:
             if self._lifetime.closed or (
@@ -1077,180 +1041,11 @@ class ConnectionHandle[C: Connection]:
             self._session = session
             self._lifetime.attached = session
             self._lifetime.preparations.remove(preparation)
-        self._verified_workload = selection is not None
-        return self._check(connection)
-
-    def __await__(self) -> Generator[object, None, C]:
-        return self._prepare().__await__()
-
-    def _failed_cleanup(self) -> set[_Session]:
-        # only a failed preparation owns these references. the handle's initial
-        # session may instead alias an unrelated, already-prepared human owner.
-        if self._session.creator_pid != os.getpid():
-            return set()
-        with self._lifetime.changed:
-            preparations = tuple(self._lifetime.preparations)
-        return {
-            reference
-            for preparation in preparations
-            for reference in preparation.cleanup_references()
-        }
-
-    @property
-    def protocol(self) -> str:
-        return self.snapshot().protocol
-
-    @property
-    def host(self) -> str:
-        return self.snapshot().host
-
-    @property
-    def port(self) -> int:
-        return self.snapshot().port
-
-    @property
-    def ssl(self: ConnectionHandle[_TLSConnections]) -> ssl.SSLContext:
-        return self._tls().ssl
-
-    @property
-    def server_hostname(self: ConnectionHandle[_TLSConnections]) -> str:
-        return self._tls().server_hostname
-
-    @property
-    def ca(self: ConnectionHandle[_TLSConnections]) -> str | None:
-        return self._tls().ca
-
-    def _tls(self) -> _TLSConnection:
-        connection = self.snapshot()
-        if not isinstance(connection, _TLSConnection):
-            raise _error("invalid")
         return connection
 
-    @property
-    def expires_at(self) -> datetime:
-        return self.snapshot().expires_at
-
     def close(self) -> None:
-        """close the shared SDK-owned session; mounted owners stay running."""
+        """join this acquisition's selected work; leave borrowed owners running."""
         self._lifetime.close()
 
     async def aclose(self) -> None:
         await asyncio.to_thread(self.close)
-
-
-class PostgresConnectionHandle(ConnectionHandle[PostgresConnection]):
-    @property
-    def protocol(self) -> Literal["postgres"]:
-        return self.snapshot().protocol
-
-
-class MySQLConnectionHandle(ConnectionHandle[MySQLConnection]):
-    @property
-    def protocol(self) -> Literal["mysql"]:
-        return self.snapshot().protocol
-
-
-class TCPConnectionHandle(ConnectionHandle[TCPConnection]):
-    @property
-    def protocol(self) -> Literal["tcp"]:
-        return self.snapshot().protocol
-
-
-class HTTPConnectionHandle(ConnectionHandle[HTTPConnection]):
-    @property
-    def protocol(self) -> Literal["http"]:
-        return self.snapshot().protocol
-
-    @property
-    def url(self) -> str:
-        return self.snapshot().url
-
-
-class KubernetesConnectionHandle(ConnectionHandle[KubernetesConnection]):
-    @property
-    def protocol(self) -> Literal["kubernetes"]:
-        return self.snapshot().protocol
-
-    @property
-    def url(self) -> str:
-        return self.snapshot().url
-
-    @property
-    def kubeconfig(self) -> str:
-        return self.snapshot().kubeconfig
-
-    @property
-    def context(self) -> str:
-        return self.snapshot().context
-
-
-def connect(
-    service: str, *, directory: str | os.PathLike[str] | None = None
-) -> ConnectionHandle[Connection]:
-    """select a service without starting native or reading credentials."""
-    try:
-        name = service_name(service)
-        root = Path(directory if directory is not None else os.getcwd()).resolve(strict=True)
-        mounted = os.environ.get("TNL_CONNECTION_HANDLE")
-        if not root.is_dir() or mounted is not None and not Path(mounted).is_absolute():
-            raise _error("input")
-    except (TnlError, OSError, ValueError, TypeError):
-        raise _error("input") from None
-    key = (str(root), os.environ.get("TNL_STATE_DIR"), os.environ.get("TNL_SERVER"), mounted)
-    with _sessions_lock:
-        scope = _sessions.get(key)
-        if scope is None:
-            scope = _Scope(str(root), mounted)
-            _sessions[key] = scope
-        if uses_workload():
-            session = _Session(scope)
-        else:
-            if scope.selected.closed:
-                scope.selected = _Session(scope, mounted)
-            session = scope.selected
-    return ConnectionHandle(session, service=name)
-
-
-class Project:
-    """runtime name/protocol validation for the generated project-local facade."""
-
-    def __init__(self, services: Mapping[str, str] | None = None) -> None:
-        self._services = None if services is None else dict(services)
-
-    def connect(
-        self, service: str, *, directory: str | os.PathLike[str] | None = None
-    ) -> ConnectionHandle[Connection]:
-        handle = connect(service, directory=directory)
-        if self._services is not None and service not in self._services:
-            raise _error("input")
-        if self._services is not None:
-            protocol = self._services[service]
-            handles: dict[str, type[ConnectionHandle[Connection]]] = {
-                "postgres": PostgresConnectionHandle,
-                "mysql": MySQLConnectionHandle,
-                "tcp": TCPConnectionHandle,
-                "http": HTTPConnectionHandle,
-                "kubernetes": KubernetesConnectionHandle,
-            }
-            if protocol not in handles:
-                raise _error("input")
-            handle = handles[protocol](handle._session, protocol, service)
-        return handle
-
-    def client[C: Connection, T](
-        self,
-        service: str,
-        *,
-        create: Callable[[C], T | Awaitable[T]],
-        close: Callable[[T], None | Awaitable[None]],
-        directory: str | os.PathLike[str] | None = None,
-    ) -> ClientFactory[T]:
-        from ._client import connection_client
-
-        self.connect(service, directory=directory)
-
-        def selected() -> ConnectionHandle[C]:
-            # generated names bind C to the project's validated protocol.
-            return cast(ConnectionHandle[C], self.connect(service, directory=directory))
-
-        return connection_client(selected, create=create, close=close)

@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
-import { tnl, type TnlClientFactory } from "@tnldotdev/tnl";
+import { createClient, type TnlClientFactory } from "@tnldotdev/tnl";
 import { createInterface } from "node:readline";
 import mysql from "mysql2/promise";
 import pg from "pg";
 
-// run with a prepared owner and the disposable TLS database provider.
 const protocol = process.argv[2];
+assert(protocol === "postgres" || protocol === "mysql");
+const deployment = createClient({
+  project: "fixture/driver-fixture",
+  services: { database: { protocol } },
+}).deployment("production");
 const credentials = { user: "tnl_client", password: "testpass", database: "tnl_fixture" };
 const input = createInterface({ input: process.stdin });
 const lines = input[Symbol.asyncIterator]();
@@ -42,33 +46,38 @@ async function exercise<Client>(
   console.log("closed");
 }
 
-if (protocol === "postgres") {
-  const options = await tnl.connect("database");
-  assert("ssl" in options && !("stream" in options));
-  assert.equal(options.ssl.rejectUnauthorized, true);
-  const client = new pg.Client({ ...options, ...credentials, connectionTimeoutMillis: 5_000 });
-  try {
-    await client.connect();
-    const result = await client.query(
-      "SELECT current_user AS username, ssl AS secure FROM pg_stat_ssl WHERE pid=pg_backend_pid()",
-    );
-    assert.equal(result.rows[0]?.username, credentials.user);
-    assert.equal(result.rows[0]?.secure, true);
-  } finally {
-    await client.end();
-  }
-  const closed: pg.Pool[] = [];
-  const get = tnl.client("database", {
-    create(connection) {
-      assert("ssl" in connection && !("stream" in connection));
-      return new pg.Pool({ ...connection, ...credentials, max: 1, connectionTimeoutMillis: 5_000 });
-    },
-    async close(pool) {
-      await pool.end();
-      closed.push(pool);
-    },
-  });
-  try {
+try {
+  const options = await deployment.connect("database");
+  if (protocol === "postgres") {
+    assert(!("stream" in options));
+    assert.equal(options.ssl.rejectUnauthorized, true);
+    const client = new pg.Client({ ...options, ...credentials, connectionTimeoutMillis: 5_000 });
+    try {
+      await client.connect();
+      const result = await client.query(
+        "SELECT current_user AS username, ssl AS secure FROM pg_stat_ssl WHERE pid=pg_backend_pid()",
+      );
+      assert.equal(result.rows[0]?.username, credentials.user);
+      assert.equal(result.rows[0]?.secure, true);
+    } finally {
+      await client.end();
+    }
+    const closed: pg.Pool[] = [];
+    const get = deployment.client("database", {
+      create(connection) {
+        assert(!("stream" in connection));
+        return new pg.Pool({
+          ...connection,
+          ...credentials,
+          max: 1,
+          connectionTimeoutMillis: 5_000,
+        });
+      },
+      async close(pool) {
+        await pool.end();
+        closed.push(pool);
+      },
+    });
     await exercise(
       get,
       async (pool) => {
@@ -82,72 +91,52 @@ if (protocol === "postgres") {
       },
       closed,
     );
-  } finally {
-    await get.close();
-  }
-} else if (protocol === "mysql") {
-  const options = await tnl.connect("database");
-  assert("ssl" in options && "stream" in options);
-  assert.equal(options.ssl.rejectUnauthorized, true);
-  const client = await mysql.createConnection({
-    ...options,
-    ...credentials,
-    connectTimeout: 5_000,
-  });
-  try {
-    const [rows] = await client.query("SELECT CURRENT_USER() AS username");
-    assert(Array.isArray(rows) && rows.length === 1);
-    const row: unknown = rows[0];
-    assert(
-      typeof row === "object" &&
-        row !== null &&
-        "username" in row &&
-        typeof row.username === "string" &&
-        row.username.startsWith("tnl_client@"),
-    );
-    const [status] = await client.query("SHOW SESSION STATUS LIKE 'Ssl_cipher'");
-    assert(Array.isArray(status) && status.length === 1);
-    assert(
-      typeof status[0] === "object" &&
-        status[0] !== null &&
-        "Value" in status[0] &&
-        status[0].Value,
-    );
-  } finally {
-    await client.end();
-  }
-  const closed: mysql.Pool[] = [];
-  const get = tnl.client("database", {
-    create(connection) {
-      assert("ssl" in connection && "stream" in connection);
-      return mysql.createPool({
-        ...connection,
-        ...credentials,
-        connectionLimit: 1,
-        connectTimeout: 5_000,
-      });
-    },
-    async close(pool) {
-      await pool.end();
-      closed.push(pool);
-    },
-  });
-  try {
+  } else {
+    assert("stream" in options);
+    assert.equal(options.ssl.rejectUnauthorized, true);
+    const client = await mysql.createConnection({
+      ...options,
+      ...credentials,
+      connectTimeout: 5_000,
+    });
+    try {
+      const [rows] = await client.query<mysql.RowDataPacket[]>("SELECT CURRENT_USER() AS username");
+      assert(typeof rows[0]?.username === "string" && rows[0].username.startsWith("tnl_client@"));
+      const [status] = await client.query<mysql.RowDataPacket[]>(
+        "SHOW SESSION STATUS LIKE 'Ssl_cipher'",
+      );
+      assert(status[0]?.Value);
+    } finally {
+      await client.end();
+    }
+    const closed: mysql.Pool[] = [];
+    const get = deployment.client("database", {
+      create(connection) {
+        assert("stream" in connection);
+        return mysql.createPool({
+          ...connection,
+          ...credentials,
+          connectionLimit: 1,
+          connectTimeout: 5_000,
+        });
+      },
+      async close(pool) {
+        await pool.end();
+        closed.push(pool);
+      },
+    });
     await exercise(
       get,
       async (pool) => {
         const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT CONNECTION_ID() AS pid");
         const pid: unknown = rows[0]?.pid;
-        assert.equal(typeof pid, "number");
         assert(typeof pid === "number");
         return pid;
       },
       closed,
     );
-  } finally {
-    await get.close();
   }
-} else {
-  assert.fail("select postgres or mysql");
+} finally {
+  input.close();
+  await deployment.close();
 }
-input.close();

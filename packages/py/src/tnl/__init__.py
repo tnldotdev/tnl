@@ -2,24 +2,26 @@
 
 from ._app import PreparedService, Server, prepare, run
 from ._asgi import AccessPolicy, Limits, RateLimit, Tunnel, open
-from ._client import ClientFactory, client
+from ._client import ClientFactory
 from ._connections import (
     Connection,
-    ConnectionHandle,
     HTTPConnection,
-    HTTPConnectionHandle,
     KubernetesConnection,
-    KubernetesConnectionHandle,
     MySQLConnection,
-    MySQLConnectionHandle,
     PostgresConnection,
-    PostgresConnectionHandle,
-    Project,
     TCPConnection,
-    TCPConnectionHandle,
-    connect,
 )
-from ._deployments import Client, Deployment, LocalPostgresConnection, create_client
+from ._deployments import (
+    Client,
+    Deployment,
+    LocalConnection,
+    LocalHTTPConnection,
+    LocalKubernetesConnection,
+    LocalMySQLConnection,
+    LocalPostgresConnection,
+    LocalTCPConnection,
+    create_client,
+)
 from ._handler import handler
 from ._management_client import ManagementError, SavedDeployment
 from ._protocol import (
@@ -33,25 +35,23 @@ from ._workload import configure_workload
 __all__ = [
     "AccessPolicy",
     "Connection",
-    "ConnectionHandle",
     "ClientFactory",
     "Client",
     "Deployment",
     "LocalPostgresConnection",
+    "LocalConnection",
+    "LocalMySQLConnection",
+    "LocalTCPConnection",
+    "LocalHTTPConnection",
+    "LocalKubernetesConnection",
     "create_client",
     "ManagementError",
     "SavedDeployment",
     "HTTPConnection",
-    "HTTPConnectionHandle",
     "KubernetesConnection",
-    "KubernetesConnectionHandle",
     "MySQLConnection",
-    "MySQLConnectionHandle",
     "PostgresConnection",
-    "PostgresConnectionHandle",
-    "Project",
     "TCPConnection",
-    "TCPConnectionHandle",
     "InvalidResponse",
     "Limits",
     "NativeUnavailable",
@@ -62,8 +62,6 @@ __all__ = [
     "Tunnel",
     "Server",
     "handler",
-    "connect",
-    "client",
     "configure_workload",
     "open",
     "prepare",

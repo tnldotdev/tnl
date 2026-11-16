@@ -1,27 +1,16 @@
 import { developmentPort } from "./internal/publisher/port.js";
-import { loadConnection } from "./internal/connector/connection_bridge.js";
 import { serviceMetadata } from "./internal/project/service_metadata.js";
-import {
-  parseRuntimePayload,
-  parseProjectRuntime,
-  type ProjectMetadata,
-} from "./internal/project/runtime.js";
+import { parseRuntimePayload, type ProjectMetadata } from "./internal/project/runtime.js";
 import { TnlError } from "./errors.js";
 import type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
 import type { AdHocTunnel, OpenOptions } from "./internal/publisher/open.js";
 import type { LocalHTTPServer } from "./internal/publisher/register.js";
 import type { FetchHandler } from "./internal/publisher/fetch_types.js";
 import type {
-  TnlConnection,
-  TnlConnectionHandle,
   TnlProjectFromConfig,
   TnlResolvedConfig,
-  TnlServiceNames,
   TnlService,
   TnlProtocolRegistry,
-  TnlConnectionRegistry,
-  TnlClientFactory,
-  TnlClientOptions,
 } from "./project.js";
 export type * from "./project.js";
 export type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
@@ -64,13 +53,6 @@ export type TnlRuntime = Readonly<
       readonly dev: boolean;
       prepare(options?: PrepareOptions): Promise<PreparedService>;
       open(server: LocalHTTPServer | FetchHandler, options?: OpenOptions): Promise<AdHocTunnel>;
-      connect<Name extends TnlServiceNames<Config>>(
-        name: Name,
-      ): TnlConnectionHandle<TnlConnection<Config, Name>>;
-      client<Name extends TnlServiceNames<Config>, Client>(
-        name: Name,
-        options: TnlClientOptions<TnlConnection<Config, Name>, Client>,
-      ): TnlClientFactory<Client>;
     }
 >;
 
@@ -92,7 +74,7 @@ const serializedRuntime =
 /** Server port and optional browser-safe project metadata for this process. */
 // the parser validates the runtime shape; generated project declarations supply
 // project-specific service names and literals unavailable to this shared module.
-let runtime = parseRuntimePayload(serializedRuntime);
+const runtime = parseRuntimePayload(serializedRuntime);
 export const tnl = Object.freeze({
   ...runtime,
   get services() {
@@ -115,36 +97,5 @@ export const tnl = Object.freeze({
     if (typeof process === "undefined") throw new TnlError("sdk.configuration_invalid");
     const { openServer, openFetch } = await import("./internal/publisher/open.js");
     return typeof server === "function" ? openFetch(server, options) : openServer(server, options);
-  },
-  connect(name: string) {
-    if (typeof process === "undefined" || typeof process.versions?.node !== "string")
-      throw new TnlError("sdk.connection_server_only");
-    const { connectionHandle } = loadConnection();
-    return connectionHandle(name, (project) => {
-      runtime =
-        runtime === undefined
-          ? project
-          : parseProjectRuntime({
-              ...runtime,
-              services: { ...runtime.services, ...project.services },
-            });
-    });
-  },
-  client<Client>(
-    name: string,
-    options: TnlClientOptions<TnlConnectionRegistry[keyof TnlConnectionRegistry], Client>,
-  ) {
-    if (typeof process === "undefined" || typeof process.versions?.node !== "string")
-      throw new TnlError("sdk.connection_server_only");
-    const { connectionClient } = loadConnection();
-    return connectionClient(name, options, (project) => {
-      runtime =
-        runtime === undefined
-          ? project
-          : parseProjectRuntime({
-              ...runtime,
-              services: { ...runtime.services, ...project.services },
-            });
-    });
   },
 }) as unknown as TnlRuntime;

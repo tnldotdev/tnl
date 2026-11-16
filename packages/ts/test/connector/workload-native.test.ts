@@ -72,8 +72,19 @@ vi.mock("../../src/internal/connector/connection_ipc.js", async () => {
 });
 vi.mock("../../src/internal/connector/workload/provider.js", () => ({
   usesWorkload: () => true,
-  selectWorkload: async () => ({
-    sdk_workload: { name: "job", callback: true, runtime: {} },
+  captureWorkload: () => ({ configuration: undefined, environment: {} }),
+  selectWorkload: async (
+    _preview: unknown,
+    _key: unknown,
+    _source: unknown,
+    selection?: { project: string; name: string },
+  ) => ({
+    sdk_workload: {
+      name: "job",
+      callback: true,
+      runtime: {},
+      ...(selection === undefined ? {} : { selection }),
+    },
     sdk_workload_policy: "a".repeat(64),
     assertion: fixture.assertion,
   }),
@@ -103,9 +114,6 @@ vi.mock("node:child_process", () => ({
         },
       },
     };
-  },
-  execFileSync() {
-    throw new Error("not prepared synchronously in this fixture");
   },
 }));
 
@@ -221,7 +229,7 @@ function response(args: string[], input: unknown): unknown {
       },
     };
   }
-  if (operation === "stop") return { schema: 1, state: "stopped" };
+  if (operation === "stop" || operation === "sdk-stop") return { schema: 1, state: "stopped" };
   throw new Error("unexpected native operation");
 }
 
@@ -281,47 +289,95 @@ afterEach(() => {
     if (!originalListeners.has(listener)) process.removeListener("beforeExit", listener);
 });
 
+const options = {
+  project: "team/project",
+  services: {
+    api: { protocol: "http" },
+    db: { protocol: "postgres" },
+    mysql: { protocol: "mysql" },
+    raw: { protocol: "tcp" },
+    cluster: { protocol: "kubernetes" },
+  },
+} as const;
+
 test("all protocols share a verified native identity owner and assertions travel only through private stdin", async () => {
-  const { connectionHandle } = await import("../../src/internal/connector/connection.js");
+  const { createClient } = await import("../../src/index.js");
+  const deployment = createClient(options).deployment("production");
   const snapshots = await Promise.all(
-    ["api", "db", "mysql", "raw", "cluster"].map((name) =>
-      Promise.resolve(connectionHandle(name, vi.fn())),
-    ),
+    (["api", "db", "mysql", "raw", "cluster"] as const).map((name) => deployment.connect(name)),
   );
   expect(snapshots).toHaveLength(5);
   expect(fixture.owners.size).toBe(1);
   expect(fixture.calls.every((c) => c.args[2] === "sdk-prepare")).toBe(true);
   expect(fixture.calls.every((c) => !c.args.includes("first"))).toBe(true);
   fixture.assertion = "rotated";
-  await connectionHandle("db", vi.fn());
+  await deployment.connect("db");
   expect(fixture.owners.size).toBe(1);
   expect(fixture.ipc.some((c) => c.assertion === "rotated")).toBe(true);
 });
 
+test("deployment handles keep all five provider protocols on native selection and joined cleanup", async () => {
+  vi.stubEnv("TNL_TOKEN", undefined);
+  vi.stubEnv("TNL_CONNECTION_HANDLE", undefined);
+  const { createClient } = await import("../../src/internal/connector/client.js");
+  const deployment = createClient({
+    project: "team/project",
+    services: {
+      api: { protocol: "http" },
+      db: { protocol: "postgres" },
+      mysql: { protocol: "mysql" },
+      raw: { protocol: "tcp" },
+      cluster: { protocol: "kubernetes" },
+    },
+  }).deployment("production");
+  try {
+    const values = await Promise.all([
+      deployment.connect("api"),
+      deployment.connect("db"),
+      deployment.connect("mysql"),
+      deployment.connect("raw"),
+      deployment.connect("cluster"),
+    ]);
+    expect(values).toHaveLength(5);
+    expect(fixture.owners.size).toBe(1);
+    for (const call of fixture.calls.filter((call) => call.args[2] === "sdk-prepare")) {
+      expect(call.input).toMatchObject({
+        sdk_workload: { selection: { project: "team/project", name: "production" } },
+        assertion: "first",
+      });
+      expect(call.input).not.toHaveProperty("deployment");
+      expect(call.args).not.toContain("first");
+    }
+  } finally {
+    await deployment.close();
+    vi.unstubAllEnvs();
+  }
+  expect(fixture.calls.at(-1)?.args[2]).toBe("sdk-stop");
+});
+
 test("control rejection cannot select a cached owner, and one service denial leaves another usable", async () => {
-  const { connectionHandle } = await import("../../src/internal/connector/connection.js");
-  await connectionHandle("db", vi.fn());
+  const { createClient } = await import("../../src/index.js");
+  const deployment = createClient(options).deployment("production");
+  await deployment.connect("db");
   fixture.assertion = "forged";
   const reads = fixture.ipc.length;
-  await expect(Promise.resolve(connectionHandle("db", vi.fn()))).rejects.toMatchObject({
+  await expect(deployment.connect("db")).rejects.toMatchObject({
     code: "sdk.connection_unavailable",
   });
   expect(fixture.ipc).toHaveLength(reads);
   fixture.assertion = "rotated";
   fixture.denied.add("api");
-  await expect(Promise.resolve(connectionHandle("api", vi.fn()))).rejects.toThrow();
-  await expect(Promise.resolve(connectionHandle("db", vi.fn()))).resolves.toHaveProperty(
-    "port",
-    12345,
-  );
+  await expect(deployment.connect("api")).rejects.toThrow();
+  await expect(deployment.connect("db")).resolves.toHaveProperty("port", 12345);
   expect(fixture.owners.size).toBe(1);
   expect(fixture.calls.some((c) => c.args[2] === "stop")).toBe(false);
 });
 
 test("a returned fetch resolves the caller's current verified owner rather than capturing its original file", async () => {
   const dispatch = transport.fetch.mockResolvedValue(new Response("bytes"));
-  const { connectionHandle } = await import("../../src/internal/connector/connection.js");
-  const initial = await connectionHandle("api", vi.fn());
+  const { createClient } = await import("../../src/index.js");
+  const deployment = createClient(options).deployment("production");
+  const initial = await deployment.connect("api");
   if (!("fetch" in initial)) throw new Error("missing HTTP settings");
   fixture.assertion = "other";
   const response = await initial.fetch("/echo", {
@@ -336,47 +392,43 @@ test("a returned fetch resolves the caller's current verified owner rather than 
   expect(dispatch.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
 });
 
-test("a module-shared workload handle cannot synchronously select the last caller's identity", async () => {
-  const { connectionHandle } = await import("../../src/internal/connector/connection.js");
-  const handle = connectionHandle("db", vi.fn());
-  const first = await handle;
+test("a deployment connection never reuses the last caller's identity on denial", async () => {
+  const { createClient } = await import("../../src/index.js");
+  const deployment = createClient(options).deployment("production");
+  const first = await deployment.connect("db");
   fixture.assertion = "other";
-  const second = await handle;
+  const second = await deployment.connect("db");
   expect(first).toHaveProperty("port", 12345);
   expect(second).toHaveProperty("port", 12346);
   expect(first).not.toHaveProperty("then");
-  expect(() => ({ ...handle })).toThrow(
-    expect.objectContaining({ code: "sdk.connection_unprepared" }),
-  );
   fixture.assertion = "forged";
-  await expect(Promise.resolve(handle)).rejects.toMatchObject({
+  await expect(deployment.connect("db")).rejects.toMatchObject({
     code: "sdk.connection_unavailable",
   });
   expect(first).toHaveProperty("port", 12345);
 });
 
 test("a late concurrent death proof adopts the recovered owner instead of starting a second native process", async () => {
-  const { connectionHandle } = await import("../../src/internal/connector/connection.js");
-  await connectionHandle("db", vi.fn());
+  const { createClient } = await import("../../src/index.js");
+  const deployment = createClient(options).deployment("production");
+  await deployment.connect("db");
   fixture.dead.add("/fixture/owner-0/handle.json");
-  const current = await Promise.all([
-    connectionHandle("db", vi.fn()),
-    connectionHandle("mysql", vi.fn()),
-  ]);
+  const current = await Promise.all([deployment.connect("db"), deployment.connect("mysql")]);
   expect(current).toMatchObject([{ port: 12346 }, { port: 12346 }]);
   expect(fixture.owners.size).toBe(2);
 });
 
 test("cold and warm helper/control budgets are explicit; rotation revalidates before reuse", async () => {
-  const { connectionHandle } = await import("../../src/internal/connector/connection.js");
-  await connectionHandle("api", vi.fn());
+  const { createClient } = await import("../../src/index.js");
+  const deployment = createClient(options).deployment("production");
+  await deployment.connect("api");
   expect(fixture.calls.map((c) => c.args[2])).toEqual(["sdk-prepare"]);
   expect(Object.values(fixture.control).reduce((a, b) => a + b, 0)).toBe(5);
-  for (let i = 0; i < 10; i++) await connectionHandle("api", vi.fn());
+  for (let i = 0; i < 10; i++) await deployment.connect("api");
   expect(fixture.calls).toHaveLength(1);
   expect(Object.values(fixture.control).reduce((a, b) => a + b, 0)).toBe(5);
   fixture.assertion = "rotated";
-  await connectionHandle("api", vi.fn());
+  await deployment.connect("api");
   expect(fixture.calls.map((c) => c.args[2])).toEqual(["sdk-prepare"]);
   expect(fixture.control.attach).toBe(1);
   expect(fixture.control.identity).toBe(3);

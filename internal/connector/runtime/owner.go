@@ -111,7 +111,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 			return
 		}
 		request := Request{}
-		if ReadJSON(r.Body, &request) != nil || request.Schema != Schema || request.Directory != scope.Directory || request.ConfigDigest != scope.ConfigDigest {
+		if ReadJSON(r.Body, &request) != nil || request.Schema != Schema || request.Directory != scope.Directory || request.ConfigDigest != scope.ConfigDigest || !scope.MatchesSelection(request.Selection) {
 			w.WriteHeader(401)
 			_, _ = io.WriteString(w, `{"code":"connections.unauthorized"}`)
 			return

@@ -169,6 +169,10 @@ func connectionProject(ctx context.Context, options ContextOptions) (projectConf
 	}
 	digest := sha256.Sum256(encoded)
 	scope := connectorruntime.Context{Schema: 1, Directory: project.Root, ConfigDigest: hex.EncodeToString(digest[:]), Server: server, Audience: server, TeamID: team, ProjectKey: source.Key, SourceID: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey(), ProjectLabel: source.Label, Workload: options.Workload, Services: services}
+	scope.Deployment = project.Deployment
+	if project.Config.Team != nil {
+		scope.TeamName = *project.Config.Team
+	}
 	return projectConfiguration{Project: project}, scope, scope.Validate()
 }
 
@@ -212,6 +216,7 @@ func connectionManifest(options ContextOptions) (projectConfiguration, connector
 		configuration.Services[s] = config.Service{Protocol: new(m.Services[s])}
 	}
 	scope := connectorruntime.Context{Schema: 1, Directory: directory, ConfigDigest: hex.EncodeToString(digest[:]), Server: m.Server, Audience: m.Server, TeamID: m.Team, ProjectKey: m.ProjectKey, SourceID: m.SourceFingerprint, WorktreeKey: "deployment", ProjectLabel: m.ProjectLabel, Workload: options.Workload, Services: services}
+	scope.Deployment, scope.TeamName = w.Deployment, m.Team
 	return projectConfiguration{Project: clientproject.Project{Root: directory, Config: configuration, Deployment: w.Deployment}}, scope, scope.Validate()
 }
 
