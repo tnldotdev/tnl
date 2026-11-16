@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -740,5 +742,489 @@ func TestConnectorLegCloseStopsTransportAndRetainsEachFailure(t *testing.T) {
 	}
 	if !carrier.stoppedBeforeClose {
 		t.Error("leg cleanup joined packet registrations before stopping transport i/o", closed)
+	}
+}
+
+// this fixture serves real control frames but can end the whole session at one
+// response read. ending the session and physically closing it are separate events.
+type legOriginScript struct {
+	phase       connectorAttemptStage
+	operation   error
+	ended       bool
+	sessionErr  error
+	closeErr    error
+	reply       tunnelv1.ErrorCode
+	finishCause error
+	waitExpiry  bool
+}
+
+type legOriginSession struct {
+	local, remote net.Conn
+	script        legOriginScript
+	call          context.Context
+	cancel        context.CancelCauseFunc
+	hello         chan tunnelv1.ConnectorPairLegProof
+	activation    chan tunnelv1.ConnectorLegBinding
+	atResponse    chan struct{}
+	done, served  chan struct{}
+	endOnce       sync.Once
+	closeOnce     sync.Once
+	mu            sync.Mutex
+	sessionErr    error
+	physicalErr   error
+	serveErr      error
+	beforeDone    bool
+	beforeErr     error
+	beforeCause   error
+	raw           error
+	closes        atomic.Int32
+	opens         atomic.Int32
+	reads         atomic.Int32
+	writes        atomic.Int32
+}
+
+func newLegOriginSession(t *testing.T, call context.Context, cancel context.CancelCauseFunc, pair controlv1.ConnectorPeerPair, script legOriginScript) *legOriginSession {
+	t.Helper()
+	local, remote := net.Pipe()
+	s := &legOriginSession{local: local, remote: remote, script: script, call: call, cancel: cancel,
+		hello: make(chan tunnelv1.ConnectorPairLegProof, 1), activation: make(chan tunnelv1.ConnectorLegBinding, 1),
+		atResponse: make(chan struct{}), done: make(chan struct{}), served: make(chan struct{})}
+	until, _ := call.Deadline()
+	if err := remote.SetDeadline(until); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = s.Close()
+		<-s.served
+	})
+	go func() {
+		defer close(s.served)
+		defer remote.Close()
+		message, err := tunnelv1.ReadControl(remote)
+		if err != nil {
+			s.serveErr = err
+			return
+		}
+		proof := message.ConnectorPairLegProof
+		if message.Type != tunnelv1.Hello || proof == nil || proof.PairID != pair.PairId || proof.ConnectionSlot != 0 {
+			s.serveErr = errors.New("origin fixture received a different hello")
+			return
+		}
+		s.hello <- *proof
+		if script.phase == connectorAttemptHello {
+			close(s.atResponse)
+			if script.reply != "" {
+				s.serveErr = tunnelv1.WriteControl(remote, tunnelv1.Message{Type: tunnelv1.Error,
+					ProtocolVersion: tunnelv1.Version, Code: script.reply})
+			}
+			return
+		}
+		receipt := tunnelv1.ConnectorPairLegAccepted{PairID: pair.PairId, DeliveryID: pair.DeliveryId,
+			DeliveryGeneration: pair.DeliveryGeneration, BindingState: tunnelv1.ConnectorPeerLegBindingPrepared,
+			ConnectionSlot: 0, SourceIP: "192.0.2.1", ObservedAt: time.Now().UTC().Truncate(time.Microsecond), ExpiresAt: pair.ExpiresAt}
+		if s.serveErr = tunnelv1.WriteControl(remote, tunnelv1.Message{Type: tunnelv1.HelloAccepted,
+			ProtocolVersion: tunnelv1.Version, ConnectorPairLegAccepted: &receipt}); s.serveErr != nil {
+			return
+		}
+		request, err := tunnelv1.ReadControl(remote)
+		if err != nil {
+			s.serveErr = err
+			return
+		}
+		if request.Type != tunnelv1.ConnectorLegActivate || request.ConnectorLegBinding == nil {
+			s.serveErr = errors.New("origin fixture expected one activation")
+			return
+		}
+		s.activation <- *request.ConnectorLegBinding
+		close(s.atResponse)
+		if script.reply != "" {
+			s.serveErr = tunnelv1.WriteControl(remote, tunnelv1.Message{Type: tunnelv1.Error,
+				ProtocolVersion: tunnelv1.Version, RequestID: request.RequestID, Code: script.reply})
+		}
+	}()
+	return s
+}
+
+func (s *legOriginSession) end(err error) {
+	s.endOnce.Do(func() {
+		s.mu.Lock()
+		s.sessionErr = err
+		s.mu.Unlock()
+		close(s.done)
+	})
+}
+
+func (s *legOriginSession) failResponse() error {
+	select {
+	case <-s.atResponse:
+	case <-s.call.Done():
+		return context.Cause(s.call)
+	}
+	s.mu.Lock()
+	s.raw = s.script.operation
+	s.sessionErr = s.script.sessionErr
+	s.mu.Unlock()
+	if s.script.ended {
+		s.end(s.script.sessionErr)
+	}
+	if s.script.waitExpiry {
+		<-s.call.Done()
+	}
+	if s.script.finishCause != nil {
+		s.cancel(s.script.finishCause)
+	}
+	return s.script.operation
+}
+
+func (s *legOriginSession) OpenStream(ctx context.Context) (muxsession.Stream, error) {
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
+	if s.opens.Add(1) != 1 {
+		return nil, errors.New("origin fixture permits one physical control")
+	}
+	return &legOriginControl{Conn: s.local, owner: s}, nil
+}
+
+func (s *legOriginSession) AcceptStream(ctx context.Context) (muxsession.Stream, error) {
+	select {
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	case <-s.done:
+		return nil, muxsession.ErrClosed
+	}
+}
+
+func (s *legOriginSession) Close() error {
+	s.closes.Add(1)
+	s.closeOnce.Do(func() {
+		// snapshot before Close itself is allowed to make Done and Err normal.
+		select {
+		case <-s.done:
+			s.beforeDone = true
+		default:
+		}
+		s.beforeErr, s.beforeCause = s.Err(), context.Cause(s.call)
+		s.end(errors.Join(muxsession.ErrClosed, &quic.ApplicationError{}))
+		s.physicalErr = errors.Join(s.local.Close(), s.remote.Close(), s.script.closeErr)
+	})
+	return s.physicalErr
+}
+
+func (s *legOriginSession) Done() <-chan struct{} { return s.done }
+func (s *legOriginSession) Err() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sessionErr
+}
+func (*legOriginSession) SupportsDatagrams() bool { return true }
+func (*legOriginSession) SendDatagram(context.Context, []byte) error {
+	return errors.New("origin fixture does not forward packets")
+}
+func (s *legOriginSession) ReceiveDatagram(ctx context.Context) ([]byte, error) {
+	select {
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	case <-s.done:
+		return nil, muxsession.ErrClosed
+	}
+}
+
+type legOriginControl struct {
+	net.Conn
+	owner      *legOriginSession
+	activation bool
+	reply      []byte
+}
+
+func (s *legOriginControl) SetDeadline(at time.Time) error {
+	if at.IsZero() {
+		s.activation = true
+		s.reply = nil
+	}
+	return s.Conn.SetDeadline(at)
+}
+
+func (s *legOriginControl) Read(p []byte) (int, error) {
+	failure := s.owner.script.phase == connectorAttemptHello || s.activation
+	if failure && s.owner.script.reply == "" {
+		s.owner.reads.Add(1)
+		return 0, s.owner.failResponse()
+	}
+	n, err := s.Conn.Read(p)
+	if failure && n > 0 {
+		s.reply = append(s.reply, p[:n]...)
+		if response, parseErr := tunnelv1.ReadControl(bytes.NewReader(s.reply)); parseErr == nil && response.Type == tunnelv1.Error {
+			// a fully received rejection has no failed physical read. a later
+			// finish cause must not turn its code into local diagnostic evidence.
+			if s.owner.script.ended {
+				s.owner.end(s.owner.script.sessionErr)
+			}
+			if s.owner.script.finishCause != nil {
+				s.owner.cancel(s.owner.script.finishCause)
+			}
+		}
+	}
+	return n, err
+}
+
+func (s *legOriginControl) Write(p []byte) (int, error) {
+	s.owner.writes.Add(1)
+	return s.Conn.Write(p)
+}
+func (*legOriginControl) CloseWrite() error    { return nil }
+func (s *legOriginControl) Reset(uint32) error { return s.Close() }
+
+type legOriginCase struct {
+	name   string
+	script legOriginScript
+	retry  bool
+}
+
+func legOriginCases() []legOriginCase {
+	normal := errors.Join(muxsession.ErrClosed, &quic.ApplicationError{Remote: true})
+	independent := errors.New("independent response operation")
+	return []legOriginCase{
+		{"already ended", legOriginScript{operation: normal, ended: true, sessionErr: normal}, true},
+		{"close creates done", legOriginScript{operation: normal}, false},
+		{"live session reports normal error", legOriginScript{operation: normal, sessionErr: normal}, false},
+		{"ended session has nil error", legOriginScript{operation: normal, ended: true}, false},
+		{"ended session has abnormal error", legOriginScript{operation: normal, ended: true,
+			sessionErr: &quic.ApplicationError{Remote: true, ErrorCode: 17}}, false},
+		{"ended session has independent error", legOriginScript{operation: normal, ended: true,
+			sessionErr: errors.Join(normal, independent)}, false},
+		{"live stream reset code zero", legOriginScript{operation: &quic.StreamError{Remote: true}, sessionErr: normal}, false},
+		{"ended stream reset code zero", legOriginScript{operation: &quic.StreamError{Remote: true}, ended: true, sessionErr: normal}, false},
+		{"independent operation", legOriginScript{operation: errors.Join(normal, independent), ended: true, sessionErr: normal}, false},
+		{"normal and EOF operation", legOriginScript{operation: errors.Join(normal, io.EOF), ended: true, sessionErr: normal}, false},
+		{"operation cancellation", legOriginScript{operation: errors.Join(normal, context.Canceled), ended: true, sessionErr: normal}, false},
+		{"operation deadline", legOriginScript{operation: errors.Join(normal, context.DeadlineExceeded), ended: true, sessionErr: normal}, false},
+		{"typed operation cleanup", legOriginScript{operation: errors.Join(normal, &tunnel.SessionCleanupError{Err: context.Canceled}),
+			ended: true, sessionErr: normal}, false},
+		{"typed session cleanup", legOriginScript{operation: normal, ended: true,
+			sessionErr: errors.Join(normal, &muxsession.QUICTransportCloseError{Err: context.Canceled})}, false},
+		{"failed physical close", legOriginScript{operation: normal, ended: true, sessionErr: normal,
+			closeErr: errors.New("origin fixture physical close failed")}, false},
+		{"typed canceled physical close", legOriginScript{operation: normal, ended: true, sessionErr: normal,
+			closeErr: &muxsession.QUICTransportCloseError{Err: context.Canceled}}, false},
+		{"normal-looking failed close", legOriginScript{operation: normal, ended: true, sessionErr: normal, closeErr: muxsession.ErrClosed}, false},
+		{"finish cancellation", legOriginScript{operation: normal, ended: true, sessionErr: normal, finishCause: context.Canceled}, false},
+		{"independent finish cause", legOriginScript{operation: normal, ended: true, sessionErr: normal,
+			finishCause: errors.New("independent setup finish cause")}, false},
+		{"finish deadline", legOriginScript{operation: normal, ended: true, sessionErr: normal, waitExpiry: true}, false},
+		{"received denial", legOriginScript{reply: tunnelv1.Unauthenticated, ended: true, sessionErr: normal}, false},
+		{"received unavailable with independent finish", legOriginScript{reply: tunnelv1.Unavailable, ended: true, sessionErr: normal,
+			finishCause: errors.New("independent received-response finish cause")}, false},
+	}
+}
+
+func legOriginConfig(session *legOriginSession, alternate error, calls *[2]atomic.Int32) Config {
+	return Config{
+		RelayQUIC: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+			calls[0].Add(1)
+			return session, nil
+		}),
+		RelayTCP: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+			calls[1].Add(1)
+			return nil, alternate
+		}),
+	}
+}
+
+func assertLegOriginResult(t *testing.T, s *legOriginSession, err error, wantRetry bool) {
+	t.Helper()
+	if err == nil || s.opens.Load() != 1 || s.closes.Load() != 1 {
+		t.Fatal("failed physical control lost its operation or single closing owner", err)
+	}
+	if got := connectorReconnectError(err); (got == retryAttempt) != wantRetry || !wantRetry && got != terminateConnection {
+		t.Error("normal session end acquired the wrong owned decision", got, err)
+	}
+	if s.beforeDone != s.script.ended || !errors.Is(s.beforeErr, s.script.sessionErr) {
+		t.Error("fixture did not preserve the session state preceding owned Close", s.beforeDone, s.beforeErr)
+	}
+	select {
+	case <-s.done:
+	default:
+		t.Error("failed physical control did not join its session close")
+	}
+	for _, cause := range []error{s.script.operation, s.script.closeErr, s.script.finishCause} {
+		if cause != nil && !errors.Is(err, cause) {
+			t.Error("complete returned result lost a physical operation, cleanup, or finish cause", cause, err)
+		}
+	}
+	if s.script.reply != "" {
+		var protocol *tunnel.ProtocolError
+		if !errors.As(err, &protocol) || protocol.Code != s.script.reply || s.reads.Load() != 0 {
+			t.Error("received protocol response was confused with a failed raw read", err)
+		}
+	} else if s.reads.Load() != 1 || s.raw != s.script.operation {
+		t.Error("fixture did not retain exactly one raw physical response failure")
+	}
+	if s.script.waitExpiry && (!errors.Is(err, context.DeadlineExceeded) || s.beforeCause != context.DeadlineExceeded) {
+		t.Error("setup finish lost the actual call deadline", err, s.beforeCause)
+	}
+	if s.script.closeErr != nil {
+		var cleanup *CleanupError
+		var sessionCleanup *tunnel.SessionCleanupError
+		marked := errors.As(err, &cleanup) || errors.As(err, &sessionCleanup)
+		if !marked || cleanup != nil && errors.Is(cleanup, s.script.operation) ||
+			sessionCleanup != nil && errors.Is(sessionCleanup, s.script.operation) {
+			t.Error("failed Close lost its marker or absorbed the independent operation", err)
+		}
+	}
+	independent := errors.New("unrelated caller failure")
+	if connectorReconnectError(errors.Join(err, independent)) != terminateConnection ||
+		connectorReconnectError(fmt.Errorf("unowned caller: %w", err)) != terminateConnection {
+		t.Error("owned session-end evidence escaped into an unrelated caller aggregate", err)
+	}
+	if connectorTemporary(errors.Join(s.script.operation, independent)) {
+		t.Error("raw operation aggregate acquired retry permission")
+	}
+}
+
+func TestConnectorLegHelloNormalEndRequiresPreCloseEvidence(t *testing.T) {
+	for _, test := range legOriginCases() {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				budget, stop := context.WithTimeout(t.Context(), 5*time.Second)
+				defer stop()
+				call, cancel := context.WithCancelCause(budget)
+				defer cancel(nil)
+				if test.script.waitExpiry {
+					bounded, finish := context.WithTimeout(call, time.Second)
+					defer finish()
+					call = bounded
+				}
+				signer, _, pair, _, _ := rebindFixture(t)
+				script := test.script
+				script.phase = connectorAttemptHello
+				session := newLegOriginSession(t, call, cancel, pair, script)
+				alternate := errors.New("alternate transport did not connect")
+				var calls [2]atomic.Int32
+				leg, err := prepareConnectorLeg(call, budget, legOriginConfig(session, alternate, &calls),
+					signer, pair, [32]byte{1}, 0, nil, tunnelv1.ConnectorHandoffID{1})
+				if leg != nil {
+					_ = leg.Close()
+					t.Fatal("lost hello exposed a relay leg")
+				}
+				assertLegOriginResult(t, session, err, test.retry)
+				if calls[0].Load() != 1 || calls[1].Load() > 1 ||
+					context.Cause(call) == nil && (calls[1].Load() != 1 || !errors.Is(err, alternate)) {
+					t.Error("hello observation changed the bounded transport race", err)
+				}
+				if session.writes.Load() != 2 || len(session.activation) != 0 {
+					t.Error("failed hello attempted activation or replayed its physical request")
+				}
+				<-session.served
+				if session.serveErr != nil || len(session.hello) != 1 {
+					t.Fatal("fixture failed before receiving the signed hello", session.serveErr)
+				}
+			})
+		})
+	}
+}
+
+func TestConnectorLegActivationNormalEndRequiresCompleteResult(t *testing.T) {
+	for _, test := range legOriginCases() {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				budget, stop := context.WithTimeout(t.Context(), 5*time.Second)
+				defer stop()
+				call, cancel := context.WithCancelCause(budget)
+				defer cancel(nil)
+				if test.script.waitExpiry {
+					bounded, finish := context.WithTimeout(call, time.Second)
+					defer finish()
+					call = bounded
+				}
+				signer, _, pair, _, _ := rebindFixture(t)
+				script := test.script
+				script.phase = connectorAttemptActivation
+				session := newLegOriginSession(t, call, cancel, pair, script)
+				var calls [2]atomic.Int32
+				initial := tunnelv1.ConnectorHandoffID{1}
+				leg, err := prepareConnectorLeg(call, budget, legOriginConfig(session, errors.New("unused alternate"), &calls),
+					signer, pair, [32]byte{1}, 0, nil, initial)
+				if leg != nil {
+					_ = leg.Close()
+					t.Fatal("lost activation exposed a relay leg")
+				}
+				assertLegOriginResult(t, session, err, test.retry)
+				var diagnostic *tunnel.ProtocolError
+				if script.reply == "" && script.operation != nil &&
+					(!errors.As(err, &diagnostic) || diagnostic.Code != tunnelv1.Unavailable) {
+					t.Error("activation discarded its existing local diagnostic", err)
+				}
+				if calls[0].Load() != 1 || calls[1].Load() != 0 || session.writes.Load() != 4 {
+					t.Error("lost activation replayed a physical control or started another candidate")
+				}
+				<-session.served
+				if session.serveErr != nil || len(session.hello) != 1 || len(session.activation) != 1 {
+					t.Fatal("fixture did not receive the real hello and activation", session.serveErr)
+				}
+				binding := <-session.activation
+				activation, bindingErr := binding.Activation()
+				operation, stable := activation.InitialOperation()
+				if bindingErr != nil || !stable || operation != initial {
+					t.Error("uncertain activation changed the initial operation", bindingErr)
+				}
+			})
+		})
+	}
+}
+
+func TestConnectorLegActivationNormalEndRetainsPhysicalFence(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
+		defer stop()
+		call, cancel := context.WithCancelCause(ctx)
+		defer cancel(nil)
+		signer, _, pair, _, _ := rebindFixture(t)
+		normal := errors.Join(muxsession.ErrClosed, &quic.ApplicationError{Remote: true})
+		session := newLegOriginSession(t, call, cancel, pair, legOriginScript{
+			phase: connectorAttemptActivation, operation: normal, ended: true, sessionErr: normal})
+		var calls [2]atomic.Int32
+		initial := tunnelv1.ConnectorHandoffID{1}
+		leg, err := dialConnectorLeg(call, ctx, legOriginConfig(session, errors.New("unused alternate"), &calls),
+			signer, pair, [32]byte{1}, 0, nil, initial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer leg.Close()
+		first := activateConnectorLeg(call, leg, nil, initial)
+		writes := session.writes.Load()
+		second := activateConnectorLeg(call, leg, nil, initial)
+		var rejected *tunnel.ProtocolError
+		if !errors.Is(first, normal) || !errors.As(second, &rejected) || rejected.Code != tunnelv1.InvalidMessage ||
+			session.writes.Load() != writes || session.reads.Load() != 1 || calls[0].Load() != 1 || calls[1].Load() != 0 {
+			t.Fatal("uncertain activation was retried on the same physical control", first, second)
+		}
+	})
+}
+
+func TestConnectorLegNormalEndCannotAuthorizeAnotherCandidate(t *testing.T) {
+	ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stop()
+	call, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	signer, _, pair, _, _ := rebindFixture(t)
+	normal := errors.Join(muxsession.ErrClosed, &quic.ApplicationError{Remote: true})
+	independent := errors.New("other hello failed independently")
+	first := newLegOriginSession(t, call, cancel, pair, legOriginScript{
+		phase: connectorAttemptHello, operation: normal, ended: true, sessionErr: normal})
+	second := newLegOriginSession(t, call, cancel, pair, legOriginScript{
+		phase: connectorAttemptHello, operation: independent, ended: true, sessionErr: normal})
+	config := Config{
+		RelayQUIC: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return first, nil }),
+		RelayTCP:  muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return second, nil }),
+	}
+	leg, err := prepareConnectorLeg(call, ctx, config, signer, pair, [32]byte{1}, 0, nil, tunnelv1.ConnectorHandoffID{1})
+	if leg != nil {
+		_ = leg.Close()
+		t.Fatal("normal session end exposed an independently failed candidate")
+	}
+	if !errors.Is(err, normal) || !errors.Is(err, independent) || connectorReconnectError(err) != terminateConnection ||
+		first.closes.Load() != 1 || second.closes.Load() != 1 {
+		t.Fatal("one candidate's normal end authorized another candidate's independent failure", err)
 	}
 }

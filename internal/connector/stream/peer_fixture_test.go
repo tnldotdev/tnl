@@ -1,12 +1,15 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -309,5 +312,112 @@ func (f *connectorFixture) serveConnectorPeer(p *fixtureConnectorPeer, ready cha
 			return
 		}
 		workers.Go(func() { _ = f.visitor(control.Context, stream, p) })
+	}
+}
+
+func TestConnectorFixtureRebindCancellationOrigin(t *testing.T) {
+	for _, kind := range []string{
+		"live valid", "canceled valid", "deadline valid", "owned stop valid",
+		"live bad proof", "live bad signature", "live malformed signature", "live missing pair", "live wrong phase",
+	} {
+		t.Run(kind, func(t *testing.T) {
+			budget, finish := context.WithTimeout(t.Context(), 5*time.Second)
+			defer finish()
+			ctx, cancel := context.WithCancelCause(budget)
+			defer cancel(nil)
+			signer, run, original, prepare, _ := rebindFixture(t)
+			original.BindingState, original.SourceIp = controlv1.ConnectorPeerPairBindingActive, new("127.0.0.1")
+			request, err := connectorRebindRequest(signer, run, original, prepare.IdempotencyKey,
+				controlv1.ConnectorPeerPairInspect, "", original.DeliveryGeneration, nil, "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			saved := &fixtureConnectorPeer{owner: request.IdempotencyKey, pair: original}
+			f := &connectorFixture{ctx: budget, device: signer, run: run, expires: original.ExpiresAt,
+				peers: map[string]*fixtureConnectorPeer{original.PairId: saved}}
+			var stopped error
+			switch kind {
+			case "canceled valid":
+				stopped = context.Canceled
+			case "deadline valid":
+				stopped = context.DeadlineExceeded
+			case "owned stop valid":
+				stopped = errors.New("fixture rebind caller stopped with an exact cause")
+			case "live bad proof":
+				request.RequestedAt = time.Time{}
+			case "live bad signature":
+				signature, err := base64.RawURLEncoding.Strict().DecodeString(request.Signature)
+				if err != nil {
+					t.Fatal(err)
+				}
+				signature[0] ^= 1
+				request.Signature = base64.RawURLEncoding.EncodeToString(signature)
+			case "live malformed signature":
+				request.Signature = "%"
+			case "live missing pair":
+				delete(f.peers, original.PairId)
+			case "live wrong phase":
+				// retain a valid signed prepare shape so that only the
+				// fixture's inspect-only phase boundary rejects this call.
+				request = prepare
+			}
+			message, proofErr := controlv1.ConnectorPeerPairRebindProofMessage(run.ServiceID, original.PairId, request)
+			signature, decodeErr := base64.RawURLEncoding.Strict().DecodeString(request.Signature)
+			switch kind {
+			case "live bad proof":
+				if proofErr == nil {
+					t.Fatal("bad-proof contrast still had a valid proof shape")
+				}
+			case "live bad signature":
+				if proofErr != nil || decodeErr != nil || ed25519.Verify(signer.PublicKey, message, signature) {
+					t.Fatal("bad-signature contrast did not isolate a forged signature")
+				}
+			case "live malformed signature":
+				if proofErr != nil || decodeErr == nil {
+					t.Fatal("malformed-signature contrast did not isolate signature decoding")
+				}
+			default:
+				if proofErr != nil || decodeErr != nil || !ed25519.Verify(signer.PublicKey, message, signature) {
+					t.Fatal("valid, canceled, missing-peer, or wrong-phase call lacked a genuine signed proof", proofErr, decodeErr)
+				}
+			}
+			if stopped != nil {
+				cancel(stopped)
+				if context.Cause(ctx) != stopped {
+					t.Fatal("fixture call did not enter with the exact stop cause")
+				}
+			} else if context.Cause(ctx) != nil {
+				t.Fatal("live fixture contrast entered after cancellation")
+			}
+			authorityBefore, err := json.Marshal([]any{saved.pair, saved.owner, f.run, f.expires})
+			if err != nil {
+				t.Fatal(err)
+			}
+			peersBefore := len(f.peers)
+			state, got := f.RebindConnectorPeerPair(ctx, run.ServiceID, original.PairId, request)
+			switch {
+			case stopped != nil:
+				if got != stopped || !reflect.DeepEqual(state, controlv1.ConnectorPeerPairRebindState{}) {
+					t.Error("valid canceled fixture call manufactured an authority denial instead of its exact cause", got)
+				}
+			case kind == "live valid":
+				if got != nil || state.Active == nil || state.Pending != nil ||
+					state.Active.PairId != original.PairId || state.HighWaterGeneration != original.DeliveryGeneration ||
+					!reflect.DeepEqual(state.ReadyRelays, original.Relays) {
+					t.Fatal("valid signed inspect did not return the saved active binding", got)
+				}
+				if _, err := validateConnectorRebindState(ctx, signer, run, original, request, state, request.RequestedAt, original.DeliveryGeneration); err != nil {
+					t.Error("valid fixture inspect did not pass the real snapshot validator", err)
+				}
+			default:
+				if got != ErrServiceConnection || !reflect.DeepEqual(state, controlv1.ConnectorPeerPairRebindState{}) {
+					t.Error("live invalid fixture call lost its exact rejection", got)
+				}
+			}
+			authorityAfter, marshalErr := json.Marshal([]any{saved.pair, saved.owner, f.run, f.expires})
+			if marshalErr != nil || !bytes.Equal(authorityBefore, authorityAfter) || saved.retired || len(f.peers) != peersBefore {
+				t.Error("fixture inspect changed saved authority or retired the owner")
+			}
+		})
 	}
 }
