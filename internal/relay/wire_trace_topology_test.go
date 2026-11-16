@@ -263,7 +263,9 @@ func traceMuxServer(t *testing.T, ctx context.Context, transport tunnel.Transpor
 	var accept func() (muxsession.Session, error)
 	var closeListener func() error
 	if transport == tunnel.TransportQUIC {
-		listener, err := muxsession.ListenQUIC("127.0.0.1:0", config, muxsession.QUICConfig{})
+		// real publisher and connector admission requires transport-layer source
+		// pinning; an address snapshot cannot attest that a quic peer is bound.
+		listener, err := muxsession.ListenQUIC("127.0.0.1:0", config, muxsession.QUICConfig{PinnedRemoteIPLimit: 4})
 		if err != nil {
 			t.Fatal(err)
 		}

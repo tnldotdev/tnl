@@ -70,7 +70,18 @@ func dialPrivateClaim(t *testing.T, accept func(context.Context, muxsession.Sess
 	return session, done, err
 }
 
-func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
+type privateClaimFixture struct {
+	database *controlstate.Database
+	inspect  *pgx.Conn
+	url      string
+	now      time.Time
+	service  controlstate.ServiceRecord
+	run      controlstate.ServiceRunState
+	leases   map[string]controlstate.RelayLease
+}
+
+func newPrivateClaimFixture(t *testing.T) privateClaimFixture {
+	t.Helper()
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	ctx, now := t.Context(), time.Now().UTC()
 	url := testutil.NewDisposablePostgresDatabaseURL(t, "private-claim-loss")
@@ -134,6 +145,13 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 	if _, err = d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 8}); err != nil {
 		t.Fatal(err)
 	}
+	return privateClaimFixture{database: d, inspect: inspect, url: url, now: now, service: service, run: run, leases: leases}
+}
+
+func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
+	fixture := newPrivateClaimFixture(t)
+	d, inspect, now, service, run, leases := fixture.database, fixture.inspect, fixture.now, fixture.service, fixture.run, fixture.leases
+	ctx := t.Context()
 	secret := strings.Repeat("s", 32)
 	secrets, err := serverhttp.NewBearerSecrets(secret, "")
 	if err != nil {
