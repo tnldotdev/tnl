@@ -3085,6 +3085,11 @@
           "type": "boolean",
           "description": "Allow limited anonymous tnl publish --demo runs."
         },
+        "control_outage_tolerance": {
+          "type": "string",
+          "description": "Control-issued serving allowance since the last successful confirmation; earlier actual expiry still wins.",
+          "default": "5m"
+        },
         "email_url": {
           "type": "string",
           "description": "HTTPS origin of the invitation email receiver."

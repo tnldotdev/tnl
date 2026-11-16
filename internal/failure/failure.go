@@ -19,24 +19,25 @@ type Operation string
 type Setting string
 
 const (
-	SettingDatabaseURL          Setting = "TNLD_DATABASE_URL"
-	SettingDatabaseDirectURL    Setting = "TNLD_DATABASE_DIRECT_URL"
-	SettingStorageKey           Setting = "TNLD_STORAGE_KEY"
-	SettingMetricsListen        Setting = "TNLD_METRICS_LISTEN"
-	SettingControlListen        Setting = "TNLD_CONTROL_LISTEN"
-	SettingPrivateControlListen Setting = "TNLD_PRIVATE_CONTROL_LISTEN"
-	SettingPrivateControlCert   Setting = "TNLD_PRIVATE_CONTROL_TLS_CERTIFICATE_FILE"
-	SettingPrivateControlKey    Setting = "TNLD_PRIVATE_CONTROL_TLS_PRIVATE_KEY_FILE"
-	SettingIngressListen        Setting = "TNLD_INGRESS_LISTEN"
-	SettingRelayTCPListen       Setting = "TNLD_RELAY_TCP_LISTEN"
-	SettingRelayUDPListen       Setting = "TNLD_RELAY_UDP_LISTEN"
-	SettingRelayQUICProfile     Setting = "TNLD_RELAY_QUIC_PROFILE"
-	SettingInternalRelayListen  Setting = "TNLD_INTERNAL_RELAY_LISTEN"
-	SettingDNSServer            Setting = "TNLD_DNS_SERVER"
-	SettingEmailURL             Setting = "TNLD_EMAIL_URL"
-	SettingWebhookSecret        Setting = "TNLD_WEBHOOK_SECRET"
-	SettingWebServiceSecret     Setting = "TNLD_WEB_SERVICE_SECRET"
-	SettingOIDCIssuer           Setting = "TNLD_OIDC_ISSUER"
+	SettingDatabaseURL            Setting = "TNLD_DATABASE_URL"
+	SettingDatabaseDirectURL      Setting = "TNLD_DATABASE_DIRECT_URL"
+	SettingStorageKey             Setting = "TNLD_STORAGE_KEY"
+	SettingMetricsListen          Setting = "TNLD_METRICS_LISTEN"
+	SettingControlListen          Setting = "TNLD_CONTROL_LISTEN"
+	SettingPrivateControlListen   Setting = "TNLD_PRIVATE_CONTROL_LISTEN"
+	SettingPrivateControlCert     Setting = "TNLD_PRIVATE_CONTROL_TLS_CERTIFICATE_FILE"
+	SettingPrivateControlKey      Setting = "TNLD_PRIVATE_CONTROL_TLS_PRIVATE_KEY_FILE"
+	SettingIngressListen          Setting = "TNLD_INGRESS_LISTEN"
+	SettingRelayTCPListen         Setting = "TNLD_RELAY_TCP_LISTEN"
+	SettingRelayUDPListen         Setting = "TNLD_RELAY_UDP_LISTEN"
+	SettingRelayQUICProfile       Setting = "TNLD_RELAY_QUIC_PROFILE"
+	SettingInternalRelayListen    Setting = "TNLD_INTERNAL_RELAY_LISTEN"
+	SettingDNSServer              Setting = "TNLD_DNS_SERVER"
+	SettingEmailURL               Setting = "TNLD_EMAIL_URL"
+	SettingWebhookSecret          Setting = "TNLD_WEBHOOK_SECRET"
+	SettingWebServiceSecret       Setting = "TNLD_WEB_SERVICE_SECRET"
+	SettingOIDCIssuer             Setting = "TNLD_OIDC_ISSUER"
+	SettingControlOutageTolerance Setting = "TNLD_CONTROL_OUTAGE_TOLERANCE"
 )
 
 func (setting Setting) valid() bool {
@@ -63,7 +64,7 @@ func (setting Setting) valid() bool {
 		SettingMetricsListen, SettingControlListen, SettingPrivateControlListen, SettingIngressListen,
 		SettingPrivateControlCert, SettingPrivateControlKey,
 		SettingRelayTCPListen, SettingRelayUDPListen, SettingRelayQUICProfile, SettingInternalRelayListen, SettingDNSServer,
-		SettingEmailURL, SettingWebhookSecret, SettingWebServiceSecret, SettingOIDCIssuer:
+		SettingEmailURL, SettingWebhookSecret, SettingWebServiceSecret, SettingOIDCIssuer, SettingControlOutageTolerance:
 		return true
 	}
 	return false
