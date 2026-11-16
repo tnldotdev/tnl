@@ -718,7 +718,11 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	if header.PublicService != nil {
 		authority = serviceendpoint.HTTPAuthority(b.prepared.managedHostname, header.PublicService.DestinationPort)
 	}
-	connection := &replayConn{Conn: stream, reader: replay}
+	serving := stream
+	if owned != nil {
+		serving = &httpServingConn{boundVisitor: owned}
+	}
+	connection := &replayConn{Conn: serving, reader: replay}
 	if endStream != nil {
 		connection.endStream = func() error { return endStream(ctx) }
 	}

@@ -39,6 +39,13 @@ func (v *boundVisitor) Close() error {
 	return v.Conn.Close()
 }
 
+// the frontend borrows physical close, not the admission owner's cancellation.
+// normal HTTP completion must return its result before retirement cancels that
+// owner; explicit interruption still closes the registered boundVisitor.
+type httpServingConn struct{ *boundVisitor }
+
+func (v *httpServingConn) Close() error { return v.http.closePhysical() }
+
 func (v *boundVisitor) SetDeadline(until time.Time) error {
 	if a := v.http; a != nil {
 		a.bound.mu.Lock()
@@ -286,6 +293,10 @@ func (a *httpAdmission) close() error {
 	a.retireLocked()
 	a.bound.mu.Unlock()
 	a.cancel()
+	return a.closePhysical()
+}
+
+func (a *httpAdmission) closePhysical() error {
 	a.closeOnce.Do(func() { a.closeErr = a.visitor.Conn.Close() })
 	return a.closeErr
 }
