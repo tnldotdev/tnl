@@ -163,7 +163,7 @@ func (f *lifecycleControl) HeartbeatServiceRun(_ context.Context, id, run string
 		Healthy: &health.Healthy, StreamCapacity: &health.StreamCapacity, ActiveStreams: &health.ActiveStreams,
 		EndpointRevision: endpointRevision, PublicEndpointReady: publicReady,
 		PublisherConnections: connections,
-		PublisherExpiresAt:   time.Now().Add(time.Minute), State: state}, nil
+		ObservedAt:           time.Now(), PublisherExpiresAt: time.Now().Add(time.Minute), State: state}, nil
 }
 
 func (f *lifecycleControl) CloseServiceRun(_ context.Context, id, run string, token credentials.ServiceRunToken) error {

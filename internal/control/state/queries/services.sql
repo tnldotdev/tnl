@@ -195,7 +195,7 @@ ORDER BY s.id LIMIT 101;
 INSERT INTO control.service_runs(preferred_regions, traffic_limits, id, service_id, protocol, team_id, guest_id, run_number,
     publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key,
     request_digest, preparation_expires_at, assignment_seed_ciphertext,
-    assignment_seed_storage_key_id, certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,certificate_hostname,certificate_namespace,require_post_quantum,state, created_at, publisher_expires_at)
+    assignment_seed_storage_key_id, certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,certificate_hostname,certificate_namespace,require_post_quantum,state, created_at, publisher_expires_at,serving_observed_at,serving_until)
 VALUES (sqlc.arg(preferred_regions), convert_from(sqlc.arg(traffic_limits)::bytea,'UTF8')::jsonb, sqlc.arg(id), sqlc.arg(service_id),
     (SELECT service.protocol FROM control.services service WHERE service.id=sqlc.arg(service_id)),sqlc.narg(team_id),
     (SELECT service.guest_id FROM control.services service WHERE service.id=sqlc.arg(service_id)),sqlc.arg(run_number),
@@ -206,7 +206,7 @@ VALUES (sqlc.arg(preferred_regions), convert_from(sqlc.arg(traffic_limits)::byte
     (SELECT endpoint.namespace FROM control.service_endpoints endpoint
         WHERE endpoint.service_id=sqlc.arg(service_id) AND endpoint.hostname=sqlc.arg(certificate_hostname)
         AND endpoint.domain_id=sqlc.narg(certificate_domain_id)),
-    sqlc.arg(require_post_quantum), 'prepared', sqlc.arg(now), sqlc.arg(publisher_expires_at)) RETURNING *;
+    sqlc.arg(require_post_quantum), 'prepared', sqlc.arg(now), sqlc.arg(publisher_expires_at),sqlc.arg(now),sqlc.arg(publisher_expires_at)) RETURNING *;
 
 -- name: LockServiceRun :one
 SELECT * FROM control.service_runs
@@ -278,12 +278,18 @@ WHERE id = sqlc.arg(id) AND service_id = sqlc.arg(service_id)
     AND run_number = sqlc.arg(run_number) AND state = 'ready' AND closed_at IS NULL;
 
 -- name: RenewServiceRun :one
-UPDATE control.service_runs run SET publisher_expires_at = LEAST(sqlc.arg(publisher_expires_at),service.expires_at,publisher_grant.expires_at)
+UPDATE control.service_runs run SET publisher_expires_at = LEAST(sqlc.arg(publisher_expires_at),service.expires_at,publisher_grant.expires_at),
+    serving_observed_at=GREATEST(run.serving_observed_at,sqlc.arg(serving_observed_at)),
+    serving_until=LEAST(CASE
+        WHEN sqlc.arg(serving_observed_at)<run.serving_observed_at THEN run.serving_until
+        WHEN sqlc.arg(serving_observed_at)=run.serving_observed_at THEN LEAST(run.serving_until,sqlc.arg(serving_until))
+        ELSE sqlc.arg(serving_until) END,
+        service.expires_at,publisher_grant.expires_at,run.certificate_expires_at)
 FROM control.services service, control.publisher_grants publisher_grant, control.publisher_identities publisher
 WHERE run.id = sqlc.arg(id) AND run.run_number = sqlc.arg(run_number)
     AND run.service_id = sqlc.arg(service_id)
     AND run.run_token_digest = sqlc.arg(run_token_digest)
-    AND run.closed_at IS NULL AND run.publisher_expires_at > sqlc.arg(now)
+    AND run.closed_at IS NULL AND run.serving_until > sqlc.arg(now)
     AND sqlc.arg(publisher_expires_at)::timestamptz > sqlc.arg(now)
     AND service.id = run.service_id AND service.enabled AND service.deleted_at IS NULL
     AND (service.expires_at IS NULL OR service.expires_at>sqlc.arg(now))

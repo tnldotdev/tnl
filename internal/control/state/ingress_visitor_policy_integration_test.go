@@ -30,14 +30,21 @@ func TestIntegrationIngressVisitorPolicyBindsExactRunProjectionAndProcess(t *tes
 		return lease
 	}
 	owner := register("policy-ingress", time.Minute)
+	tolerance := d.servingTolerance()
+	if err := d.ConfigureControlOutageTolerance(3 * time.Second); err != nil {
+		t.Fatal(err)
+	}
 	second := register("second-policy-ingress", 3*time.Second)
+	if err := d.ConfigureControlOutageTolerance(tolerance); err != nil {
+		t.Fatal(err)
+	}
 	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
 	read := func(lease IngressLeaseIdentity, at time.Time) (IngressServiceRun, error) {
 		return readIngressServiceRun(t.Context(), d, lease, f.service.ID, f.run.RunID, at)
 	}
 	routing, err := read(owner.IngressLeaseIdentity, now)
 	if err != nil || routing.ServiceID != f.service.ID || routing.RunID != f.run.RunID ||
-		routing.RunNumber != f.run.RunNumber || !routing.ValidUntil.Equal(now.Add(visitortoken.PolicyLifetime)) {
+		routing.RunNumber != f.run.RunNumber || !routing.ValidUntil.Equal(minTime(now.Add(d.servingTolerance()), f.run.ServingUntil)) {
 		t.Fatal("ingress routing lost its exact run or observation deadline", routing, err)
 	}
 	auth := ServiceHTTPRun{Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: f.service.ID},
@@ -48,7 +55,7 @@ func TestIntegrationIngressVisitorPolicyBindsExactRunProjectionAndProcess(t *tes
 		t.Fatal("publisher policy lost its exact service/run binding", err)
 	}
 	bounded, err := read(second.IngressLeaseIdentity, now)
-	if err != nil || !bounded.ValidUntil.Equal(second.LeaseExpiresAt) {
+	if err != nil || !bounded.ValidUntil.Equal(second.ServingUntil) {
 		t.Fatal("routing outlived its ingress process lease", bounded, err)
 	}
 	authority, err := tunnelv1.ReadVisitorSourceAuthority(routing.SourceAuthority)
@@ -67,7 +74,7 @@ func TestIntegrationIngressVisitorPolicyBindsExactRunProjectionAndProcess(t *tes
 	if err != nil || visitortoken.VerifyVisitorSource(f.run.VisitorSourceKey, proof, binding, authority.VisitorPolicyRevision, now) != nil {
 		t.Fatal("publisher rejected its exact delegated socket facts", err)
 	}
-	if _, err := visitortoken.SignVisitorSource([32]byte(bounded.SourceKey), otherAuthority, 1, binding, second.LeaseExpiresAt); err == nil {
+	if _, err := visitortoken.SignVisitorSource([32]byte(bounded.SourceKey), otherAuthority, 1, binding, second.ServingUntil); err == nil {
 		t.Fatal("expired ingress delegation signed another visitor")
 	}
 	for _, field := range []string{"service", "run", "number", "visitor", "process", "source", "port"} {

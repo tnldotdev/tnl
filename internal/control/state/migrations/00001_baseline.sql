@@ -530,6 +530,7 @@ CREATE TABLE control.relay_leases (
     registered_at timestamptz NOT NULL,
     renewed_at timestamptz NOT NULL,
     lease_expires_at timestamptz NOT NULL,
+    serving_until timestamptz NOT NULL,
     UNIQUE (relay_id, relay_run_id, relay_lease_revision),
     CHECK (array_position(internal_networks, NULL) IS NULL),
     CHECK (renewed_at >= registered_at),
@@ -558,6 +559,7 @@ CREATE TABLE control.ingress_leases (
     registered_at timestamptz NOT NULL,
     renewed_at timestamptz NOT NULL,
     lease_expires_at timestamptz NOT NULL,
+    serving_until timestamptz NOT NULL,
     UNIQUE (ingress_id, ingress_run_id, ingress_lease_revision),
     CHECK (renewed_at >= registered_at),
     CHECK (lease_expires_at > renewed_at),
@@ -1537,6 +1539,8 @@ CREATE TABLE control.service_runs (
     certificate_expires_at timestamptz,
     CHECK ((certificate_issuance_id IS NULL)=(certificate_expires_at IS NULL)),
     created_at timestamptz NOT NULL, publisher_expires_at timestamptz NOT NULL CHECK (publisher_expires_at > created_at),
+    serving_observed_at timestamptz NOT NULL,
+    serving_until timestamptz NOT NULL CHECK (serving_until > serving_observed_at),
     ready_at timestamptz, closed_at timestamptz,
     assignments_open boolean GENERATED ALWAYS AS (closed_at IS NULL) STORED,
     CHECK (num_nonnulls(team_id,guest_id)=1),
@@ -1563,6 +1567,7 @@ CREATE TABLE control.service_runs (
 CREATE UNIQUE INDEX service_runs_active ON control.service_runs(service_id, publisher_identity_id) WHERE closed_at IS NULL;
 CREATE UNIQUE INDEX service_runs_guest_active ON control.service_runs(guest_id) WHERE guest_id IS NOT NULL AND closed_at IS NULL;
 CREATE INDEX service_runs_expiring ON control.service_runs(publisher_expires_at) WHERE closed_at IS NULL;
+CREATE INDEX service_runs_serving_expiring ON control.service_runs(serving_until) WHERE closed_at IS NULL;
 ALTER TABLE control.service_recovery_episodes ADD CONSTRAINT service_recovery_run_fkey
     FOREIGN KEY(service_run_id,service_id,run_number)
     REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT;
@@ -1588,7 +1593,7 @@ CREATE TRIGGER cleanup_demo_feedback AFTER UPDATE OF closed_at ON control.servic
 -- serving capability shares the same fixed deadline after first readiness.
 CREATE FUNCTION control.guest_serving_deadline(guest_id text, at_time timestamptz) RETURNS timestamptz LANGUAGE sql STABLE AS $$
     SELECT CASE WHEN run.id IS NULL OR run.closed_at IS NOT NULL OR guest.ended_at IS NOT NULL THEN $2
-        ELSE LEAST(guest.expires_at, run.publisher_expires_at,
+        ELSE LEAST(guest.expires_at, run.serving_until,
             COALESCE(guest.ready_deadline, $2 +
                 (GREATEST(0, 1200000000000 - guest.used_ready_ns)::double precision / 1000000000) * interval '1 second')) END
     FROM control.guest_trials guest

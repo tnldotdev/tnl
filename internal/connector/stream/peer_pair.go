@@ -12,6 +12,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
@@ -127,9 +128,10 @@ func validateConnectorPair(ctx context.Context, signer Signer, run Run, body con
 	frameKey, frameKeyErr := connectorPairSecret(pair.SessionKey)
 	_, idErr := tunnelv1.ParsePeerDeliveryIdentifier(pair.DeliveryId)
 	duration := pair.ExpiresAt.Sub(pair.ObservedAt)
-	until := started.Add(duration)
+	until, deadlineErr := controloutage.LocalDeadline(started, pair.ObservedAt, pair.ExpiresAt, time.Now())
 	if keyErr != nil || frameKeyErr != nil || idErr != nil || !opaqueid.Valid(pair.PairId, "cpp_") || pair.DeliveryGeneration < 1 || pair.ServiceId != run.ServiceID || pair.ServiceRunId != run.ServiceRunID || pair.RunNumber != int64(run.RunNumber) || pair.TrustRevision != run.TrustRevision || pair.PublisherIdentityId != run.PairReady.PublisherIdentityId || !visitorsubject.Equal(pair.Subject, signer.Subject) ||
-		pair.ObservedAt.IsZero() || duration <= 0 || duration > 5*time.Minute || !until.After(time.Now()) || len(pair.Relays) != 2 {
+		deadlineErr != nil || duration > 5*time.Minute || len(pair.Relays) != 2 ||
+		previous != nil && pair.ObservedAt.Before(previous.ObservedAt) {
 		return key, time.Time{}, ErrServiceConnection
 	}
 	for slot, relay := range pair.Relays {

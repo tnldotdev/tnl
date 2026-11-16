@@ -39,7 +39,7 @@ func connectorPairReadySelection(ctx context.Context, tx pgx.Tx, runID, serviceI
 		err := tx.QueryRow(ctx, `SELECT lease.relay_service_id,lease.relay_id,lease.relay_run_id,lease.relay_lease_revision,service.relay_address,service.tls_server_name
 		    FROM control.relay_leases lease JOIN control.relay_services service ON service.relay_service_id=lease.relay_service_id
 		    WHERE lease.relay_id=$1 AND lease.relay_run_id=$2 AND lease.relay_lease_revision=$3 AND lease.relay_service_id=$4
-		    AND lease.lease_expires_at>$5 AND NOT lease.draining AND service.enabled`, slot.RelayID.String, slot.RelayRunID.String, slot.RelayLeaseRevision.Int64, slot.RelayServiceID, now).
+		    AND lease.serving_until>$5 AND NOT lease.draining AND service.enabled`, slot.RelayID.String, slot.RelayRunID.String, slot.RelayLeaseRevision.Int64, slot.RelayServiceID, now).
 			Scan(&relay.RelayLease.RelayServiceID, &relay.RelayLease.RelayID, &relay.RelayLease.RelayRunID, &revision, &relay.RelayAddress, &relay.TLSServerName)
 		if errors.Is(err, pgx.ErrNoRows) || err == nil && (slot.RelayAddress != relay.RelayAddress || slot.TlsServerName != relay.TLSServerName) {
 			return nil, nil

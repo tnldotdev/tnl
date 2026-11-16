@@ -28,7 +28,7 @@ func (s serviceRunLifecycleState) active() bool {
 }
 
 func activeServiceRun(run controlstatedb.ControlServiceRun, now time.Time) bool {
-	return !run.ClosedAt.Valid && run.PublisherExpiresAt.Time.After(now) && serviceRunLifecycleState(run.State).active()
+	return !run.ClosedAt.Valid && run.ServingUntil.Time.After(now) && serviceRunLifecycleState(run.State).active()
 }
 
 func privateAssignmentState(s string) (PublisherConnectionState, error) {

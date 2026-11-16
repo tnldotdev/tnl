@@ -124,14 +124,14 @@ WHERE id=sqlc.arg(id) AND retired_at IS NULL AND session_key_ciphertext IS NULL 
 
 -- name: ReadConnectorPeerObservationRelayBounds :many
 -- relay leases are current-state recheck deadlines, not pair renewals.
-SELECT slot.connection_slot,lease.lease_expires_at,relay.relay_address,relay.tls_server_name
+SELECT slot.connection_slot,lease.serving_until,relay.relay_address,relay.tls_server_name
 FROM control.service_connection_slots slot
 JOIN control.relay_leases lease ON lease.relay_id=slot.relay_id AND lease.relay_run_id=slot.relay_run_id
     AND lease.relay_lease_revision=slot.relay_lease_revision AND lease.relay_service_id=slot.relay_service_id
 JOIN control.relay_services relay ON relay.relay_service_id=lease.relay_service_id
 WHERE slot.service_run_id=sqlc.arg(service_run_id) AND slot.service_id=sqlc.arg(service_id)
     AND slot.state='ready' AND slot.session_open AND NOT lease.draining AND relay.enabled
-    AND lease.lease_expires_at>sqlc.arg(now)
+    AND lease.serving_until>sqlc.arg(now)
 ORDER BY slot.connection_slot LIMIT 2 FOR SHARE OF lease,relay;
 
 -- name: LockConnectorPeerRetirementTeam :one

@@ -150,11 +150,11 @@ SET used_ready_ns = LEAST(1200000000000, used_ready_ns + CASE
     END),
     end_reason = COALESCE(end_reason, CASE
         WHEN $1::text = 'guest_expired' OR expires_at <= $2::timestamptz OR expires_at <= serving_until THEN 'expired'
-        WHEN ready_deadline <= serving_until THEN 'ready_limit'
+        WHEN ready_deadline <= serving_until OR ready_deadline <= $2::timestamptz THEN 'ready_limit'
     END),
     ended_at = COALESCE(ended_at, CASE
         WHEN $1::text = 'guest_expired' OR expires_at <= $2::timestamptz OR expires_at <= serving_until THEN expires_at
-        WHEN ready_deadline <= serving_until THEN ready_deadline
+        WHEN ready_deadline <= serving_until OR ready_deadline <= $2::timestamptz THEN ready_deadline
     END),
     active_ready_at = NULL,
     ready_deadline = NULL,
@@ -494,9 +494,10 @@ func (q *Queries) InsertGuestTrial(ctx context.Context, arg InsertGuestTrialPara
 
 const limitGuestServiceRunExpiry = `-- name: LimitGuestServiceRunExpiry :one
 UPDATE control.service_runs
-SET publisher_expires_at = LEAST(publisher_expires_at, $1::timestamptz)
+SET publisher_expires_at = LEAST(publisher_expires_at, $1::timestamptz),
+    serving_until = LEAST(serving_until, $1::timestamptz)
 WHERE id = $2
-RETURNING preferred_regions, traffic_limits, id, service_id, team_id, guest_id, protocol, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, require_post_quantum, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, ready_at, closed_at, assignments_open
+RETURNING preferred_regions, traffic_limits, id, service_id, team_id, guest_id, protocol, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, require_post_quantum, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, serving_observed_at, serving_until, ready_at, closed_at, assignments_open
 `
 
 type LimitGuestServiceRunExpiryParams struct {
@@ -541,6 +542,8 @@ func (q *Queries) LimitGuestServiceRunExpiry(ctx context.Context, arg LimitGuest
 		&i.CertificateExpiresAt,
 		&i.CreatedAt,
 		&i.PublisherExpiresAt,
+		&i.ServingObservedAt,
+		&i.ServingUntil,
 		&i.ReadyAt,
 		&i.ClosedAt,
 		&i.AssignmentsOpen,
@@ -643,7 +646,7 @@ func (q *Queries) RecentGuestTrialStats(ctx context.Context, since pgtype.Timest
 const updateGuestServingAuthority = `-- name: UpdateGuestServingAuthority :one
 UPDATE control.guest_trials AS guest
 SET serving_until = CASE WHEN guest.active_ready_at IS NULL THEN guest.serving_until
-        ELSE GREATEST(guest.serving_until, LEAST(guest.expires_at, guest.ready_deadline, run.publisher_expires_at)) END
+        ELSE GREATEST(guest.serving_until, LEAST(guest.expires_at, guest.ready_deadline, run.serving_until)) END
 FROM control.service_runs AS run
 WHERE run.id = $1 AND guest.active_service_run_id = run.id AND run.guest_id=guest.id
 RETURNING control.guest_serving_deadline(guest.id, $2::timestamptz)::timestamptz AS deadline

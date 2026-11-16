@@ -102,3 +102,74 @@ func TestRepeatedControlObservationHonorsShorterIssuedDeadline(t *testing.T) {
 		}
 	})
 }
+
+func TestPolicyLeaseRepeatedAbsoluteExpiryCannotRecoverSpentLatency(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		lease, update, key := fixture(t)
+		first := lease.Begin()
+		until := first.StartedAt.Add(time.Minute)
+		update.View.ObservedAt, update.View.ValidUntil = first.StartedAt, until
+		if err := lease.Apply(first, update); err != nil {
+			t.Fatal(err)
+		}
+		var stopped atomic.Int64
+		guard, err := lease.Bind(admission(t, lease, key, "first", until.Add(time.Hour)), netip.MustParseAddr("192.0.2.1"), func() { stopped.Add(1) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer guard.Close()
+		time.Sleep(2 * time.Second)
+		later := lease.Begin()
+		// control observed this call earlier than its local request start because
+		// the first request spent more time waiting before observation.
+		update.View.ObservedAt = first.StartedAt.Add(time.Second)
+		if err := lease.Apply(later, update); err != nil {
+			t.Fatal(err)
+		}
+		view, enabled, _ := lease.Current()
+		if !enabled || !view.ValidUntil.Equal(until) {
+			t.Fatal("unchanged absolute authority acquired another local second", view.ValidUntil, until)
+		}
+		time.Sleep(time.Until(until))
+		synctest.Wait()
+		if stopped.Load() != 1 {
+			t.Fatal("repeated absolute expiry retained traffic")
+		}
+	})
+}
+
+func TestPolicyLeaseFreshPolicyCannotReanchorAcceptedCredentialExpiry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		lease, update, key := fixture(t)
+		first := lease.Begin()
+		control := first.StartedAt.Add(time.Second)
+		update.View.ObservedAt, update.View.ValidUntil = control, control.Add(time.Minute)
+		time.Sleep(2 * time.Second)
+		if err := lease.Apply(first, update); err != nil {
+			t.Fatal(err)
+		}
+		permission := admission(t, lease, key, "first", control.Add(4*time.Second))
+		var stopped atomic.Int64
+		guard, err := lease.Bind(permission, netip.MustParseAddr("192.0.2.1"), func() { stopped.Add(1) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer guard.Close()
+		time.Sleep(time.Second)
+		// a faster, successful policy response is fresh policy evidence, not a
+		// renewal of the same signed token's already accepted local deadline.
+		update.View.ObservedAt = first.StartedAt.Add(3500 * time.Millisecond)
+		update.View.ValidUntil = update.View.ObservedAt.Add(time.Minute)
+		if err := lease.Apply(lease.Begin(), update); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Second)
+		synctest.Wait()
+		if stopped.Load() != 1 {
+			t.Fatal("fresh policy moved the accepted credential deadline")
+		}
+		if err := guard.Renew(permission); err == nil {
+			t.Fatal("expired guard was revived")
+		}
+	})
+}

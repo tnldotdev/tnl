@@ -12,7 +12,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
-	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -59,6 +58,7 @@ type routedVisitor struct {
 type sourceCounter struct {
 	next       atomic.Uint64
 	validUntil int64
+	until      time.Time
 }
 
 type terminalServiceRun struct {
@@ -157,10 +157,9 @@ func (s *Server) RefreshServices(ctx context.Context) error {
 }
 
 func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, snapshot ingressv1.IngressServices) error {
-	duration := snapshot.ValidUntil.Sub(snapshot.ObservedAt)
 	now := time.Now()
 	snapshotDeadline, err := controloutage.LocalDeadline(started, snapshot.ObservedAt, snapshot.ValidUntil, now)
-	if err != nil || duration > visitortoken.PolicyLifetime || !lease.LeaseExpiresAt.After(now) || lease.Draining {
+	if err != nil || !lease.LeaseExpiresAt.After(now) || lease.Draining {
 		return ErrServiceAdmission
 	}
 	runs := make(map[string]*serviceRoute, len(snapshot.Runs))
@@ -179,6 +178,10 @@ func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, 
 		}
 		if err := validateServiceRelays(run.ConnectedRelays, snapshot.ObservedAt); err != nil {
 			return err
+		}
+		run.ConnectedRelays = slices.Clone(run.ConnectedRelays)
+		for i := range run.ConnectedRelays {
+			run.ConnectedRelays[i].LeaseExpiresAt = started.Add(run.ConnectedRelays[i].LeaseExpiresAt.Sub(snapshot.ObservedAt))
 		}
 		source, err := tunnelv1.ReadVisitorSourceAuthority(run.SourceAuthority)
 		if err != nil || source.ServiceID != run.ServiceId || source.ServiceRunID != run.ServiceRunId ||
@@ -256,8 +259,13 @@ func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, 
 		key := [32]byte(route.source.MAC)
 		counter := r.sourceCounters[key]
 		if counter == nil {
-			counter = &sourceCounter{validUntil: route.source.ValidUntil}
+			counter = &sourceCounter{validUntil: route.source.ValidUntil, until: route.until}
 			r.sourceCounters[key] = counter
+		} else {
+			// the same signed source authority has one absolute expiry, even
+			// across a temporary routing omission or changed response latency.
+			counter.until = privateMinTime(counter.until, route.until)
+			route.until = counter.until
 		}
 		route.sequence = counter
 	}

@@ -41,6 +41,9 @@ func (d *daemon) startControlWorkers(
 		return err
 	}
 	d.database = database
+	if err := database.ConfigureControlOutageTolerance(cfg.ControlOutageTolerance); err != nil {
+		return err
+	}
 	if len(cfg.IngressIPv4Addresses) > 1 || len(cfg.IngressIPv6Addresses) > 1 {
 		return errors.New("provision primary ingress pool: configure at most one ingress IPv4 and one ingress IPv6 address")
 	}

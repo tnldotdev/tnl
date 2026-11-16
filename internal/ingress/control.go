@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
+	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
@@ -51,6 +52,8 @@ type ControllerConfig struct {
 
 // Controller maintains one exact ingress lease.
 type Controller struct {
+	confirmationMu   sync.Mutex
+	confirmation     controloutage.Confirmation
 	client           ControlClient
 	registration     ingressv1.IngressRegistration
 	renewalInterval  time.Duration
@@ -63,6 +66,7 @@ type Controller struct {
 	mu               sync.RWMutex
 	lease            ingressv1.IngressLease
 	leaseLost        bool
+	leaseUpdated     chan struct{}
 }
 
 func NewController(config ControllerConfig) (*Controller, error) {
@@ -92,6 +96,7 @@ func NewController(config ControllerConfig) (*Controller, error) {
 		renewalInterval: config.RenewalInterval, retryInterval: config.RetryInterval,
 		load: config.Load, now: config.Now, report: config.Report,
 		observer: config.Observer, leaseEstablished: config.LeaseEstablished,
+		leaseUpdated: make(chan struct{}),
 	}
 	return c, nil
 }
@@ -130,6 +135,7 @@ func (c *Controller) watchLease(ctx context.Context) error {
 			}
 		}
 		lost := c.leaseLost
+		updated := c.leaseUpdated
 		c.mu.Unlock()
 		if lost {
 			return ErrIngressLeaseLost
@@ -139,6 +145,8 @@ func (c *Controller) watchLease(ctx context.Context) error {
 		case <-ctx.Done():
 			timer.Stop()
 			return nil
+		case <-updated:
+			timer.Stop()
 		case <-timer.C:
 		}
 	}
@@ -148,7 +156,10 @@ func (c *Controller) run(ctx context.Context) error {
 	for {
 		err := c.runOnce(ctx)
 		if ctx.Err() != nil {
-			return nil
+			if failure.Only(err, ctx.Err()) {
+				return nil
+			}
+			return err
 		}
 		if err == nil {
 			return nil
@@ -177,6 +188,7 @@ func (c *Controller) runOnce(ctx context.Context) error {
 
 func (c *Controller) register(ctx context.Context) (retErr error) {
 	started := time.Now()
+	requestStarted := c.now()
 	defer func() { c.observeOperation(ctx, observability.OpIngressRegister, retErr, started) }()
 	if lease := c.Lease(); lease.IngressLeaseRevision != 0 && !lease.LeaseExpiresAt.After(c.now()) {
 		return ErrIngressLeaseLost
@@ -185,7 +197,7 @@ func (c *Controller) register(ctx context.Context) (retErr error) {
 	if err != nil {
 		return c.responseError("register ingress", err)
 	}
-	return c.setLease(lease)
+	return c.confirmLease(requestStarted, lease)
 }
 
 func (c *Controller) renewLoop(ctx context.Context) error {
@@ -203,6 +215,7 @@ func (c *Controller) renewLoop(ctx context.Context) error {
 			return errors.New("ingress: reported connection count cannot be negative")
 		}
 		started := time.Now()
+		requestStarted := c.now()
 		lease, err := c.client.RenewIngress(ctx, c.registration.IngressId, ingressv1.IngressRenewal{
 			IngressId: c.registration.IngressId, IngressRunId: c.registration.IngressRunId,
 			IngressLeaseRevision: lease.IngressLeaseRevision, ReportedConnections: connections,
@@ -214,7 +227,7 @@ func (c *Controller) renewLoop(ctx context.Context) error {
 			}
 			return c.responseError("renew ingress", err)
 		}
-		if err := c.setLease(lease); err != nil {
+		if err := c.confirmLease(requestStarted, lease); err != nil {
 			return err
 		}
 		periodic.Reset(c.renewalInterval)
@@ -242,6 +255,7 @@ func (c *Controller) Lease() ingressv1.IngressLease {
 }
 
 func (c *Controller) Drain(ctx context.Context, deadline time.Time) error {
+	started := c.now()
 	lease := c.Lease()
 	if lease.IngressLeaseRevision <= 0 || !deadline.After(c.now()) {
 		return errors.New("ingress: active lease and future drain deadline are required")
@@ -256,7 +270,7 @@ func (c *Controller) Drain(ctx context.Context, deadline time.Time) error {
 	if err != nil {
 		return c.responseError("drain ingress", err)
 	}
-	return c.setLease(updated)
+	return c.confirmLease(started, updated)
 }
 
 func (c *Controller) ObserveRecovery(
@@ -293,6 +307,21 @@ func (c *Controller) ObserveRecovery(
 	return observation, nil
 }
 
+func (c *Controller) confirmLease(started time.Time, lease ingressv1.IngressLease) error {
+	c.confirmationMu.Lock()
+	defer c.confirmationMu.Unlock()
+	next, err := c.confirmation.Confirm(started, lease.RenewedAt, lease.LeaseExpiresAt, c.now())
+	if err != nil {
+		return ErrIngressLeaseLost
+	}
+	lease.LeaseExpiresAt = next.Deadline
+	if err := c.setLease(lease); err != nil {
+		return err
+	}
+	c.confirmation = next
+	return nil
+}
+
 func (c *Controller) setLease(lease ingressv1.IngressLease) error {
 	now := c.now()
 	if !lease.LeaseExpiresAt.After(now) {
@@ -322,6 +351,10 @@ func (c *Controller) setLease(lease ingressv1.IngressLease) error {
 		}
 	}
 	c.lease = cloneIngressLease(lease)
+	if c.leaseUpdated != nil {
+		close(c.leaseUpdated)
+	}
+	c.leaseUpdated = make(chan struct{})
 	return nil
 }
 

@@ -126,7 +126,7 @@ func (d *Database) RebindConnectorPeerPair(ctx context.Context, serviceID, pairI
 		if len(leases) != 2 {
 			return result, ErrConnectorPeerBindingStale
 		}
-		until = minTime(until, minTime(leases[0].LeaseExpiresAt.Time, leases[1].LeaseExpiresAt.Time))
+		until = minTime(until, minTime(leases[0].ServingUntil.Time, leases[1].ServingUntil.Time))
 		secret, challenge := make([]byte, 32), make([]byte, 32)
 		if _, err = rand.Read(secret); err != nil {
 			return result, err

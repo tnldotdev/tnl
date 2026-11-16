@@ -80,7 +80,7 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 				IngressLeaseRevision: 7,
 			},
 			ProtocolVersion: registration.ProtocolVersion, ConnectionCapacity: registration.ConnectionCapacity,
-			RegisteredAt: registeredAt, RenewedAt: registeredAt, LeaseExpiresAt: registeredAt.Add(leaseDuration),
+			RegisteredAt: registeredAt, RenewedAt: registeredAt, LeaseExpiresAt: registeredAt.Add(leaseDuration), ServingUntil: registeredAt.Add(leaseDuration),
 		}, nil
 	}}
 	body := ingressv1.IngressRegistration{

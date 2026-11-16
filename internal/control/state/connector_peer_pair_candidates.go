@@ -71,7 +71,7 @@ func (d *Database) ListConnectorPeerPairs(ctx context.Context, serviceID, runID,
 	// authorize positive hints before taking any pair lock. a known serving
 	// denial permits only retained negative facts, never a fabricated retirement.
 	includeCandidates := ownerCurrent && service.Enabled && !service.DeletedAt.Valid
-	until := run.PublisherExpiresAt.Time
+	until := run.ServingUntil.Time
 	if includeCandidates {
 		_, err = d.validateServiceRunAuthorization(ctx, tx, q, serviceID, runID, run, digest, clock)
 		if err == nil {
@@ -150,7 +150,7 @@ func (d *Database) ListConnectorPeerPairs(ctx context.Context, serviceID, runID,
 		if err == nil && connectorPeerPairUnretired(pair) && pair.PublisherPreparedUntil.Valid {
 			_, _, bound, err := d.connectorPeerSessionAuthority(ctx, tx, run, pair, clock.current())
 			if err == nil {
-				candidate.OwnerAuthority = &ConnectorPeerPairOwnerAuthority{ObservedAt: now, ExpiresAt: minTime(bound, now.Add(5*time.Minute))}
+				candidate.OwnerAuthority = &ConnectorPeerPairOwnerAuthority{ObservedAt: now, ExpiresAt: minTime(bound, now.Add(d.servingTolerance()))}
 			} else if !connectorPeerAuthorityDenied(err) {
 				return ConnectorPeerPairCandidates{}, err
 			}

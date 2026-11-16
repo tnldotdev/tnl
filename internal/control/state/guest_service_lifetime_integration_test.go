@@ -20,7 +20,7 @@ func TestIntegrationGuestAuthorityStartsAtReadinessAndSettlesIssuedIdleTail(t *t
 	}
 	f.ready(t, f.now.Add(10*time.Second))
 	ready := f.stored(t)
-	if !ready.ReadyDeadline.Time.Equal(ready.ActiveReadyAt.Time.Add(GuestReadyAllowance)) || !ready.ServingUntil.Time.Equal(f.run.ExpiresAt) {
+	if !ready.ReadyDeadline.Time.Equal(ready.ActiveReadyAt.Time.Add(GuestReadyAllowance)) || !ready.ServingUntil.Time.Equal(f.run.ServingUntil) {
 		t.Fatalf("readiness bounds: %+v", ready)
 	}
 	if err := f.database.CloseServiceRun(f.ctx, f.service.ID, f.run.RunID, f.run.Token, f.now.Add(11*time.Second)); err != nil {
@@ -144,8 +144,8 @@ func TestIntegrationGuestAuthorityLateCleanupAndConcurrentClose(t *testing.T) {
 			}
 			before := f.stored(t)
 			older, err := f.heartbeat(f.now.Add(5 * time.Second))
-			if err != nil || !older.ExpiresAt.Equal(before.ServingUntil.Time) {
-				t.Fatalf("older heartbeat discarded issued authority: %v, %v", older.ExpiresAt, err)
+			if err != nil || !older.ServingUntil.Equal(before.ServingUntil.Time) {
+				t.Fatalf("older heartbeat discarded issued authority: %v, %v", older.ServingUntil, err)
 			}
 			const callers = 8
 			results := make(chan error, callers)
@@ -242,7 +242,7 @@ func TestIntegrationGuestAuthorityCloseSerializesWithRenewal(t *testing.T) {
 		t.Fatal(err)
 	}
 	after := f.stored(t)
-	want := f.now.Add(55 * time.Second)
+	want := f.now.Add(10*time.Second + f.database.servingTolerance())
 	if !after.ServingUntil.Time.Equal(want) || time.Duration(after.UsedReadyNs) != want.Sub(before.ActiveReadyAt.Time) {
 		t.Fatalf("closure missed serialized renewal: %+v", after)
 	}

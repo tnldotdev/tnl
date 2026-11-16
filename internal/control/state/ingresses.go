@@ -55,6 +55,7 @@ type IngressLease struct {
 	RegisteredAt        time.Time
 	RenewedAt           time.Time
 	LeaseExpiresAt      time.Time
+	ServingUntil        time.Time
 }
 
 // RegisterIngress creates or renews one ingress process lease.
@@ -94,6 +95,7 @@ func (d *Database) RegisterIngress(
 		IngressPoolID: registration.IngressPoolID, Https: registration.HTTPS, ServicePorts: append([]int32{}, registration.ServicePorts...),
 		RegisteredAt: timestamptz(now), RenewedAt: timestamptz(now),
 		LeaseExpiresAt: timestamptz(now.Add(leaseDuration)),
+		ServingUntil:   timestamptz(now.Add(d.servingTolerance())),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return IngressLease{}, ErrIngressAlreadyRunning
@@ -147,7 +149,8 @@ func (d *Database) RenewIngress(
 	row, err := queries.RenewIngress(ctx, controlstatedb.RenewIngressParams{
 		ReportedConnections: reportedConnections,
 		RenewedAt:           timestamptz(now), LeaseExpiresAt: timestamptz(now.Add(leaseDuration)),
-		IngressID: renewal.IngressID, IngressRunID: renewal.IngressRunID,
+		ServingUntil: timestamptz(now.Add(d.servingTolerance())),
+		IngressID:    renewal.IngressID, IngressRunID: renewal.IngressRunID,
 		IngressLeaseRevision: leaseRevision,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -304,6 +307,6 @@ func ingressLease(row controlstatedb.ControlIngressLease) (IngressLease, error) 
 		ProtocolVersion: uint64(row.ProtocolVersion), ConnectionCapacity: uint64(row.ConnectionCapacity),
 		ReportedConnections: uint64(row.ReportedConnections),
 		Draining:            row.Draining, DrainDeadline: drainDeadline, RegisteredAt: row.RegisteredAt.Time,
-		RenewedAt: row.RenewedAt.Time, LeaseExpiresAt: row.LeaseExpiresAt.Time,
+		RenewedAt: row.RenewedAt.Time, LeaseExpiresAt: row.LeaseExpiresAt.Time, ServingUntil: row.ServingUntil.Time,
 	}, nil
 }

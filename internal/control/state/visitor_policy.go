@@ -48,7 +48,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		return result, ErrVisitorPolicy
 	}
 	policy := controlv1.VisitorPolicySnapshot{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(scope.Kind), Id: scope.ID}, Issuer: issuer,
-		VisitorPolicyRevision: revision, KeyRevision: keyRevision, ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime), VerificationKeys: []controlv1.VisitorVerificationKey{}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}, RegisteredKeyLeases: []controlv1.VisitorRegisteredKeyLease{}}
+		VisitorPolicyRevision: revision, KeyRevision: keyRevision, ObservedAt: now, ValidUntil: now.Add(d.servingTolerance()), VerificationKeys: []controlv1.VisitorVerificationKey{}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}, RegisteredKeyLeases: []controlv1.VisitorRegisteredKeyLease{}}
 	for _, key := range keys {
 		policy.VerificationKeys = append(policy.VerificationKeys, controlv1.VisitorVerificationKey{Id: key.ID, PublicKey: key.PublicKey})
 	}
@@ -71,6 +71,9 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		}
 	}
 	policy.Enabled = row.Enabled && !row.DeletedAt.Valid && (!row.ExpiresAt.Valid || row.ExpiresAt.Time.After(now))
+	if row.ExpiresAt.Valid && row.ExpiresAt.Time.After(now) {
+		policy.ValidUntil = minTime(policy.ValidUntil, row.ExpiresAt.Time)
+	}
 	settings, err := d.serviceHTTPSettings(ctx, q, scope.ID)
 	if err != nil {
 		return result, err
@@ -248,5 +251,9 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 	// endpoint edits do not change this publisher's connector TLS identity.
 	// current policy and target trust still apply to the captured run.
 	result.Policy.Hostname = row.CertificateHostname
+	result.Policy.ValidUntil = minTime(result.Policy.ValidUntil, row.ServingUntil.Time)
+	if row.CertificateExpiresAt.Valid {
+		result.Policy.ValidUntil = minTime(result.Policy.ValidUntil, row.CertificateExpiresAt.Time)
+	}
 	return result, tx.Commit(ctx)
 }

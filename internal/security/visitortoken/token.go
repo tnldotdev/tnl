@@ -217,7 +217,7 @@ func (v View) LocalDeadline(deadline time.Time) time.Time {
 
 func (v View) current(now time.Time) bool {
 	return validText(v.Issuer, 256) && validResource(v.Scope, v.Hostname) && v.VisitorPolicyRevision > 0 &&
-		!v.ObservedAt.IsZero() && !now.Before(v.ObservedAt) && v.ValidUntil.After(v.ObservedAt) && !v.ValidUntil.After(v.ObservedAt.Add(PolicyLifetime)) && now.Before(v.ValidUntil)
+		!v.ObservedAt.IsZero() && !now.Before(v.ObservedAt) && v.ValidUntil.After(v.ObservedAt) && now.Before(v.ValidUntil)
 }
 
 func verify(token Token, view View, now time.Time) (Permission, error) {

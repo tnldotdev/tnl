@@ -446,7 +446,7 @@ func TestIntegrationConnectorPeerPairSavedParentDeadlines(t *testing.T) {
 				"refresh":         {`UPDATE control.control_sessions SET access_expires_at=$2,refresh_expires_at=$2 WHERE id=$1`, f.parent.SessionID},
 				"company proof":   {`UPDATE control.company_session_contexts SET expires_at=$2 WHERE session_id=$1`, f.parent.SessionID},
 				"eligibility":     {`UPDATE control.company_eligibility SET valid_until=$2 WHERE identity_id=$1`, f.pair.Subject.IdentityID},
-				"run":             {`UPDATE control.service_runs SET publisher_expires_at=$2 WHERE id=$1`, f.run.RunID},
+				"run":             {`UPDATE control.service_runs SET serving_until=$2 WHERE id=$1`, f.run.RunID},
 				"publisher grant": {`UPDATE control.publisher_grants SET expires_at=$2 WHERE id=$1`, f.publisherGrant},
 				"certificate":     {`UPDATE control.service_runs SET certificate_expires_at=$2 WHERE id=$1`, f.run.RunID},
 				"pair":            {`UPDATE control.connector_peer_pairs SET expires_at=$2 WHERE id=$1`, f.pair.ID},

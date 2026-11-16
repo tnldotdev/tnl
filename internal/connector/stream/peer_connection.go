@@ -780,6 +780,9 @@ func (p *connectorConnection) refreshAuthority() error {
 	renewal, bound, err := renewConnectorPair(call, p.config.Control, p.signer, run, p.owner, previous)
 	pair, permission, next := renewal.Pair, renewal.VisitorPermission, run
 	if err == nil {
+		if pair.ObservedAt.Equal(previous.ObservedAt) {
+			bound = earliestConnectorDeadline(bound, until.Add(min(0, pair.ExpiresAt.Sub(previous.ExpiresAt))))
+		}
 		if !pair.ExpiresAt.After(previous.ExpiresAt) {
 			bound = earliestConnectorDeadline(bound, until)
 		}

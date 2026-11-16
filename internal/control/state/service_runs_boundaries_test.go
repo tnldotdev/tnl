@@ -29,12 +29,12 @@ func TestServiceRunLifecycleBoundary(t *testing.T) {
 			if tc.state.valid() != tc.valid || tc.state.active() != tc.active {
 				t.Fatal("private run lifecycle crossed the active publisher boundary")
 			}
-			run := controlstatedb.ControlServiceRun{State: string(tc.state), PublisherExpiresAt: timestamptz(now.Add(time.Nanosecond))}
+			run := controlstatedb.ControlServiceRun{State: string(tc.state), PublisherExpiresAt: timestamptz(now), ServingUntil: timestamptz(now.Add(time.Nanosecond))}
 			if activeServiceRun(run, now) != tc.active {
 				t.Fatal("stored run crossed the active publisher boundary")
 			}
 			if activeServiceRun(run, now.Add(time.Nanosecond)) {
-				t.Fatal("publisher lease remained active at its expiry")
+				t.Fatal("publisher serving authority remained active at its expiry")
 			}
 			run.ClosedAt = timestamptz(now)
 			if activeServiceRun(run, now) {

@@ -18,7 +18,7 @@ func connectorPeerPublisherAuthority(ctx context.Context, tx pgx.Tx, run control
 	}); err != nil {
 		return time.Time{}, publisherLookupError(err, ErrServiceAccess)
 	}
-	until := run.PublisherExpiresAt.Time
+	until := run.ServingUntil.Time
 	if run.CertificateExpiresAt.Valid {
 		until = minTime(until, run.CertificateExpiresAt.Time)
 	}

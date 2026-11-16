@@ -13,7 +13,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
-	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -74,7 +73,7 @@ func TestIntegrationGuestAuthorityBoundsPreparationPolicyAndPermissions(t *testi
 			for _, at := range []time.Time{f.now.Add(time.Second), horizon.Add(-time.Second)} {
 				policy, err := f.database.ReadPublisherVisitorPolicy(f.ctx, scope, f.run.RunID, f.run.RunNumber, f.run.Token, 0, at)
 				if err != nil || policy.Policy.ConnectionDeadline == nil || !policy.Policy.ConnectionDeadline.Equal(horizon) ||
-					!policy.Policy.ValidUntil.Equal(minTime(policy.Policy.ObservedAt.Add(visitortoken.PolicyLifetime), horizon)) {
+					!policy.Policy.ValidUntil.Equal(minTime(policy.Policy.ObservedAt.Add(f.database.servingTolerance()), horizon)) {
 					t.Fatalf("fixed policy horizon=%+v, %v", policy.Policy, err)
 				}
 				wire, err := json.Marshal(policy)
@@ -137,7 +136,7 @@ func TestIntegrationGuestAuthorityOrdinaryPolicyUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !policy.Policy.Enabled || policy.Policy.ConnectionDeadline != nil || !policy.Policy.ValidUntil.Equal(policy.Policy.ObservedAt.Add(visitortoken.PolicyLifetime)) {
+	if !policy.Policy.Enabled || policy.Policy.ConnectionDeadline != nil || !policy.Policy.ValidUntil.Equal(minTime(policy.Policy.ObservedAt.Add(f.database.servingTolerance()), f.run.ServingUntil)) {
 		t.Fatalf("ordinary policy changed: %+v", policy.Policy)
 	}
 	renewed, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now.Add(time.Second),

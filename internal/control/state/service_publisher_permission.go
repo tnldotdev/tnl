@@ -59,7 +59,7 @@ func serviceRunPublisherPermission(ctx context.Context, tx pgx.Tx, run controlst
 	}
 	now = clock.current()
 	state := serviceRunLifecycleState(run.State)
-	if run.ClosedAt.Valid || !run.PublisherExpiresAt.Time.After(now) ||
+	if run.ClosedAt.Valid || !run.ServingUntil.Time.After(now) ||
 		!state.active() && state != serviceRunPrepared ||
 		state == serviceRunPrepared && !run.PreparationExpiresAt.Time.After(now) {
 		return pgtype.Timestamptz{}, ErrServiceAccess

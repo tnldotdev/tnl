@@ -608,6 +608,7 @@ type ControlIngressLease struct {
 	RegisteredAt         pgtype.Timestamptz
 	RenewedAt            pgtype.Timestamptz
 	LeaseExpiresAt       pgtype.Timestamptz
+	ServingUntil         pgtype.Timestamptz
 }
 
 type ControlIngressPool struct {
@@ -896,6 +897,7 @@ type ControlRelayLease struct {
 	RegisteredAt         pgtype.Timestamptz
 	RenewedAt            pgtype.Timestamptz
 	LeaseExpiresAt       pgtype.Timestamptz
+	ServingUntil         pgtype.Timestamptz
 }
 
 type ControlRelayRunSigningKey struct {
@@ -1220,6 +1222,8 @@ type ControlServiceRun struct {
 	CertificateExpiresAt       pgtype.Timestamptz
 	CreatedAt                  pgtype.Timestamptz
 	PublisherExpiresAt         pgtype.Timestamptz
+	ServingObservedAt          pgtype.Timestamptz
+	ServingUntil               pgtype.Timestamptz
 	ReadyAt                    pgtype.Timestamptz
 	ClosedAt                   pgtype.Timestamptz
 	AssignmentsOpen            pgtype.Bool

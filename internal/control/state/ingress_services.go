@@ -51,7 +51,7 @@ func (d *Database) ReadIngressServices(ctx context.Context, identity IngressLeas
 	}
 	defer rollback(ctx, tx, "read ingress services", &retErr)()
 	q := controlstatedb.New(tx)
-	lease, err := q.GetIngressLease(ctx, controlstatedb.GetIngressLeaseParams{
+	lease, err := q.GetIngressServingLease(ctx, controlstatedb.GetIngressServingLeaseParams{
 		IngressID: identity.IngressID, IngressRunID: identity.IngressRunID,
 		IngressLeaseRevision: int64(identity.IngressLeaseRevision), Now: timestamptz(now),
 	})
@@ -68,7 +68,7 @@ func (d *Database) ReadIngressServices(ctx context.Context, identity IngressLeas
 		return result, err
 	}
 	result.ObservedAt = now
-	result.ValidUntil = minTime(now.Add(visitortoken.PolicyLifetime), lease.LeaseExpiresAt.Time)
+	result.ValidUntil = minTime(now.Add(d.servingTolerance()), lease.ServingUntil.Time)
 	result.Runs = make([]IngressServiceRun, 0, len(rows))
 	ids := make([]string, 0, len(rows))
 	serviceIDs := make([]string, 0, len(rows))
@@ -95,7 +95,7 @@ func (d *Database) ReadIngressServices(ctx context.Context, identity IngressLeas
 			ConnectionAssignmentRevision: slot.ConnectionAssignmentRevision, RelayServiceID: slot.RelayServiceID,
 			RelayID: slot.RelayID, RelayRunID: slot.RelayRunID, RelayLeaseRevision: slot.RelayLeaseRevision,
 			InternalRelayAddress: slot.InternalRelayAddress, TLSServerName: slot.TlsServerName,
-			LeaseExpiresAt: slot.LeaseExpiresAt.Time,
+			LeaseExpiresAt: slot.ServingUntil.Time,
 		})
 	}
 	for _, row := range rows {

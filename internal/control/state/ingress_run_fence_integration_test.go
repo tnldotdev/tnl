@@ -21,7 +21,7 @@ func TestIntegrationExpiredIngressRunRequiresNewRun(t *testing.T) {
 	if err != nil || replayed.IngressLeaseIdentity != lease.IngressLeaseIdentity {
 		t.Fatalf("live retry = %+v, %v", replayed, err)
 	}
-	expired := now.Add(2 * time.Minute)
+	expired := replayed.ServingUntil
 	for range 2 {
 		if _, err := database.RegisterIngress(t.Context(), registration, expired, time.Minute); !errors.Is(err, ErrIngressLeaseStale) {
 			t.Fatalf("same-run registration = %v", err)

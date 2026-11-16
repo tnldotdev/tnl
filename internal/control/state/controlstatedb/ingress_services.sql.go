@@ -14,14 +14,14 @@ import (
 const listIngressServiceRelays = `-- name: ListIngressServiceRelays :many
 SELECT slot.service_run_id,slot.publisher_connection_id,slot.connection_slot,slot.connection_assignment_revision,
     slot.relay_service_id,lease.relay_id,lease.relay_run_id,lease.relay_lease_revision,
-    lease.internal_relay_address,lease.lease_expires_at,service.tls_server_name
+    lease.internal_relay_address,lease.lease_expires_at,lease.serving_until,service.tls_server_name
 FROM control.service_connection_slots slot
 JOIN control.relay_services service ON service.relay_service_id=slot.relay_service_id
 JOIN control.relay_leases lease ON lease.relay_id=slot.relay_id
     AND lease.relay_run_id=slot.relay_run_id AND lease.relay_lease_revision=slot.relay_lease_revision
     AND lease.relay_service_id=slot.relay_service_id
 WHERE slot.service_run_id=ANY($1::text[]) AND slot.state='ready' AND slot.session_open
-    AND lease.lease_expires_at>$2 AND NOT lease.draining
+    AND lease.serving_until>$2 AND NOT lease.draining
 ORDER BY slot.service_run_id,slot.connection_slot
 `
 
@@ -41,6 +41,7 @@ type ListIngressServiceRelaysRow struct {
 	RelayLeaseRevision           int64
 	InternalRelayAddress         string
 	LeaseExpiresAt               pgtype.Timestamptz
+	ServingUntil                 pgtype.Timestamptz
 	TlsServerName                string
 }
 
@@ -64,6 +65,7 @@ func (q *Queries) ListIngressServiceRelays(ctx context.Context, arg ListIngressS
 			&i.RelayLeaseRevision,
 			&i.InternalRelayAddress,
 			&i.LeaseExpiresAt,
+			&i.ServingUntil,
 			&i.TlsServerName,
 		); err != nil {
 			return nil, err
@@ -77,8 +79,8 @@ func (q *Queries) ListIngressServiceRelays(ctx context.Context, arg ListIngressS
 }
 
 const listIngressServiceRuns = `-- name: ListIngressServiceRuns :many
-SELECT service.id, service.team_id, service.guest_id, service.name, service.name_scope, service.placement_worktree_key, service.placement_worktree_label, service.protocol, service.tls_metadata, service.configuration_ciphertext, service.storage_key_id, service.trust_revision, service.endpoint_revision, service.visitor_revision, service.publisher_pool, service.ephemeral, service.expires_at, service.require_post_quantum, service.domain_id, service.certificate_hostname, service.certificate_scope, service.service_port, service.ingress_pool_id, service.public, service.created_by_identity_id, service.idempotency_key, service.request_digest, service.enabled, service.next_run_number, service.created_at, service.updated_at, service.deleted_at,run.preferred_regions, run.traffic_limits, run.id, run.service_id, run.team_id, run.guest_id, run.protocol, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.preparation_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.started_at, run.state, run.healthy, run.stream_capacity, run.reported_streams, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_domain_id, run.certificate_hostname, run.certificate_namespace, run.require_post_quantum, run.certificate_issuance_id, run.certificate_expires_at, run.created_at, run.publisher_expires_at, run.ready_at, run.closed_at, run.assignments_open,
-    LEAST(run.publisher_expires_at,run.certificate_expires_at,permission.expires_at)::timestamptz AS valid_until,
+SELECT service.id, service.team_id, service.guest_id, service.name, service.name_scope, service.placement_worktree_key, service.placement_worktree_label, service.protocol, service.tls_metadata, service.configuration_ciphertext, service.storage_key_id, service.trust_revision, service.endpoint_revision, service.visitor_revision, service.publisher_pool, service.ephemeral, service.expires_at, service.require_post_quantum, service.domain_id, service.certificate_hostname, service.certificate_scope, service.service_port, service.ingress_pool_id, service.public, service.created_by_identity_id, service.idempotency_key, service.request_digest, service.enabled, service.next_run_number, service.created_at, service.updated_at, service.deleted_at,run.preferred_regions, run.traffic_limits, run.id, run.service_id, run.team_id, run.guest_id, run.protocol, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.preparation_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.started_at, run.state, run.healthy, run.stream_capacity, run.reported_streams, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_domain_id, run.certificate_hostname, run.certificate_namespace, run.require_post_quantum, run.certificate_issuance_id, run.certificate_expires_at, run.created_at, run.publisher_expires_at, run.serving_observed_at, run.serving_until, run.ready_at, run.closed_at, run.assignments_open,
+    LEAST(run.serving_until,run.certificate_expires_at,permission.expires_at)::timestamptz AS valid_until,
     policy.revision AS visitor_policy_revision,recovery.id AS recovery_episode_id
 FROM control.services service
 JOIN control.service_runs run ON run.service_id=service.id
@@ -92,7 +94,7 @@ JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id
 WHERE service.ingress_pool_id=$2 AND service.public AND service.enabled
     AND service.deleted_at IS NULL AND (service.expires_at IS NULL OR service.expires_at>$1)
     AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
-    AND run.publisher_expires_at>$1 AND run.certificate_expires_at>$1
+    AND run.serving_until>$1 AND run.certificate_expires_at>$1
     AND run.certificate_hostname=service.certificate_hostname
     AND run.certificate_domain_id IS NOT DISTINCT FROM service.domain_id
     AND EXISTS(SELECT 1 FROM control.service_endpoints endpoint
@@ -190,6 +192,8 @@ func (q *Queries) ListIngressServiceRuns(ctx context.Context, arg ListIngressSer
 			&i.ControlServiceRun.CertificateExpiresAt,
 			&i.ControlServiceRun.CreatedAt,
 			&i.ControlServiceRun.PublisherExpiresAt,
+			&i.ControlServiceRun.ServingObservedAt,
+			&i.ControlServiceRun.ServingUntil,
 			&i.ControlServiceRun.ReadyAt,
 			&i.ControlServiceRun.ClosedAt,
 			&i.ControlServiceRun.AssignmentsOpen,

@@ -22,12 +22,13 @@ func TestIngressLeaseMutationContracts(t *testing.T) {
 		IngressLeaseIdentity: controlstate.IngressLeaseIdentity{IngressID: "ingress-result", IngressRunID: "run-result", IngressLeaseRevision: 9},
 		ProtocolVersion:      1, ConnectionCapacity: 100, ReportedConnections: 11,
 		RegisteredAt: now.Add(-time.Minute), RenewedAt: now, LeaseExpiresAt: now.Add(30 * time.Second), Draining: true, DrainDeadline: &deadline,
+		ServingUntil: now.Add(time.Minute),
 	}
 	wantLease := ingressv1.IngressLease{
 		Region:    "gcp:us-west1",
 		IngressId: "ingress-result", IngressRunId: "run-result", IngressLeaseRevision: 9, ProtocolVersion: 1,
 		ConnectionCapacity: 100, ReportedConnections: 11,
-		RegisteredAt: now.Add(-time.Minute), RenewedAt: now, LeaseExpiresAt: now.Add(30 * time.Second), Draining: true, DrainDeadline: &deadline,
+		RegisteredAt: now.Add(-time.Minute), RenewedAt: now, LeaseExpiresAt: now.Add(time.Minute), LivenessExpiresAt: now.Add(30 * time.Second), Draining: true, DrainDeadline: &deadline,
 	}
 	for _, operation := range []string{"renew", "drain"} {
 		for _, transport := range []string{"direct", "HTTP"} {

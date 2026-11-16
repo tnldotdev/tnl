@@ -66,7 +66,7 @@ func TestRegisterRelayAuthorizesAndConvertsRequest(t *testing.T) {
 			TLSServerName: registration.TLSServerName, InternalRelayAddress: registration.InternalRelayAddress,
 			InternalNetworks: registration.InternalNetworks, ConnectionCapacity: registration.ConnectionCapacity,
 			StreamCapacity: registration.StreamCapacity, RegisteredAt: registeredAt,
-			RenewedAt: registeredAt, LeaseExpiresAt: registeredAt.Add(leaseDuration),
+			RenewedAt: registeredAt, LeaseExpiresAt: registeredAt.Add(leaseDuration), ServingUntil: registeredAt.Add(leaseDuration),
 		}, nil
 	}}
 	body := relayv1.RelayRegistration{

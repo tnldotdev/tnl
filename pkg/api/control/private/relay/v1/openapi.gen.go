@@ -171,8 +171,13 @@ type RelayLease struct {
 	Draining             bool       `json:"draining"`
 	InternalNetworks     []string   `json:"internal_networks"`
 	InternalRelayAddress Identifier `json:"internal_relay_address"`
-	LeaseExpiresAt       time.Time  `json:"lease_expires_at"`
-	ObservedAddress      *string    `json:"observed_address,omitempty"`
+
+	// LeaseExpiresAt Serving authorization issued at renewed_at; response latency spends this allowance.
+	LeaseExpiresAt time.Time `json:"lease_expires_at"`
+
+	// LivenessExpiresAt Control's separate deadline for process availability and replacement.
+	LivenessExpiresAt time.Time `json:"liveness_expires_at"`
+	ObservedAddress   *string   `json:"observed_address,omitempty"`
 
 	// PeerSigningPublicKey Process-run key when registered. Missing-key leases cannot authorize connector pair claims.
 	PeerSigningPublicKey *string `json:"peer_signing_public_key,omitempty"`

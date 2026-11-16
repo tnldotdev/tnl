@@ -26,7 +26,7 @@ func TestIntegrationIngressServicesReadsReadyRunsWithoutVisitorWrites(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !snapshot.ObservedAt.Equal(f.now) || !snapshot.ValidUntil.Equal(f.now.Add(visitortoken.PolicyLifetime)) || len(snapshot.Runs) != 1 {
+		if !snapshot.ObservedAt.Equal(f.now) || !snapshot.ValidUntil.Equal(minTime(f.now.Add(f.database.servingTolerance()), lease.ServingUntil)) || len(snapshot.Runs) != 1 {
 			t.Fatal("routing did not return one current, short-lived run", snapshot.ObservedAt, snapshot.ValidUntil, len(snapshot.Runs))
 		}
 		run := snapshot.Runs[0]
@@ -46,7 +46,7 @@ func TestIntegrationIngressServicesReadsReadyRunsWithoutVisitorWrites(t *testing
 			}
 			current := f.leases[relay.RelayServiceID]
 			if !matched || relay.RelayRunID != current.RelayRunID || relay.RelayLeaseRevision != int64(current.RelayLeaseRevision) ||
-				!relay.LeaseExpiresAt.Equal(current.LeaseExpiresAt) {
+				!relay.LeaseExpiresAt.Equal(current.ServingUntil) {
 				t.Fatal("routing returned a different assignment or relay process")
 			}
 		}
@@ -98,7 +98,7 @@ func TestIntegrationIngressServicesRejectsStaleIngress(t *testing.T) {
 		{"unknown", IngressLeaseIdentity{IngressID: "missing", IngressRunID: lease.IngressRunID, IngressLeaseRevision: lease.IngressLeaseRevision}, f.now},
 		{"process", IngressLeaseIdentity{IngressID: lease.IngressID, IngressRunID: mustOpaqueID(t, "ir_"), IngressLeaseRevision: lease.IngressLeaseRevision}, f.now},
 		{"revision", IngressLeaseIdentity{IngressID: lease.IngressID, IngressRunID: lease.IngressRunID, IngressLeaseRevision: lease.IngressLeaseRevision + 1}, f.now},
-		{"expired", lease.IngressLeaseIdentity, lease.LeaseExpiresAt},
+		{"expired", lease.IngressLeaseIdentity, lease.ServingUntil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := f.database.ReadIngressServices(t.Context(), test.identity, test.now); !errors.Is(err, ErrIngressLeaseStale) {
@@ -155,13 +155,13 @@ func TestIntegrationIngressServicesDropsUnavailableRuns(t *testing.T) {
 		{"disabled", `UPDATE control.services SET enabled=false WHERE id=$1`},
 		{"retired endpoint", `UPDATE control.service_endpoints SET retired_at=clock_timestamp(),reusable_after=clock_timestamp()+interval '1 minute' WHERE service_id=$1`},
 		{"unhealthy", `UPDATE control.service_runs SET healthy=false WHERE service_id=$1`},
-		{"expired publisher", `UPDATE control.service_runs SET publisher_expires_at=created_at+interval '1 microsecond' WHERE service_id=$1`},
+		{"expired publisher", `UPDATE control.service_runs SET serving_until=serving_observed_at+interval '1 microsecond' WHERE service_id=$1`},
 		{"expired certificate", `UPDATE control.service_runs SET certificate_expires_at='2000-01-01' WHERE service_id=$1`},
 		{"old certificate", `UPDATE control.service_runs SET certificate_hostname='old.example' WHERE service_id=$1`},
 		{"closed run", `UPDATE control.service_runs SET state='closed',closed_at=clock_timestamp() WHERE service_id=$1`},
 		{"closed connections", `UPDATE control.service_connection_slots SET state='closed' WHERE service_id=$1`},
 		{"old relay process", `UPDATE control.relay_leases SET relay_lease_revision=relay_lease_revision+1 WHERE relay_id IN (SELECT relay_id FROM control.service_connection_slots WHERE service_id=$1)`},
-		{"expired relays", `UPDATE control.relay_leases SET lease_expires_at=renewed_at+interval '1 microsecond' WHERE relay_id IN (SELECT relay_id FROM control.service_connection_slots WHERE service_id=$1)`},
+		{"expired relays", `UPDATE control.relay_leases SET serving_until=renewed_at+interval '1 microsecond' WHERE relay_id IN (SELECT relay_id FROM control.service_connection_slots WHERE service_id=$1)`},
 		{"draining relays", `UPDATE control.relay_leases SET draining=true WHERE relay_id IN (SELECT relay_id FROM control.service_connection_slots WHERE service_id=$1)`},
 		{"revoked grant", `UPDATE control.publisher_grants SET revoked_at=clock_timestamp() WHERE id IN (SELECT publisher_grant_id FROM control.service_runs WHERE service_id=$1)`},
 		{"revoked publisher", `UPDATE control.publisher_identities SET revoked_at=clock_timestamp() WHERE id IN (SELECT publisher_identity_id FROM control.service_runs WHERE service_id=$1)`},

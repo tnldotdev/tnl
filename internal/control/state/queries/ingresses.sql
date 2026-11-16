@@ -11,7 +11,8 @@ INSERT INTO control.ingress_leases (
     service_ports,
     registered_at,
     renewed_at,
-    lease_expires_at
+    lease_expires_at,
+    serving_until
 ) VALUES (
     sqlc.arg(region),
     sqlc.arg(ingress_id),
@@ -24,14 +25,15 @@ INSERT INTO control.ingress_leases (
     sqlc.arg(service_ports),
     sqlc.arg(registered_at),
     sqlc.arg(renewed_at),
-    sqlc.arg(lease_expires_at)
+    sqlc.arg(lease_expires_at),
+    sqlc.arg(serving_until)
 )
 ON CONFLICT (ingress_id) DO UPDATE SET
     region = EXCLUDED.region,
     ingress_run_id = EXCLUDED.ingress_run_id,
     ingress_lease_revision = CASE
         WHEN control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
-         AND control.ingress_leases.lease_expires_at > EXCLUDED.registered_at
+          AND control.ingress_leases.serving_until > EXCLUDED.registered_at
             THEN control.ingress_leases.ingress_lease_revision
         ELSE control.ingress_leases.ingress_lease_revision + 1
     END,
@@ -42,29 +44,31 @@ ON CONFLICT (ingress_id) DO UPDATE SET
     service_ports = EXCLUDED.service_ports,
     reported_connections = CASE
         WHEN control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
-         AND control.ingress_leases.lease_expires_at > EXCLUDED.registered_at
+          AND control.ingress_leases.serving_until > EXCLUDED.registered_at
             THEN control.ingress_leases.reported_connections
         ELSE 0
     END,
     draining = CASE
         WHEN control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
-         AND control.ingress_leases.lease_expires_at > EXCLUDED.registered_at
+          AND control.ingress_leases.serving_until > EXCLUDED.registered_at
             THEN control.ingress_leases.draining
         ELSE false
     END,
     drain_deadline = CASE
         WHEN control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
-         AND control.ingress_leases.lease_expires_at > EXCLUDED.registered_at
+          AND control.ingress_leases.serving_until > EXCLUDED.registered_at
             THEN control.ingress_leases.drain_deadline
         ELSE NULL
     END,
     registered_at = CASE
         WHEN control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
-         AND control.ingress_leases.lease_expires_at > EXCLUDED.registered_at
+          AND control.ingress_leases.serving_until > EXCLUDED.registered_at
             THEN control.ingress_leases.registered_at
         ELSE EXCLUDED.registered_at
     END,
     renewed_at = EXCLUDED.renewed_at,
+    serving_until = CASE WHEN control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id AND control.ingress_leases.draining
+        THEN control.ingress_leases.serving_until ELSE EXCLUDED.serving_until END,
     lease_expires_at = CASE
         WHEN control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
          AND control.ingress_leases.lease_expires_at > EXCLUDED.registered_at
@@ -77,7 +81,8 @@ WHERE (control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
     AND control.ingress_leases.ingress_pool_id=EXCLUDED.ingress_pool_id
     AND control.ingress_leases.https=EXCLUDED.https
     AND control.ingress_leases.service_ports=EXCLUDED.service_ports)
-   OR control.ingress_leases.lease_expires_at <= EXCLUDED.registered_at
+   OR (control.ingress_leases.ingress_run_id <> EXCLUDED.ingress_run_id
+       AND control.ingress_leases.lease_expires_at <= EXCLUDED.registered_at)
 RETURNING *;
 
 -- name: FenceIngressRun :one
@@ -92,6 +97,7 @@ RETURNING ingress_lease_revision;
 UPDATE control.ingress_leases
 SET reported_connections = sqlc.arg(reported_connections),
     renewed_at = sqlc.arg(renewed_at),
+    serving_until = CASE WHEN draining THEN serving_until ELSE sqlc.arg(serving_until) END,
     lease_expires_at = CASE
         WHEN draining THEN lease_expires_at
         ELSE sqlc.arg(lease_expires_at)
@@ -99,7 +105,7 @@ SET reported_connections = sqlc.arg(reported_connections),
 WHERE ingress_id = sqlc.arg(ingress_id)
   AND ingress_run_id = sqlc.arg(ingress_run_id)
   AND ingress_lease_revision = sqlc.arg(ingress_lease_revision)
-  AND lease_expires_at > sqlc.arg(renewed_at)
+  AND serving_until > sqlc.arg(renewed_at)
 RETURNING *;
 
 -- name: BeginIngressDrain :one
@@ -130,3 +136,11 @@ WHERE ingress_id = sqlc.arg(ingress_id)
   AND ingress_run_id = sqlc.arg(ingress_run_id)
   AND ingress_lease_revision = sqlc.arg(ingress_lease_revision)
   AND lease_expires_at > sqlc.arg(now);
+
+-- name: GetIngressServingLease :one
+SELECT *
+FROM control.ingress_leases
+WHERE ingress_id = sqlc.arg(ingress_id)
+  AND ingress_run_id = sqlc.arg(ingress_run_id)
+  AND ingress_lease_revision = sqlc.arg(ingress_lease_revision)
+  AND serving_until > sqlc.arg(now);

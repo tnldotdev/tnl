@@ -4020,6 +4020,9 @@ type ServiceRunState struct {
 	EndpointRevision int64  `json:"endpoint_revision"`
 	Healthy          *bool  `json:"healthy,omitempty"`
 
+	// ObservedAt Control observation used with publisher_expires_at to derive the local serving deadline from the request start.
+	ObservedAt time.Time `json:"observed_at"`
+
 	// PublicEndpointReady The current public endpoint has compatible ingress and published or explicitly unmanaged DNS for this run. This fact does not grant access, extend authority, or affect connector readiness.
 	PublicEndpointReady  bool                   `json:"public_endpoint_ready"`
 	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`

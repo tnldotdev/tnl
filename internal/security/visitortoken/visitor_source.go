@@ -40,7 +40,7 @@ func visitorSourceChildKey(master [32]byte, authority tunnelv1.VisitorSourceAuth
 
 func IssueVisitorSourceAuthority(master [32]byte, authority tunnelv1.VisitorSourceAuthority, now time.Time) (tunnelv1.VisitorSourceAuthority, [32]byte, error) {
 	input, err := authority.SigningBytes()
-	if err != nil || master == ([32]byte{}) || authority.ValidUntil <= now.Unix() || authority.ValidUntil > now.Add(PolicyLifetime).Unix() {
+	if err != nil || master == ([32]byte{}) || authority.ValidUntil <= now.Unix() {
 		return tunnelv1.VisitorSourceAuthority{}, [32]byte{}, ErrVisitorSource
 	}
 	authority.MAC = sourceMAC(master, "tnl-service-visitor-source-authority-v1", input)
@@ -64,7 +64,6 @@ func SignVisitorSource(key [32]byte, authority tunnelv1.VisitorSourceAuthority, 
 func VerifyVisitorSourceAuthority(master [32]byte, authority tunnelv1.VisitorSourceAuthority, now time.Time) error {
 	input, err := authority.SigningBytes()
 	if err != nil || master == ([32]byte{}) || authority.ValidUntil <= now.Unix() ||
-		authority.ValidUntil > now.Add(PolicyLifetime).Unix() ||
 		!hmac.Equal(authority.MAC, sourceMAC(master, "tnl-service-visitor-source-authority-v1", input)) {
 		return ErrVisitorSource
 	}
@@ -78,7 +77,7 @@ func VerifyVisitorSourceAuthority(master [32]byte, authority tunnelv1.VisitorSou
 // cannot roll back the publisher's newer access policy. a future delegation may
 // not outrun the policy the publisher has actually installed.
 func VerifyVisitorSource(master [32]byte, proof tunnelv1.VisitorSourceProof, binding tunnelv1.VisitorSourceBinding, policyRevision int64, now time.Time) error {
-	if policyRevision < 1 || proof.Authority.VisitorPolicyRevision > policyRevision {
+	if policyRevision < 1 || proof.Authority.VisitorPolicyRevision > policyRevision || proof.ObservedAt > now.UnixMicro() {
 		return ErrVisitorSource
 	}
 	if err := VerifyVisitorSourceAuthority(master, proof.Authority, now); err != nil {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
@@ -48,6 +49,8 @@ type ControllerConfig struct {
 // Controller maintains one exact relay lease and applies it to publisher
 // connection transitions.
 type Controller struct {
+	confirmationMu     sync.Mutex
+	confirmation       controloutage.Confirmation
 	client             ControlClient
 	registration       relayv1.RelayRegistration
 	renewalInterval    time.Duration
@@ -62,6 +65,8 @@ type Controller struct {
 	mu                  sync.RWMutex
 	lease               relayv1.RelayLease
 	certificateNotAfter time.Time
+	leaseUpdated        chan struct{}
+	servingLost         bool
 }
 
 func NewController(config ControllerConfig) (*Controller, error) {
@@ -94,15 +99,64 @@ func NewController(config ControllerConfig) (*Controller, error) {
 		client: config.Client, registration: registration, renewalInterval: config.RenewalInterval,
 		retryInterval: config.RetryInterval, load: config.Load, leaseChanged: config.LeaseChanged,
 		certificateChanged: config.CertificateChanged, now: config.Now, report: config.Report,
-		observer: config.Observer,
+		observer:     config.Observer,
+		leaseUpdated: make(chan struct{}),
 	}, nil
 }
 
 func (c *Controller) Run(ctx context.Context) error {
+	life, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 2)
+	go func() { done <- c.run(life) }()
+	go func() { done <- c.watchServingDeadline(life) }()
+	err := <-done
+	cancel()
+	err = errors.Join(err, <-done)
+	c.clearLease()
+	if ctx.Err() != nil && failure.Only(err, ctx.Err()) {
+		return nil
+	}
+	return err
+}
+
+func (c *Controller) watchServingDeadline(ctx context.Context) error {
+	for {
+		delay := c.retryInterval
+		c.mu.Lock()
+		lease := cloneLease(c.lease)
+		updated := c.leaseUpdated
+		if lease.RelayLeaseRevision > 0 {
+			delay = lease.LeaseExpiresAt.Sub(c.now())
+			if delay <= 0 {
+				c.servingLost = true
+				c.lease = relayv1.RelayLease{}
+				c.mu.Unlock()
+				c.leaseChanged(lease, relayv1.RelayLease{})
+				return controloutage.ErrDeadline
+			}
+		}
+		c.mu.Unlock()
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil
+		case <-updated:
+			timer.Stop()
+		case <-timer.C:
+		}
+	}
+}
+
+func (c *Controller) run(ctx context.Context) error {
 	for {
 		err := c.runOnce(ctx)
 		if ctx.Err() != nil {
-			return nil
+			if failure.Only(err, ctx.Err()) {
+				return nil
+			}
+			return err
 		}
 		if c.Lease().Draining {
 			<-ctx.Done()
@@ -155,9 +209,6 @@ func (c *Controller) runOnce(ctx context.Context) error {
 		case <-ticker.C:
 		}
 		if err := c.renew(ctx); err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
 			return err
 		}
 		if c.certificateChanged != nil && !c.certificateCurrent(c.now().Add(24*time.Hour)) {
@@ -169,16 +220,18 @@ func (c *Controller) runOnce(ctx context.Context) error {
 }
 
 func (c *Controller) register(ctx context.Context) (retErr error) {
+	started := c.now()
 	finish := startOperation(ctx, c.observer, observability.OpRelayRegister)
 	defer func() { finish(retErr) }()
 	lease, err := c.client.RegisterRelay(ctx, c.registration)
 	if err != nil {
 		return relayControlError("register relay", err)
 	}
-	return c.setLease(lease)
+	return c.confirmLease(started, lease)
 }
 
 func (c *Controller) renew(ctx context.Context) (retErr error) {
+	started := c.now()
 	finish := startOperation(ctx, c.observer, observability.OpRelayRenewLease)
 	defer func() { finish(retErr) }()
 	lease := c.Lease()
@@ -194,7 +247,7 @@ func (c *Controller) renew(ctx context.Context) (retErr error) {
 	if err != nil {
 		return c.responseError("renew relay", err)
 	}
-	return c.setLease(lease)
+	return c.confirmLease(started, lease)
 }
 
 func (c *Controller) Ready(now time.Time) bool {
@@ -236,6 +289,7 @@ func (c *Controller) Lease() relayv1.RelayLease {
 }
 
 func (c *Controller) Drain(ctx context.Context, deadline time.Time) (retErr error) {
+	started := c.now()
 	finish := startOperation(ctx, c.observer, observability.OpRelayBeginDrain)
 	defer func() { finish(retErr) }()
 	lease := c.Lease()
@@ -250,7 +304,7 @@ func (c *Controller) Drain(ctx context.Context, deadline time.Time) (retErr erro
 	if err != nil {
 		return c.responseError("drain relay", err)
 	}
-	return c.setLease(updated)
+	return c.confirmLease(started, updated)
 }
 
 func (c *Controller) activeLease() (relayv1.RelayLease, error) {
@@ -260,11 +314,30 @@ func (c *Controller) activeLease() (relayv1.RelayLease, error) {
 	return c.Lease(), nil
 }
 
+func (c *Controller) confirmLease(started time.Time, lease relayv1.RelayLease) error {
+	c.confirmationMu.Lock()
+	defer c.confirmationMu.Unlock()
+	next, err := c.confirmation.Confirm(started, lease.RenewedAt, lease.LeaseExpiresAt, c.now())
+	if err != nil {
+		return err
+	}
+	lease.LeaseExpiresAt = next.Deadline
+	if err := c.setLease(lease); err != nil {
+		return err
+	}
+	c.confirmation = next
+	return nil
+}
+
 func (c *Controller) setLease(lease relayv1.RelayLease) error {
 	if err := validateLease(c.registration, lease, c.now()); err != nil {
 		return err
 	}
 	c.mu.Lock()
+	if c.servingLost || c.lease.RelayLeaseRevision > 0 && !c.lease.LeaseExpiresAt.After(c.now()) {
+		c.mu.Unlock()
+		return controloutage.ErrDeadline
+	}
 	if c.lease.RelayLeaseRevision != 0 && c.lease.RelayLeaseRevision != lease.RelayLeaseRevision {
 		c.mu.Unlock()
 		return errors.New("relay: control changed the active relay lease revision")
@@ -276,6 +349,10 @@ func (c *Controller) setLease(lease relayv1.RelayLease) error {
 	}
 	previous := cloneLease(c.lease)
 	c.lease = cloneLease(lease)
+	if c.leaseUpdated != nil {
+		close(c.leaseUpdated)
+	}
+	c.leaseUpdated = make(chan struct{})
 	current := cloneLease(c.lease)
 	c.mu.Unlock()
 	c.leaseChanged(previous, current)

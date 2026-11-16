@@ -178,6 +178,6 @@ func ingressLease(lease controlstate.IngressLease) ingressv1.IngressLease {
 		ConnectionCapacity: int64(lease.ConnectionCapacity), ReportedConnections: int64(lease.ReportedConnections),
 		Draining:      lease.Draining,
 		DrainDeadline: lease.DrainDeadline, RegisteredAt: lease.RegisteredAt,
-		RenewedAt: lease.RenewedAt, LeaseExpiresAt: lease.LeaseExpiresAt,
+		RenewedAt: lease.RenewedAt, LeaseExpiresAt: lease.ServingUntil, LivenessExpiresAt: lease.LeaseExpiresAt,
 	}
 }

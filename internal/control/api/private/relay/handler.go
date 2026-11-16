@@ -210,7 +210,7 @@ func relayLease(lease controlstate.RelayLease) relayv1.RelayLease {
 		ConnectionCapacity: int64(lease.ConnectionCapacity), StreamCapacity: int64(lease.StreamCapacity),
 		ReportedConnections: int64(lease.ReportedConnections), ReportedStreams: int64(lease.ReportedStreams),
 		Draining: lease.Draining, DrainDeadline: lease.DrainDeadline, RegisteredAt: lease.RegisteredAt,
-		RenewedAt: lease.RenewedAt, LeaseExpiresAt: lease.LeaseExpiresAt,
+		RenewedAt: lease.RenewedAt, LeaseExpiresAt: lease.ServingUntil, LivenessExpiresAt: lease.LeaseExpiresAt,
 	}
 	if len(lease.PeerSigningPublicKey) != 0 {
 		value := base64.RawURLEncoding.EncodeToString(lease.PeerSigningPublicKey)

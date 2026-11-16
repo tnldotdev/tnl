@@ -26,13 +26,14 @@ func TestRelayLeaseMutationContracts(t *testing.T) {
 		InternalNetworks: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/24")}, ConnectionCapacity: 100, StreamCapacity: 200,
 		ReportedConnections: 11, ReportedStreams: 12, RegisteredAt: now.Add(-time.Minute), RenewedAt: now,
 		LeaseExpiresAt: now.Add(30 * time.Second), Draining: true, DrainDeadline: &deadline,
+		ServingUntil: now.Add(time.Minute),
 	}
 	wantLease := relayv1.RelayLease{
 		Region:         "aws:us-west-1",
 		RelayServiceId: "service-result", RelayId: "relay-result", RelayRunId: "run-result", RelayLeaseRevision: 9,
 		ProtocolVersion: 1, RelayAddress: "relay.example.test:443", TlsServerName: "relay.example.test", InternalRelayAddress: "10.0.0.10:8443",
 		InternalNetworks: []string{"10.0.0.0/24"}, ConnectionCapacity: 100, StreamCapacity: 200, ReportedConnections: 11, ReportedStreams: 12,
-		RegisteredAt: now.Add(-time.Minute), RenewedAt: now, LeaseExpiresAt: now.Add(30 * time.Second), Draining: true, DrainDeadline: &deadline,
+		RegisteredAt: now.Add(-time.Minute), RenewedAt: now, LeaseExpiresAt: now.Add(time.Minute), LivenessExpiresAt: now.Add(30 * time.Second), Draining: true, DrainDeadline: &deadline,
 	}
 	for _, operation := range []string{"renew", "drain"} {
 		for _, transport := range []string{"direct", "HTTP"} {

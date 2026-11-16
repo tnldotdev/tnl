@@ -120,6 +120,8 @@ func TestConnectorPairRenewalUsesShiftedAuthorityClock(t *testing.T) {
 	}
 	for _, shift := range []time.Duration{-time.Hour, time.Hour} {
 		t.Run(shift.String(), func(t *testing.T) {
+			previous := pair
+			previous.ObservedAt, previous.ExpiresAt = pair.ObservedAt.Add(shift), pair.ExpiresAt.Add(shift)
 			var reply controlv1.ConnectorPeerPairRenewal
 			control := renewalControl{renew: func(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
 				reply, err = f.RenewConnectorPeerPair(ctx, service, body)
@@ -134,7 +136,7 @@ func TestConnectorPairRenewalUsesShiftedAuthorityClock(t *testing.T) {
 				return reply, nil
 			}}
 			before := time.Now()
-			renewed, until, err := renewConnectorPair(t.Context(), control, f.device, f.run, "renewal-owner", pair)
+			renewed, until, err := renewConnectorPair(t.Context(), control, f.device, f.run, "renewal-owner", previous)
 			if err != nil {
 				t.Fatal("live authority interval was compared with the local wall clock", err)
 			}

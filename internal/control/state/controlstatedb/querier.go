@@ -182,6 +182,7 @@ type Querier interface {
 	GetIdentityTeam(ctx context.Context, arg GetIdentityTeamParams) (GetIdentityTeamRow, error)
 	GetIngressLease(ctx context.Context, arg GetIngressLeaseParams) (ControlIngressLease, error)
 	GetIngressPool(ctx context.Context, id string) (ControlIngressPool, error)
+	GetIngressServingLease(ctx context.Context, arg GetIngressServingLeaseParams) (ControlIngressLease, error)
 	GetInvitationByIdempotency(ctx context.Context, arg GetInvitationByIdempotencyParams) (GetInvitationByIdempotencyRow, error)
 	GetLocalProjectService(ctx context.Context, arg GetLocalProjectServiceParams) (GetLocalProjectServiceRow, error)
 	GetManagedCertificateDomainKind(ctx context.Context, domainID string) (string, error)

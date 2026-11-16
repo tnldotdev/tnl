@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/publisher/proxy"
@@ -377,7 +378,9 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		status.LastCheck = time.Now()
 		report()
 	}()
+	var servingConfirmation controloutage.Confirmation
 	heartbeat := func(ctx context.Context) (state controlv1.ServiceRunState, err error) {
+		started := time.Now()
 		ctx, finish := observability.PublisherOperation(ctx, "private_heartbeat")
 		defer func() {
 			finish(err)
@@ -392,7 +395,17 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		state, err = config.Control.HeartbeatServiceRun(ctx, config.ServiceID, setup.ServiceRunId, runToken,
 			controlv1.ServiceRunHeartbeat{Healthy: status.TargetHealthy, StreamCapacity: config.StreamCapacity, ActiveStreams: int32(active)})
 		if err == nil {
-			err = bound.ApplyHeartbeat(state)
+			var next controloutage.Confirmation
+			next, state, err = acceptServingConfirmation(servingConfirmation, started, state, time.Now())
+			if err == nil {
+				err = context.Cause(ctx)
+			}
+			if err == nil {
+				err = bound.ApplyHeartbeat(state)
+			}
+			if err == nil {
+				servingConfirmation = next
+			}
 			if err != nil {
 				status.ConfigurationCurrent = false
 			}

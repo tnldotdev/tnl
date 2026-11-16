@@ -85,13 +85,12 @@ func (n *ConnectorGuard) Current() (time.Time, error) {
 		return time.Time{}, visitortoken.ErrPolicy
 	}
 	view := l.update.View
-	until := earlier(view.ValidUntil, view.LocalDeadline(g.permission.Facts().ExpiresAt))
+	until := earlier(view.ValidUntil, g.permissionUntil)
+	if !g.parentUntil.IsZero() {
+		until = earlier(until, g.parentUntil)
+	}
 	if g.renewable && g.permission.Facts().VisitorPolicyRevision != view.VisitorPolicyRevision {
 		until = earlier(until, g.confirmedUntil)
-	}
-	if workload, ok := g.permission.Facts().Subject.(visitortoken.Workload); ok {
-		parent, _ := view.Workload(workload.SessionID)
-		until = earlier(until, view.LocalDeadline(parent.ExpiresAt))
 	}
 	return until, nil
 }

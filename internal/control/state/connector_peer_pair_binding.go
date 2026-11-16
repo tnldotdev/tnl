@@ -58,7 +58,7 @@ func (d *Database) connectorPeerPairBinding(ctx context.Context, tx pgx.Tx, run 
 		}
 	}
 	b.expiresAt = sessionUntil
-	b.recheckAt = minTime(b.expiresAt, minTime(leases[0].LeaseExpiresAt.Time, leases[1].LeaseExpiresAt.Time))
+	b.recheckAt = minTime(b.expiresAt, minTime(leases[0].ServingUntil.Time, leases[1].ServingUntil.Time))
 	claims, err := q.ReadConnectorPeerBindingClaims(ctx, controlstatedb.ReadConnectorPeerBindingClaimsParams{PairID: pair.ID, DeliveryGeneration: pair.DeliveryGeneration})
 	if err != nil {
 		return b, err

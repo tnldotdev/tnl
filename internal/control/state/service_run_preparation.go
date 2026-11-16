@@ -51,6 +51,7 @@ type ServiceRunState struct {
 	EndpointRevision                int64
 	PublicEndpointReady             bool
 	ExpiresAt                       time.Time
+	ObservedAt, ServingUntil        time.Time
 	Connections                     []ServiceRunAssignment
 	VisitorSourceKey                [32]byte
 	Healthy                         bool
@@ -419,7 +420,7 @@ func (d *Database) validateServiceRunAuthorization(ctx context.Context, tx pgx.T
 
 func privateConnectedRelays(ctx context.Context, tx pgx.Tx, runID string, now time.Time) ([]ServiceRelay, time.Time, error) {
 	rows, err := tx.Query(ctx, `SELECT slot.publisher_connection_id, slot.connection_slot, slot.connection_assignment_revision, slot.relay_service_id,
-		lease.relay_id, lease.relay_run_id, lease.relay_lease_revision, lease.internal_relay_address, lease.lease_expires_at,service.tls_server_name
+		lease.relay_id, lease.relay_run_id, lease.relay_lease_revision, lease.internal_relay_address, lease.serving_until,service.tls_server_name
 		FROM control.service_connection_slots slot
 		JOIN control.relay_services service ON service.relay_service_id=slot.relay_service_id
 		JOIN control.relay_leases lease ON lease.relay_id=slot.relay_id
@@ -719,7 +720,7 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	if err != nil {
 		return result, err
 	}
-	previousExpiration := run.PublisherExpiresAt.Time
+	previousExpiration := run.ServingUntil.Time
 	firstReadiness := !run.ReadyAt.Valid
 	if report.StreamCapacity < 1 || report.StreamCapacity > 1<<20 || report.ActiveStreams < 0 {
 		return result, ErrServiceAccess
@@ -732,9 +733,18 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	if run.PublisherExpiresAt.Time.After(until) {
 		until = run.PublisherExpiresAt.Time
 	}
+	servingUntil := now.Add(d.servingTolerance())
+	permission, err := serviceRunPublisherPermission(ctx, tx, run, clock.current())
+	if err != nil {
+		return result, err
+	}
+	if permission.Valid {
+		servingUntil = minTime(servingUntil, permission.Time)
+	}
 	run, err = q.RenewServiceRun(ctx, controlstatedb.RenewServiceRunParams{
 		ID: runID, ServiceID: serviceID, RunNumber: run.RunNumber,
 		RunTokenDigest: run.RunTokenDigest, PublisherExpiresAt: timestamptz(until), Now: timestamptz(clock.current()),
+		ServingObservedAt: timestamptz(now), ServingUntil: timestamptz(servingUntil),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
@@ -817,7 +827,7 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	return ServiceRunState{ServiceID: serviceID, RunID: runID, RunNumber: run.RunNumber,
 		EndpointRevision: endpoint.revision, PublicEndpointReady: endpointReady,
 		Healthy: run.Healthy, StreamCapacity: run.StreamCapacity, ReportedStreams: run.ReportedStreams,
-		State: run.State, ExpiresAt: run.PublisherExpiresAt.Time,
+		State: run.State, ExpiresAt: run.PublisherExpiresAt.Time, ObservedAt: run.ServingObservedAt.Time, ServingUntil: run.ServingUntil.Time,
 		Connections: connections}, nil
 }
 

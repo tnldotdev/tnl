@@ -937,14 +937,14 @@ func (q *Queries) ReadConnectorPeerClaimBounds(ctx context.Context, pairID strin
 }
 
 const readConnectorPeerObservationRelayBounds = `-- name: ReadConnectorPeerObservationRelayBounds :many
-SELECT slot.connection_slot,lease.lease_expires_at,relay.relay_address,relay.tls_server_name
+SELECT slot.connection_slot,lease.serving_until,relay.relay_address,relay.tls_server_name
 FROM control.service_connection_slots slot
 JOIN control.relay_leases lease ON lease.relay_id=slot.relay_id AND lease.relay_run_id=slot.relay_run_id
     AND lease.relay_lease_revision=slot.relay_lease_revision AND lease.relay_service_id=slot.relay_service_id
 JOIN control.relay_services relay ON relay.relay_service_id=lease.relay_service_id
 WHERE slot.service_run_id=$1 AND slot.service_id=$2
     AND slot.state='ready' AND slot.session_open AND NOT lease.draining AND relay.enabled
-    AND lease.lease_expires_at>$3
+    AND lease.serving_until>$3
 ORDER BY slot.connection_slot LIMIT 2 FOR SHARE OF lease,relay
 `
 
@@ -956,7 +956,7 @@ type ReadConnectorPeerObservationRelayBoundsParams struct {
 
 type ReadConnectorPeerObservationRelayBoundsRow struct {
 	ConnectionSlot int16
-	LeaseExpiresAt pgtype.Timestamptz
+	ServingUntil   pgtype.Timestamptz
 	RelayAddress   string
 	TlsServerName  string
 }
@@ -973,7 +973,7 @@ func (q *Queries) ReadConnectorPeerObservationRelayBounds(ctx context.Context, a
 		var i ReadConnectorPeerObservationRelayBoundsRow
 		if err := rows.Scan(
 			&i.ConnectionSlot,
-			&i.LeaseExpiresAt,
+			&i.ServingUntil,
 			&i.RelayAddress,
 			&i.TlsServerName,
 		); err != nil {

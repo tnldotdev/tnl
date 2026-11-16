@@ -175,7 +175,7 @@ func (h *handler) RenewServiceRun(w http.ResponseWriter, r *http.Request, servic
 	}
 	writeJSON(w, 200, controlv1.ServiceRunState{
 		ServiceId: state.ServiceID, ServiceRunId: state.RunID, RunNumber: state.RunNumber,
-		State: controlv1.ServiceRunStateState(state.State), PublisherExpiresAt: state.ExpiresAt,
+		State: controlv1.ServiceRunStateState(state.State), PublisherExpiresAt: state.ServingUntil, ObservedAt: state.ObservedAt,
 		EndpointRevision: state.EndpointRevision, PublicEndpointReady: state.PublicEndpointReady,
 		Healthy: &state.Healthy, StreamCapacity: &state.StreamCapacity, ActiveStreams: &state.ReportedStreams,
 		PublisherConnections: serviceRunConnections(state.Connections),

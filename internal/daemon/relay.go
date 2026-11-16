@@ -253,6 +253,10 @@ func (d *daemon) startRelayRuntime(
 		},
 		CertificateChanged: runtimeConfig.certificateChanged,
 		Load:               serviceRegistry.Load, LeaseChanged: func(previous, current relayv1.RelayLease) {
+			if previous.RelayLeaseRevision > 0 && current.RelayLeaseRevision == 0 {
+				// lost serving authority closes existing streams, not only readiness.
+				_ = serviceRegistry.Close()
+			}
 			if runtimeConfig.metrics != nil {
 				runtimeConfig.metrics.SetRelayLeaseExpiry(runtimeConfig.relayID, current.LeaseExpiresAt)
 			}

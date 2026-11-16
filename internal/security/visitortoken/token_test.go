@@ -95,7 +95,7 @@ func TestVisitorTokensUseExactCurrentResourceAndServer(t *testing.T) {
 					*v = v.WithVerificationKeys(map[string]ed25519.PublicKey{"key-one": ed25519.NewKeyFromSeed([]byte(strings.Repeat("x", 32))).Public().(ed25519.PublicKey)})
 				},
 				"expired-policy":     func(v *View) { v.ValidUntil = now.Add(time.Second) },
-				"oversized-lease":    func(v *View) { v.ValidUntil = now.Add(PolicyLifetime + time.Nanosecond) },
+				"empty-lease":        func(v *View) { v.ValidUntil = v.ObservedAt },
 				"future-observation": func(v *View) { v.ObservedAt = now.Add(2 * time.Second) },
 			} {
 				t.Run(name, func(t *testing.T) {

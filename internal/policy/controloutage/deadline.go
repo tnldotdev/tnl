@@ -12,6 +12,38 @@ const DefaultTolerance = 5 * time.Minute
 
 var ErrDeadline = errors.New("control serving deadline is invalid or expired")
 
+// Confirmation retains both control's evidence and its accepted local deadline.
+// revision and identity checks remain with the owner.
+type Confirmation struct {
+	ObservedAt, ValidUntil, Deadline time.Time
+}
+
+func (previous Confirmation) Confirm(startedAt, observedAt, validUntil, now time.Time) (Confirmation, error) {
+	deadline, err := LocalDeadline(startedAt, observedAt, validUntil, now)
+	if err != nil {
+		return Confirmation{}, err
+	}
+	if !previous.Deadline.IsZero() {
+		if !now.Before(previous.Deadline) || observedAt.Before(previous.ObservedAt) {
+			return Confirmation{}, ErrDeadline
+		}
+		if !observedAt.After(previous.ObservedAt) || !validUntil.After(previous.ValidUntil) {
+			deadline = minDeadline(deadline, previous.Deadline.Add(min(0, validUntil.Sub(previous.ValidUntil))))
+		}
+	}
+	if !now.Before(deadline) {
+		return Confirmation{}, ErrDeadline
+	}
+	return Confirmation{ObservedAt: observedAt, ValidUntil: validUntil, Deadline: deadline}, nil
+}
+
+func minDeadline(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
 // LocalDeadline spends response latency from the request's local start time.
 // observedAt and validUntil must come from the same authenticated response.
 // callers retain revision, identity, and request-order fences; a failed call

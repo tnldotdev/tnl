@@ -76,6 +76,7 @@ type RelayLease struct {
 	RegisteredAt         time.Time
 	RenewedAt            time.Time
 	LeaseExpiresAt       time.Time
+	ServingUntil         time.Time
 }
 
 // RegisterRelay creates or renews one relay process lease. A different process
@@ -118,6 +119,7 @@ func (d *Database) RegisterRelay(
 		InternalNetworks: internalNetworks, ConnectionCapacity: connectionCapacity,
 		StreamCapacity: streamCapacity, RegisteredAt: timestamptz(now), RenewedAt: timestamptz(now),
 		LeaseExpiresAt: timestamptz(now.Add(leaseDuration)), RelayServiceID: registration.RelayServiceID,
+		ServingUntil: timestamptz(now.Add(d.servingTolerance())),
 		RelayAddress: registration.RelayAddress, TlsServerName: registration.TLSServerName,
 		PeerSigningPublicKey: registration.PeerSigningPublicKey,
 	})
@@ -184,6 +186,7 @@ func (d *Database) RenewRelay(
 	row, err := controlstatedb.New(d.pool).RenewRelay(ctx, controlstatedb.RenewRelayParams{
 		ReportedConnections: reportedConnections, ReportedStreams: reportedStreams,
 		RenewedAt: timestamptz(now), LeaseExpiresAt: timestamptz(now.Add(leaseDuration)),
+		ServingUntil:   timestamptz(now.Add(d.servingTolerance())),
 		RelayServiceID: renewal.RelayServiceID, RelayID: renewal.RelayID,
 		RelayRunID: renewal.RelayRunID, RelayLeaseRevision: revision,
 	})
@@ -279,10 +282,14 @@ func validateClaimRelayLease(
 	assignedRelayServiceID string,
 	now time.Time,
 ) error {
+	return validateClaimRelayLeaseUntil(lease, identity, assignedRelayServiceID, lease.LeaseExpiresAt.Time, now)
+}
+
+func validateClaimRelayLeaseUntil(lease controlstatedb.GetRelayLeaseForClaimRow, identity RelayLeaseIdentity, assignedRelayServiceID string, until, now time.Time) error {
 	if lease.RelayServiceID != identity.RelayServiceID || lease.RelayID != identity.RelayID ||
 		lease.RelayRunID != identity.RelayRunID ||
 		!matchesPositiveInt64(lease.RelayLeaseRevision, identity.RelayLeaseRevision) ||
-		!lease.LeaseExpiresAt.Valid || !lease.LeaseExpiresAt.Time.After(now) {
+		until.IsZero() || !until.After(now) {
 		return ErrRelayLeaseStale
 	}
 	if lease.RelayServiceID != assignedRelayServiceID {
@@ -304,7 +311,7 @@ func relayLeaseFromRegister(row controlstatedb.RegisterRelayRow) (RelayLease, er
 		internalNetworks: row.InternalNetworks, connectionCapacity: row.ConnectionCapacity,
 		streamCapacity: row.StreamCapacity, reportedConnections: row.ReportedConnections,
 		reportedStreams: row.ReportedStreams, draining: row.Draining, drainDeadline: row.DrainDeadline,
-		registeredAt: row.RegisteredAt, renewedAt: row.RenewedAt, leaseExpiresAt: row.LeaseExpiresAt,
+		registeredAt: row.RegisteredAt, renewedAt: row.RenewedAt, leaseExpiresAt: row.LeaseExpiresAt, servingUntil: row.ServingUntil,
 		relayAddress: row.RelayAddress, tlsServerName: row.TlsServerName,
 	})
 }
@@ -319,7 +326,7 @@ func relayLeaseFromRenewal(row controlstatedb.RenewRelayRow) (RelayLease, error)
 		internalNetworks: row.InternalNetworks, connectionCapacity: row.ConnectionCapacity,
 		streamCapacity: row.StreamCapacity, reportedConnections: row.ReportedConnections,
 		reportedStreams: row.ReportedStreams, draining: row.Draining, drainDeadline: row.DrainDeadline,
-		registeredAt: row.RegisteredAt, renewedAt: row.RenewedAt, leaseExpiresAt: row.LeaseExpiresAt,
+		registeredAt: row.RegisteredAt, renewedAt: row.RenewedAt, leaseExpiresAt: row.LeaseExpiresAt, servingUntil: row.ServingUntil,
 		relayAddress: row.RelayAddress, tlsServerName: row.TlsServerName,
 	})
 }
@@ -334,7 +341,7 @@ func relayLeaseFromDrain(row controlstatedb.BeginRelayDrainRow) (RelayLease, err
 		internalNetworks: row.InternalNetworks, connectionCapacity: row.ConnectionCapacity,
 		streamCapacity: row.StreamCapacity, reportedConnections: row.ReportedConnections,
 		reportedStreams: row.ReportedStreams, draining: row.Draining, drainDeadline: row.DrainDeadline,
-		registeredAt: row.RegisteredAt, renewedAt: row.RenewedAt, leaseExpiresAt: row.LeaseExpiresAt,
+		registeredAt: row.RegisteredAt, renewedAt: row.RenewedAt, leaseExpiresAt: row.LeaseExpiresAt, servingUntil: row.ServingUntil,
 		relayAddress: row.RelayAddress, tlsServerName: row.TlsServerName,
 	})
 }
@@ -349,6 +356,7 @@ type relayLeaseValues struct {
 	internalNetworks                                                                       []netip.Prefix
 	draining                                                                               bool
 	drainDeadline, registeredAt, renewedAt, leaseExpiresAt                                 pgtype.Timestamptz
+	servingUntil                                                                           pgtype.Timestamptz
 }
 
 func relayLease(row relayLeaseValues) (RelayLease, error) {
@@ -379,7 +387,7 @@ func relayLease(row relayLeaseValues) (RelayLease, error) {
 		ConnectionCapacity: uint64(row.connectionCapacity), StreamCapacity: uint64(row.streamCapacity),
 		ReportedConnections: uint64(row.reportedConnections), ReportedStreams: uint64(row.reportedStreams),
 		Draining: row.draining, DrainDeadline: drainDeadline, RegisteredAt: row.registeredAt.Time,
-		RenewedAt: row.renewedAt.Time, LeaseExpiresAt: row.leaseExpiresAt.Time,
+		RenewedAt: row.renewedAt.Time, LeaseExpiresAt: row.leaseExpiresAt.Time, ServingUntil: row.servingUntil.Time,
 	}, nil
 }
 

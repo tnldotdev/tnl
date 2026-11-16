@@ -48,6 +48,7 @@ type Lease struct {
 	update                   Update
 	sequence, applied, epoch uint64
 	revision, keyRevision    int64
+	controlValidUntil        time.Time
 	phase                    leasePhase
 	timer                    *time.Timer
 	guards                   map[*Guard]struct{}
@@ -117,7 +118,7 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 		(!request.Deadline.IsZero() && !now.Before(request.Deadline)) ||
 		(l.revision > 0 && view.ObservedAt.Before(l.update.View.ControlTime)) ||
 		view.Scope != l.scope || view.VisitorPolicyRevision < l.revision || update.KeyRevision < l.keyRevision || update.KeyRevision < 1 || view.VisitorPolicyRevision < 1 ||
-		deadlineErr != nil || duration > visitortoken.PolicyLifetime || !view.ValidVerificationKeys() {
+		deadlineErr != nil || !view.ValidVerificationKeys() {
 		return ErrUpdate
 	}
 	if l.revision > 0 && view.ObservedAt.Equal(l.update.View.ControlTime) {
@@ -125,6 +126,12 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 		// later local deadline merely by arriving in another request.
 		observedAt = l.update.View.ObservedAt
 		deadline = earlier(observedAt.Add(duration), l.update.View.ValidUntil)
+		if !now.Before(deadline) {
+			return ErrUpdate
+		}
+	}
+	if l.revision > 0 && !view.ValidUntil.After(l.controlValidUntil) {
+		deadline = earlier(deadline, l.update.View.ValidUntil.Add(min(0, view.ValidUntil.Sub(l.controlValidUntil))))
 		if !now.Before(deadline) {
 			return ErrUpdate
 		}
@@ -160,6 +167,7 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 		update.PublicEndpoint = &endpoint
 	}
 	view.ControlTime = view.ObservedAt
+	l.controlValidUntil = view.ValidUntil
 	view.ObservedAt, view.ValidUntil = observedAt, deadline
 	update.View, update.Events = view, nil
 	l.update, l.revision, l.keyRevision, l.applied, l.phase = update, view.VisitorPolicyRevision, update.KeyRevision, request.sequence, leaseCurrent
@@ -224,23 +232,29 @@ func (l *Lease) allowedLocked(permission visitortoken.VerifiedPermission, source
 }
 
 type Guard struct {
-	lease          *Lease
-	permission     visitortoken.VerifiedPermission
-	source         netip.Addr
-	stop           func()
-	once           sync.Once
-	timer          *time.Timer
-	anonymous      bool
-	connection     bool
-	renewable      bool
-	confirmedUntil time.Time
-	policyRefused  bool
-	connector      *connectorPermission
-	publicEndpoint *controlv1.VisitorPublicEndpoint
+	lease                              *Lease
+	permission                         visitortoken.VerifiedPermission
+	source                             netip.Addr
+	stop                               func()
+	once                               sync.Once
+	timer                              *time.Timer
+	anonymous                          bool
+	connection                         bool
+	renewable                          bool
+	confirmedUntil                     time.Time
+	permissionUntil, permissionExpires time.Time
+	parentUntil, parentExpires         time.Time
+	policyRefused                      bool
+	connector                          *connectorPermission
+	publicEndpoint                     *controlv1.VisitorPublicEndpoint
 }
 
 func (g *Guard) allowedLocked(now time.Time) bool {
 	l := g.lease
+	if !g.permissionUntil.IsZero() && !now.Before(g.permissionUntil) ||
+		!g.parentUntil.IsZero() && !now.Before(g.parentUntil) {
+		return false
+	}
 	if g.publicEndpoint != nil {
 		return l.phase != leaseClosed && l.update.Enabled && l.update.PublicEndpoint != nil &&
 			*g.publicEndpoint == *l.update.PublicEndpoint &&
@@ -335,7 +349,9 @@ func (g *Guard) resetLocked() {
 	facts := g.permission.Facts()
 	until := view.ValidUntil
 	if !g.anonymous && !g.connection && g.publicEndpoint == nil {
-		until = view.LocalDeadline(facts.ExpiresAt)
+		g.permissionUntil = retainedCredentialDeadline(g.permissionUntil, g.permissionExpires, view.LocalDeadline(facts.ExpiresAt), facts.ExpiresAt)
+		g.permissionExpires = facts.ExpiresAt
+		until = g.permissionUntil
 		if g.renewable && facts.VisitorPolicyRevision != view.VisitorPolicyRevision {
 			until = earlier(until, g.confirmedUntil)
 		}
@@ -346,11 +362,15 @@ func (g *Guard) resetLocked() {
 	}
 	if workload, ok := subject.(visitortoken.Workload); ok {
 		parent, _ := view.Workload(workload.SessionID)
-		until = earlier(until, view.LocalDeadline(parent.ExpiresAt))
+		g.parentUntil = retainedCredentialDeadline(g.parentUntil, g.parentExpires, view.LocalDeadline(parent.ExpiresAt), parent.ExpiresAt)
+		g.parentExpires = parent.ExpiresAt
+		until = earlier(until, g.parentUntil)
 	}
 	if key, ok := subject.(visitortoken.RegisteredKey); ok {
 		parent, _ := view.RegisteredKey(key.AuthorityID())
-		until = earlier(until, view.LocalDeadline(parent.ExpiresAt))
+		g.parentUntil = retainedCredentialDeadline(g.parentUntil, g.parentExpires, view.LocalDeadline(parent.ExpiresAt), parent.ExpiresAt)
+		g.parentExpires = parent.ExpiresAt
+		until = earlier(until, g.parentUntil)
 	}
 	delay := max(0, until.Sub(g.lease.now()))
 	if g.timer == nil {
@@ -358,6 +378,15 @@ func (g *Guard) resetLocked() {
 	} else {
 		g.timer.Reset(delay)
 	}
+}
+
+// a new policy observation does not renew a signed credential or its parent.
+// only a changed absolute expiry can change the previously accepted bound.
+func retainedCredentialDeadline(previous, previousExpiry, next, expiry time.Time) time.Time {
+	if previous.IsZero() {
+		return next
+	}
+	return earlier(next, previous.Add(expiry.Sub(previousExpiry)))
 }
 
 func (g *Guard) expire() {

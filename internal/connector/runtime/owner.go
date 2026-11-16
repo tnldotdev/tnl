@@ -327,6 +327,11 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 				continue
 			}
 			if err != nil {
+				if time.Now().Before(localDeadline) && temporaryOwnerRenewal(err) {
+					// retain only the last confirmed deadline. a failed renewal
+					// neither changes the handle nor restarts its clock.
+					continue
+				}
 				return err
 			}
 			if err := updateDeadline(next); err != nil {

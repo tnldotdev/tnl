@@ -39,7 +39,7 @@ func (d *Database) expireServiceRunCandidates(ctx context.Context, clock authori
 	    SELECT run.id,run.service_id,service.team_id,service.guest_id,run.publisher_expires_at,
 	        row_number() OVER (PARTITION BY service.team_id,service.guest_id ORDER BY run.publisher_expires_at,run.id) AS owner_position
 	    FROM control.service_runs run JOIN control.services service ON service.id=run.service_id
-	    WHERE run.closed_at IS NULL AND(run.publisher_expires_at<=$1 OR run.state='prepared' AND run.preparation_expires_at<=$1
+	    WHERE run.closed_at IS NULL AND(run.serving_until<=$1 OR run.state='prepared' AND run.preparation_expires_at<=$1
 	        OR NOT $3::boolean AND NOT EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,run.service_id,$1) permission
 	            JOIN control.publisher_grants grant_record ON grant_record.id=run.publisher_grant_id
 	            JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id AND signing.publisher_identity_id=run.publisher_identity_id
@@ -110,7 +110,7 @@ func (d *Database) expireServiceRunCandidates(ctx context.Context, clock authori
 			}
 			if relayServices != nil {
 				checkedAt := clock.current()
-				if run.PublisherExpiresAt.Time.After(checkedAt) && (run.State != "prepared" || run.PreparationExpiresAt.Time.After(checkedAt)) {
+				if run.ServingUntil.Time.After(checkedAt) && (run.State != "prepared" || run.PreparationExpiresAt.Time.After(checkedAt)) {
 					return false, true, nil
 				}
 				var relevant bool
@@ -145,7 +145,7 @@ func (d *Database) expireServiceRunCandidates(ctx context.Context, clock authori
 			if permissionErr != nil && !failure.Only(permissionErr, ErrServiceAccess) {
 				return false, false, permissionErr
 			}
-			if permissionErr == nil && run.PublisherExpiresAt.Time.After(checkedAt) && (run.State != "prepared" || run.PreparationExpiresAt.Time.After(checkedAt)) {
+			if permissionErr == nil && run.ServingUntil.Time.After(checkedAt) && (run.State != "prepared" || run.PreparationExpiresAt.Time.After(checkedAt)) {
 				return false, true, nil
 			}
 			changed, err := closeServiceRun(ctx, q, run, checkedAt)

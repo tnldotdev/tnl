@@ -138,14 +138,15 @@ WHERE active_service_run_id = sqlc.arg(service_run_id)
 -- its replacement. the run lock serializes readiness, heartbeat and settlement.
 UPDATE control.guest_trials AS guest
 SET serving_until = CASE WHEN guest.active_ready_at IS NULL THEN guest.serving_until
-        ELSE GREATEST(guest.serving_until, LEAST(guest.expires_at, guest.ready_deadline, run.publisher_expires_at)) END
+        ELSE GREATEST(guest.serving_until, LEAST(guest.expires_at, guest.ready_deadline, run.serving_until)) END
 FROM control.service_runs AS run
 WHERE run.id = sqlc.arg(service_run_id) AND guest.active_service_run_id = run.id AND run.guest_id=guest.id
 RETURNING control.guest_serving_deadline(guest.id, sqlc.arg(now)::timestamptz)::timestamptz AS deadline;
 
 -- name: LimitGuestServiceRunExpiry :one
 UPDATE control.service_runs
-SET publisher_expires_at = LEAST(publisher_expires_at, sqlc.arg(deadline)::timestamptz)
+SET publisher_expires_at = LEAST(publisher_expires_at, sqlc.arg(deadline)::timestamptz),
+    serving_until = LEAST(serving_until, sqlc.arg(deadline)::timestamptz)
 WHERE id = sqlc.arg(service_run_id)
 RETURNING *;
 
@@ -157,11 +158,11 @@ SET used_ready_ns = LEAST(1200000000000, used_ready_ns + CASE
     END),
     end_reason = COALESCE(end_reason, CASE
         WHEN sqlc.arg(close_reason)::text = 'guest_expired' OR expires_at <= sqlc.arg(closed_at)::timestamptz OR expires_at <= serving_until THEN 'expired'
-        WHEN ready_deadline <= serving_until THEN 'ready_limit'
+        WHEN ready_deadline <= serving_until OR ready_deadline <= sqlc.arg(closed_at)::timestamptz THEN 'ready_limit'
     END),
     ended_at = COALESCE(ended_at, CASE
         WHEN sqlc.arg(close_reason)::text = 'guest_expired' OR expires_at <= sqlc.arg(closed_at)::timestamptz OR expires_at <= serving_until THEN expires_at
-        WHEN ready_deadline <= serving_until THEN ready_deadline
+        WHEN ready_deadline <= serving_until OR ready_deadline <= sqlc.arg(closed_at)::timestamptz THEN ready_deadline
     END),
     active_ready_at = NULL,
     ready_deadline = NULL,

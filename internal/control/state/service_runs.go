@@ -173,10 +173,18 @@ func (d *Database) startServiceRunAttempt(ctx context.Context, service, id strin
 	} else if !serviceRunLifecycleState(run.State).active() {
 		return result, ErrServiceAccess
 	}
-	if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET run_token_digest=$2,publisher_expires_at=$3,state=$4,started_at=COALESCE(started_at,$5) WHERE id=$1`, id, digest[:], until, run.State, now); err != nil {
+	servingUntil := now.Add(d.servingTolerance())
+	if permission.Valid {
+		servingUntil = minTime(servingUntil, permission.Time)
+	}
+	if run.CertificateExpiresAt.Valid {
+		servingUntil = minTime(servingUntil, run.CertificateExpiresAt.Time)
+	}
+	if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET run_token_digest=$2,publisher_expires_at=$3,state=$4,started_at=COALESCE(started_at,$5),serving_observed_at=$5,serving_until=$6 WHERE id=$1`, id, digest[:], until, run.State, now, servingUntil); err != nil {
 		return result, err
 	}
 	run.PublisherExpiresAt = timestamptz(until)
+	run.ServingObservedAt, run.ServingUntil = timestamptz(now), timestamptz(servingUntil)
 	run, err = boundGuestServingAuthority(ctx, q, run, clock.current())
 	if err != nil {
 		return result, err
@@ -198,7 +206,7 @@ func (d *Database) startServiceRunAttempt(ctx context.Context, service, id strin
 	if !until.After(clock.current()) || !run.PublisherExpiresAt.Time.After(clock.current()) || prepared && !run.PreparationExpiresAt.Time.After(clock.current()) {
 		return result, ErrServiceAccess
 	}
-	result.ServiceRunState = ServiceRunState{ServiceID: service, RunID: id, RunNumber: number, Token: token.String(), State: run.State, ExpiresAt: until, Connections: connections}
+	result.ServiceRunState = ServiceRunState{ServiceID: service, RunID: id, RunNumber: number, Token: token.String(), State: run.State, ExpiresAt: until, ObservedAt: run.ServingObservedAt.Time, ServingUntil: run.ServingUntil.Time, Connections: connections}
 	result.VisitorSourceKey, err = visitortoken.ServiceVisitorSourceKey(digest[:], id, uint64(number))
 	if err != nil {
 		return result, err
