@@ -33,7 +33,7 @@ func claimedAwait[T any](t *testing.T, result <-chan T) T {
 
 // both sides use real verified TLS/yamux and the production tunnel handshake.
 // wrapping the publisher transport changes only the explicitly injected fault.
-func newClaimedTestPair(t *testing.T, bound *Bound, slot uint8, wrap func(muxsession.Session) muxsession.Session) (*Claimed, *tunnel.Session) {
+func newClaimedTestPair(t *testing.T, bound *Bound, slot uint8, wrap func(muxsession.Session) muxsession.Session, wrapRelay ...func(muxsession.Session) muxsession.Session) (*Claimed, *tunnel.Session) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
@@ -61,6 +61,9 @@ func newClaimedTestPair(t *testing.T, bound *Bound, slot uint8, wrap func(muxses
 			_ = conn.Close()
 			remote <- accepted{err: err}
 			return
+		}
+		for _, apply := range wrapRelay {
+			outer = apply(outer)
 		}
 		session, _, err := tunnel.Accept(ctx, outer, func(_ context.Context, hello tunnelv1.Message) error {
 			if hello.ServiceConnection == nil || *hello.ServiceConnection != ref {

@@ -91,28 +91,34 @@ func (s *pendingHTTPTransport) AcceptStream(ctx context.Context) (muxsession.Str
 }
 
 type pendingHTTPSlot struct {
-	claimed      *Claimed
-	relay        *tunnel.Session
-	wire         *pendingHTTPTransport
-	cancel       context.CancelFunc
-	served       <-chan error
-	capacityDone <-chan error
-	once         sync.Once
+	claimed        *Claimed
+	relay          *tunnel.Session
+	wire           *pendingHTTPTransport
+	cancel         context.CancelFunc
+	cancelCapacity context.CancelFunc
+	served         <-chan error
+	capacityDone   <-chan error
+	once           sync.Once
 }
 
 func (s *pendingHTTPSlot) stop(t *testing.T) {
 	t.Helper()
 	s.once.Do(func() {
-		s.cancel()
-		if err := s.relay.Close(); err != nil {
-			t.Error("close pending HTTP relay", err)
-		}
-		for _, result := range []<-chan error{s.served, s.capacityDone} {
+		join := func(result <-chan error) {
 			err := claimedAwait(t, result)
 			if err != nil && !failure.Only(err, context.Canceled) &&
 				!failure.Only(err, net.ErrClosed) && !failure.Only(err, muxsession.ErrClosed) {
 				t.Error("pending HTTP owner lost joined shutdown", err)
 			}
+		}
+		// the capacity reply can reach the publisher before its relay worker's
+		// physical close returns. retain both transports until that owner joins.
+		s.cancelCapacity()
+		join(s.capacityDone)
+		s.cancel()
+		join(s.served)
+		if err := s.relay.Close(); err != nil {
+			t.Error("close pending HTTP relay", err)
 		}
 		if err := s.claimed.Close(); err != nil {
 			t.Error("close pending HTTP claimed slot", err)
@@ -131,12 +137,13 @@ type pendingHTTPFixture struct {
 	calls     atomic.Int32
 	ingressMu sync.Mutex
 	ingress   func(context.Context) error
+	wrapRelay []func(muxsession.Session) muxsession.Session
 }
 
-func newPendingHTTPFixture(t *testing.T, capacity int, handler http.Handler) *pendingHTTPFixture {
+func newPendingHTTPFixture(t *testing.T, capacity int, handler http.Handler, wrapRelay ...func(muxsession.Session) muxsession.Session) *pendingHTTPFixture {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-	f := &pendingHTTPFixture{source: newSourceForwardingFixture(t), ctx: ctx, cancel: cancel}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 15*time.Second)
+	f := &pendingHTTPFixture{source: newSourceForwardingFixture(t), ctx: ctx, cancel: cancel, wrapRelay: wrapRelay}
 	// retain the real configured service HTTP frontend and signed source owner;
 	// only the inline application and the run's approved physical limit vary.
 	f.source.prepared.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -151,7 +158,7 @@ func newPendingHTTPFixture(t *testing.T, capacity int, handler http.Handler) *pe
 		f.current[slot] = f.connect(t, slot)
 	}
 	t.Cleanup(func() {
-		cancel()
+		defer cancel()
 		for _, slot := range f.slots {
 			slot.stop(t)
 		}
@@ -173,7 +180,7 @@ func (f *pendingHTTPFixture) connect(t *testing.T, index uint8) *pendingHTTPSlot
 	s.claimed, s.relay = newClaimedTestPair(t, f.source.bound, index, func(outer muxsession.Session) muxsession.Session {
 		s.wire = &pendingHTTPTransport{Session: outer, accepted: make(chan *pendingHTTPWire, 128)}
 		return s.wire
-	})
+	}, f.wrapRelay...)
 	ctx, cancel := context.WithCancel(f.ctx)
 	s.cancel = cancel
 	served, capacity := make(chan error, 1), make(chan error, 1)
@@ -181,7 +188,9 @@ func (f *pendingHTTPFixture) connect(t *testing.T, index uint8) *pendingHTTPSlot
 	go func() { served <- s.claimed.Serve(ctx) }()
 	// this is the existing authenticated capacity exchange, not a supplied
 	// no-op replacement for the publisher's reservation callback.
-	go func() { capacity <- s.relay.ServeServiceCapacity(ctx) }()
+	capacityContext, cancelCapacity := context.WithCancel(f.ctx)
+	s.cancelCapacity = cancelCapacity
+	go func() { capacity <- s.relay.ServeServiceCapacity(capacityContext) }()
 	f.slots = append(f.slots, s)
 	return s
 }
