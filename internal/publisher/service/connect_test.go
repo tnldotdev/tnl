@@ -491,8 +491,11 @@ func newPrivateSlotRelay(t *testing.T, bound *Bound, datagrams bool, authenticat
 	r.stop = sync.OnceFunc(func() {
 		cancel()
 		_ = tcp.Close()
-		_ = udp.Close()
+		// accepted sessions send their close before the shared UDP socket ends.
+		// listener shutdown alone must not race that packet with transport close.
+		_ = udp.StopAccepting()
 		workers.Wait()
+		_ = udp.Close()
 	})
 	t.Cleanup(r.stop)
 	return r

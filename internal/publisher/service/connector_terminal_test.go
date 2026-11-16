@@ -20,76 +20,93 @@ import (
 )
 
 func TestConnectorTerminalAbortResultWaitsForActualOuterAuditSubmission(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		b, p, _, opening, _ := connectorPeerFixture(t, "127.0.0.1:1")
-		ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
-		defer cancel()
-		entered, release := make(chan struct{}), make(chan struct{})
-		unblock := sync.OnceFunc(func() { close(release) })
-		defer unblock()
-		b.audit = connectorAuditSink(func(serviceaudit.Observation) bool {
-			close(entered)
-			<-release
-			return true
-		})
-		control := newModeledConnectorTerminal(t, p)
-		visitor, publisher := net.Pipe()
-		defer visitor.Close()
-		a, err := p.reserve(ctx, publisher)
-		if err != nil {
-			t.Fatal(err)
-		}
-		forwarded := make(chan error, 1)
-		go func() { defer p.workers.Done(); forwarded <- a.forwardPeer() }()
-		entry := opening("A")
-		if _, err := tunnelv1.WriteConnectorPeerVisitorOpening(visitor, entry, nil); err != nil {
-			t.Fatal(err)
-		}
-		if err := tunnelv1.ReadConnectorPeerVisitorAccepted(visitor, entry.VisitorConnectionID); err != nil {
-			t.Fatal(err)
-		}
-		type exchangeResult struct {
-			exchange tunnel.ConnectorTerminalExchange
-			err      error
-		}
-		result := make(chan exchangeResult, 1)
-		control.calls.Go(func() {
-			exchange, err := control.writer.Abort(ctx, a.terminalKey)
-			result <- exchangeResult{exchange, err}
-		})
-		dispatch := <-control.dispatched
-		if dispatch.err != nil {
-			t.Fatal(dispatch.err)
-		}
-		<-entered
-		synctest.Wait()
-		b.mu.Lock()
-		phase := a.terminal
-		pending, charged := b.connectorPending, b.reservedStreams
-		decision := phase.result
-		b.mu.Unlock()
-		if decision != nil || pending != 0 || charged != 0 {
-			t.Fatal("Result preceded audit submission, or cleanup did not release charges", decision, pending, charged)
-		}
-		select {
-		case <-a.joined:
-			t.Fatal("outer admission claimed joined while its actual audit submission was held")
-		case <-result:
-			t.Fatal("Abort matched before the real outer admission joined")
-		default:
-		}
-		unblock()
-		err = <-forwarded
-		if serviceWorkerError(err, errConnectorAdmissionAbort) != nil {
-			t.Fatal("unused preparation Abort lost typed interruption provenance", err)
-		}
-		got := <-result
-		if got.err != nil || !got.exchange.Matched || !got.exchange.ObservedWritten ||
-			got.exchange.Result.Outcome != tunnelv1.ConnectorTerminalAccepted || got.exchange.Result.TerminalNumber != dispatch.request.TerminalNumber {
-			t.Fatal("Abort did not match its actual full join and Observed write", got)
-		}
-		<-phase.done
+	b, p, verification, opening, _ := connectorPeerFixture(t, "127.0.0.1:1")
+	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
+	defer cancel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
+	b.audit = connectorAuditSink(func(serviceaudit.Observation) bool {
+		close(entered)
+		<-release
+		return true
 	})
+	control := newModeledConnectorTerminal(t, p)
+	client, server := connectorInnerPair(t, ctx, verification)
+	visitor, err := client.OpenStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Abort must interrupt an actual locally reset QUIC stream. net.Pipe can
+	// instead race its untyped closed-pipe error against preparation entry.
+	entry := opening("A")
+	written := make(chan error, 1)
+	writerJoined := make(chan struct{})
+	go func() {
+		defer close(writerJoined)
+		_, err := tunnelv1.WriteConnectorPeerVisitorOpening(visitor, entry, nil)
+		written <- err
+	}()
+	defer func() { _ = visitor.Close(); <-writerJoined }()
+	publisher, err := server.AcceptStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := p.reserve(ctx, publisher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forwarded := make(chan error, 1)
+	go func() { defer p.workers.Done(); forwarded <- a.forwardPeer() }()
+	if err := <-written; err != nil {
+		t.Fatal(err)
+	}
+	if err := tunnelv1.ReadConnectorPeerVisitorAccepted(visitor, entry.VisitorConnectionID); err != nil {
+		t.Fatal(err)
+	}
+	type exchangeResult struct {
+		exchange tunnel.ConnectorTerminalExchange
+		err      error
+	}
+	result := make(chan exchangeResult, 1)
+	b.mu.Lock()
+	key := a.terminalKey
+	b.mu.Unlock()
+	control.calls.Go(func() {
+		exchange, err := control.writer.Abort(ctx, key)
+		result <- exchangeResult{exchange, err}
+	})
+	dispatch := <-control.dispatched
+	if dispatch.err != nil {
+		t.Fatal(dispatch.err)
+	}
+	<-entered
+	b.mu.Lock()
+	phase := a.terminal
+	pending, charged := b.connectorPending, b.reservedStreams
+	decision := phase.result
+	b.mu.Unlock()
+	if decision != nil || pending != 0 || charged != 0 {
+		t.Fatal("Result preceded audit submission, or cleanup did not release charges", decision, pending, charged)
+	}
+	select {
+	case <-a.joined:
+		t.Fatal("outer admission claimed joined while its actual audit submission was held")
+	case <-result:
+		t.Fatal("Abort matched before the real outer admission joined")
+	default:
+	}
+	unblock()
+	err = <-forwarded
+	if serviceWorkerError(err, errConnectorAdmissionAbort) != nil {
+		t.Fatal("unused preparation Abort lost typed interruption provenance", err)
+	}
+	got := <-result
+	if got.err != nil || !got.exchange.Matched || !got.exchange.ObservedWritten ||
+		got.exchange.Result.Outcome != tunnelv1.ConnectorTerminalAccepted || got.exchange.Result.TerminalNumber != dispatch.request.TerminalNumber {
+		t.Fatal("Abort did not match its actual full join and Observed write", got)
+	}
+	<-phase.done
 }
 
 type terminalResultReturnGate struct {
