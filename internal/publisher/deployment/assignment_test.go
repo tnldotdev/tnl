@@ -1,6 +1,7 @@
 package deployment
 
 import (
+	"context"
 	"crypto/ed25519"
 	"errors"
 	"fmt"
@@ -8,6 +9,33 @@ import (
 
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+type serverDiscoveryFunc func(context.Context) (controlv1.ControlDiscovery, error)
+
+func (f serverDiscoveryFunc) Discovery(ctx context.Context) (controlv1.ControlDiscovery, error) {
+	return f(ctx)
+}
+
+func TestPublicURLAssignmentRequiresServerDiscovery(t *testing.T) {
+	failure := errors.New("discovery unavailable")
+	p := AssignmentPublisher{Member: controlv1.DeploymentPublisherIdentity{DeploymentId: "deployment-one", DeploymentName: "production"}}
+	a := controlv1.DeploymentPublisherServiceAssignment{
+		ServiceKind: "public_url", Hostname: new("web.example.test"),
+		Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocol("http")), Target: "http://127.0.0.1:3000", PublicUrl: &controlv1.ProjectServicePublicURL{}},
+	}
+	if err := p.Publish(t.Context(), a, nil); !errors.Is(err, ErrAssignment) {
+		t.Fatal("public URL assignment accepted missing discovery", err)
+	}
+	p.ServerDiscovery = serverDiscoveryFunc(func(ctx context.Context) (controlv1.ControlDiscovery, error) {
+		if ctx != t.Context() {
+			t.Fatal("server discovery lost its operation context")
+		}
+		return controlv1.ControlDiscovery{}, failure
+	})
+	if err := p.Publish(t.Context(), a, nil); !errors.Is(err, failure) {
+		t.Fatal("public URL assignment hid discovery failure", err)
+	}
+}
 
 func TestAssignmentPublisherRejectsInvalidAssignmentBeforeIdentityPreparation(t *testing.T) {
 	for _, test := range []struct {

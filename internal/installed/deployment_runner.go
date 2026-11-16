@@ -103,7 +103,7 @@ func (r DeploymentRunner) Serve(ctx context.Context, job Job, profile *clientsta
 	}
 	// Runtime.Serve joins assignments before shared discovery is canceled/joined.
 	defer resolver.Close()
-	publications := publisherdeployment.AssignmentPublisher{Telemetry: r.Telemetry, Member: member, Private: private, State: profile, Control: control.NativeControl, Authority: authority, Discovery: resolver}
+	publications := publisherdeployment.AssignmentPublisher{Telemetry: r.Telemetry, Member: member, Private: private, State: profile, Control: control.NativeControl, Authority: authority, Discovery: resolver, ServerDiscovery: control.Discovery}
 	return WithCertificateState(setupCtx, job, profile, private, client, func(_ context.Context) error {
 		finishStartup(nil)
 		ctx = observability.Independent(setup)

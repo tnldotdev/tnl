@@ -22,13 +22,18 @@ import (
 // installed jobs and foreground callers compose this operation without giving it
 // a registry or transferring their process lifetime to it.
 type AssignmentPublisher struct {
-	Telemetry *clienttelemetry.Collector
-	Member    controlv1.DeploymentPublisherIdentity
-	Private   ed25519.PrivateKey
-	State     *clientstate.Store
-	Control   publisheridentity.NativeControl
-	Authority publisheridentity.AssertionExchanger
-	Discovery *publisherdiscovery.Resolver
+	Telemetry       *clienttelemetry.Collector
+	Member          controlv1.DeploymentPublisherIdentity
+	Private         ed25519.PrivateKey
+	State           *clientstate.Store
+	Control         publisheridentity.NativeControl
+	Authority       publisheridentity.AssertionExchanger
+	Discovery       *publisherdiscovery.Resolver
+	ServerDiscovery ServerDiscovery
+}
+
+type ServerDiscovery interface {
+	Discovery(context.Context) (controlv1.ControlDiscovery, error)
 }
 
 func (AssignmentPublisher) String() string   { return "deployment publications" }

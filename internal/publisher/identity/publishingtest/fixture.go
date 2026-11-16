@@ -50,6 +50,7 @@ type Fixture struct {
 	runURLs                                   map[string]string
 	deleted                                   []string
 	setups                                    map[string]controlv1.PublishRunSetup
+	browserLoginAvailable                     *bool
 	hooks                                     testutil.PublishingHooks
 	t                                         *testing.T
 	relayOnce                                 sync.Once
@@ -76,19 +77,33 @@ func (f *Fixture) Owner() (*clientcontrol.Client, error) {
 	return clientcontrol.New(f.URL, f.HTTP, credentials.AccessToken(f.OwnerToken))
 }
 
-func (f *Fixture) SavedPublicURL(ctx context.Context, purpose controlv1.PublicURLPurpose, target string) (controlv1.PublicURL, error) {
+func (f *Fixture) SavedPublicURL(ctx context.Context, purpose controlv1.PublicURLPurpose, target string, access ...controlv1.VisitorAccessMode) (controlv1.PublicURL, error) {
 	protocol := controlv1.Http
+	mode := controlv1.Anonymous
+	if len(access) > 0 {
+		mode = access[0]
+	}
 	key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
-	publicURL, err := f.seed.CreatePublicURL(ctx, controlv1.CreatePublicURLRequest{TeamId: "tm_0000000000000000000001", DomainId: f.DomainID, CanonicalHostname: string(purpose) + "." + f.Namespace, Target: target, Purpose: purpose, PublicUrlScope: controlv1.Member, ServiceProtocol: &protocol}, key)
+	publicURL, err := f.seed.CreatePublicURL(ctx, controlv1.CreatePublicURLRequest{TeamId: "tm_0000000000000000000001", DomainId: f.DomainID, CanonicalHostname: string(purpose) + "." + f.Namespace, Target: target, Purpose: purpose, PublicUrlScope: controlv1.Member, ServiceProtocol: &protocol, AccessMode: &mode}, key)
 	if err != nil {
 		return publicURL, err
 	}
 	publicURL.ServiceProtocol = controlv1.Http
+	publicURL.AccessMode = mode
 	publicURL.MutationRevision = 1
 	f.mu.Lock()
 	f.routes[publicURL.Id] = publicURL
 	f.mu.Unlock()
 	return publicURL, nil
+}
+
+func (f *Fixture) SetBrowserLoginAvailable(available *bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.browserLoginAvailable = nil
+	if available != nil {
+		f.browserLoginAvailable = new(*available)
+	}
 }
 
 func (f *Fixture) NamespaceEnrollment(ctx context.Context) (string, error) {
@@ -119,6 +134,12 @@ func denied(w http.ResponseWriter) {
 }
 
 func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && r.URL.Path == "/v1/discovery" {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		write(w, controlv1.ControlDiscovery{BrowserLoginAvailable: f.browserLoginAvailable})
+		return
+	}
 	if r.Method == "POST" && r.URL.Path == "/v1/publisher-enrollments" {
 		if r.Header.Get("Authorization") != "Bearer "+f.OwnerToken {
 			denied(w)
@@ -222,7 +243,7 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 		write(w, controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: []int64{}, SnapshotRequired: body.AfterRevision == 0,
 			VisitorSourceKey: new(source[:]),
 			Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: setup.PublicUrl.CanonicalHostname, Port: 443, Issuer: f.URL,
-				VisitorPolicyRevision: 1, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true, Anonymous: true,
+				VisitorPolicyRevision: 1, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true, Anonymous: setup.PublicUrl.AccessMode != controlv1.Restricted,
 				VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "publishing-fixture", PublicKey: key.Public().(ed25519.PublicKey)}},
 				WorkloadLeases:   []controlv1.VisitorWorkloadLease{}}})
 		return

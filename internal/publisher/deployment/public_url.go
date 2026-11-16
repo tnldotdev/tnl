@@ -18,8 +18,12 @@ import (
 // mutation. app-owned listeners are excluded before assignments reach workers.
 func (p AssignmentPublisher) publishPublicURL(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
 	s := assignment.Configuration
-	if s.PublicUrl == nil || s.Protocol == nil || *s.Protocol != controlv1.ServiceProtocol("http") || s.Target == "app" || assignment.Hostname == nil || *assignment.Hostname == "" || assignment.TrustRevision != 0 || p.Member.DeploymentId == "" || p.Member.DeploymentName == "" || p.Member.DeploymentName == "local" {
+	if s.PublicUrl == nil || s.Protocol == nil || *s.Protocol != controlv1.ServiceProtocol("http") || s.Target == "app" || assignment.Hostname == nil || *assignment.Hostname == "" || assignment.TrustRevision != 0 || p.Member.DeploymentId == "" || p.Member.DeploymentName == "" || p.Member.DeploymentName == "local" || p.ServerDiscovery == nil {
 		return ErrAssignment
+	}
+	server, err := p.ServerDiscovery.Discovery(ctx)
+	if err != nil {
+		return err
 	}
 	identity := authorityv1.PublisherEnrollmentResult{ClientId: p.Member.PublisherIdentityId, KeyId: p.Member.KeyId, TeamId: p.Member.TeamId, GrantId: assignment.GrantId, Kind: authorityv1.SavedPublicUrl, PublicUrlId: &assignment.ServiceId}
 	native, err := publisheridentity.NewNative(p.Control, p.Authority, identity, p.Private)
@@ -80,7 +84,7 @@ func (p AssignmentPublisher) publishPublicURL(ctx context.Context, assignment co
 	if health != nil {
 		defer health(false)
 	}
-	return publisher.Run(ctx, publisher.Config{Telemetry: p.Telemetry, Control: native, Identity: native, Audit: native, VisitorControl: native, BrowserControl: native, Shares: native, ControlURL: native.ControlURL(), State: p.State, TeamID: u.TeamId, DomainID: u.DomainId, MembershipID: membership, PublicURLScope: u.PublicUrlScope, PolicyRevision: uint64(u.PolicyRevision), Purpose: u.Purpose, Hostname: u.CanonicalHostname, Target: s.Target, ServiceProtocol: controlv1.Http, TargetOptions: options, Limits: httpLimits, TransportTLS: &tls.Config{MinVersion: tls.VersionTLS13}, Observe: func(event publisher.Event) error {
+	return publisher.Run(ctx, publisher.Config{Telemetry: p.Telemetry, Control: native, Identity: native, Audit: native, VisitorControl: native, BrowserControl: native, Shares: native, ControlURL: native.ControlURL(), BrowserLoginAvailable: server.BrowserLoginAvailable != nil && *server.BrowserLoginAvailable, State: p.State, TeamID: u.TeamId, DomainID: u.DomainId, MembershipID: membership, PublicURLScope: u.PublicUrlScope, PolicyRevision: uint64(u.PolicyRevision), Purpose: u.Purpose, Hostname: u.CanonicalHostname, Target: s.Target, ServiceProtocol: controlv1.Http, TargetOptions: options, Limits: httpLimits, TransportTLS: &tls.Config{MinVersion: tls.VersionTLS13}, Observe: func(event publisher.Event) error {
 		if health != nil {
 			switch event.Type {
 			case publisher.EventReady:
