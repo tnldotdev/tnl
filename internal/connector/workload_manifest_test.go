@@ -18,7 +18,7 @@ func TestWorkloadManifestWithoutGitOrRuntimeConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := config.TNL{Server: new("https://control.example"), Team: new("acme"), Services: config.Services{"inventory": {Protocol: new("http"), Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://private-target.invalid:3000"))}}, "models": {Protocol: new("postgres")}}, Workloads: map[string]config.Workload{"storefront": {Vercel: &config.WorkloadVercel{Project: "store", Environment: "production"}, Services: []string{"inventory", "models"}}}}
+	c := config.Project{Server: new("https://control.example"), Team: new("acme"), Services: map[string]config.ServiceDeclaration{"inventory": {}, "models": {Protocol: new("postgres")}}, Deployments: map[string]config.Deployment{"production": {Targets: map[string]config.DeploymentBinding{"inventory": {ServiceTarget: config.ServiceTarget{Address: new(config.Target("http://private-target.invalid:3000"))}}, "models": {ServiceTarget: config.ServiceTarget{Address: new(config.Target("db.internal:5432"))}}}}}, Workloads: map[string]config.DeploymentWorkload{"storefront": {Deployment: "production", Workload: config.Workload{Vercel: &config.WorkloadVercel{Project: "store", Environment: "production"}, Services: []string{"inventory", "models"}}}}}
 	data, err := workloadmanifest.Generate(c, clientproject.SourceIdentity{Key: "project-store", Fingerprint: strings.Repeat("a", 64), Label: "store"})
 	if err != nil {
 		t.Fatal(err)

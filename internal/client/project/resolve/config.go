@@ -25,6 +25,8 @@ type Options struct {
 	ConfigPath      string
 	EnvironmentPath string
 	NoConfig        bool
+	Deployment      string
+	Workload        string
 }
 
 func Select(ctx context.Context, options Options) (clientproject.Selection, string, error) {
@@ -37,6 +39,7 @@ func Select(ctx context.Context, options Options) (clientproject.Selection, stri
 		}
 	}
 	selection, err := clientproject.SelectProjectConfig(ctx, cwd, options.ConfigPath, options.EnvironmentPath, options.NoConfig)
+	selection.Deployment, selection.Workload = options.Deployment, options.Workload
 	return selection, cwd, failure.Wrap("select project configuration", failure.ProjectConfigInvalid, err)
 }
 

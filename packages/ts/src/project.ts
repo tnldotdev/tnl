@@ -100,13 +100,28 @@ export type TnlStableServiceNames<Config> = Config extends unknown
     ? { error: "declare stable service names with TnlConfigForServices before generating" }
     : true
   : never;
-type ServiceEntries<Values> = { readonly [Name in keyof Values]: TnlService<Values[Name]> };
+type LocalTargets<Config> = Field<
+  Field<Field<Config, "deployments", {}>, "local", {}>,
+  "targets",
+  {}
+>;
+type ServiceEntries<Config, Values> = {
+  readonly [Name in keyof Values]:
+    | TnlService<
+        NonNullable<Values[Name]> &
+          Pick<
+            Field<LocalTargets<Config>, Name, {}>,
+            "http" & keyof Field<LocalTargets<Config>, Name, {}>
+          >
+      >
+    | (undefined extends Values[Name] ? undefined : never);
+};
 export type TnlServices<Config> = Config extends unknown
   ? string extends keyof Services<Config>
     ? { "declare stable service names with TnlConfigForServices before generating": never }
     : undefined extends Field<Config, "services", {}>
-      ? Partial<ServiceEntries<Services<Config>>>
-      : ServiceEntries<Services<Config>>
+      ? Partial<ServiceEntries<Config, Services<Config>>>
+      : ServiceEntries<Config, Services<Config>>
   : never;
 export type TnlServiceNames<Config> = Config extends unknown
   ? Extract<keyof Services<Config>, string>
@@ -133,9 +148,9 @@ export type TnlProjectFromConfig<Config> = Config extends unknown
         Config[Key]
       >;
     } & {
-      readonly [
-        Key in keyof Config as Key extends "publisherGroups" | "workloads" ? Key : never
-      ]: DeepReadonly<Config[Key]>;
+      readonly [Key in keyof Config as Key extends "workloads" ? Key : never]: DeepReadonly<
+        Config[Key]
+      >;
     } & {
       readonly [Key in keyof Config as Key extends "oauth" ? Key : never]:
         | { readonly hostname: string; readonly url: `https://${string}` }

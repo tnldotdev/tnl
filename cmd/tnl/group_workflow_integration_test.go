@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -97,11 +98,13 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	}))
 	t.Cleanup(target.Close)
 	configuration := filepath.Join(root, "tnl.json")
-	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": team, "oauth": true, "webhooks": map[string]any{"review": map[string]any{"service": "web", "path": "/hooks/review", "provider": "custom", "source_ips": []string{"127.0.0.1"}}}, "publisher_groups": map[string]any{"cluster": map[string]any{"description": "CLI workflow"}, "external": map[string]any{"public": true}}, "services": map[string]any{
-		"api":       map[string]any{"publisher_group": "cluster", "target": map[string]any{"type": "address", "address": target.URL}, "access": map[string]any{"team": true}},
-		"publicapi": map[string]any{"publisher_group": "external", "target": map[string]any{"type": "address", "address": target.URL}, "http": map[string]any{}, "access": map[string]any{"team": true}},
-		"internal":  map[string]any{"name": "local-internal", "target": map[string]any{"type": "app"}, "access": map[string]any{"team": true}},
-		"web":       map[string]any{"target": map[string]any{"type": "app"}, "public_url": map[string]any{"access": "anonymous"}},
+	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": team, "oauth": true, "webhooks": map[string]any{"review": map[string]any{"service": "web", "path": "/hooks/review", "provider": "custom", "source_ips": []string{"127.0.0.1"}}}, "services": map[string]any{"api": map[string]any{}, "publicapi": map[string]any{}, "internal": map[string]any{}, "web": map[string]any{}}, "deployments": map[string]any{
+		"cluster":  map[string]any{"description": "CLI workflow", "targets": map[string]any{"api": map[string]any{"address": target.URL, "access": map[string]any{"team": true}}}},
+		"external": map[string]any{"public": true, "targets": map[string]any{"publicapi": map[string]any{"address": target.URL, "http": map[string]any{}, "access": map[string]any{"team": true}}}},
+		"local": map[string]any{"targets": map[string]any{
+			"internal": map[string]any{"name": "local-internal", "access": map[string]any{"team": true}},
+			"web":      map[string]any{"public_url": map[string]any{"access": "anonymous"}},
+		}},
 	}}})
 	if err != nil {
 		t.Fatal(err)
@@ -116,6 +119,12 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	}
 	if !applied.Configuration.Oauth || len(applied.Configuration.Webhooks) != 1 || applied.Configuration.Webhooks["review"].Path != "/hooks/review" {
 		t.Fatal("root OAuth/webhook declarations did not reach real control")
+	}
+	for _, deployment := range []string{"external", "cluster"} {
+		result := cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--deployment", deployment, "--state-dir", person, "--output", "json"})
+		if err := json.Unmarshal(result, &applied); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var serviceID string
 	for _, s := range applied.Services {
@@ -165,7 +174,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	public, err := meta.Parse(metadata)
-	if err != nil || len(public.Services) != 3 || public.Services["web"].URL == "" || public.Services["publicapi"].URL == "" || public.Services["api"].URL == "" || public.Services["api"].Public || bytes.Contains(metadata, []byte(target.URL)) {
+	if err != nil || len(public.Services) != 1 || public.Services["web"].URL == "" || bytes.Contains(metadata, []byte(target.URL)) {
 		t.Fatalf("browser metadata lost endpoint scope or leaked a target: %v", err)
 	}
 	if _, found := public.Services["internal"]; found {
@@ -386,26 +395,31 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 			f.logRuns(t)
 			loggedRuns = true
 		}
-		status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey)
-		if err != nil || len(status.Members) != 3 {
+		status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "cluster")
+		if err != nil || len(status.Members) != 2 {
 			return false
 		}
 		members = nil
 		for _, m := range status.Members {
-			if !m.Healthy || m.ObservedRevision != applied.Revision {
+			if !m.Healthy || m.ObservedRevision != m.CurrentRevision {
 				return false
 			}
 			if m.GroupName == "cluster" {
 				members = append(members, m.PublisherIdentityId)
 			}
 		}
-		return true
+		external, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "external")
+		return err == nil && len(external.Members) == 1 && external.Members[0].Healthy && external.Members[0].ObservedRevision == external.Members[0].CurrentRevision
 	})
 	if members[0] == members[1] {
 		t.Fatal("replicas shared a publisher identity")
 	}
 	var publicService controlv1.Service
-	for _, service := range applied.Services {
+	external, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "external")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, service := range external.Services {
 		if service.Service == "publicapi" && service.ServiceId != nil {
 			publicService, err = control.GetService(t.Context(), *service.ServiceId)
 			if err != nil {
@@ -422,7 +436,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	workflowWait(t, 10*time.Second, func() bool {
-		request, err := http.NewRequestWithContext(t.Context(), "GET", public.Services["publicapi"].URL, nil)
+		request, err := http.NewRequestWithContext(t.Context(), "GET", "https://"+net.JoinHostPort(publicService.Endpoint.Hostname, strconv.Itoa(publicService.Endpoint.Port)), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -439,7 +453,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	address := listen.Addr().String()
 	_ = listen.Close()
 	connectCtx, stopConnect := context.WithCancel(t.Context())
-	_, connectJoined := f.command(t, connectCtx, stopConnect, []string{"--config", configuration, "connect", "api", "--listen", address, "--state-dir", person}, connectorstream.ErrServiceConnection)
+	_, connectJoined := f.command(t, connectCtx, stopConnect, []string{"--config", configuration, "connect", "api", "--deployment", "cluster", "--listen", address, "--state-dir", person}, connectorstream.ErrServiceConnection)
 	savedService, err := control.GetService(t.Context(), serviceID)
 	if err != nil {
 		t.Fatal(err)
@@ -510,7 +524,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		t.Fatal("terminal connector owner still accepted application traffic")
 	}
 	successorCtx, stopSuccessor := context.WithCancel(t.Context())
-	_, successorJoined := f.command(t, successorCtx, stopSuccessor, []string{"--config", configuration, "connect", "api", "--listen", address, "--state-dir", person})
+	_, successorJoined := f.command(t, successorCtx, stopSuccessor, []string{"--config", configuration, "connect", "api", "--deployment", "cluster", "--listen", address, "--state-dir", person})
 	workflowWait(t, time.Until(transitionUntil), func() bool {
 		response, err := client.Get("https://" + address + "/surviving-replica")
 		if err != nil {
@@ -546,12 +560,12 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		t.Fatal("persisted task did not restart with its own key")
 	}
 	workflowWait(t, 20*time.Second, func() bool {
-		status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey)
-		if err != nil || len(status.Members) != 3 {
+		status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "cluster")
+		if err != nil || len(status.Members) != 2 {
 			return false
 		}
 		for _, member := range status.Members {
-			if !member.Healthy || member.ObservedRevision != applied.Revision {
+			if !member.Healthy || member.ObservedRevision != member.CurrentRevision {
 				return false
 			}
 			if member.GroupName == "cluster" && member.PublisherIdentityId != members[0] && member.PublisherIdentityId != members[1] {

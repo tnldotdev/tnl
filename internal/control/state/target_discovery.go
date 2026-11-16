@@ -53,14 +53,14 @@ func (t *ProjectTargetDiscovery) Normalize(protocol string) (*ProjectTargetDisco
 // only this allowlisted projection crosses the visitor boundary. RDS metadata,
 // target addresses, trust bundles and publisher credentials never leave control.
 func (d *Database) visitorKubernetesAuth(ctx context.Context, q *controlstatedb.Queries, service string) (*controlv1.KubernetesAuth, error) {
-	row, err := q.VisitorServiceConfiguration(ctx, text(service))
+	row, err := q.GetDeploymentServiceConfiguration(ctx, text(service))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	c, err := d.openAppliedProject(controlstatedb.ControlAppliedProject{TeamID: row.TeamID, ProjectKey: row.ProjectKey, ConfigurationCiphertext: row.ConfigurationCiphertext, StorageKeyID: row.StorageKeyID})
+	c, err := d.openDeploymentConfiguration(row.ControlProjectPublisherGroup)
 	if err != nil {
 		return nil, err
 	}

@@ -46,7 +46,7 @@ func (p *TargetPlan) Normalize() error {
 	var target string
 	var err error
 	if p.Protocol == config.ProtocolHTTP || p.Protocol == config.ProtocolKubernetes {
-		if p.Protocol == config.ProtocolKubernetes && (!strings.HasPrefix(p.Target, "https://") || p.Trust == nil) {
+		if p.Protocol == config.ProtocolKubernetes && p.Trust == nil {
 			return ErrScope
 		}
 		if strings.HasPrefix(p.Target, "https://") && p.Trust == nil || strings.HasPrefix(p.Target, "http://") && p.Trust != nil {
@@ -55,6 +55,9 @@ func (p *TargetPlan) Normalize() error {
 		target, err = config.NormalizeHTTPServiceTarget(config.Service{}, p.Target)
 		if err == nil && p.Trust != nil && !strings.Contains(p.Target, "://") {
 			target = "https://" + strings.TrimPrefix(target, "http://")
+		}
+		if err == nil && p.Protocol == config.ProtocolKubernetes && !strings.HasPrefix(target, "https://") {
+			return ErrScope
 		}
 	} else {
 		target, err = tcptarget.Normalize(p.Target)

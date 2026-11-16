@@ -129,14 +129,14 @@ func initConfigSource(service string) []byte {
 
 export default defineConfig({
   feedback: true,
-  services: {
-    %s: {
-      publicURL: {},
-      target: { type: "app" },
+  services: { %s: {} },
+  deployments: {
+    local: {
+      targets: { %s: { publicURL: {}, type: "app" } },
     },
   },
 });
-`, service))
+`, service, service))
 }
 
 func frameworkConfigPaths(root, framework string) []string {

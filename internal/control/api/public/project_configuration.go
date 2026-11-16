@@ -16,9 +16,8 @@ type ProjectConfigurationStore interface {
 	RetireProject(context.Context, string, string, string, int64, time.Time) (controlstate.AppliedProjectConfiguration, error)
 	GetProjectStatus(context.Context, string, string, string, string, time.Time) (controlstate.ProjectStatus, error)
 	ListProjects(context.Context, string, string, string) (controlstate.ProjectPage, error)
-	ResolveProjectConfiguration(context.Context, string, string, controlstate.ProjectConfiguration) (controlstate.ProjectConfiguration, error)
 	ApplyProjectConfiguration(context.Context, controlstate.ApplyProjectConfigurationRequest) (controlstate.AppliedProjectConfiguration, error)
-	GetProjectConfiguration(context.Context, string, string, string) (controlstate.AppliedProjectConfiguration, error)
+	GetProjectConfiguration(context.Context, string, string, string, string) (controlstate.AppliedProjectConfiguration, error)
 }
 
 func (h *handler) RetireProject(w http.ResponseWriter, r *http.Request, project string) {
@@ -155,13 +154,15 @@ func (h *handler) ApplyProjectConfiguration(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var body struct {
-		TeamID           string                             `json:"team_id"`
-		Source           *naming.GitProjectSource           `json:"source"`
-		ProjectLabel     string                             `json:"project_label"`
-		ExpectedRevision *int64                             `json:"expected_revision,string"`
-		Configuration    *controlstate.ProjectConfiguration `json:"configuration"`
+		TeamID              string                             `json:"team_id"`
+		Source              *naming.GitProjectSource           `json:"source"`
+		ProjectLabel        string                             `json:"project_label"`
+		ExpectedRevision    *int64                             `json:"expected_revision,string"`
+		Configuration       *controlstate.ProjectConfiguration `json:"configuration"`
+		Deployment          string                             `json:"deployment"`
+		ServiceDeclarations map[string]string                  `json:"service_declarations"`
 	}
-	if decodeJSONLimited(w, r, &body, 4<<20) != nil || body.ExpectedRevision == nil || body.Configuration == nil {
+	if decodeJSONLimited(w, r, &body, 4<<20) != nil || body.ExpectedRevision == nil || body.Configuration == nil || body.ServiceDeclarations == nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid normalized project configuration")
 		return
 	}
@@ -169,17 +170,7 @@ func (h *handler) ApplyProjectConfiguration(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	c, _, err := controlstate.NormalizeProjectConfiguration(*body.Configuration)
-	if err != nil {
-		projectConfigurationProblem(r.Context(), w, "validate project configuration", err)
-		return
-	}
-	c, err = store.ResolveProjectConfiguration(r.Context(), body.TeamID, actor, c)
-	if err != nil {
-		projectConfigurationProblem(r.Context(), w, "resolve project public hostnames", err)
-		return
-	}
-	result, err := store.ApplyProjectConfiguration(r.Context(), controlstate.ApplyProjectConfigurationRequest{TeamID: body.TeamID, ProjectKey: project, Source: body.Source, ProjectLabel: body.ProjectLabel, ActorID: actor, ExpectedRevision: *body.ExpectedRevision, Configuration: c, DNSAutomation: h.config.DNSAutomation, TrafficDefaults: h.config.TrafficDefaults, TrafficCeiling: h.config.TrafficCeiling, Now: time.Now()})
+	result, err := store.ApplyProjectConfiguration(r.Context(), controlstate.ApplyProjectConfigurationRequest{Deployment: body.Deployment, ServiceDeclarations: body.ServiceDeclarations, TeamID: body.TeamID, ProjectKey: project, Source: body.Source, ProjectLabel: body.ProjectLabel, ActorID: actor, ExpectedRevision: *body.ExpectedRevision, Configuration: *body.Configuration, DNSAutomation: h.config.DNSAutomation, TrafficDefaults: h.config.TrafficDefaults, TrafficCeiling: h.config.TrafficCeiling, Now: time.Now()})
 	if err != nil {
 		projectConfigurationProblem(r.Context(), w, "apply project configuration", err)
 		return
@@ -198,7 +189,7 @@ func (h *handler) GetProjectConfiguration(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	result, err := store.GetProjectConfiguration(r.Context(), params.TeamId, project, actor)
+	result, err := store.GetProjectConfiguration(r.Context(), params.TeamId, project, actor, params.Deployment)
 	if err != nil {
 		projectConfigurationProblem(r.Context(), w, "get project configuration", err)
 		return

@@ -17,7 +17,7 @@ import (
 func TestSystemInstallLoadsConfiguredTargetBeforeSetup(t *testing.T) {
 	root := t.TempDir()
 	configuration := filepath.Join(root, "tnl.json")
-	if err := os.WriteFile(configuration, []byte(`{"version":1,"tnl":{"services":{"opencode":{"public_url":{},"target":{"type":"app"}}}}}`), 0o600); err != nil {
+	if err := os.WriteFile(configuration, []byte(`{"version":1,"tnl":{"services":{"opencode":{}},"deployments":{"local":{"targets":{"opencode":{"public_url":{},"type":"app"}}}}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var output, diagnostics bytes.Buffer

@@ -11,5 +11,5 @@ func (d *Database) RetireProject(ctx context.Context, team, project, actor strin
 	if expected < 1 {
 		return AppliedProjectConfiguration{}, ErrProjectConfigurationInvalid
 	}
-	return d.ApplyProjectConfiguration(ctx, ApplyProjectConfigurationRequest{retire: true, TeamID: team, ProjectKey: project, ActorID: actor, ExpectedRevision: expected, Now: now})
+	return d.ApplyProjectConfiguration(ctx, ApplyProjectConfigurationRequest{retire: true, Deployment: "local", ServiceDeclarations: map[string]string{}, TeamID: team, ProjectKey: project, ActorID: actor, ExpectedRevision: expected, Now: now})
 }

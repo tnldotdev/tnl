@@ -13,15 +13,15 @@ import (
 
 // CaptureServiceTrust captures trust for a service's resolved target.
 // the caller compares it with control's approved metadata before mutations.
-func (p Project) CaptureServiceTrust(ctx context.Context, cache *targettrust.Cache, name, target string) (*targettrust.Snapshot, error) {
+func (p Project) CaptureServiceTrust(ctx context.Context, name, target string) (*targettrust.Snapshot, error) {
 	service, found := p.Config.Services[name]
 	if !found || config.IsPublicService(service) {
 		return nil, fmt.Errorf("service %q is not a configured service", name)
 	}
-	return p.captureTrust(ctx, cache, name, target)
+	return p.captureTrust(ctx, name, target)
 }
 
-func (p Project) captureTrust(ctx context.Context, cache *targettrust.Cache, name, target string) (*targettrust.Snapshot, error) {
+func (p Project) captureTrust(ctx context.Context, name, target string) (*targettrust.Snapshot, error) {
 	if err := config.ValidateTNL(p.Config); err != nil {
 		return nil, err
 	}
@@ -35,18 +35,19 @@ func (p Project) captureTrust(ctx context.Context, cache *targettrust.Cache, nam
 		}
 		return nil, nil
 	}
-	setting := config.TrustSource{CA: "system", Hostname: service.Target.TLS.ServerName}
-	if service.Target.TLS.CAFile != nil {
-		setting.CA = *service.Target.TLS.CAFile
+	tls := service.Target.TLS
+	ca, hostname := "system", ""
+	if tls.CA != nil {
+		ca = *tls.CA
 	}
-	if cache == nil {
-		cache = targettrust.NewCache(nil)
+	if tls.Hostname != nil {
+		hostname = *tls.Hostname
 	}
 	if config.TargetType(service) == "app" && target == "" {
-		if setting.Hostname == nil {
-			return nil, fmt.Errorf("service %q target.tls.server_name is required before its app listener is known", name)
+		if hostname == "" {
+			return nil, fmt.Errorf("service %q target.tls.hostname is required before its app listener is known", name)
 		}
-		snapshot, err := cache.Capture(ctx, p.Root, net.JoinHostPort(*setting.Hostname, "443"), setting)
+		snapshot, err := targettrust.CapturePortable(ctx, config.Protocol(service), net.JoinHostPort(hostname, "443"), ca, hostname)
 		return &snapshot, err
 	}
 	if config.Protocol(service) == "http" || config.Protocol(service) == "kubernetes" {
@@ -56,7 +57,7 @@ func (p Project) captureTrust(ctx context.Context, cache *targettrust.Cache, nam
 		}
 		target = origin.Host
 	}
-	snapshot, err := cache.Capture(ctx, p.Root, target, setting)
+	snapshot, err := targettrust.CapturePortable(ctx, config.Protocol(service), target, ca, hostname)
 	if err != nil {
 		return nil, fmt.Errorf("capture service %q TLS trust: %w", name, err)
 	}

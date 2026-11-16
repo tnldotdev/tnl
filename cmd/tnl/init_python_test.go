@@ -15,7 +15,7 @@ func TestInitPythonFacadeIsProjectLocalAndNoInstallPreservesProject(t *testing.T
 	writeInitIgnoreFixture(t, root, "package.json", `{"workspaces":["apps/*"]}`)
 	pyproject := "[project]\nname = \"example-api\"\nversion = \"0.0.0\"\nrequires-python = \">=3.12\"\n"
 	writeInitIgnoreFixture(t, project, "pyproject.toml", pyproject)
-	writeInitIgnoreFixture(t, project, "tnl.yml", "version: 1\ntnl:\n  services:\n    database:\n      protocol: postgres\n      target: {type: address, address: 'database:5432'}\n")
+	writeInitIgnoreFixture(t, project, "tnl.yml", "version: 1\ntnl:\n  services:\n    database:\n      protocol: postgres\n  deployments:\n    local:\n      targets:\n        database: {address: 'database:5432'}\n")
 	working := filepath.Join(project, "src")
 	if err := os.Mkdir(working, 0755); err != nil {
 		t.Fatal(err)

@@ -35,7 +35,7 @@ func sdkWorkloadFixture(t *testing.T, provider string, acquisition workloadmanif
 			t.Fatal(err)
 		}
 	}
-	write(workloadmanifest.Workload{Provider: provider, Services: []string{"db"}, MaxDurationSeconds: 3600, Acquisition: acquisition})
+	write(workloadmanifest.Workload{Deployment: "production", Provider: provider, Services: []string{"db"}, MaxDurationSeconds: 3600, Acquisition: acquisition})
 	return f, write
 }
 
@@ -78,7 +78,7 @@ func TestConnectionSDKNativeWorkloadCurrentEnvironmentAndRecoveryFence(t *testin
 	if _, err := prepare(connectorruntime.SDKEnvironment{}, first.Owner.ConnectionHandle); Reason(err) != failure.ConnectionUnavailable {
 		t.Fatal("live recovery crossed provider boundary", err)
 	}
-	write(workloadmanifest.Workload{Provider: "vercel", Services: []string{"db"}, MaxDurationSeconds: 1800, Acquisition: workloadmanifest.Acquisition{Method: "vercel-oidc"}})
+	write(workloadmanifest.Workload{Deployment: "production", Provider: "vercel", Services: []string{"db"}, MaxDurationSeconds: 1800, Acquisition: workloadmanifest.Acquisition{Method: "vercel-oidc"}})
 	if _, err := prepare(connectorruntime.SDKEnvironment{VercelToken: "other"}, ""); !errors.Is(err, workloadmanifest.ErrInvalid) {
 		t.Fatal("changed preview policy was accepted", err)
 	}

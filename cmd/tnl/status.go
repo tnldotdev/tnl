@@ -27,6 +27,7 @@ const (
 )
 
 type statusCommand struct {
+	Deployment    string               `name:"deployment" help:"Read this configured deployment's applied targets and publishers; defaults to local."`
 	Output        statusOutputMode     `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 	Scope         string               `name:"scope" enum:"local,server,both" default:"both" help:"Read local snapshots, fresh server state, or both (default)."`
 	ServerURL     string               `name:"server" env:"TNL_SERVER" help:"Control URL to read; independent of --scope."`
@@ -312,7 +313,7 @@ func readAppliedStatus(ctx context.Context, state *clientstate.Database, server,
 		result.AppliedReason = "select a project team"
 		return
 	}
-	applied, err := auth.Control.GetProjectConfiguration(ctx, current.Team().Id, source.Key)
+	applied, err := auth.Control.GetProjectConfiguration(ctx, current.Team().Id, source.Key, project.Deployment)
 	if err != nil {
 		result.AppliedReason = "not applied or unavailable; run tnl apply"
 		return

@@ -21,17 +21,22 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
   feedback: true,
   inspection: {mode: "none"},
   publicURL: {domain: "routes.example.test", limits: {http: {total: 20, rate: {count: 5, per: "1m"}, concurrency: 750}}},
-  services: {
-    api: {target: {type: "address", address: 3000}, inspection: {mode: "summary"}, name: worktree.label.fullLabel, http: {readiness: {path: "/status"}}},
+  services: {api: {}, site: {}},
+  deployments: {local: {targets: {
+    api: {address: 3000, inspection: {mode: "summary"}, name: worktree.label.fullLabel, http: {readiness: {path: "/status"}}},
     site: {publicURL: {hostname: "https://site.example.test"}, http: {open: true, paths: {"/api": "api", "/v1": {service: "api", stripPrefix: true}}}},
-  },
+  }}},
 });`
 	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("TNL_SERVER", "secret")
 	worktree := Worktree{Root: directory, Name: filepath.Base(directory), Label: WorktreeLabel{Project: "project", ID: "12345678", FullLabel: "project-12345678"}}
-	value, err := loadTypeScript(t.Context(), path, directory, worktree)
+	declaration, err := loadTypeScript(t.Context(), path, directory, worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := config.ResolveDeployment(declaration, "local")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +62,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 func TestResolveNormalizesTypeScriptExactPublicURL(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "tnl.config.ts")
-	if err := os.WriteFile(path, []byte(`export default {services: {api: {publicURL: {hostname: "api.example.test"}}}, aliases: {review: {service: "api", publicURL: "review.example.test"}}};`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`export default {services: {api: {}}, deployments: {local: {targets: {api: {publicURL: {hostname: "api.example.test"}}}}}, aliases: {review: {service: "api", publicURL: "review.example.test"}}};`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	project, err := Resolve(t.Context(), Selection{Path: path}, root, [32]byte{})
@@ -143,7 +148,7 @@ func TestFactoryReceivesRelativeProjectDirectoryAndFrozenLabel(t *testing.T) {
 		path := filepath.Join(project, "tnl.config.ts")
 		source := fmt.Sprintf(`export default ({worktree, project}) => {
   if (project.relativeDirectory !== %q || !Object.isFrozen(worktree.label) || "checkout" in worktree.label) throw new Error("context mismatch");
-  return {services: {web: {target: {type: "address", address: 3000}}}};
+  return {services: {web: {}}, deployments: {local: {targets: {web: {address: 3000}}}}};
 };`, relative)
 		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 			t.Fatal(err)
@@ -162,7 +167,7 @@ func TestLoadAliasesValidatesComputedServiceReferences(t *testing.T) {
 	}{{"api", true}, {"missing", false}} {
 		directory := t.TempDir()
 		path := filepath.Join(directory, "tnl.config.ts")
-		source := fmt.Sprintf(`export default () => ({ services: {api: {publicURL: {}}}, aliases: {review: {service: [%q].join(""), name: "api.shop", access: "anonymous"}} });`, test.service)
+		source := fmt.Sprintf(`export default () => ({ services: {api: {}}, deployments: {local: {targets: {api: {publicURL: {}}}}}, aliases: {review: {service: [%q].join(""), name: "api.shop", access: "anonymous"}} });`, test.service)
 		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -197,15 +202,15 @@ func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 	for name, test := range map[string]struct{ source, category string }{
 		"service server":    {`export default {services: {api: {server: "https://control.example"}}};`, `unknown TypeScript configuration field "server"`},
 		"service team":      {`export default {services: {api: {team: "studio"}}};`, `unknown TypeScript configuration field "team"`},
-		"concurrency":       {`export default {services: {api: {publicURL: {limits: {http: {concurrency: 0}}}}}};`, "positive safe integers"},
-		"old request limit": {`export default {services: {api: {publicURL: {requestLimit: 2}}}};`, "unknown TypeScript configuration field"},
-		"inspection":        {`export default {services: {api: {inspection: {mode: "all"}}}};`, "services.api.inspection: mode must be none or summary"},
+		"concurrency":       {"export default " + typeScriptServiceCase("api", "http", `{publicURL: {limits: {http: {concurrency: 0}}}}`), "positive safe integers"},
+		"old request limit": {"export default " + typeScriptServiceCase("api", "http", `{publicURL: {requestLimit: 2}}`), "unknown TypeScript configuration field"},
+		"inspection":        {"export default " + typeScriptServiceCase("api", "http", `{inspection: {mode: "all"}}`), "services.api.inspection: mode must be none or summary"},
 		"retired dev":       {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "dev"},
-		"target":            {`export default {services: {api: {target: {type: "address", address: "https://example.com/path"}}}};`, "services.api: target.address:"},
-		"raw SSH":           {`export default {services: {shell: {protocol: "ssh", inspection: {mode: "none"}, target: {type: "address", address: "sshd:22"}}}};`, "use tcp for an existing sshd"},
-		"raw SSH TLS":       {`export default () => ({services: {shell: {protocol: ["s", "sh"].join(""), target: {type: "address", address: "sshd:22", tls: {serverName: "sshd", caFile: "ca.pem"}}}}});`, "use tcp for an existing sshd"},
-		"ip":                {`export default {services: {api: {publicURL: {access: {ip: ["192.0.2.7/24"]}}}}};`, "distinct canonical addresses or prefixes"},
-		"duplicate":         {`export default {services: {api: {publicURL: {access: {ip: ["192.0.2.1", "192.0.2.1/32"]}}}}};`, "distinct canonical addresses or prefixes"},
+		"target":            {"export default " + typeScriptServiceCase("api", "http", `{address: "https://example.com/path"}`), "services.api: target.address:"},
+		"raw SSH":           {"export default " + typeScriptServiceCase("shell", "ssh", `{inspection: {mode: "none"}, address: "sshd:22"}`), "use tcp for an existing sshd"},
+		"raw SSH TLS":       {`export default () => ({services: {shell: {protocol: ["s", "sh"].join("")}}, deployments: {local: {targets: {shell: {address: "sshd:22", tls: {hostname: "sshd", ca: "system"}}}}}});`, "use tcp for an existing sshd"},
+		"ip":                {"export default " + typeScriptServiceCase("api", "http", `{publicURL: {access: {ip: ["192.0.2.7/24"]}}}`), "distinct canonical addresses or prefixes"},
+		"duplicate":         {"export default " + typeScriptServiceCase("api", "http", `{publicURL: {access: {ip: ["192.0.2.1", "192.0.2.1/32"]}}}`), "distinct canonical addresses or prefixes"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl.config.ts")
@@ -369,12 +374,12 @@ func TestLoadPreservesParentDeadline(t *testing.T) {
 func TestTypeScriptServicesUseCamelCaseFields(t *testing.T) {
 	value, err := unmarshalTypeScriptTNL([]byte(`{
   "team":"Team One",
-    "services":{"web":{"publicURL":{"access":{"ip":["192.0.2.1"]},"ephemeral":true,"requirePostQuantum":true},"http":{"readiness":{"path":"/health"}}}}
+    "services":{"web":{}}, "deployments":{"local":{"targets":{"web":{"publicURL":{"access":{"ip":["192.0.2.1"]},"ephemeral":true,"requirePostQuantum":true},"http":{"readiness":{"path":"/health"}}}}}}
 }`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := value.Services["web"]
+	service := value.Deployments["local"].Targets["web"]
 	if service.Tunnel.RequirePostQuantum == nil || !*service.Tunnel.RequirePostQuantum {
 		t.Fatal("TypeScript lost the public HTTPS requirement")
 	}
@@ -388,25 +393,31 @@ func TestTypeScriptServicesUseCamelCaseFields(t *testing.T) {
 }
 
 func TestTypeScriptDatabaseTargetTLSIsPublisherSide(t *testing.T) {
-	value, err := unmarshalTypeScriptTNL([]byte(`{"services":{"web":{"target":{"type":"address","address":3000}},"orders":{"protocol":"postgres","target":{"type":"address","address":"db.internal:5432","tls":{"serverName":"db.internal","caFile":"./ca.pem"}}}}}`))
+	declared, err := unmarshalTypeScriptTNL([]byte(`{"services":{"web":{},"orders":{"protocol":"postgres"}},"deployments":{"local":{"targets":{"web":{"address":3000},"orders":{"address":"db.internal:5432","tls":{"hostname":"db.internal","ca":"system"}}}}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := config.ValidateTNL(value); err != nil {
+	value, err := config.ResolveDeployment(declared, "local")
+	if err != nil {
 		t.Fatal(err)
 	}
 	options := config.ServicePublish(value.Services["orders"])
 	service := value.Services["orders"]
 	if config.ServiceName("orders", service) != "orders" || service.Tunnel != nil ||
-		service.Target.TLS == nil || service.Target.TLS.ServerName == nil || *service.Target.TLS.ServerName != "db.internal" || *service.Target.TLS.CAFile != "./ca.pem" ||
+		service.Target.TLS == nil || service.Target.TLS.Hostname == nil || *service.Target.TLS.Hostname != "db.internal" || service.Target.TLS.CA == nil || *service.Target.TLS.CA != "system" ||
 		options == nil || options.Protocol == nil || *options.Protocol != "postgres" ||
 		options.Target == nil || string(*options.Target) != "db.internal:5432" ||
-		options.TargetTLS == nil || !*options.TargetTLS || options.TargetTLSName == nil || options.TargetCAFile == nil {
+		options.TargetTLS == nil || !*options.TargetTLS || options.TargetTLSName == nil || options.TargetCAFile != nil {
 		t.Fatalf("database publication = %#v", options)
 	}
 	for _, field := range []string{"ca_file", "target_ca_file"} {
 		if _, err := unmarshalTypeScriptTNL([]byte(`{"publish":{"` + field + `":"ca.pem"}}`)); err == nil {
 			t.Fatalf("TypeScript accepted retired field %q", field)
+		}
+	}
+	for _, field := range []string{"serverName", "caFile", "server_name", "ca_file"} {
+		if _, err := unmarshalTypeScriptTNL([]byte(`{"services":{"db":{"protocol":"postgres"}},"deployments":{"local":{"targets":{"db":{"address":5432,"tls":{"` + field + `":"old"}}}}}}`)); err == nil {
+			t.Fatalf("TypeScript accepted removed target TLS field %q", field)
 		}
 	}
 }

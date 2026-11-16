@@ -86,6 +86,7 @@ func TestIntegrationWorkloadRetentionReplayAndStop(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_retention_replay")
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
+	r = selectedProjectRequest(r, "production")
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
@@ -163,11 +164,12 @@ func TestIntegrationWorkloadRetentionAssertionBoundary(t *testing.T) {
 	d, at := newControlStateIntegrationDatabase(t, "workload_retention_boundary")
 	r := appliedProjectRequest(t, d, at)
 	r.Configuration = workloadConfiguration()
+	r = selectedProjectRequest(r, "production")
 	p := r.Configuration.Workloads["test"]
 	p.MaxDurationSeconds = 10
 	r.Configuration.Workloads["test"] = p
 	trust := oidc.WorkloadTrust{Provider: "oidc", Issuer: "https://issuer.example/workloads", JWKSURL: "https://issuer.example/keys", Audience: "test", Claims: map[string]string{"sub": "worker"}}
-	r.Configuration.Workloads["long-assertion"] = ProjectWorkload{Provider: "oidc", Trust: trust, Services: []string{"api"}, MaxDurationSeconds: 10}
+	r.Configuration.Workloads["long-assertion"] = ProjectWorkload{Deployment: "production", Provider: "oidc", Trust: trust, Services: []string{"api"}, MaxDurationSeconds: 10}
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
@@ -211,6 +213,7 @@ func TestIntegrationWorkloadRetentionReferencesAndBatches(t *testing.T) {
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
+	r = selectedProjectRequest(r, "production")
 	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)
 	}

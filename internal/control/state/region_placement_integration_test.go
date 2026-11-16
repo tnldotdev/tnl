@@ -113,9 +113,10 @@ func TestIntegrationProviderRegionServiceRun(t *testing.T) {
 	d, now, _, _ := newPublishRunPrerequisites(t)
 	regionalRelays(t, d, now)
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
-		"orders": {PublisherGroup: "production", Protocol: "postgres", Target: "orders.internal:5432"},
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
+		"orders": {Protocol: "postgres", Target: "orders.internal:5432"},
 	}}
+	r = selectedProjectRequest(r, "production")
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}

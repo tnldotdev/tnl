@@ -60,12 +60,16 @@ func TestAppWorkflowStaticMountPreservesTargetAndTLSName(t *testing.T) {
 	a, _ := testAppRuntime(t)
 	target, ca, _ := appWorkflowTLSTarget(t)
 	a.project.Root = filepath.Dir(ca)
-	ca = filepath.Base(ca)
-	a.project.Config.Services = config.Services{
-		"web": {HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api", StripPrefix: true}}}},
-		"api": {Target: &config.ServiceTarget{Type: "address", Address: new(config.Target(target)), TLS: &config.TargetTLS{ServerName: new("target.internal"), CAFile: &ca}}},
+	material, err := os.ReadFile(ca)
+	if err != nil {
+		t.Fatal(err)
 	}
-	mounts, err := a.resolveRuntimeMounts(a.project, "web")
+	ca = string(material)
+	a.project.Config.Services = config.Services{
+		"web": {Tunnel: &config.Tunnel{}, HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api", StripPrefix: true}}}},
+		"api": {Target: &config.ServiceTarget{Type: "address", Address: new(config.Target(target)), TLS: &config.TargetTLS{Hostname: new("target.internal"), CA: &ca}}},
+	}
+	mounts, err := a.resolveRuntimeMounts(t.Context(), a.project, "web")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -46,7 +46,7 @@ func TestIntegrationAppliedProjectLocalConnectorVisitorBinding(t *testing.T) {
 	if _, err = d.RealizeLocalProjectService(ctx, local); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("ordinary visitor unexpectedly has management access", err)
 	}
-	if _, err = d.GetProjectConfiguration(ctx, request.TeamID, request.ProjectKey, member.IdentityID); !errors.Is(err, ErrServiceAccess) {
+	if _, err = d.GetProjectConfiguration(ctx, request.TeamID, request.ProjectKey, member.IdentityID, "local"); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("ordinary visitor read project configuration", err)
 	}
 	// a read must not allocate resources, revisions, grants, or publisher runs.

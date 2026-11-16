@@ -48,7 +48,7 @@ func TestIntegrationLocalRealizationPreservesResourceAndGrantIDs(t *testing.T) {
 	if err := d.pool.QueryRow(t.Context(), `SELECT count(*),count(visitor_grant_id) FROM control.local_project_services WHERE team_id=$1`, base.TeamID).Scan(&resources, &grants); err != nil || resources != 3 || grants != 3 {
 		t.Fatalf("repeated realization duplicated resources or grants: resources=%d grants=%d err=%v", resources, grants, err)
 	}
-	if _, err := d.GetProjectConfiguration(t.Context(), base.TeamID, base.ProjectKey, base.ActorID); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := d.GetProjectConfiguration(t.Context(), base.TeamID, base.ProjectKey, base.ActorID, "production"); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("local realization implicitly applied production configuration: %v", err)
 	}
 }

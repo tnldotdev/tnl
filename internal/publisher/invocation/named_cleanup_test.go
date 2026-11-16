@@ -18,7 +18,7 @@ import (
 func TestNamedPublicationRetainsLeaseCleanupFailure(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "tnl.json")
-	if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"server":"https://control.example","services":{"web":{}}}}`), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"server":"https://control.example","services":{"web":{}},"deployments":{"local":{"targets":{"web":{}}}}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	project, err := clientproject.Resolve(t.Context(), clientproject.Selection{Path: path}, root, [32]byte{})

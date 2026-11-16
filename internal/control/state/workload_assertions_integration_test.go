@@ -15,6 +15,7 @@ func TestIntegrationWorkloadAssertionAttachment(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_attach")
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
+	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)

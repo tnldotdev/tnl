@@ -59,7 +59,7 @@ func ConnectLocal(ctx context.Context, directory, name, protocol string, resolve
 		return nil, err
 	}
 	service, found := p.Config.Services[name]
-	if !found || config.PublisherGroupName(service) != "local" || config.IsPublicService(service) {
+	if !found || config.SelectedDeployment(p.Config) != "local" || config.IsPublicService(service) {
 		return nil, errors.New("select a configured local private service")
 	}
 	if !config.ValidProtocol(protocol) || config.Protocol(service) != protocol {
@@ -108,7 +108,7 @@ func ConnectLocal(ctx context.Context, directory, name, protocol string, resolve
 	if err != nil || !endpoint.Addr().IsLoopback() || endpoint.Addr().Zone() != "" || endpoint.Port() == 0 {
 		return nil, errors.New("local connection requires a loopback TCP address")
 	}
-	trust, err := p.CaptureServiceTrust(ctx, nil, name, trustAddress)
+	trust, err := p.CaptureServiceTrust(ctx, name, trustAddress)
 	if err != nil {
 		return nil, err
 	}

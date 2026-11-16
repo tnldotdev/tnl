@@ -19,7 +19,7 @@ import (
 
 func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 	fixture := newStandalonePublishFixture(t, "oauth-routing")
-	state, err := clientstate.Open(t.Context(), fixture.owner.directory+"/state")
+	state, err := clientstate.OpenWithOptions(t.Context(), fixture.owner.directory+"/state", clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		t.Fatal(err)
 	}

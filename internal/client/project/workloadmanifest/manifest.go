@@ -35,6 +35,7 @@ type Acquisition struct {
 	TokenEnv  string `json:"token_env,omitempty"`
 }
 type Workload struct {
+	Deployment         string      `json:"deployment"`
 	Provider           string      `json:"provider"`
 	Services           []string    `json:"services"`
 	MaxDurationSeconds int         `json:"max_duration_seconds"`
@@ -51,7 +52,7 @@ type Manifest struct {
 	Services          map[string]string   `json:"services"`
 }
 
-func Generate(c config.TNL, source clientproject.SourceIdentity) ([]byte, error) {
+func Generate(c config.Project, source clientproject.SourceIdentity) ([]byte, error) {
 	m := Manifest{Schema: 1, Server: clientserver.DefaultURL, ProjectKey: source.Key, SourceFingerprint: source.Fingerprint, ProjectLabel: source.Label, Workloads: map[string]Workload{}, Services: map[string]string{}}
 	if c.Server != nil {
 		m.Server = *c.Server
@@ -65,15 +66,15 @@ func Generate(c config.TNL, source clientproject.SourceIdentity) ([]byte, error)
 		return nil, err
 	}
 	for name, p := range c.Workloads {
-		a, err := AcquisitionFor(p, m.Server)
+		a, err := AcquisitionFor(p.Workload, m.Server)
 		if err != nil {
 			return nil, err
 		}
 		services := slices.Clone(p.Services)
 		slices.Sort(services)
-		m.Workloads[name] = Workload{Provider: p.Provider(), Services: services, MaxDurationSeconds: int(p.DurationLimit().Seconds()), Acquisition: a}
+		m.Workloads[name] = Workload{Deployment: p.Deployment, Provider: p.Provider(), Services: services, MaxDurationSeconds: int(p.DurationLimit().Seconds()), Acquisition: a}
 		for _, key := range services {
-			m.Services[key] = config.Protocol(c.Services[key])
+			m.Services[key] = config.DeclaredProtocol(c.Services[key])
 		}
 	}
 	if err = m.Validate(); err != nil {
@@ -94,7 +95,7 @@ func (m Manifest) Validate() error {
 		}
 	}
 	for name, w := range m.Workloads {
-		if !naming.ValidServiceName(name) || w.MaxDurationSeconds < 0 || int64(w.MaxDurationSeconds) > config.MaxWorkloadMaxDurationSeconds || len(w.Services) == 0 || len(w.Services) > 32 {
+		if !naming.ValidServiceName(name) || !naming.ValidServiceName(w.Deployment) || w.Deployment == "local" || w.MaxDurationSeconds < 0 || int64(w.MaxDurationSeconds) > config.MaxWorkloadMaxDurationSeconds || len(w.Services) == 0 || len(w.Services) > 32 {
 			return ErrInvalid
 		}
 		seen := map[string]bool{}

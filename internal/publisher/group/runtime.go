@@ -161,14 +161,10 @@ func (r Runtime) Serve(ctx context.Context) error {
 				r.Member.GroupName = assignment.Member.GroupName
 				definitions := map[string]string{}
 				for _, service := range assignment.Services {
-					if service.Service == "" || service.ServiceId == "" || service.GrantId == "" || service.Configuration.PublisherGroup == nil || *service.Configuration.PublisherGroup != r.Member.GroupName || definitions[service.Service] != "" {
+					if service.Service == "" || service.ServiceId == "" || service.GrantId == "" || definitions[service.Service] != "" {
 						return ErrAssignment
 					}
-					// the selector is descriptive; changing it must not restart an
-					// unchanged publication or replace its certificate and connections.
-					definition := service
-					definition.Configuration.PublisherGroup = nil
-					data, err := json.Marshal(definition)
+					data, err := json.Marshal(service)
 					if err != nil {
 						return err
 					}

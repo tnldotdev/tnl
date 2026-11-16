@@ -2,6 +2,8 @@ package state
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"time"
 
@@ -37,12 +39,13 @@ func (d *Database) RenamePublisherGroup(ctx context.Context, team, project, old,
 	if err != nil {
 		return result, publisherLookupError(err, ErrPublisherGroup)
 	}
-	c, err := d.openAppliedProject(row)
+	record, err := d.openAppliedProjectRecord(row)
 	if err != nil {
 		return result, err
 	}
+	c, declared := record.Deployments[current]
 	if current == name {
-		result, err = d.appliedProjectStatus(ctx, tx, row, c)
+		result, err = d.appliedProjectStatus(ctx, tx, row, current, c)
 		if err != nil {
 			return result, err
 		}
@@ -51,37 +54,36 @@ func (d *Database) RenamePublisherGroup(ctx context.Context, team, project, old,
 	if current != old || row.Revision != expected {
 		return result, ErrProjectConfigurationStale
 	}
-	if _, exists := c.PublisherGroups[name]; exists {
+	if _, exists := record.Deployments[name]; exists {
 		return result, ErrServiceConflict
 	}
-	if err = claimPublisherGroupName(ctx, tx, team, project, name, id, now); err != nil {
+	if err = claimDeploymentName(ctx, tx, team, project, name, id, now); err != nil {
 		return result, err
 	}
-	c.PublisherGroups[name] = c.PublisherGroups[old]
-	delete(c.PublisherGroups, old)
-	for key, service := range c.Services {
-		if service.PublisherGroup == old {
-			service.PublisherGroup = name
-			c.Services[key] = service
+	if declared {
+		for key, policy := range c.Workloads {
+			policy.Deployment = name
+			c.Workloads[key] = policy
 		}
+		c, _, err = NormalizeProjectConfiguration(c)
+		if err != nil {
+			return result, err
+		}
+		delete(record.Deployments, current)
+		record.Deployments[name] = c
 	}
-	c, hash, err := NormalizeProjectConfiguration(c)
+	encoded, err := json.Marshal(record)
 	if err != nil {
 		return result, err
 	}
-	encoded, err := json.Marshal(c)
-	if err != nil {
-		return result, err
-	}
+	digest := sha256.Sum256(encoded)
+	hash := hex.EncodeToString(digest[:])
 	sealed, err := d.storageKey.Seal(appliedProjectContext(team, project), encoded)
 	if err != nil {
 		return result, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE control.project_publisher_groups SET name=$2 WHERE id=$1`, id, name); err != nil {
 		return result, projectConstraintError(err)
-	}
-	if _, err = tx.Exec(ctx, `UPDATE control.applied_project_services SET desired_revision=$3 WHERE team_id=$1 AND project_key=$2`, team, project, row.Revision+1); err != nil {
-		return result, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE control.applied_projects SET revision=revision+1,configuration_hash=$3,configuration_ciphertext=$4,storage_key_id=$5,updated_at=$6 WHERE team_id=$1 AND project_key=$2`, team, project, hash, sealed, d.storageKey.CurrentID(), now); err != nil {
 		return result, err
@@ -91,7 +93,8 @@ func (d *Database) RenamePublisherGroup(ctx context.Context, team, project, old,
 	}
 	row.Revision++
 	row.ConfigurationHash = hash
-	result, err = d.appliedProjectStatus(ctx, tx, row, c)
+	row.ConfigurationCiphertext, row.StorageKeyID = sealed, d.storageKey.CurrentID()
+	result, err = d.appliedProjectStatus(ctx, tx, row, name, c)
 	if err != nil {
 		return result, err
 	}

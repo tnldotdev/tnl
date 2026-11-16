@@ -22,6 +22,7 @@ func testMigrationRejectsProviderBaseline(t *testing.T, previous string, provide
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
+	r = selectedProjectRequest(r, "production")
 	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)
 	}

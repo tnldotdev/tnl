@@ -34,19 +34,19 @@ func TestIntegrationCLINativeConnectRequiresReadyPublisher(t *testing.T) {
 	}
 	configuration := filepath.Join(root, "tnl.json")
 	for _, public := range []bool{true, false} {
-		data, _ := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": session.Identity().PersonalTeamId, "publisher_groups": map[string]any{"production": map[string]any{"public": public}}, "services": map[string]any{
-			"inventory": map[string]any{"publisher_group": "production", "target": map[string]any{"type": "address", "address": "http://do-not-dial.invalid:3000"}},
-			"orders":    map[string]any{"publisher_group": "production", "protocol": "postgres", "target": map[string]any{"type": "address", "address": "do-not-dial.invalid:5432"}},
-			"profile":   map[string]any{"publisher_group": "production", "protocol": "mysql", "target": map[string]any{"type": "address", "address": "do-not-dial.invalid:3306"}},
-		}}})
+		data, _ := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": session.Identity().PersonalTeamId, "services": map[string]any{"inventory": map[string]any{}, "orders": map[string]any{"protocol": "postgres"}, "profile": map[string]any{"protocol": "mysql"}}, "deployments": map[string]any{"production": map[string]any{"public": public, "targets": map[string]any{
+			"inventory": map[string]any{"address": "http://do-not-dial.invalid:3000"},
+			"orders":    map[string]any{"address": "do-not-dial.invalid:5432"},
+			"profile":   map[string]any{"address": "do-not-dial.invalid:3306"},
+		}}}}})
 		if err := os.WriteFile(configuration, data, 0600); err != nil {
 			t.Fatal(err)
 		}
-		cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--state-dir", person, "--output=json"})
+		cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--deployment", "production", "--state-dir", person, "--output=json"})
 		for _, name := range []string{"inventory", "orders", "profile"} {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			var output bytes.Buffer
-			err := run(ctx, []string{"--no-telemetry", "--config", configuration, "connect", name, "--state-dir", person, "--output=json", "--listen=127.0.0.1:15432"}, &output, io.Discard)
+			err := run(ctx, []string{"--no-telemetry", "--config", configuration, "connect", name, "--deployment", "production", "--state-dir", person, "--output=json", "--listen=127.0.0.1:15432"}, &output, io.Discard)
 			cancel()
 			if err == nil || output.Len() != 0 {
 				t.Fatal("offline service returned ready instructions", public, name, err)

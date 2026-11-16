@@ -31,7 +31,7 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 	team, control := session.Identity().PersonalTeamId, session.Authenticated().Control
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "detached replica") }))
 	defer target.Close()
-	applied, err := control.ApplyProjectConfiguration(t.Context(), "detached", controlv1.ApplyProjectConfigurationRequest{TeamId: team, Source: &controlv1.GitProjectSource{GitOrigin: "https://example.test/example.git", ConfigurationPath: "tnl.yml"}, Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{"production": {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: new("production"), Target: target.URL, Access: &controlv1.ProjectServiceAccess{Team: true}}}}})
+	applied, err := control.ApplyProjectConfiguration(t.Context(), "detached", controlv1.ApplyProjectConfigurationRequest{Deployment: "production", ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": "http"}, TeamId: team, Source: &controlv1.GitProjectSource{GitOrigin: "https://example.test/example.git", ConfigurationPath: "tnl.yml"}, Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Target: target.URL, Access: &controlv1.ProjectServiceAccess{Team: true}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,6 +40,9 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 	renamed, err := control.RenamePublisherGroup(t.Context(), "detached", "production", controlv1.RenamePublisherGroupRequest{TeamId: team, Name: "live", ExpectedRevision: applied.Revision})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if renamed.Revision <= applied.Revision {
+		t.Fatal("selector rename did not advance the project revision")
 	}
 	binary := workflowExecutable(t)
 	task := f.state(t, "detached-task")
@@ -74,8 +77,8 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 			if err != nil || state != "ready" {
 				return false
 			}
-			status, err := control.GetProjectConfiguration(t.Context(), team, "detached")
-			return err == nil && len(status.Members) == 1 && status.Members[0].Healthy && status.Members[0].GroupName == "live" && status.Members[0].ObservedRevision == renamed.Revision
+			status, err := control.GetProjectConfiguration(t.Context(), team, "detached", "live")
+			return err == nil && len(status.Members) == 1 && status.Members[0].Healthy && status.Members[0].GroupName == "live" && status.Members[0].ObservedRevision == applied.Revision && status.Members[0].CurrentRevision == applied.Revision
 		})
 		service, err := control.GetService(t.Context(), *applied.Services[0].ServiceId)
 		if err != nil {

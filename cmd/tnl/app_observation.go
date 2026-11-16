@@ -147,13 +147,13 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 	if flags.Timeout <= 0 {
 		return failure.Wrap("wait for apps", failure.InvalidCommand, errors.New("timeout must be positive"))
 	}
+	if config.SelectedDeployment(project.Config) != "local" {
+		return failure.Wrap("wait for local service", failure.AppRemoteService, errors.New("the selected deployment is remote"))
+	}
 	for _, name := range flags.Service {
-		definition, found := project.Config.Services[name]
+		_, found := project.Config.Services[name]
 		if !found {
 			return failure.Wrap("wait for service", failure.ServiceNotConfigured, errors.New("service is not configured"))
-		}
-		if config.PublisherGroupName(definition) != "local" {
-			return failure.Wrap("wait for local service", failure.AppRemoteService, errors.New("service belongs to a remote publisher"))
 		}
 	}
 	if len(flags.Service) == 0 {

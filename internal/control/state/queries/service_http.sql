@@ -100,11 +100,6 @@ AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.rela
 SELECT destination_port,identity_id,device_id,workload_session_id FROM control.public_service_visitors
 WHERE visitor_connection_id=$1;
 
--- name: ServiceHTTPAppliedConfiguration :one
-SELECT project.team_id,project.project_key,project.configuration_ciphertext,project.storage_key_id,service.service FROM control.applied_project_services service
-JOIN control.applied_projects project ON project.team_id=service.team_id AND project.project_key=service.project_key
-WHERE service.service_id=$1;
-
 -- name: CleanupServiceHTTPLogins :exec
 DELETE FROM control.service_http_browser_logins stored WHERE stored.state_digest IN
     (SELECT expired.state_digest FROM control.service_http_browser_logins expired WHERE expired.expires_at<=sqlc.arg(now) LIMIT 100);

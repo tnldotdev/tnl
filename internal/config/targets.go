@@ -184,23 +184,26 @@ func validateTarget(service Service) error {
 		return errors.New("target.port must be between 1 and 65535")
 	}
 	if tls := target.TLS; tls != nil {
-		if tls.ServerName != nil {
-			value := *tls.ServerName
+		if tls.Hostname != nil {
+			value := *tls.Hostname
 			if value == "" || strings.TrimSpace(value) != value || strings.ContainsAny(value, "/\\@ \t\r\n\x00") {
-				return errors.New("target.tls.server_name must be a hostname or IP address")
+				return errors.New("target.tls.hostname must be a hostname or IP address")
 			}
 			if net.ParseIP(value) == nil && !validTLSHostname(value) {
-				return errors.New("target.tls.server_name must be a hostname or IP address")
+				return errors.New("target.tls.hostname must be a hostname or IP address")
 			}
 			if addr, err := netip.ParseAddr(value); err == nil && addr.Zone() != "" {
-				return errors.New("target.tls.server_name cannot have an IP zone")
+				return errors.New("target.tls.hostname cannot have an IP zone")
 			}
 		}
-		if tls.CAFile != nil && (*tls.CAFile == "" || strings.TrimSpace(*tls.CAFile) != *tls.CAFile || strings.ContainsRune(*tls.CAFile, 0)) {
-			return errors.New("target.tls.ca_file must be a nonempty path without surrounding whitespace or NUL")
-		}
-		if tls.CAFile != nil && validateProjectRelativeFile(*tls.CAFile) != nil {
-			return errors.New("target.tls.ca_file must be a project-relative CA-only PEM file")
+		if tls.CA != nil {
+			ca := *tls.CA
+			if len(ca) > 1<<20 || ca != "system" && ca != "aws-rds" && !strings.HasPrefix(strings.TrimSpace(ca), "-----BEGIN CERTIFICATE-----") {
+				return errors.New("target.tls.ca must be system, aws-rds, or CA-only PEM certificates; paths and URLs are not supported")
+			}
+			if ca == "aws-rds" && protocol != "postgres" && protocol != "mysql" {
+				return errors.New("target.tls.ca aws-rds requires postgres or mysql")
+			}
 		}
 	}
 	return nil

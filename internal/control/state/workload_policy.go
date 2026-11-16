@@ -26,6 +26,7 @@ var (
 )
 
 type ProjectWorkload struct {
+	Deployment         string                     `json:"deployment,omitempty"`
 	Provider           string                     `json:"provider"`
 	Trust              oidc.WorkloadTrust         `json:"trust"`
 	GitHub             *ProjectWorkloadGitHub     `json:"github,omitempty"`
@@ -55,10 +56,13 @@ func (p ProjectWorkloadGitHub) matches(c oidc.GitHubExecution) bool {
 }
 
 func normalizeProjectWorkloads(c *ProjectConfiguration) error {
-	if len(c.Workloads) > 32 {
+	if len(c.Workloads) > 32 || c.Settings == nil && len(c.Workloads) != 0 {
 		return ErrProjectConfigurationInvalid
 	}
 	for name, p := range c.Workloads {
+		if !naming.ValidServiceName(p.Deployment) || p.Deployment == "local" {
+			return ErrProjectConfigurationInvalid
+		}
 		if (p.Provider == "google") != (p.Google != nil) {
 			return ErrProjectConfigurationInvalid
 		}
@@ -80,8 +84,8 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 			}
 			seen := map[string]bool{}
 			for _, key := range p.Services {
-				s, ok := c.Services[key]
-				if !ok || s.PublisherGroup == "local" || seen[key] {
+				_, ok := c.Services[key]
+				if !ok || seen[key] {
 					return ErrProjectConfigurationInvalid
 				}
 				seen[key] = true
@@ -100,10 +104,8 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 			return ErrWorkloadBinding
 		}
 		services := map[string]config.Service{}
-		for key, s := range c.Services {
-			if s.PublisherGroup != "local" {
-				services[key] = config.Service{PublisherGroup: new(s.PublisherGroup)}
-			}
+		for key := range c.Services {
+			services[key] = config.Service{}
 		}
 		policy := config.Workload{GitHub: &config.WorkloadGitHub{Repository: &g.Repository, Workflow: workflow, Events: g.Events}, Services: p.Services}
 		if !config.ValidWorkloadRef(g.Ref) {
@@ -126,7 +128,7 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 		if p.MaxDurationSeconds < 0 || int64(p.MaxDurationSeconds) > config.MaxWorkloadMaxDurationSeconds || len(g.WorkflowRef) > 1024 || len(g.Ref) > 512 || len(g.Environment) > 256 || len(g.JobWorkflowRef) > 1024 {
 			return ErrProjectConfigurationInvalid
 		}
-		if err := config.ValidateWorkloads(config.TNL{Services: services, Workloads: map[string]config.Workload{name: policy}}); err != nil {
+		if err := config.ValidateWorkloads(services, map[string]config.Workload{name: policy}); err != nil {
 			return errors.Join(ErrProjectConfigurationInvalid, err)
 		}
 		slices.Sort(p.Services)
@@ -174,7 +176,7 @@ func reconcileWorkloadPolicies(ctx context.Context, tx pgx.Tx, r ApplyProjectCon
 			}
 			continue
 		}
-		if _, err = tx.Exec(ctx, `DELETE FROM control.workload_session_services right_ WHERE right_.workload_session_id=$1 AND NOT EXISTS(SELECT 1 FROM control.applied_project_services applied WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=ANY($4::text[]) AND applied.service_id=right_.service_id)`, s.id, r.TeamID, r.ProjectKey, p.Services); err != nil {
+		if _, err = tx.Exec(ctx, `DELETE FROM control.workload_session_services right_ WHERE right_.workload_session_id=$1 AND NOT EXISTS(SELECT 1 FROM control.applied_project_services applied JOIN control.project_publisher_groups deployment ON deployment.id=applied.group_id AND deployment.deleted_at IS NULL WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=ANY($4::text[]) AND applied.service_id=right_.service_id AND deployment.name=$5)`, s.id, r.TeamID, r.ProjectKey, p.Services, p.Deployment); err != nil {
 			return err
 		}
 		if p.MaxDurationSeconds > 0 {
@@ -281,18 +283,23 @@ func (d *Database) WorkloadPolicy(ctx context.Context, team, project, name, sour
 		return ProjectWorkload{}, err
 	}
 	defer rollback(ctx, tx, "read workload policy", &retErr)()
-	row, err := controlstatedb.New(tx).LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: team, ProjectKey: project})
+	q := controlstatedb.New(tx)
+	row, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: team, ProjectKey: project})
 	if err != nil {
 		return ProjectWorkload{}, publisherLookupError(err, ErrWorkloadDenied)
 	}
 	if row.SourceFingerprint != source {
 		return ProjectWorkload{}, ErrWorkloadDenied
 	}
-	c, err := d.openAppliedProject(row)
+	record, err := d.openAppliedProjectRecord(row)
 	if err != nil {
 		return ProjectWorkload{}, err
 	}
-	p, ok := c.Workloads[name]
+	policies, err := record.workloads(ctx, q, row)
+	if err != nil {
+		return ProjectWorkload{}, err
+	}
+	p, ok := policies[name]
 	if !ok {
 		return p, ErrWorkloadDenied
 	}

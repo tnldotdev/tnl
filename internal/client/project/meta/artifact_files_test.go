@@ -12,7 +12,7 @@ import (
 
 func artifactFiles(t *testing.T) map[string][]byte {
 	t.Helper()
-	files, err := PythonFacade(config.TNL{}, "tnl.yml")
+	files, err := PythonFacade(config.Project{}, "tnl.yml")
 	if err != nil {
 		t.Fatal(err)
 	}

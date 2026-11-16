@@ -5,21 +5,27 @@ import { Pool } from "pg";
 
 const configuration = defineConfig(({ worktree }) => ({
   services: {
-    api: { protocol: "http", publicURL: {} },
-    db: { protocol: "postgres", target: { type: "rds", instance: "orders", region: "us-east-1" } },
-    mysql: { protocol: "mysql", target: { type: "address", address: "db.internal:3306" } },
-    cluster: {
-      protocol: "kubernetes",
-      target: { type: "eks", cluster: "development", region: "us-east-1" },
-    },
+    api: { protocol: "http" },
+    db: { protocol: "postgres" },
+    mysql: { protocol: "mysql" },
+    cluster: { protocol: "kubernetes" },
     ...(worktree.label.checkout
       ? {
           worker: {
             protocol: "tcp" as const,
-            target: { type: "address" as const, address: "worker:9000" },
           },
         }
       : {}),
+  },
+  deployments: {
+    production: {
+      targets: {
+        api: { address: "api.internal:3000" },
+        db: { type: "rds", instance: "orders", region: "us-east-1" },
+        mysql: { address: "db.internal:3306" },
+        cluster: { type: "eks", cluster: "development", region: "us-east-1" },
+      },
+    },
   },
 }));
 

@@ -18,7 +18,8 @@ func TestIntegrationProjectStatusWorktreeInventory(t *testing.T) {
 	r := appliedProjectRequest(t, d, now)
 	r.ProjectLabel = "storefront"
 	local := ProjectServiceConfiguration{Protocol: "postgres", Target: "localhost:5432", TargetTLS: &ProjectTargetTLS{Hostname: "database.internal"}}
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"db": local, "web": {Target: "app"}}}
+	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"db": local, "web": {Target: "app"}}}
+	r = selectedProjectRequest(r, "local")
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
@@ -62,5 +63,59 @@ func TestIntegrationProjectStatusWorktreeInventory(t *testing.T) {
 	data, err := json.Marshal(page)
 	if err != nil || strings.Contains(string(data), "localhost") || strings.Contains(string(data), "target_tls") || strings.Contains(string(data), "configuration") {
 		t.Fatal("status leaked configuration", string(data), err)
+	}
+}
+
+func TestIntegrationProjectStatusKeepsSameNamedDeploymentBindings(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "deployment_status")
+	if err := d.ConfigureIngressServicePorts(t.Context(), PrimaryIngressPoolID, []tcpport.Range{{First: 25443, Last: 25600}}); err != nil {
+		t.Fatal(err)
+	}
+	r := appliedProjectRequest(t, d, now)
+	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"db": {Protocol: "postgres", Target: "localhost:5432"}}}
+	r = selectedProjectRequest(r, "local")
+	local, err := d.ApplyProjectConfiguration(t.Context(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.ExpectedRevision = local.Revision
+	r.Deployment = "staging"
+	r.Configuration.Settings = &DeploymentSettings{}
+	r.Configuration.Services["db"] = ProjectServiceConfiguration{Protocol: "postgres", Target: "staging.internal:5432"}
+	staging, err := d.ApplyProjectConfiguration(t.Context(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	customer, err := d.CreateDeployment(t.Context(), CreateDeploymentRequest{
+		DeploymentScope: DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID},
+		Name:            "customer", IdempotencyKey: "status-customer", Targets: map[string]DeploymentTarget{"db": {Address: "customer.internal:5432"}}, Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := d.GetProjectStatus(t.Context(), r.TeamID, r.ProjectKey, r.ActorID, "", now)
+	if err != nil || len(status.Publications) != 3 {
+		t.Fatal("same-named bindings were lost", status, err)
+	}
+	seen := map[string]bool{}
+	for _, publication := range status.Publications {
+		if publication.Service != "db" || seen[publication.PublisherGroup] {
+			t.Fatal("status mixed deployment selectors", publication)
+		}
+		seen[publication.PublisherGroup] = true
+	}
+	if !seen["local"] || !seen["staging"] || !seen["customer"] {
+		t.Fatal("status borrowed another deployment's selector", seen)
+	}
+	retired, err := d.RetireProject(t.Context(), r.TeamID, r.ProjectKey, r.ActorID, staging.Revision, now)
+	if err != nil || retired.RetiredAt == nil {
+		t.Fatal("retirement did not include all deployment owners", retired, err)
+	}
+	status, err = d.GetProjectStatus(t.Context(), r.TeamID, r.ProjectKey, r.ActorID, "", now)
+	if err != nil || len(status.Publications) != 0 {
+		t.Fatal("retirement retained sibling publications", status, err)
+	}
+	if _, err = d.GetDeployment(t.Context(), DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID}, customer.ID); err == nil {
+		t.Fatal("retirement retained an independently managed deployment")
 	}
 }

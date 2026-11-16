@@ -88,11 +88,15 @@ func (d *Database) AttachWorkloadAssertion(ctx context.Context, id, credential s
 	if err != nil {
 		return result, err
 	}
-	configuration, err := d.openAppliedProject(project)
+	record, err := d.openAppliedProjectRecord(project)
 	if err != nil {
 		return result, err
 	}
-	p, found := configuration.Workloads[row.WorkloadName]
+	policies, err := record.workloads(ctx, controlstatedb.New(tx), project)
+	if err != nil {
+		return result, err
+	}
+	p, found := policies[row.WorkloadName]
 	if !found || !p.matches(c) || row.Binding != workloadBinding(row.TeamID, row.ProjectKey, row.WorkloadName, project.SourceFingerprint, c) || row.RevokedAt.Valid {
 		return result, ErrWorkloadDenied
 	}

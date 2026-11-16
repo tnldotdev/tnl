@@ -118,6 +118,11 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/connector -run='^TestIntegration' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
+  service-access:
+    desc: Check deployment-scoped CLI sharing against real control without granting visitor access
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='^TestIntegrationServiceShareManagerLookup$' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
   local-database:
     desc: Check the explicit local deployment SDK against disposable PostgreSQL without sign-in
     deps: [":js:build"]

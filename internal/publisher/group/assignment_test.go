@@ -12,24 +12,31 @@ import (
 func TestAssignmentPublisherRejectsInvalidAssignmentBeforeIdentityPreparation(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		change func(*controlv1.PublisherGroupServiceAssignment)
+		change func(*AssignmentPublisher, *controlv1.PublisherGroupServiceAssignment)
 	}{
-		{"missing service kind", func(a *controlv1.PublisherGroupServiceAssignment) { a.ServiceKind = "" }},
-		{"public URL", func(a *controlv1.PublisherGroupServiceAssignment) { a.ServiceKind = "public_url" }},
-		{"missing protocol", func(a *controlv1.PublisherGroupServiceAssignment) { a.Configuration.Protocol = nil }},
-		{"missing trust revision", func(a *controlv1.PublisherGroupServiceAssignment) { a.TrustRevision = 0 }},
-		{"negative trust revision", func(a *controlv1.PublisherGroupServiceAssignment) { a.TrustRevision = -1 }},
-		{"missing group", func(a *controlv1.PublisherGroupServiceAssignment) { a.Configuration.PublisherGroup = nil }},
-		{"empty group", func(a *controlv1.PublisherGroupServiceAssignment) { a.Configuration.PublisherGroup = new("") }},
-		{"local group", func(a *controlv1.PublisherGroupServiceAssignment) { a.Configuration.PublisherGroup = new("local") }},
+		{"missing service kind", func(_ *AssignmentPublisher, a *controlv1.PublisherGroupServiceAssignment) { a.ServiceKind = "" }},
+		{"public URL", func(_ *AssignmentPublisher, a *controlv1.PublisherGroupServiceAssignment) {
+			a.ServiceKind = "public_url"
+		}},
+		{"missing protocol", func(_ *AssignmentPublisher, a *controlv1.PublisherGroupServiceAssignment) {
+			a.Configuration.Protocol = nil
+		}},
+		{"missing trust revision", func(_ *AssignmentPublisher, a *controlv1.PublisherGroupServiceAssignment) { a.TrustRevision = 0 }},
+		{"negative trust revision", func(_ *AssignmentPublisher, a *controlv1.PublisherGroupServiceAssignment) { a.TrustRevision = -1 }},
+		{"missing deployment ID", func(p *AssignmentPublisher, _ *controlv1.PublisherGroupServiceAssignment) { p.Member.GroupId = "" }},
+		{"empty deployment name", func(p *AssignmentPublisher, _ *controlv1.PublisherGroupServiceAssignment) { p.Member.GroupName = "" }},
+		{"local deployment", func(p *AssignmentPublisher, _ *controlv1.PublisherGroupServiceAssignment) {
+			p.Member.GroupName = "local"
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			assignment := controlv1.PublisherGroupServiceAssignment{ServiceKind: "service", TrustRevision: 1, Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocol("http")), PublisherGroup: new("application")}}
-			test.change(&assignment)
+			assignment := controlv1.PublisherGroupServiceAssignment{ServiceKind: "service", TrustRevision: 1, Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocol("http"))}}
+			publisher := AssignmentPublisher{Member: controlv1.PublisherGroupMember{GroupId: "deployment-one", GroupName: "application"}}
+			test.change(&publisher, &assignment)
 			healthCalls := 0
 			// no identity capabilities are supplied: validation must reject the
 			// assignment before attempting native identity or target preparation.
-			err := (AssignmentPublisher{}).Publish(t.Context(), assignment, func(bool) { healthCalls++ })
+			err := publisher.Publish(t.Context(), assignment, func(bool) { healthCalls++ })
 			if !errors.Is(err, ErrAssignment) || healthCalls != 0 {
 				t.Fatal("invalid assignment reached identity or health preparation", err, healthCalls)
 			}

@@ -73,22 +73,36 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if before, err := owner.ListProjects(ctx, controlv1.ListProjectsParams{TeamId: team}); err != nil || len(before.Projects) != 0 {
 		t.Fatal("source resolution created project state", err)
 	}
-	body := controlv1.ApplyProjectConfigurationRequest{TeamId: team, Source: &testProjectSource, ExpectedRevision: 0, Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"web": {PublisherGroup: &group, Target: "http://app.internal:3000"}}}}
+	body := controlv1.ApplyProjectConfigurationRequest{TeamId: team, Source: &testProjectSource, ExpectedRevision: 0, Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"web": {Target: "http://app.internal:3000"}}}}
 	body.Configuration.Oauth = true
 	body.Configuration.Services["local-app"] = controlv1.ProjectServiceConfiguration{Target: "app", PublicUrl: &controlv1.ProjectServicePublicURL{}}
 	body.Configuration.Services["local-private"] = controlv1.ProjectServiceConfiguration{Target: "app"}
 	body.Configuration.Webhooks = map[string]controlv1.ProjectWebhook{"payments": {Service: "local-app", Path: "/hooks/payments", Provider: controlv1.Custom}}
 	name, hostname, mode := "website", "upstream.internal", controlv1.Restricted
 	digest := sha256.Sum256([]byte("tnl-target-tls/v1\x00" + hostname + "\x00"))
-	body.Configuration.Services["public"] = controlv1.ProjectServiceConfiguration{PublisherGroup: &group, Name: &name, Target: "https://192.0.2.5:8443", TargetTls: &controlv1.ProjectTargetTLS{Hostname: hostname, Digest: hex.EncodeToString(digest[:])}, Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectPublicAccess{Mode: &mode}}}
+	body.Configuration.Services["public"] = controlv1.ProjectServiceConfiguration{Name: &name, Target: "https://192.0.2.5:8443", TargetTls: &controlv1.ProjectTargetTLS{Hostname: hostname, Digest: hex.EncodeToString(digest[:])}, Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectPublicAccess{Mode: &mode}}}
+	body.Deployment = group
+	body.ServiceDeclarations = controlv1.ProjectServiceDeclarations{"web": "http", "public": "http", "local-app": "http", "local-private": "http"}
+	localBody := body
+	localBody.Deployment = "local"
+	localBody.Configuration = controlv1.ProjectConfiguration{Oauth: true, Webhooks: body.Configuration.Webhooks, Services: map[string]controlv1.ProjectServiceConfiguration{"local-app": body.Configuration.Services["local-app"], "local-private": body.Configuration.Services["local-private"]}}
+	body.Configuration.Oauth = false
+	body.Configuration.Webhooks = map[string]controlv1.ProjectWebhook{}
+	delete(body.Configuration.Services, "local-app")
+	delete(body.Configuration.Services, "local-private")
 	if _, err = anonymous.ApplyProjectConfiguration(ctx, project, body); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("anonymous desired-state mutation", err)
 	}
+	localApplied, err := owner.ApplyProjectConfiguration(ctx, project, localBody)
+	if err != nil || !localApplied.Configuration.Oauth || len(localApplied.Configuration.Webhooks) != 1 || len(localApplied.Services) != 2 {
+		t.Fatal("local wire configuration lost integration declarations", localApplied, err)
+	}
+	body.ExpectedRevision = localApplied.Revision
 	applied, err := owner.ApplyProjectConfiguration(ctx, project, body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if applied.Revision != 1 || len(applied.Services) != 4 || !applied.Configuration.Oauth || len(applied.Configuration.Webhooks) != 1 {
+	if applied.Revision != 2 || len(applied.Services) != 2 || applied.Configuration.Oauth || len(applied.Configuration.Webhooks) != 0 {
 		t.Fatalf("wire configuration: %+v", applied)
 	}
 	if applied.Configuration.Services["public"].TargetTls.Digest != hex.EncodeToString(digest[:]) {
@@ -104,10 +118,10 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	page, err := reader.ListProjects(ctx, controlv1.ListProjectsParams{TeamId: team})
-	if err != nil || len(page.Projects) != 1 || page.Projects[0].ProjectKey != project || page.Projects[0].Revision != 1 {
+	if err != nil || len(page.Projects) != 1 || page.Projects[0].ProjectKey != project || page.Projects[0].Revision != 2 {
 		t.Fatal("project discovery lost its usable selector", page, err)
 	}
-	discovered, err := reader.GetProjectConfiguration(ctx, page.Projects[0].TeamId, page.Projects[0].ProjectKey)
+	discovered, err := reader.GetProjectConfiguration(ctx, page.Projects[0].TeamId, page.Projects[0].ProjectKey, group)
 	if err != nil || discovered.Groups == nil || len(*discovered.Groups) != 1 || (*discovered.Groups)[0].Id == "" {
 		t.Fatal("discovered selector did not resolve group detail", err)
 	}
@@ -121,7 +135,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if _, err = reader.GetProjectStatus(ctx, project, controlv1.GetProjectStatusParams{TeamId: "other-team"}); !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatal("project status crossed teams", err)
 	}
-	replay := controlv1.ApplyProjectConfigurationRequest{TeamId: team, Configuration: discovered.Configuration}
+	replay := controlv1.ApplyProjectConfigurationRequest{TeamId: team, Deployment: group, ServiceDeclarations: discovered.ServiceDeclarations, Configuration: discovered.Configuration}
 	if result, err := reader.ApplyProjectConfiguration(ctx, project, replay); err != nil || result.Revision != discovered.Revision || result.SourceFingerprint != resolved.SourceFingerprint {
 		t.Fatal("same-content replay required a caller fingerprint or changed the saved source", err)
 	}
@@ -151,7 +165,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if err != nil || len(previews.Previews) != 1 || previews.Previews[0].Id != preview.Id {
 		t.Fatal("creator preview was not discoverable from another session", err)
 	}
-	endpoint := applied.Configuration.Webhooks["payments"]
+	endpoint := localApplied.Configuration.Webhooks["payments"]
 	if endpoint.Delivery == nil || *endpoint.Delivery != "fanout" || endpoint.Methods == nil || len(*endpoint.Methods) != 1 || (*endpoint.Methods)[0] != "POST" {
 		t.Fatal("wire root declaration lost webhook defaults")
 	}
@@ -166,6 +180,26 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, field := range []string{"publisher_groups", "publisher_group"} {
+		var retired map[string]any
+		if err := json.Unmarshal(encoded, &retired); err != nil {
+			t.Fatal(err)
+		}
+		configuration := retired["configuration"].(map[string]any)
+		if field == "publisher_groups" {
+			configuration[field] = map[string]any{group: map[string]any{}}
+		} else {
+			configuration["services"].(map[string]any)["web"].(map[string]any)[field] = group
+		}
+		data, err := json.Marshal(retired)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := rawAPI.ApplyProjectConfigurationWithBodyWithResponse(ctx, project, "application/json", bytes.NewReader(data), auth)
+		if err != nil || response.StatusCode() != http.StatusBadRequest {
+			t.Fatal("apply accepted a retired group field", field, err)
+		}
 	}
 	var missing map[string]any
 	if err = json.Unmarshal(encoded, &missing); err != nil {
@@ -201,7 +235,11 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 		t.Fatal("apply accepted a forged trust digest", err)
 	}
 	var unknown map[string]any
-	if err = json.Unmarshal(encoded, &unknown); err != nil {
+	localEncoded, err := json.Marshal(localBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(localEncoded, &unknown); err != nil {
 		t.Fatal(err)
 	}
 	secret := "must-not-leak-webhook-secret"
@@ -263,11 +301,11 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if err != nil || len(projection.Services) != 0 {
 		t.Fatal("service leaked into public URL metadata", projection, err)
 	}
-	local, err := owner.RealizeLocalProjectService(ctx, project, "local-app", controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: applied.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: body.Configuration.Services["local-app"]})
+	local, err := owner.RealizeLocalProjectService(ctx, project, "local-app", controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: applied.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: localBody.Configuration.Services["local-app"]})
 	if err == nil || local.ServiceId != "" {
 		t.Fatal("public realization accepted a missing exact public URL ID")
 	}
-	local, err = owner.RealizeLocalProjectService(ctx, project, "local-private", controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: applied.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: body.Configuration.Services["local-private"]})
+	local, err = owner.RealizeLocalProjectService(ctx, project, "local-private", controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: applied.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: localBody.Configuration.Services["local-private"]})
 	if err != nil || local.ServiceId == "" || local.Metadata == nil || local.Metadata.Protocol != controlv1.ServiceProtocolHTTP {
 		t.Fatal("local realization wire lost its approved resource metadata", local, err)
 	}
@@ -306,15 +344,19 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if err = anonymous.AcknowledgePublisherGroupConfiguration(ctx, lease.AccessToken, controlv1.PublisherGroupAcknowledgement{Revision: assignments.Revision, ConfigurationHash: assignments.ConfigurationHash, Healthy: true}); err != nil {
 		t.Fatal(err)
 	}
-	current, err := owner.GetProjectConfiguration(ctx, team, project)
+	current, err := owner.GetProjectConfiguration(ctx, team, project, group)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(current.Members) != 1 || current.Members[0].ObservedRevision != 1 || !current.Members[0].Healthy {
 		t.Fatal("wire status lost acknowledgement")
 	}
-	if !current.Configuration.Oauth || len(current.Configuration.Webhooks) != 1 || current.Revision != 1 {
-		t.Fatal("wire status lost root state or invalid metadata changed the revision")
+	if current.Configuration.Oauth || len(current.Configuration.Webhooks) != 0 || current.Revision != applied.Revision {
+		t.Fatal("remote wire status borrowed local state or invalid metadata changed the revision")
+	}
+	localStatus, err := owner.GetProjectConfiguration(ctx, team, project, "local")
+	if err != nil || !localStatus.Configuration.Oauth || len(localStatus.Configuration.Webhooks) != 1 || localStatus.Revision != current.Revision {
+		t.Fatal("remote apply changed local root state", localStatus, err)
 	}
 	// a group lease is not a person's session, and a session is not a group lease.
 	if _, err = anonymous.GetPublisherGroupAssignments(ctx, session.AccessToken.String()); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
@@ -324,7 +366,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = groupAsPerson.GetProjectConfiguration(ctx, team, project); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if _, err = groupAsPerson.GetProjectConfiguration(ctx, team, project, group); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("group read manager configuration", err)
 	}
 	if _, err = groupAsPerson.SelectServiceRun(ctx, local.ServiceId, device.Id); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
@@ -373,7 +415,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if page, err := owner.ListProjects(ctx, controlv1.ListProjectsParams{TeamId: team}); err != nil || len(page.Projects) != 0 {
 		t.Fatal("retired HTTP project remained discoverable", page, err)
 	}
-	if detail, err := owner.GetProjectConfiguration(ctx, team, project); err != nil || detail.RetiredAt == nil || detail.SourceFingerprint != resolved.SourceFingerprint {
+	if detail, err := owner.GetProjectConfiguration(ctx, team, project, "local"); err != nil || detail.RetiredAt == nil || detail.SourceFingerprint != resolved.SourceFingerprint {
 		t.Fatal("retired HTTP project lost source identity", detail, err)
 	}
 	if _, err := owner.RetireProject(ctx, "missing", retirement); !errors.Is(err, clientcontrol.ErrNotFound) {

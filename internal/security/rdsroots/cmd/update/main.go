@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/publisher/target/discovery/rdsroots"
+	"github.com/tnldotdev/tnl/internal/security/rdsroots"
 )
 
 func main() {
@@ -88,8 +88,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile("internal/publisher/target/discovery/rdsroots/source.pem", original, 0644); err != nil {
+	if err := os.WriteFile("internal/security/rdsroots/source.pem", original, 0644); err != nil {
 		return err
 	}
-	return os.WriteFile("internal/publisher/target/discovery/rdsroots/bundles.json", append(encoded, '\n'), 0644)
+	return os.WriteFile("internal/security/rdsroots/bundles.json", append(encoded, '\n'), 0644)
 }

@@ -21,14 +21,18 @@ tnl:
     access: {ip: [192.0.2.0/24]}
     ephemeral: true
   services:
-    web:
-      name: website
-      public_url:
-        access: anonymous
-      target: {type: address, address: 4000}
-      http:
-        open: true
-        readiness: {path: /status}
+    web: {}
+  deployments:
+    local:
+      targets:
+        web:
+          name: website
+          public_url:
+            access: anonymous
+          address: 4000
+          http:
+            open: true
+            readiness: {path: /status}
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -37,7 +41,11 @@ tnl:
 	if err != nil {
 		t.Fatal(err)
 	}
-	project := Project{Config: *document.TNL}
+	selected, err := config.ResolveDeployment(*document.TNL, "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := Project{Config: selected}
 	effective, err := project.EffectiveService("web")
 	if err != nil {
 		t.Fatal(err)
@@ -186,23 +194,21 @@ func TestResolvedServiceSelectsOnlyApplicableProjectDefaults(t *testing.T) {
 	}
 }
 
-func TestPublisherGroupIsExplicitAndDefaultsToLocal(t *testing.T) {
-	group, protocol := "cloud", "postgres"
+func TestSelectedDeploymentIsExplicitAndDefaultsToLocal(t *testing.T) {
+	protocol := "postgres"
 	target := config.Target("db.internal:5432")
 	project := Project{Config: config.TNL{
-		PublisherGroups: map[string]config.PublisherGroup{"cloud": {}},
 		Services: config.Services{
 			"default": {},
-			"db":      {PublisherGroup: &group, Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}},
 		},
 	}}
-	for _, test := range []struct {
-		name     string
-		expected string
-	}{{"default", "local"}, {"db", "cloud"}} {
-		if actual := config.PublisherGroupName(project.Config.Services[test.name]); actual != test.expected {
-			t.Fatalf("service %q group=%s", test.name, actual)
-		}
+	if actual := config.SelectedDeployment(project.Config); actual != "local" {
+		t.Fatalf("default deployment=%s", actual)
+	}
+	project.Config.Deployment = "cloud"
+	project.Config.Services = config.Services{"db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}}}
+	if actual := config.SelectedDeployment(project.Config); actual != "cloud" || config.Protocol(project.Config.Services["db"]) != protocol || *project.Config.Services["db"].Target.Address != target {
+		t.Fatal("selected deployment lost its binding")
 	}
 }
 

@@ -21,7 +21,7 @@ const keys = parseJSON(
   "configuration key mappings",
 );
 const client = {
-  ...parseValue(schema.$defs.TNL, schemaObject, "TNL schema"),
+  ...parseValue(schema.$defs.Project, schemaObject, "project schema"),
   $schema: schema.$schema,
   $defs: schema.$defs,
 };

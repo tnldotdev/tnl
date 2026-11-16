@@ -6,11 +6,11 @@ import (
 	"errors"
 	"io"
 	"os"
-	"slices"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/internal/publisher/setup"
@@ -57,24 +57,15 @@ func runPublisherGroupProvision(ctx context.Context, options groupIdentityProvis
 	if err != nil {
 		return err
 	}
-	applied, err := session.Authenticated().Control.GetProjectConfiguration(ctx, current.Team().Id, options.ProjectKey)
+	deployment, err := session.Authenticated().Control.GetDeployment(ctx, current.Team().Id, options.ProjectKey, options.Group)
 	if err != nil {
 		return err
 	}
-	var groupID string
-	if applied.Groups == nil {
+	if deployment.TeamId != current.Team().Id || deployment.ProjectKey != options.ProjectKey || !opaqueid.Valid(deployment.Id, "pgrp_") {
 		return credentialfile.ErrInvalid
 	}
-	for _, group := range *applied.Groups {
-		if slices.Contains(group.GroupNames, options.Group) {
-			groupID = group.Id
-		}
-	}
-	if groupID == "" {
-		return publisherCLIError("publisher group is not in this applied project's selector history")
-	}
 	value, err := setup.Ensure(ctx, session.Store(), session.Authenticated().Control, client, setup.Scope{
-		Server: server, Team: current.Team().Id, Project: options.ProjectKey, GroupID: groupID, Group: options.Group, Instance: options.Instance,
+		Server: server, Team: current.Team().Id, Project: options.ProjectKey, GroupID: deployment.Id, Group: options.Group, Instance: options.Instance,
 	})
 	if err != nil {
 		return err

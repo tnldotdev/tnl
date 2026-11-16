@@ -12,7 +12,7 @@ import (
 // local configuration lookup or fallback to an address/static trust setting.
 func AssignmentDiscovery(configuration controlv1.ProjectServiceConfiguration) (publisherdiscovery.Request, error) {
 	descriptor := configuration.TargetDiscovery
-	if descriptor == nil || configuration.Protocol == nil || !configuration.Protocol.Valid() || !descriptor.Type.Valid() || configuration.Target != "" || configuration.TargetTls != nil || configuration.PublisherGroup == nil || *configuration.PublisherGroup == "" || *configuration.PublisherGroup == "local" || configuration.PublicUrl != nil || configuration.Http != nil {
+	if descriptor == nil || configuration.Protocol == nil || !configuration.Protocol.Valid() || !descriptor.Type.Valid() || configuration.Target != "" || configuration.TargetTls != nil || configuration.PublicUrl != nil || configuration.Http != nil {
 		return publisherdiscovery.Request{}, ErrAssignment
 	}
 	if descriptor.Cluster != nil && *descriptor.Cluster == "" || descriptor.Instance != nil && *descriptor.Instance == "" {

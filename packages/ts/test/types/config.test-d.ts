@@ -8,52 +8,49 @@ import {
 } from "@tnldotdev/tnl/config";
 import { assert, assertType, expectTypeOf, test } from "vitest";
 
+function local<const Services, const Targets>(services: Services, targets: Targets) {
+  return { services, deployments: { local: { targets } } };
+}
+
 export const grouped = defineConfig({
-  publisherGroups: { cloud: { description: "database publisher" } },
-  services: {
-    db: {
-      publisherGroup: "cloud",
-      protocol: "postgres",
-      target: { type: "address", address: "db.internal:5432" },
-      access: { team: true },
+  services: { db: { protocol: "postgres" }, internal: {} },
+  deployments: {
+    cloud: {
+      description: "database publisher",
+      targets: { db: { address: "db.internal:5432", access: { team: true } } },
     },
-    internal: { target: { type: "app" } },
+    local: { targets: { internal: {} } },
   },
 });
-test("publisher groups select named assignments and reject deployment settings", () => {
+
+test("deployments select declared bindings and reject infrastructure settings", () => {
   assertType<TnlConfig>(grouped);
   defineConfig({
-    publisherGroups: { cloud: {} },
-    services: {
-      // @ts-expect-error groups must be declared.
-      db: { publisherGroup: "missing", target: { type: "address", address: "db.internal:5432" } },
-    },
+    services: { db: {} },
+    // @ts-expect-error every binding needs a logical declaration.
+    deployments: { cloud: { targets: { missing: { address: 3000 } } } },
   });
   defineConfig({
-    publisherGroups: { cloud: {} },
-    // @ts-expect-error remote groups cannot use app discovery.
-    services: { web: { publisherGroup: "cloud", target: { type: "app" } } },
+    services: { web: {} },
+    // @ts-expect-error remote deployments cannot use app discovery.
+    deployments: { cloud: { targets: { web: { type: "app" } } } },
   });
-  // @ts-expect-error local is reserved.
-  defineConfig({ publisherGroups: { local: {} } });
-  const infrastructureGroup = {
-    publisherGroups: { cloud: { description: "db", type: "self-hosted" } },
+  // @ts-expect-error local is client-side and has no server reachability.
+  defineConfig({ deployments: { local: { public: true } } });
+  const infrastructure = {
+    deployments: { cloud: { description: "db", type: "self-hosted" } },
   } as const;
-  // @ts-expect-error infrastructure settings do not belong in project configuration.
-  defineConfig(infrastructureGroup);
-  const detailedAWSGroup = {
-    publisherGroups: { production: { aws: { replicas: 2, vpcId: "vpc-12345678" } } },
+  // @ts-expect-error inferred infrastructure settings are rejected.
+  defineConfig(infrastructure);
+  const aws = {
+    deployments: { production: { aws: { replicas: 2, vpcId: "vpc-12345678" } } },
   } as const;
-  // @ts-expect-error inferred AWS deployment settings are rejected too.
-  defineConfig(detailedAWSGroup);
-  defineConfig({
-    publisherGroups: {
-      production: {
-        // @ts-expect-error deployment configuration is not part of a publisher group.
-        aws: {},
-      },
-    },
-  });
+  // @ts-expect-error inferred AWS settings are rejected too.
+  defineConfig(aws);
+  // @ts-expect-error fresh AWS settings are rejected.
+  defineConfig({ deployments: { production: { aws: {} } } });
+  // @ts-expect-error the replaced root layout has no compatibility alias.
+  defineConfig({ publisherGroups: { cloud: {} } });
 });
 
 const config = defineConfig({
@@ -72,38 +69,29 @@ const config = defineConfig({
       },
     },
   },
-  services: {
-    web: {
-      publicURL: {},
-      target: { type: "app" },
-      http: {
-        open: true,
-        readiness: { path: "/health" },
-        paths: { "/api": "api", "/v1": { service: "api", stripPrefix: true } },
+  services: { web: {}, api: {}, db: { protocol: "postgres" }, cache: { protocol: "tcp" } },
+  deployments: {
+    local: {
+      targets: {
+        web: {
+          publicURL: {},
+          type: "app",
+          http: {
+            open: true,
+            readiness: { path: "/health" },
+            paths: { "/api": "api", "/v1": { service: "api", stripPrefix: true } },
+          },
+        },
+        api: {
+          name: "api-preview",
+          publicURL: {},
+          type: "address",
+          address: "https://localhost:4000",
+          tls: { ca: "system", hostname: "localhost" },
+        },
+        db: { type: "compose", service: "db", port: 5432, tls: {} },
+        cache: { name: "shared-cache", type: "docker", container: "shop-cache", port: 6379 },
       },
-    },
-    api: {
-      name: "api-preview",
-      publicURL: {},
-      target: {
-        type: "address",
-        address: "https://localhost:4000",
-        tls: { caFile: "./ca.pem", serverName: "localhost" },
-      },
-    },
-    db: {
-      protocol: "postgres",
-      target: {
-        type: "compose",
-        service: "db",
-        port: 5432,
-        tls: {},
-      },
-    },
-    cache: {
-      protocol: "tcp",
-      name: "shared-cache",
-      target: { type: "docker", container: "shop-cache", port: 6379 },
     },
   },
   aliases: { review: { service: "web" } },
@@ -112,88 +100,100 @@ const config = defineConfig({
 
 test("configuration preserves service, target, name, and path literals", () => {
   expectTypeOf(config.services.db.protocol).toEqualTypeOf<"postgres">();
-  expectTypeOf(config.services.cache.name).toEqualTypeOf<"shared-cache">();
-  expectTypeOf(config.services.api.name).toEqualTypeOf<"api-preview">();
-  assertType<object>(config.services.api.publicURL);
-  expectTypeOf(config.services.web.http.paths["/api"]).toEqualTypeOf<"api">();
+  expectTypeOf(config.deployments.local.targets.cache.name).toEqualTypeOf<"shared-cache">();
+  expectTypeOf(config.deployments.local.targets.api.name).toEqualTypeOf<"api-preview">();
+  assertType<object>(config.deployments.local.targets.api.publicURL);
+  expectTypeOf(config.deployments.local.targets.web.http.paths["/api"]).toEqualTypeOf<"api">();
 });
 
 export const factory = defineConfig(async ({ worktree, project, env, cwd }) => ({
-  services: {
-    web: { publicURL: {}, http: { paths: { "/api": "api" } } },
-    api: {
-      name: `${env.USER ?? "user"}-${worktree.label.id}-${cwd.length}-${project.relativeDirectory.length}`,
+  services: { web: {}, api: {} },
+  deployments: {
+    local: {
+      targets: {
+        web: { publicURL: {}, http: { paths: { "/api": "api" } } },
+        api: {
+          name: `${env.USER ?? "user"}-${worktree.label.id}-${cwd.length}-${project.relativeDirectory.length}`,
+        },
+      },
     },
   },
   aliases: { review: { service: "web" } },
 }));
-
-// ordinary factories must preserve their returned discriminants without as const.
-export const literalAddressFactory = defineConfig(() => ({
-  services: { web: { target: { type: "address", address: 3000 } } },
-}));
-export const literalAsyncAddressFactory = defineConfig(async () => ({
-  services: {
-    web: { target: { type: "address", address: 3000 } },
-    db: { protocol: "tcp", target: { type: "address", address: 5432 } },
-  },
-}));
-declare const literalAddressResult: Awaited<ReturnType<typeof literalAddressFactory>>;
-declare const literalAsyncAddressResult: Awaited<ReturnType<typeof literalAsyncAddressFactory>>;
+export const literalAddressFactory = defineConfig(() =>
+  local({ web: {} }, { web: { type: "address", address: 3000 } }),
+);
+export const literalAsyncAddressFactory = defineConfig(async () =>
+  local(
+    { web: {}, db: { protocol: "tcp" } },
+    { web: { type: "address", address: 3000 }, db: { address: 5432 } },
+  ),
+);
 export const addressFactory = defineConfig(({ worktree }) => ({
   inspection: { mode: "summary", retention: "24h", maxBytes: "64MiB" },
   publicURL: {
     access: { ip: ["192.0.2.0/24"] },
     limits: { http: { rate: { count: 5, per: "1m" } } },
   },
-  services: {
-    web: {
-      protocol: "http",
-      publicURL: {},
-      target: { type: "address", address: 3000 },
-      http: { paths: { "/api": { service: "api", stripPrefix: true } } },
+  services: { web: { protocol: "http" }, api: {}, db: { protocol: "tcp" } },
+  deployments: {
+    local: {
+      targets: {
+        web: {
+          publicURL: {},
+          type: "address",
+          address: 3000,
+          http: { paths: { "/api": { service: "api", stripPrefix: true } } },
+        },
+        api: { publicURL: {}, type: "app", name: worktree.label.id },
+        db: { address: 5432 },
+      },
     },
-    api: { publicURL: {}, target: { type: "app" }, name: worktree.label.id },
-    db: { protocol: "tcp", target: { type: "address", address: 5432 } },
   },
   aliases: { review: { service: "web" } },
   webhooks: { payments: { service: "api", path: "/hooks/payments", provider: "stripe" } },
 }));
 export const asyncAddressFactory = defineConfig(async ({ worktree }) => ({
   publicURL: { access: { ip: ["192.0.2.0/24"] } },
-  services: {
-    web: {
-      publicURL: {},
-      target: { type: "address", address: 3000 },
-      http: { paths: { "/api": "api" } },
-    },
-    api: { publicURL: {}, target: { type: "app" }, name: worktree.label.id },
-    db: {
-      protocol: "tcp",
-      target: { type: "compose", service: "db", port: 5432 },
-    },
-    cache: {
-      protocol: "tcp",
-      name: "cache",
-      target: { type: "docker", container: "cache", port: 6379 },
+  services: { web: {}, api: {}, db: { protocol: "tcp" }, cache: { protocol: "tcp" } },
+  deployments: {
+    local: {
+      targets: {
+        web: { publicURL: {}, type: "address", address: 3000, http: { paths: { "/api": "api" } } },
+        api: { publicURL: {}, type: "app", name: worktree.label.id },
+        db: { type: "compose", service: "db", port: 5432 },
+        cache: { name: "cache", type: "docker", container: "cache", port: 6379 },
+      },
     },
   },
   aliases: { review: { service: "web" } },
   webhooks: { payments: { service: "api", path: "/hooks/payments", provider: "stripe" } },
 }));
+declare const literalAddressResult: Awaited<ReturnType<typeof literalAddressFactory>>;
+declare const literalAsyncAddressResult: Awaited<ReturnType<typeof literalAsyncAddressFactory>>;
 declare const addressFactoryResult: Awaited<ReturnType<typeof addressFactory>>;
 declare const asyncAddressFactoryResult: Awaited<ReturnType<typeof asyncAddressFactory>>;
 test("sync and async factories preserve literal discriminants without casts", () => {
-  expectTypeOf(literalAddressResult.services.web.target.type).toEqualTypeOf<"address">();
-  expectTypeOf(literalAsyncAddressResult.services.web.target.type).toEqualTypeOf<"address">();
+  expectTypeOf(literalAddressResult.deployments.local.targets.web.type).toEqualTypeOf<"address">();
+  expectTypeOf(
+    literalAsyncAddressResult.deployments.local.targets.web.type,
+  ).toEqualTypeOf<"address">();
   expectTypeOf(literalAsyncAddressResult.services.db.protocol).toEqualTypeOf<"tcp">();
-  expectTypeOf(addressFactoryResult.services.web.target.type).toEqualTypeOf<"address">();
+  expectTypeOf(addressFactoryResult.deployments.local.targets.web.type).toEqualTypeOf<"address">();
   expectTypeOf(addressFactoryResult.services.web.protocol).toEqualTypeOf<"http">();
   expectTypeOf(addressFactoryResult.services.db.protocol).toEqualTypeOf<"tcp">();
-  expectTypeOf(addressFactoryResult.services.web.http.paths["/api"].service).toEqualTypeOf<"api">();
-  expectTypeOf(asyncAddressFactoryResult.services.web.target.type).toEqualTypeOf<"address">();
-  expectTypeOf(asyncAddressFactoryResult.services.db.target.type).toEqualTypeOf<"compose">();
-  expectTypeOf(asyncAddressFactoryResult.services.cache.target.type).toEqualTypeOf<"docker">();
+  expectTypeOf(
+    addressFactoryResult.deployments.local.targets.web.http.paths["/api"].service,
+  ).toEqualTypeOf<"api">();
+  expectTypeOf(
+    asyncAddressFactoryResult.deployments.local.targets.web.type,
+  ).toEqualTypeOf<"address">();
+  expectTypeOf(
+    asyncAddressFactoryResult.deployments.local.targets.db.type,
+  ).toEqualTypeOf<"compose">();
+  expectTypeOf(
+    asyncAddressFactoryResult.deployments.local.targets.cache.type,
+  ).toEqualTypeOf<"docker">();
   expectTypeOf(asyncAddressFactoryResult.services.db.protocol).toEqualTypeOf<"tcp">();
   expectTypeOf(asyncAddressFactoryResult.aliases.review.service).toEqualTypeOf<"web">();
 });
@@ -207,7 +207,6 @@ test("duration and byte-size values require their units", () => {
   // @ts-expect-error byte sizes use whole binary units.
   "1.5MB" satisfies TnlByteSize;
 });
-
 declare const context: TnlConfigContext;
 declare const services: NonNullable<TnlConfig["services"]>;
 test("configuration context and arbitrary service lookups preserve absence", () => {
@@ -215,543 +214,409 @@ test("configuration context and arbitrary service lookups preserve absence", () 
   expectTypeOf(context.worktree.label.checkout).toEqualTypeOf<string | undefined>();
   expectTypeOf(context.project.relativeDirectory).toEqualTypeOf<string>();
   // @ts-expect-error arbitrary service keys may be absent.
-  services.arbitrary.target satisfies unknown;
+  services.arbitrary.protocol satisfies unknown;
   assert(services.arbitrary !== undefined);
-  assertType<unknown>(services.arbitrary.target);
+  assertType<unknown>(services.arbitrary.protocol);
 });
+
 test("configuration enforces service ownership and references for literals and factories", () => {
+  // @ts-expect-error service-owned target definitions have been replaced.
+  defineConfig({ services: { web: { target: { type: "app" } } } });
   // @ts-expect-error public service directories are removed.
   ({ services: { web: { directory: "apps/web" } } }) satisfies TnlConfig;
-
   // @ts-expect-error root publication settings have been removed.
   ({ publish: { target: 3000 } }) satisfies TnlConfig;
-  // @ts-expect-error readiness belongs under service.http.
+  // @ts-expect-error readiness belongs in a binding's HTTP settings.
   ({ readiness: { path: "/" } }) satisfies TnlConfig;
   // @ts-expect-error flat limits have been removed.
   ({ publicURL: { limits: { requests: 3 } } }) satisfies TnlConfig;
-  // @ts-expect-error browser opening belongs under service.http.
+  // @ts-expect-error browser opening belongs in a binding's HTTP settings.
   ({ publicURL: { open: true } }) satisfies TnlConfig;
-  // @ts-expect-error target variants reject unrelated discovery fields.
-  ({ services: { web: { target: { type: "app", address: 3000 } } } }) satisfies TnlConfig;
-  ({
-    // @ts-expect-error Compose discovery requires a service and private port.
-    services: { db: { target: { type: "compose", service: "db" } } },
-  }) satisfies TnlConfig;
-
-  const duplicatedPublicName = {
-    services: { web: { name: "site", publicURL: { name: "other", access: "anonymous" } } },
-  } as const;
-  // @ts-expect-error name is common service metadata, never duplicated in publicURL.
-  duplicatedPublicName satisfies TnlConfig;
-  // @ts-expect-error inferred values cannot duplicate the saved name in publicURL.
-  defineConfig(duplicatedPublicName);
-  // @ts-expect-error factories cannot duplicate the saved name in publicURL.
-  defineConfig(() => duplicatedPublicName);
-
-  const publicPool = {
-    services: { web: { publicURL: { publisherPool: true, access: "anonymous" } } },
-  } as const;
-  // @ts-expect-error publisherPool is common service metadata, not public URL policy.
-  publicPool satisfies TnlConfig;
-  // @ts-expect-error inferred values cannot put publisherPool under publicURL.
-  defineConfig(publicPool);
-  // @ts-expect-error Docker discovery requires the private port.
-  ({ services: { db: { target: { type: "docker", container: "db" } } } }) satisfies TnlConfig;
   // @ts-expect-error publisher placement is not project configuration.
   ({ publisherGroup: { type: "host", port: 8765 } }) satisfies TnlConfig;
-  ({
-    // @ts-expect-error private target TLS never accepts visitor passthrough.
-    services: { web: { target: { type: "address", address: 3000, tls: { passthrough: true } } } },
-  }) satisfies TnlConfig;
+  // @ts-expect-error publisher container placement is not project configuration.
+  ({ publisherGroup: { type: "compose", service: "publisher", port: 8765 } }) satisfies TnlConfig;
   // @ts-expect-error protocol limits use duration-literal periods.
   ({ publicURL: { limits: { tcp: { rate: { count: 1, per: "minute" } } } } }) satisfies TnlConfig;
-
-  const known = {
-    services: { api: {}, web: { publicURL: {}, http: { paths: { "/api": "api" } } } },
-    aliases: { review: { service: "web" } },
-  } satisfies TnlConfigForServices<"api" | "web">;
-  assertType<TnlConfigForServices<"api" | "web">>(known);
-  // @ts-expect-error aliases must name a configured service.
-  defineConfig({ services: { api: {} }, aliases: { review: { service: "missing" } } });
-  defineConfig({
-    // @ts-expect-error string path mounts name another configured service.
-    services: { web: { publicURL: {}, http: { paths: { "/api": "missing" } } }, api: {} },
-  });
-  defineConfig({
-    services: {
-      // @ts-expect-error object path mounts name another configured service.
-      web: { publicURL: {}, http: { paths: { "/api": { service: "missing" } } } },
-      api: {},
-    },
-  });
-  // @ts-expect-error services cannot mount themselves.
-  defineConfig({ services: { api: { publicURL: {}, http: { paths: { "/api": "api" } } } } });
-  defineConfig({
-    services: { db: { protocol: "postgres", target: { type: "address", address: 5432 } } },
-  });
-  defineConfig({
-    services: {
-      db: {
-        protocol: "tcp",
-        target: { type: "address", address: 5432, tls: {} },
-      },
-    },
-  });
-  defineConfig({
-    services: {
-      db: { protocol: "tcp", target: { type: "address", address: 5432 } },
-    },
-    // @ts-expect-error aliases can only select HTTP services.
-    aliases: { review: { service: "db" } },
-  });
-  defineConfig({
-    services: {
-      // @ts-expect-error HTTP mounts cannot select TCP services.
-      web: { publicURL: {}, http: { paths: { "/db": "db" } } },
-      db: { protocol: "tcp", target: { type: "address", address: 5432 } },
-    },
-  });
-  // @ts-expect-error factory references retain configured service names.
-  defineConfig(() => ({ services: { api: {} }, aliases: { review: { service: "missing" } } }));
-  // @ts-expect-error async factory references retain configured service names.
-  defineConfig(async () => ({
-    services: { api: {}, web: { publicURL: {}, http: { paths: { "/api": "missing" } } } },
-  }));
-  // @ts-expect-error version is implicit for TypeScript configuration.
-  defineConfig({ version: 1 });
-  // @ts-expect-error daemon configuration is static-only.
-  defineConfig({ tnld: { role: "relay" } });
-
-  // the same non-fresh invalid values must fail file-shape, object, and factory checks.
-  defineConfig({
-    services: { db: { protocol: "tcp", target: { type: "address", address: 5432 } } },
-  });
-  defineConfig({
-    services: {
-      db: { protocol: "tcp", name: "database", target: { type: "address", address: 5432 } },
-    },
-  });
-  defineConfig({
-    services: {
-      db: {
-        protocol: "tcp",
-        // @ts-expect-error explicit private saved names must be strings.
-        name: 42,
-        target: { type: "address", address: 5432 },
-      },
-    },
-  });
-  defineConfig({
-    services: {
-      db: {
-        protocol: "tcp",
-        // @ts-expect-error private TCP services cannot declare public URL settings.
-        publicURL: { hostname: "db.example" },
-        target: { type: "address", address: 5432 },
-      },
-    },
-  });
-
-  const tcpApp = {
-    services: { db: { protocol: "tcp", target: { type: "app" } } },
-  } as const;
-  // @ts-expect-error TCP services cannot select an app target.
-  tcpApp satisfies TnlConfig;
-  // @ts-expect-error TCP services cannot select an app target.
-  defineConfig(tcpApp);
-  // @ts-expect-error TCP services cannot select an app target.
-  defineConfig(() => tcpApp);
-  // @ts-expect-error TCP services cannot select an app target.
-  defineConfig(async () => tcpApp);
-
-  const tcpHTTP = {
-    services: {
-      db: {
-        protocol: "tcp",
-        target: { type: "address", address: 5432 },
-        http: { open: true },
-      },
-    },
-  } as const;
-  // @ts-expect-error HTTP settings cannot be applied to a TCP service.
-  tcpHTTP satisfies TnlConfig;
-  // @ts-expect-error HTTP settings cannot be applied to a TCP service.
-  defineConfig(tcpHTTP);
-  // @ts-expect-error HTTP settings cannot be applied to a TCP service.
-  defineConfig(() => tcpHTTP);
-  // @ts-expect-error HTTP settings cannot be applied to a TCP service.
-  defineConfig(async () => tcpHTTP);
-
-  const missingTCPTarget = {
-    services: { db: { protocol: "tcp" } },
-  } as const;
-  // @ts-expect-error a TCP service needs a private target.
-  missingTCPTarget satisfies TnlConfig;
-  // @ts-expect-error a TCP service needs a private target.
-  defineConfig(missingTCPTarget);
-  // @ts-expect-error a TCP service needs a private target.
-  defineConfig(() => missingTCPTarget);
-  // @ts-expect-error a TCP service needs a private target.
-  defineConfig(async () => missingTCPTarget);
-
-  const mixedApp = { services: { web: { target: { type: "app", address: 3000 } } } } as const;
-  // @ts-expect-error app targets cannot contain address fields, including non-fresh values.
-  mixedApp satisfies TnlConfig;
-  // @ts-expect-error app targets cannot contain address fields.
-  defineConfig(mixedApp);
-  // @ts-expect-error app targets cannot contain address fields.
-  defineConfig(() => mixedApp);
-  // @ts-expect-error app targets cannot contain address fields.
-  defineConfig(async () => mixedApp);
-
-  const mixedAddress = {
-    services: { web: { target: { type: "address", address: 3000, container: "web" } } },
-  } as const;
-  // @ts-expect-error address targets cannot contain Docker fields.
-  mixedAddress satisfies TnlConfig;
-  // @ts-expect-error address targets cannot contain Docker fields.
-  defineConfig(mixedAddress);
-  // @ts-expect-error address targets cannot contain Docker fields.
-  defineConfig(() => mixedAddress);
-  // @ts-expect-error address targets cannot contain Docker fields.
-  defineConfig(async () => mixedAddress);
-
-  const mixedCompose = {
-    services: {
-      web: {
-        target: {
-          type: "compose",
-          project: "shop",
-          file: "compose.yml",
-          service: "web",
-          port: 3000,
-          container: "web",
-        },
-      },
-    },
-  } as const;
-  // @ts-expect-error Compose targets cannot contain Docker fields.
-  mixedCompose satisfies TnlConfig;
-  // @ts-expect-error Compose targets cannot contain Docker fields.
-  defineConfig(mixedCompose);
-  // @ts-expect-error Compose targets cannot contain Docker fields.
-  defineConfig(() => mixedCompose);
-  // @ts-expect-error Compose targets cannot contain Docker fields.
-  defineConfig(async () => mixedCompose);
-
-  const mixedDocker = {
-    services: {
-      db: {
-        protocol: "tcp",
-        target: { type: "docker", container: "db", port: 3306, address: "db:3306" },
-      },
-    },
-  } as const;
-  // @ts-expect-error Docker targets cannot contain address fields.
-  mixedDocker satisfies TnlConfig;
-  // @ts-expect-error Docker targets cannot contain address fields.
-  defineConfig(mixedDocker);
-  // @ts-expect-error Docker targets cannot contain address fields.
-  defineConfig(() => mixedDocker);
-  // @ts-expect-error Docker targets cannot contain address fields.
-  defineConfig(async () => mixedDocker);
-
-  const tcpAlias = {
-    services: {
-      db: { protocol: "tcp", target: { type: "address", address: 5432 } },
-    },
-    aliases: { review: { service: "db" } },
-  } as const satisfies TnlConfig;
-  // @ts-expect-error aliases must select an HTTP service.
-  defineConfig(tcpAlias);
-  // @ts-expect-error factory aliases must select an HTTP service.
-  defineConfig(() => tcpAlias);
-  // @ts-expect-error async factory aliases must select an HTTP service.
-  defineConfig(async () => tcpAlias);
-
-  const tcpWebhook = {
-    services: {
-      db: { protocol: "tcp", target: { type: "address", address: 5432 } },
-    },
-    webhooks: { hook: { service: "db", path: "/hook", provider: "custom" } },
-  } as const satisfies TnlConfig;
-  // @ts-expect-error webhooks must select an HTTP service.
-  defineConfig(tcpWebhook);
-  // @ts-expect-error factory webhooks must select an HTTP service.
-  defineConfig(() => tcpWebhook);
-  // @ts-expect-error async factory webhooks must select an HTTP service.
-  defineConfig(async () => tcpWebhook);
-
-  const tcpMount = {
-    services: {
-      web: { publicURL: {}, http: { paths: { "/db": "db" } } },
-      db: { protocol: "tcp", target: { type: "address", address: 5432 } },
-    },
-  } as const satisfies TnlConfig;
-  // @ts-expect-error mounts must select another HTTP service.
-  defineConfig(tcpMount);
-  // @ts-expect-error factory mounts must select another HTTP service.
-  defineConfig(() => tcpMount);
-  // @ts-expect-error async factory mounts must select another HTTP service.
-  defineConfig(async () => tcpMount);
-
-  const tcpObjectMount = {
-    services: {
-      web: { publicURL: {}, http: { paths: { "/db": { service: "db" } } } },
-      db: { protocol: "tcp", target: { type: "address", address: 5432 } },
-    },
-  } as const satisfies TnlConfig;
-  // @ts-expect-error object mounts must select another HTTP service.
-  defineConfig(tcpObjectMount);
-  // @ts-expect-error factory object mounts must select another HTTP service.
-  defineConfig(() => tcpObjectMount);
-  // @ts-expect-error async factory object mounts must select another HTTP service.
-  defineConfig(async () => tcpObjectMount);
-
-  const unnamedTCPWebhook = {
-    ...tcpWebhook,
-    webhooks: { hook: { service: "", path: "/hook", provider: "custom" } },
-  } as const satisfies TnlConfig;
-  // @ts-expect-error configured TCP services do not create an unnamed HTTP service.
-  defineConfig(unnamedTCPWebhook);
-  // @ts-expect-error configured TCP services do not create an unnamed HTTP service.
-  defineConfig(() => unnamedTCPWebhook);
-  // @ts-expect-error configured TCP services do not create an unnamed HTTP service.
-  defineConfig(async () => unnamedTCPWebhook);
-
-  const unnamedWebhook = {
-    webhooks: { hook: { service: "", path: "/hook", provider: "custom" } },
-  } as const satisfies TnlConfig;
-  // @ts-expect-error webhook receivers must name a local public HTTP service.
-  defineConfig(unnamedWebhook);
-  // @ts-expect-error webhook receivers must name a local public HTTP service.
-  defineConfig(() => unnamedWebhook);
-  // @ts-expect-error webhook receivers must name a local public HTTP service.
-  defineConfig(async () => unnamedWebhook);
-  // @ts-expect-error webhook receivers must name a local public HTTP service.
-  defineConfig(() => ({ webhooks: { hook: { service: "", path: "/hook", provider: "custom" } } }));
-  // @ts-expect-error webhook receivers must name a local public HTTP service.
-  defineConfig(async () => ({
-    webhooks: { hook: { service: "", path: "/hook", provider: "custom" } },
-  }));
-
-  const privateWebhook = {
-    services: { api: {} },
-    webhooks: { hook: { service: "api", path: "/hook", provider: "custom" } },
-  } as const satisfies TnlConfig;
-  // @ts-expect-error private HTTP is not a webhook receiver.
-  defineConfig(privateWebhook);
-  const remoteReadiness = {
-    publisherGroups: { cloud: {} },
-    services: {
-      web: {
-        publisherGroup: "cloud",
-        publicURL: {},
-        target: { type: "address", address: 3000 },
-        http: { readiness: { path: "/health" } },
-      },
-    },
-  } as const satisfies TnlConfig;
-  // @ts-expect-error remote assignments cannot honor readiness overrides.
-  defineConfig(remoteReadiness);
-  const remoteMount = {
-    publisherGroups: { cloud: {} },
-    services: {
-      web: {
-        publisherGroup: "cloud",
-        publicURL: {},
-        target: { type: "address", address: 3000 },
-        http: { paths: { "/api": "api" } },
-      },
-      api: {},
-    },
-  } as const satisfies TnlConfig;
-  // @ts-expect-error remote assignments cannot honor path mounts.
-  defineConfig(remoteMount);
-
-  // @ts-expect-error publisher placement is not project configuration.
-  ({ publisherGroup: { type: "compose", service: "publisher", port: 8765 } }) satisfies TnlConfig;
   // @ts-expect-error combined byte totals are removed.
   ({ publicURL: { limits: { traffic: { totalBytes: 1024 } } } }) satisfies TnlConfig;
   ({
     // @ts-expect-error combined byte rates are removed.
     publicURL: { limits: { traffic: { rate: { bytes: 1024, per: "1s" } } } },
   }) satisfies TnlConfig;
+  // @ts-expect-error version is implicit for TypeScript configuration.
+  defineConfig({ version: 1 });
+  // @ts-expect-error daemon configuration is static-only.
+  defineConfig({ tnld: { role: "relay" } });
 
-  ({
-    services: {
-      api: {
-        target: {
-          type: "address",
-          address: "https://api.example",
-          tls: {},
-          // @ts-expect-error application authentication is not target configuration.
-          auth: {},
+  const mixedApp = local({ web: {} }, { web: { type: "app", address: 3000 } });
+  // @ts-expect-error app targets cannot contain addresses, including non-fresh objects.
+  mixedApp satisfies TnlConfig;
+  // @ts-expect-error app targets cannot contain addresses.
+  defineConfig(mixedApp);
+  // @ts-expect-error synchronous factory variants remain disjoint.
+  defineConfig(() => mixedApp);
+  // @ts-expect-error asynchronous factory variants remain disjoint.
+  defineConfig(async () => mixedApp);
+  const mixedAddress = local(
+    { web: {} },
+    { web: { type: "address", address: 3000, container: "web" } },
+  );
+  // @ts-expect-error address targets cannot contain Docker fields.
+  mixedAddress satisfies TnlConfig;
+  // @ts-expect-error inferred address targets remain disjoint.
+  defineConfig(mixedAddress);
+  // @ts-expect-error synchronous address factories remain disjoint.
+  defineConfig(() => mixedAddress);
+  // @ts-expect-error asynchronous address factories remain disjoint.
+  defineConfig(async () => mixedAddress);
+  const mixedCompose = local(
+    { web: {} },
+    {
+      web: {
+        type: "compose",
+        project: "shop",
+        file: "compose.yml",
+        service: "web",
+        port: 3000,
+        container: "web",
+      },
+    },
+  );
+  // @ts-expect-error Compose targets cannot contain Docker fields.
+  mixedCompose satisfies TnlConfig;
+  // @ts-expect-error inferred Compose targets remain disjoint.
+  defineConfig(mixedCompose);
+  // @ts-expect-error synchronous Compose factories remain disjoint.
+  defineConfig(() => mixedCompose);
+  // @ts-expect-error asynchronous Compose factories remain disjoint.
+  defineConfig(async () => mixedCompose);
+  const mixedDocker = local(
+    { db: { protocol: "tcp" } },
+    { db: { type: "docker", container: "db", port: 3306, address: "db:3306" } },
+  );
+  // @ts-expect-error Docker targets cannot contain addresses.
+  mixedDocker satisfies TnlConfig;
+  // @ts-expect-error inferred Docker targets remain disjoint.
+  defineConfig(mixedDocker);
+  // @ts-expect-error synchronous Docker factories remain disjoint.
+  defineConfig(() => mixedDocker);
+  // @ts-expect-error asynchronous Docker factories remain disjoint.
+  defineConfig(async () => mixedDocker);
+  // @ts-expect-error Compose discovery requires a private port.
+  local({ db: {} }, { db: { type: "compose", service: "db" } }) satisfies TnlConfig;
+  // @ts-expect-error Docker discovery requires a private port.
+  local({ db: {} }, { db: { type: "docker", container: "db" } }) satisfies TnlConfig;
+  // @ts-expect-error private TLS never accepts visitor passthrough.
+  local({ web: {} }, { web: { address: 3000, tls: { passthrough: true } } }) satisfies TnlConfig;
+  // @ts-expect-error target configuration cannot contain application authentication.
+  local({ api: {} }, { api: { address: "https://api.example", auth: {} } }) satisfies TnlConfig;
+  const duplicatedPublicName = local(
+    { web: {} },
+    { web: { name: "site", publicURL: { name: "other", access: "anonymous" } } },
+  );
+  // @ts-expect-error saved names are never duplicated inside publicURL.
+  duplicatedPublicName satisfies TnlConfig;
+  // @ts-expect-error inferred public names are checked.
+  defineConfig(duplicatedPublicName);
+  // @ts-expect-error factory public names are checked.
+  defineConfig(() => duplicatedPublicName);
+  const publicPool = local(
+    { web: {} },
+    { web: { publicURL: { publisherPool: true, access: "anonymous" } } },
+  );
+  // @ts-expect-error public URL policy does not contain publisher pools.
+  publicPool satisfies TnlConfig;
+  // @ts-expect-error inferred pool settings are rejected.
+  defineConfig(publicPool);
+
+  // logical declarations need no binding until a deployment selects them.
+  defineConfig({ services: { db: { protocol: "tcp" } } });
+  defineConfig(local({ db: { protocol: "postgres" } }, { db: { address: 5432 } }));
+  defineConfig(local({ db: { protocol: "tcp" } }, { db: { address: 5432, tls: {} } }));
+  defineConfig(local({ db: { protocol: "tcp" } }, { db: { name: "database", address: 5432 } }));
+  // @ts-expect-error saved endpoint names are strings.
+  defineConfig(local({ db: { protocol: "tcp" } }, { db: { name: 42, address: 5432 } }));
+  const tcpApp = local({ db: { protocol: "tcp" } }, { db: { type: "app" } });
+  // @ts-expect-error TCP bindings cannot use app discovery.
+  defineConfig(tcpApp);
+  // @ts-expect-error sync factories retain protocol boundaries.
+  defineConfig(() => tcpApp);
+  // @ts-expect-error async factories retain protocol boundaries.
+  defineConfig(async () => tcpApp);
+  const missingTCPTarget = local({ db: { protocol: "tcp" } }, { db: {} });
+  // @ts-expect-error a selected TCP binding needs a target.
+  defineConfig(missingTCPTarget);
+  // @ts-expect-error sync factories require selected targets.
+  defineConfig(() => missingTCPTarget);
+  // @ts-expect-error async factories require selected targets.
+  defineConfig(async () => missingTCPTarget);
+  const tcpHTTP = local(
+    { db: { protocol: "tcp" } },
+    { db: { address: 5432, http: { open: true } } },
+  );
+  // @ts-expect-error TCP bindings cannot use HTTP settings.
+  defineConfig(tcpHTTP);
+  // @ts-expect-error sync factories retain HTTP boundaries.
+  defineConfig(() => tcpHTTP);
+  // @ts-expect-error async factories retain HTTP boundaries.
+  defineConfig(async () => tcpHTTP);
+  const tcpPublicURL = local(
+    { db: { protocol: "tcp" } },
+    { db: { address: 5432, publicURL: { hostname: "db.example" } } },
+  );
+  // @ts-expect-error TCP bindings cannot enable public URLs.
+  defineConfig(tcpPublicURL);
+
+  const known = {
+    ...local(
+      { api: {}, web: {} },
+      { api: {}, web: { publicURL: {}, http: { paths: { "/api": "api" } } } },
+    ),
+    aliases: { review: { service: "web" } },
+  } satisfies TnlConfigForServices<"api" | "web">;
+  assertType<TnlConfigForServices<"api" | "web">>(known);
+  // @ts-expect-error aliases name existing services.
+  defineConfig({ services: { api: {} }, aliases: { review: { service: "missing" } } });
+  // @ts-expect-error sync factory aliases retain service names.
+  defineConfig(() => ({ services: { api: {} }, aliases: { review: { service: "missing" } } }));
+  const missingMount = local(
+    { web: {}, api: {} },
+    { web: { publicURL: {}, http: { paths: { "/api": "missing" } } }, api: {} },
+  );
+  // @ts-expect-error path mounts name existing bindings.
+  defineConfig(missingMount);
+  const missingObjectMount = local(
+    { web: {}, api: {} },
+    { web: { publicURL: {}, http: { paths: { "/api": { service: "missing" } } } }, api: {} },
+  );
+  // @ts-expect-error object mounts name existing bindings.
+  defineConfig(missingObjectMount);
+  // @ts-expect-error services cannot mount themselves.
+  defineConfig(local({ api: {} }, { api: { publicURL: {}, http: { paths: { "/api": "api" } } } }));
+  // @ts-expect-error async factories retain mount references.
+  defineConfig(async () =>
+    local(
+      { api: {}, web: {} },
+      { api: {}, web: { publicURL: {}, http: { paths: { "/api": "missing" } } } },
+    ),
+  );
+  const tcpAlias = {
+    ...local({ db: { protocol: "tcp" } }, { db: { address: 5432 } }),
+    aliases: { review: { service: "db" } },
+  } as const;
+  // @ts-expect-error aliases select HTTP services.
+  defineConfig(tcpAlias);
+  // @ts-expect-error sync alias factories retain protocols.
+  defineConfig(() => tcpAlias);
+  // @ts-expect-error async alias factories retain protocols.
+  defineConfig(async () => tcpAlias);
+  const tcpWebhook = {
+    ...local({ db: { protocol: "tcp" } }, { db: { address: 5432 } }),
+    webhooks: { hook: { service: "db", path: "/hook", provider: "custom" } },
+  } as const;
+  // @ts-expect-error webhook receivers are HTTP services.
+  defineConfig(tcpWebhook);
+  // @ts-expect-error sync webhook factories retain protocols.
+  defineConfig(() => tcpWebhook);
+  // @ts-expect-error async webhook factories retain protocols.
+  defineConfig(async () => tcpWebhook);
+  const tcpMount = local(
+    { web: {}, db: { protocol: "tcp" } },
+    { web: { publicURL: {}, http: { paths: { "/db": "db" } } }, db: { address: 5432 } },
+  );
+  // @ts-expect-error mounts select HTTP services.
+  defineConfig(tcpMount);
+  // @ts-expect-error sync mount factories retain protocols.
+  defineConfig(() => tcpMount);
+  // @ts-expect-error async mount factories retain protocols.
+  defineConfig(async () => tcpMount);
+  const tcpObjectMount = local(
+    { web: {}, db: { protocol: "tcp" } },
+    {
+      web: { publicURL: {}, http: { paths: { "/db": { service: "db" } } } },
+      db: { address: 5432 },
+    },
+  );
+  // @ts-expect-error object mounts select HTTP services.
+  defineConfig(tcpObjectMount);
+  // @ts-expect-error sync object mount factories retain protocols.
+  defineConfig(() => tcpObjectMount);
+  // @ts-expect-error async object mount factories retain protocols.
+  defineConfig(async () => tcpObjectMount);
+  const unnamedTCPWebhook = {
+    ...tcpWebhook,
+    webhooks: { hook: { service: "", path: "/hook", provider: "custom" } },
+  } as const;
+  // @ts-expect-error TCP declarations do not create unnamed HTTP receivers.
+  defineConfig(unnamedTCPWebhook);
+  // @ts-expect-error sync factories cannot create unnamed receivers.
+  defineConfig(() => unnamedTCPWebhook);
+  // @ts-expect-error async factories cannot create unnamed receivers.
+  defineConfig(async () => unnamedTCPWebhook);
+  const unnamedWebhook = {
+    webhooks: { hook: { service: "", path: "/hook", provider: "custom" } },
+  } as const;
+  // @ts-expect-error receivers require a local public binding.
+  defineConfig(unnamedWebhook);
+  // @ts-expect-error sync factories require a local public binding.
+  defineConfig(() => unnamedWebhook);
+  // @ts-expect-error async factories require a local public binding.
+  defineConfig(async () => unnamedWebhook);
+  const privateAlias = {
+    ...local({ web: {} }, { web: {} }),
+    aliases: { review: { service: "web" } },
+  } as const;
+  // @ts-expect-error aliases require an explicit public URL.
+  defineConfig(privateAlias);
+  // @ts-expect-error sync factories cannot alias private bindings.
+  defineConfig(() => privateAlias);
+  // @ts-expect-error async factories cannot alias private bindings.
+  defineConfig(async () => privateAlias);
+  const privateWebhook = {
+    ...local({ api: {} }, { api: {} }),
+    webhooks: { hook: { service: "api", path: "/hook", provider: "custom" } },
+  } as const;
+  // @ts-expect-error private HTTP is not a webhook receiver.
+  defineConfig(privateWebhook);
+  const remote = {
+    services: { web: {}, api: {} },
+    deployments: { cloud: { targets: { web: { address: 3000 }, api: { address: 4000 } } } },
+  } as const;
+  defineConfig({
+    ...remote,
+    deployments: {
+      // @ts-expect-error remote assignments cannot honor local readiness.
+      cloud: { targets: { web: { address: 3000, http: { readiness: { path: "/health" } } } } },
+    },
+  });
+  defineConfig({
+    ...remote,
+    deployments: {
+      cloud: {
+        targets: {
+          // @ts-expect-error remote assignments cannot honor local mounts.
+          web: { address: 3000, http: { paths: { "/api": "api" } } },
+          api: { address: 4000 },
         },
       },
     },
-  }) satisfies TnlConfig;
+  });
+  // @ts-expect-error remote bindings are not local alias entries.
+  defineConfig({ ...remote, aliases: { review: { service: "web" } } });
 
   defineConfig({
-    publisherGroups: { production: {} },
-    services: {
-      cluster: {
-        publisherGroup: "production",
-        protocol: "kubernetes",
-        target: { type: "eks", cluster: "development", region: "us-east-1" },
-      },
-      db: {
-        publisherGroup: "production",
-        protocol: "postgres",
-        target: { type: "rds", cluster: "orders", region: "us-east-1", endpoint: "reader" },
+    services: { cluster: { protocol: "kubernetes" }, db: { protocol: "postgres" } },
+    deployments: {
+      production: {
+        targets: {
+          cluster: { type: "eks", cluster: "development", region: "us-east-1" },
+          db: { type: "rds", cluster: "orders", region: "us-east-1", endpoint: "reader" },
+        },
       },
     },
     workloads: {
       deploy: {
-        github: {
-          workflow: ".github/workflows/deploy.yml",
-          branch: "main",
-          events: ["push"],
-        },
+        deployment: "production",
+        github: { workflow: ".github/workflows/deploy.yml", branch: "main", events: ["push"] },
         services: ["cluster", "db"],
         maxDuration: "1h",
       },
     },
   });
+  const wrongEKSProtocol = local(
+    { cluster: { protocol: "http" } },
+    { cluster: { type: "eks", cluster: "development", region: "us-east-1" } },
+  );
+  // @ts-expect-error EKS targets require the Kubernetes protocol.
+  defineConfig(wrongEKSProtocol);
+  const instanceReader = local(
+    { db: { protocol: "postgres" } },
+    { db: { type: "rds", instance: "orders", region: "us-east-1", endpoint: "reader" } },
+  );
+  // @ts-expect-error RDS reader endpoints require a cluster.
+  defineConfig(instanceReader);
+  // @ts-expect-error existing sshd services use opaque TCP.
+  ({ services: { shell: { protocol: "ssh" } } }) satisfies TnlConfig;
   defineConfig({
-    services: { api: {} },
-    workloads: {
-      deploy: {
-        github: {
-          workflow: ".github/workflows/deploy.yml",
-          branch: "main",
-          events: ["push"],
-        },
-        // @ts-expect-error workload policies select existing service keys.
-        services: ["missing"],
-      },
-    },
+    ...remote,
+    // @ts-expect-error workloads select bindings in their exact deployment.
+    workloads: { ci: { deployment: "cloud", fly: { app: "web" }, services: ["missing"] } },
   });
+  const missingDeployment = {
+    ...remote,
+    workloads: { ci: { deployment: "missing", fly: { app: "web" }, services: ["web"] } },
+  } as const;
+  // @ts-expect-error deployment selectors must exist.
+  defineConfig(missingDeployment);
+  const localWorkload = {
+    ...local({ web: {}, explicit: {} }, { web: {}, explicit: {} }),
+    workloads: { ci: { deployment: "local", fly: { app: "web" }, services: ["web", "explicit"] } },
+  } as const;
+  // @ts-expect-error provider workloads cannot select local bindings.
+  defineConfig(localWorkload);
+  // @ts-expect-error sync factories cannot select local workload bindings.
+  defineConfig(() => localWorkload);
+  // @ts-expect-error async factories cannot select local workload bindings.
+  defineConfig(async () => localWorkload);
+
   defineConfig({
-    publisherGroups: { production: {} },
-    services: {
-      inventory: { publisherGroup: "production", target: { type: "address", address: 3000 } },
-      models: {
-        publisherGroup: "production",
-        protocol: "postgres",
-        target: { type: "address", address: "localhost:5432" },
+    services: { inventory: {}, models: { protocol: "postgres" } },
+    deployments: {
+      production: {
+        targets: { inventory: { address: 3000 }, models: { address: "localhost:5432" } },
       },
     },
     workloads: {
       storefront: {
+        deployment: "production",
         vercel: { team: "acme", project: "store", environment: "production" },
         services: ["inventory", "models"],
       },
-      machine: {
-        fly: { app: "store" },
-        services: ["inventory"],
-      },
+      machine: { deployment: "production", fly: { app: "store" }, services: ["inventory"] },
       worker: {
+        deployment: "production",
         oidc: { issuer: "https://issuer.example", claims: { sub: "service:store" } },
         token: { file: "/run/provider/token" },
         services: ["models"],
       },
       cloud: {
+        deployment: "production",
         google: { serviceAccount: "orders@project.iam.gserviceaccount.com" },
         services: ["models"],
       },
       pod: {
+        deployment: "production",
         kubernetes: { serviceAccount: "orders", namespace: "production" },
         services: ["models"],
       },
       gitlab: {
+        deployment: "production",
         gitlab: { project: "shop/storefront", pipelineSource: "push" },
         services: ["models"],
       },
     },
   });
-  defineConfig({
-    services: {
-      cluster: {
-        protocol: "http",
-        // @ts-expect-error EKS targets require the kubernetes protocol.
-        target: { type: "eks", cluster: "development", region: "us-east-1" },
-      },
-    },
-  });
-  defineConfig({
-    services: {
-      db: {
-        protocol: "postgres",
-        // @ts-expect-error RDS reader endpoints require a cluster.
-        target: { type: "rds", instance: "orders", region: "us-east-1", endpoint: "reader" },
-      },
-    },
-  });
-  // @ts-expect-error an ordinary factory cannot mix address and Docker fields.
-  defineConfig(() => ({
-    services: { web: { target: { type: "address", address: 3000, container: "web" } } },
-  }));
-  // @ts-expect-error an ordinary async factory cannot mix app and address fields.
-  defineConfig(async () => ({ services: { web: { target: { type: "app", address: 3000 } } } }));
-
-  ({
-    // @ts-expect-error existing sshd services use opaque tcp, not a separate protocol.
-    services: { shell: { protocol: "ssh", target: { type: "address", address: 22 } } },
-  }) satisfies TnlConfig;
-
-  const privateAliasEntry = {
-    services: { web: {} },
-    aliases: { review: { service: "web" } },
-  } as const;
-  // @ts-expect-error aliases require an explicit publicURL entry, including inferred objects.
-  defineConfig(privateAliasEntry);
-  // @ts-expect-error synchronous factories cannot alias private HTTP services.
-  defineConfig(() => privateAliasEntry);
-  // @ts-expect-error asynchronous factories cannot alias private HTTP services.
-  defineConfig(async () => privateAliasEntry);
-  const groupAliasEntry = {
-    publisherGroups: { cloud: {} },
-    services: {
-      web: { publisherGroup: "cloud", publicURL: {}, target: { type: "address", address: 3000 } },
-    },
-    aliases: { review: { service: "web" } },
-  } as const;
-  // @ts-expect-error aliases require local entry services.
-  defineConfig(groupAliasEntry);
-  const localWorkload = {
-    services: { web: {}, explicit: { publisherGroup: "local" } },
-    workloads: {
-      ci: {
-        fly: { app: "web" },
-        services: ["web", "explicit"],
-      },
-    },
-  } as const;
-  // @ts-expect-error workload targets must belong to named publisher groups.
-  defineConfig(localWorkload);
-  // @ts-expect-error synchronous factories reject local workload references.
-  defineConfig(() => localWorkload);
-  // @ts-expect-error asynchronous factories reject local workload references.
-  defineConfig(async () => localWorkload);
-
   ({
     workloads: {
       mixed: {
+        deployment: "production",
         github: { workflow: ".github/workflows/test.yml" },
-        // @ts-expect-error each workload selects exactly one provider block.
+        // @ts-expect-error a workload selects exactly one provider.
         fly: { app: "worker" },
         services: ["db"],
       },
       // @ts-expect-error a provider block is required.
-      missing: { services: ["db"] },
+      missing: { deployment: "production", services: ["db"] },
       old: {
-        // @ts-expect-error the provider block replaces the discriminator.
+        deployment: "production",
+        // @ts-expect-error provider blocks replace the old discriminator.
         provider: "fly",
         fly: { app: "worker" },
         services: ["db"],
       },
       refs: {
+        deployment: "production",
         github: {
           workflow: ".github/workflows/test.yml",
           branch: "main",
@@ -761,6 +626,7 @@ test("configuration enforces service ownership and references for literals and f
         services: ["db"],
       },
       gitlabRefs: {
+        deployment: "production",
         gitlab: {
           branch: "main",
           // @ts-expect-error GitLab branch and tag are mutually exclusive.
@@ -769,36 +635,33 @@ test("configuration enforces service ownership and references for literals and f
         services: ["db"],
       },
       gitlabSource: {
+        deployment: "production",
         gitlab: {
-          // @ts-expect-error GitLab pipeline sources are exact known values.
+          // @ts-expect-error GitLab sources are exact known values.
           pipelineSource: "*",
         },
         services: ["db"],
       },
-      gitlabDefaults: { gitlab: {}, services: ["db"] },
+      gitlabDefaults: { deployment: "production", gitlab: {}, services: ["db"] },
       sources: {
+        deployment: "production",
         fly: { app: "worker" },
         token: {
           file: "/run/token",
-          // @ts-expect-error token file and environment variable are mutually exclusive.
+          // @ts-expect-error token file and environment sources are mutually exclusive.
           env: "TOKEN",
         },
         services: ["db"],
       },
       defaults: {
+        deployment: "production",
         github: { workflow: ".github/workflows/test.yml" },
         token: { env: "TOKEN" },
         services: ["db"],
       },
     },
   }) satisfies TnlConfig;
-
-  // spreading an inferred configuration preserves its service-reference checks.
   defineConfig({ ...config, inspection: { maxBytes: "1GiB" } });
-  ({
-    services: {
-      // @ts-expect-error service-level TLS has been replaced by target.tls.
-      db: { protocol: "tcp", target: { type: "address", address: 5432 }, tls: { ca: "system" } },
-    },
-  }) satisfies TnlConfig;
+  // @ts-expect-error TLS belongs on a binding, not a declaration.
+  ({ services: { db: { protocol: "tcp", tls: { ca: "system" } } } }) satisfies TnlConfig;
 });

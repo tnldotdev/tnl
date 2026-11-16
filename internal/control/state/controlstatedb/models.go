@@ -687,16 +687,30 @@ type ControlPreviewPublicUrl struct {
 }
 
 type ControlProjectPublisherGroup struct {
-	Ownership   string
-	ID          string
-	TeamID      string
-	ProjectKey  string
-	Name        string
-	Description string
-	DomainID    pgtype.Text
-	Namespace   string
-	Public      bool
-	DeletedAt   pgtype.Timestamptz
+	Ownership               string
+	ID                      string
+	TeamID                  string
+	ProjectKey              string
+	Name                    string
+	Description             string
+	DomainID                pgtype.Text
+	Namespace               string
+	Public                  bool
+	Revision                int64
+	ConfigurationHash       string
+	ConfigurationCiphertext []byte
+	StorageKeyID            pgtype.Text
+	CreateActorID           pgtype.Text
+	CreateIdempotencyKey    pgtype.Text
+	CreateRequestDigest     []byte
+	DeletedAt               pgtype.Timestamptz
+}
+
+type ControlProjectService struct {
+	TeamID     string
+	ProjectKey string
+	Name       string
+	Protocol   string
 }
 
 type ControlPublicServiceVisitor struct {
@@ -957,6 +971,7 @@ type ControlPublisherGroupName struct {
 
 type ControlPublisherGroupServiceGrant struct {
 	PublisherIdentityID string
+	GroupID             string
 	TeamID              string
 	ProjectKey          string
 	Service             string

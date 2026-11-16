@@ -64,6 +64,7 @@ func TestIntegrationPostQuantumAppliedPublicURLPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	apply := ApplyProjectConfigurationRequest{TeamID: request.TeamID, ProjectKey: local.ProjectKey, SourceFingerprint: local.SourceFingerprint, ActorID: request.ActingIdentityID,
+		Deployment: "local", ServiceDeclarations: map[string]string{"web": "http"},
 		Configuration: ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": service}}, Now: now}
 	applied, err := database.ApplyProjectConfiguration(t.Context(), apply)
 	if err != nil {

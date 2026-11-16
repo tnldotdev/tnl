@@ -33,14 +33,14 @@ func (d *Database) serviceHTTPSourceAllowed(ctx context.Context, q *controlstate
 }
 
 func (d *Database) serviceHTTPSettings(ctx context.Context, q *controlstatedb.Queries, service string) (*config.HTTPService, error) {
-	row, err := q.ServiceHTTPAppliedConfiguration(ctx, text(service))
+	row, err := q.GetDeploymentServiceConfiguration(ctx, text(service))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	c, err := d.openAppliedProject(controlstatedb.ControlAppliedProject{TeamID: row.TeamID, ProjectKey: row.ProjectKey, ConfigurationCiphertext: row.ConfigurationCiphertext, StorageKeyID: row.StorageKeyID})
+	c, err := d.openDeploymentConfiguration(row.ControlProjectPublisherGroup)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +48,7 @@ func (d *Database) serviceHTTPSettings(ctx context.Context, q *controlstatedb.Qu
 	if !ok {
 		return nil, ErrServiceAccess
 	}
-	if err := config.ValidateGroupHTTP(s.HTTP); err != nil {
+	if err := config.ValidateRemoteHTTP(s.HTTP); err != nil {
 		return nil, errors.Join(ErrServiceAccess, err)
 	}
 	return s.HTTP, nil

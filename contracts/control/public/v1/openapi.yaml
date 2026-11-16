@@ -10,6 +10,8 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 tags:
+  - name: deployments
+    description: Manage isolated deployment bindings and verified target trust.
   - name: discovery
     description: Discover server capabilities, readiness, client addresses, and webhook source policies.
   - name: guest-demos
@@ -63,6 +65,10 @@ paths:
     $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1resolve-source"
   /v1/projects:
     $ref: "./paths/projects.yaml#/paths/~1v1~1projects"
+  /v1/projects/{project_key}/deployments:
+    $ref: "./paths/deployments.yaml#/paths/~1v1~1projects~1{project_key}~1deployments"
+  /v1/projects/{project_key}/deployments/{deployment}:
+    $ref: "./paths/deployments.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}"
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1connector-peer-pairs"
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery:
@@ -450,10 +456,30 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/PreviewPage"
     ProjectPage:
       $ref: "./schemas/projects.yaml#/schemas/ProjectPage"
+    DeploymentTargetTLS:
+      $ref: "./schemas/deployments.yaml#/schemas/DeploymentTargetTLS"
+    DeploymentTarget:
+      $ref: "./schemas/deployments.yaml#/schemas/DeploymentTarget"
+    DeploymentTargets:
+      $ref: "./schemas/deployments.yaml#/schemas/DeploymentTargets"
+    DeploymentTargetStatus:
+      $ref: "./schemas/deployments.yaml#/schemas/DeploymentTargetStatus"
+    CreateDeploymentRequest:
+      $ref: "./schemas/deployments.yaml#/schemas/CreateDeploymentRequest"
+    UpdateDeploymentRequest:
+      $ref: "./schemas/deployments.yaml#/schemas/UpdateDeploymentRequest"
+    DeploymentService:
+      $ref: "./schemas/deployments.yaml#/schemas/DeploymentService"
+    Deployment:
+      $ref: "./schemas/deployments.yaml#/schemas/Deployment"
+    DeploymentPage:
+      $ref: "./schemas/deployments.yaml#/schemas/DeploymentPage"
     ProjectConfiguration:
       $ref: "./schemas/projects.yaml#/schemas/ProjectConfiguration"
-    ProjectPublisherGroup:
-      $ref: "./schemas/projects.yaml#/schemas/ProjectPublisherGroup"
+    ProjectServiceDeclarations:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectServiceDeclarations"
+    DeploymentSettings:
+      $ref: "./schemas/projects.yaml#/schemas/DeploymentSettings"
     ProjectWorkload:
       $ref: "./schemas/projects.yaml#/schemas/ProjectWorkload"
     WorkloadProvider:

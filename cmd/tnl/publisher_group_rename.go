@@ -32,7 +32,7 @@ func runPublisherGroupRename(ctx context.Context, flags publisherGroupRenameComm
 	if err != nil {
 		return err
 	}
-	applied, err := session.Authenticated().Control.GetProjectConfiguration(ctx, current.Team().Id, source.Key)
+	applied, err := session.Authenticated().Control.GetProjectConfiguration(ctx, current.Team().Id, source.Key, flags.Group)
 	if err != nil {
 		return err
 	}

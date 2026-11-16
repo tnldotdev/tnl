@@ -14,7 +14,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -22,20 +21,22 @@ import (
 // paths that a remote publisher would need to reopen. discover is needed only
 // when capturing target trust for a local Docker or Compose target.
 func Declaration(ctx context.Context, project clientproject.Project, current team.Context, discover func(context.Context, string) (string, error), selected ...string) (controlv1.ProjectConfiguration, error) {
-	declaration := controlv1.ProjectConfiguration{Oauth: project.Config.OAuth, Webhooks: map[string]controlv1.ProjectWebhook{}, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{}, Services: map[string]controlv1.ProjectServiceConfiguration{}}
+	declaration := controlv1.ProjectConfiguration{Oauth: project.Config.OAuth, Webhooks: map[string]controlv1.ProjectWebhook{}, Services: map[string]controlv1.ProjectServiceConfiguration{}}
 	if err := config.ValidateTNL(project.Config); err != nil {
 		return declaration, err
 	}
-	for name, group := range project.Config.PublisherGroups {
-		entry := controlv1.ProjectPublisherGroup{Description: group.Description, Public: &group.Public}
-		if group.Domain != nil {
-			domain, err := current.ReadyDomain(*group.Domain)
+	deployment := config.SelectedDeployment(project.Config)
+	if deployment != "local" {
+		settings := project.Config.DeploymentSettings
+		entry := controlv1.DeploymentSettings{Description: settings.Description, Public: &settings.Public}
+		if settings.Domain != nil {
+			domain, err := current.ReadyDomain(*settings.Domain)
 			if err != nil {
 				return declaration, err
 			}
 			entry.DomainId = &domain.Id
 		}
-		declaration.PublisherGroups[name] = entry
+		declaration.Settings = &entry
 	}
 	for name, webhook := range project.Config.Webhooks {
 		delivery := webhook.DeliveryMode()
@@ -52,18 +53,17 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 		}
 		declaration.Webhooks[name] = entry
 	}
-	cache := targettrust.NewCache(nil)
 	names := slices.Sorted(maps.Keys(project.Config.Services))
 	if len(selected) != 0 {
 		names = selected
 	}
 	for _, name := range names {
 		service := project.Config.Services[name]
-		publisher, savedName, protocol := config.PublisherGroupName(service), config.ServiceName(name, service), controlv1.ServiceProtocol(config.Protocol(service))
-		entry := controlv1.ProjectServiceConfiguration{PublisherGroup: &publisher, Name: &savedName, Protocol: &protocol}
+		savedName, protocol := config.ServiceName(name, service), controlv1.ServiceProtocol(config.Protocol(service))
+		entry := controlv1.ProjectServiceConfiguration{Name: &savedName, Protocol: &protocol}
 		httpSettings := service.HTTP
-		if publisher != "local" {
-			resolved, err := config.ResolveGroupHTTP(project.Config.Tunnel, service.HTTP)
+		if deployment != "local" {
+			resolved, err := config.ResolveRemoteHTTP(project.Config.Tunnel, service.HTTP)
 			if err != nil {
 				return declaration, err
 			}
@@ -87,7 +87,7 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 				endpoint := controlv1.ProjectTargetDiscoveryEndpoint(*t.Endpoint)
 				entry.TargetDiscovery.Endpoint = &endpoint
 			}
-		} else if publisher == "local" {
+		} else if deployment == "local" {
 			// local discovery stays local. this declarative descriptor contains no
 			// checkout path, discovered container address or running app listener.
 			entry.Target = config.TargetType(service)
@@ -127,8 +127,8 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 				}
 				discovered = resolved
 			}
-			if service.Target != nil && service.Target.TLS != nil {
-				trust, err := project.CaptureTargetTrust(ctx, cache, name, discovered)
+			{
+				trust, err := project.CaptureTargetTrust(ctx, name, discovered)
 				if err != nil {
 					return declaration, err
 				}
@@ -148,7 +148,7 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 			if err != nil {
 				return declaration, err
 			}
-			if publisher == "local" {
+			if deployment == "local" {
 				if effective.Tunnel.PublicURL != nil {
 					hostname, _ := naming.ParseExactPublicURL(*effective.Tunnel.PublicURL)
 					entry.PublicUrl.Hostname = &hostname

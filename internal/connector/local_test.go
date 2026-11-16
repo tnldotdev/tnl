@@ -25,12 +25,12 @@ func (f localResolverFunc) ResolveTargetIdentity(ctx context.Context, p clientpr
 	return f(ctx, p, name)
 }
 
-func localProject(t *testing.T, service string) string {
+func localProject(t *testing.T, protocol, binding string) string {
 	t.Helper()
 	t.Setenv("TNL_CONFIG", "")
 	root := t.TempDir()
 	for name, content := range map[string]string{
-		"tnl.json":     `{"version":1,"tnl":{"services":{"db":` + service + `}}}`,
+		"tnl.json":     `{"version":1,"tnl":{"services":{"db":{"protocol":"` + protocol + `"}},"deployments":{"local":{"targets":{"db":` + binding + `}}}}}`,
 		"compose.yaml": "services: {}\n",
 	} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0600); err != nil {
@@ -41,7 +41,7 @@ func localProject(t *testing.T, service string) string {
 }
 
 func TestConnectLocalComposeWithoutControlState(t *testing.T) {
-	root := localProject(t, `{"protocol":"postgres","target":{"type":"compose","service":"postgres","port":5432}}`)
+	root := localProject(t, "postgres", `{"type":"compose","service":"postgres","port":5432}`)
 	state := filepath.Join(t.TempDir(), "absent-client-state")
 	t.Setenv("TNL_STATE_DIR", state)
 	t.Setenv("TNL_SERVER", "https://unreachable.invalid")
@@ -74,7 +74,7 @@ func TestConnectLocalComposeWithoutControlState(t *testing.T) {
 }
 
 func TestConnectLocalKeepsConfiguredTargetTLS(t *testing.T) {
-	root := localProject(t, `{"protocol":"postgres","target":{"type":"address","address":"127.0.0.1:5432","tls":{"server_name":"database.local"}}}`)
+	root := localProject(t, "postgres", `{"address":"127.0.0.1:5432","tls":{"hostname":"database.local"}}`)
 	connection, err := ConnectLocal(t.Context(), root, "db", "postgres", nil)
 	if err != nil || connection.SSL == nil || connection.SSL.ServerName != "database.local" || !connection.SSL.RejectUnauthorized {
 		t.Fatalf("lost target TLS: %+v %v", connection, err)
@@ -86,16 +86,16 @@ func TestConnectLocalProtocolTargets(t *testing.T) {
 		name, service, protocol, url string
 		tls                          bool
 	}{
-		{"http address", `{"protocol":"http","target":{"type":"address","address":"127.0.0.1:3000"}}`, "http", "http://127.0.0.1:3000", false},
-		{"http compose tls", `{"protocol":"http","target":{"type":"compose","service":"web","port":443,"tls":{"server_name":"web.local"}}}`, "http", "https://web.local:15443", true},
-		{"tcp address", `{"protocol":"tcp","target":{"type":"address","address":6379}}`, "tcp", "", false},
-		{"tcp tls", `{"protocol":"tcp","target":{"type":"address","address":"127.0.0.1:6379","tls":{"server_name":"redis.local"}}}`, "tcp", "", true},
-		{"mysql docker", `{"protocol":"mysql","target":{"type":"docker","container":"db","port":3306}}`, "mysql", "", false},
-		{"mysql tls", `{"protocol":"mysql","target":{"type":"address","address":"localhost:3306","tls":{}}}`, "mysql", "", true},
-		{"postgres compose", `{"protocol":"postgres","target":{"type":"compose","service":"db","port":5432}}`, "postgres", "", false},
+		{"http address", `{"address":"127.0.0.1:3000"}`, "http", "http://127.0.0.1:3000", false},
+		{"http compose tls", `{"type":"compose","service":"web","port":443,"tls":{"hostname":"web.local"}}`, "http", "https://web.local:15443", true},
+		{"tcp address", `{"address":6379}`, "tcp", "", false},
+		{"tcp tls", `{"address":"127.0.0.1:6379","tls":{"hostname":"redis.local"}}`, "tcp", "", true},
+		{"mysql docker", `{"type":"docker","container":"db","port":3306}`, "mysql", "", false},
+		{"mysql tls", `{"address":"localhost:3306","tls":{}}`, "mysql", "", true},
+		{"postgres compose", `{"type":"compose","service":"db","port":5432}`, "postgres", "", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			root := localProject(t, test.service)
+			root := localProject(t, test.protocol, test.service)
 			canonicalRoot, err := filepath.EvalSymlinks(root)
 			if err != nil {
 				t.Fatal(err)
@@ -121,7 +121,7 @@ func TestConnectLocalProtocolTargets(t *testing.T) {
 }
 
 func TestConnectLocalKubernetesRequiresMatchingKubeconfig(t *testing.T) {
-	root := localProject(t, `{"protocol":"kubernetes","target":{"type":"address","address":"https://127.0.0.1:6443","tls":{"server_name":"cluster.local"}}}`)
+	root := localProject(t, "kubernetes", `{"address":"https://127.0.0.1:6443","tls":{"hostname":"cluster.local"}}`)
 	file := filepath.Join(t.TempDir(), "kubeconfig")
 	t.Setenv("KUBECONFIG", file)
 	write := func(server, tlsName string) {
@@ -187,7 +187,7 @@ func TestLocalKubeconfigAcceptsMatchingCAFile(t *testing.T) {
 func TestConnectLocalNormalizesConfiguredBarePort(t *testing.T) {
 	for _, address := range []string{"5432", `5432`} {
 		t.Run(address, func(t *testing.T) {
-			root := localProject(t, `{"protocol":"postgres","target":{"type":"address","address":`+address+`,"tls":{"server_name":"database.local"}}}`)
+			root := localProject(t, "postgres", `{"address":`+address+`,"tls":{"hostname":"database.local"}}`)
 			connection, err := ConnectLocal(t.Context(), root, "db", "postgres", nil)
 			if err != nil || connection.Host != "127.0.0.1" || connection.Port != 5432 ||
 				connection.SSL == nil || connection.SSL.ServerName != "database.local" || !connection.SSL.RejectUnauthorized {
@@ -198,12 +198,12 @@ func TestConnectLocalNormalizesConfiguredBarePort(t *testing.T) {
 }
 
 func TestConnectLocalResolvesLocalhostWithoutDNS(t *testing.T) {
-	root := localProject(t, `{"protocol":"postgres","target":{"type":"address","address":"localhost:5432"}}`)
+	root := localProject(t, "postgres", `{"address":"localhost:5432"}`)
 	connection, err := ConnectLocal(t.Context(), root, "db", "postgres", nil)
 	if err != nil || connection.Host != "127.0.0.1" {
 		t.Fatalf("localhost connection: %+v %v", connection, err)
 	}
-	root = localProject(t, `{"protocol":"postgres","target":{"type":"address","address":"localhost:5432","tls":{}}}`)
+	root = localProject(t, "postgres", `{"address":"localhost:5432","tls":{}}`)
 	connection, err = ConnectLocal(t.Context(), root, "db", "postgres", nil)
 	if err != nil || connection.Host != "127.0.0.1" || connection.SSL == nil || connection.SSL.ServerName != "localhost" {
 		t.Fatalf("localhost TLS identity: %+v %v", connection, err)
@@ -211,7 +211,7 @@ func TestConnectLocalResolvesLocalhostWithoutDNS(t *testing.T) {
 }
 
 func TestConnectLocalNeverFallsBackFromInvalidDiscovery(t *testing.T) {
-	root := localProject(t, `{"protocol":"postgres","target":{"type":"compose","service":"postgres","port":5432}}`)
+	root := localProject(t, "postgres", `{"type":"compose","service":"postgres","port":5432}`)
 	for _, address := range []string{"db.internal:5432", "192.0.2.1:5432", "0.0.0.0:5432", "127.0.0.1:0", "[::1%lo0]:5432", "not-an-address"} {
 		t.Run(address, func(t *testing.T) {
 			resolver := localResolverFunc(func(context.Context, clientproject.Project, string) (string, string, error) {
@@ -233,27 +233,27 @@ func TestConnectLocalNeverFallsBackFromInvalidDiscovery(t *testing.T) {
 }
 
 func TestConnectLocalRejectsRemoteAndProtocolSelections(t *testing.T) {
-	for _, service := range []string{
-		`{"protocol":"postgres","target":{"type":"rds","region":"us-east-1","instance":"orders"}}`,
-		`{"protocol":"postgres","target":{"type":"address","address":"db.internal:5432"}}`,
-		`{"protocol":"mysql","target":{"type":"address","address":"192.0.2.1:3306"}}`,
-		`{"protocol":"tcp","target":{"type":"address","address":"0.0.0.0:6379"}}`,
-		`{"protocol":"http","target":{"type":"address","address":"https://remote.invalid:3000","tls":{}}}`,
-		`{"protocol":"kubernetes","target":{"type":"address","address":"https://remote.invalid:6443","tls":{}}}`,
-		`{"protocol":"http","target":{"type":"app"},"public_url":{}}`,
+	for _, service := range []struct{ protocol, binding string }{
+		{"postgres", `{"type":"rds","region":"us-east-1","instance":"orders"}`},
+		{"postgres", `{"address":"db.internal:5432"}`},
+		{"mysql", `{"address":"192.0.2.1:3306"}`},
+		{"tcp", `{"address":"0.0.0.0:6379"}`},
+		{"http", `{"address":"https://remote.invalid:3000","tls":{}}`},
+		{"kubernetes", `{"address":"https://remote.invalid:6443","tls":{}}`},
+		{"http", `{"type":"app","public_url":{}}`},
 	} {
-		root := localProject(t, service)
+		root := localProject(t, service.protocol, service.binding)
 		if _, err := ConnectLocal(t.Context(), root, "db", "postgres", nil); err == nil {
 			t.Fatal("local selection accepted", service)
 		}
 	}
 	for _, protocol := range []string{"mysql", "tcp", "http", "kubernetes", "invalid"} {
-		root := localProject(t, `{"protocol":"postgres","target":{"type":"address","address":"127.0.0.1:5432"}}`)
+		root := localProject(t, "postgres", `{"address":"127.0.0.1:5432"}`)
 		if _, err := ConnectLocal(t.Context(), root, "db", protocol, nil); err == nil {
 			t.Fatal("accepted mismatched protocol", protocol)
 		}
 	}
-	root := localProject(t, `{"protocol":"postgres","target":{"type":"address","address":"127.0.0.1:5432"}}`)
+	root := localProject(t, "postgres", `{"address":"127.0.0.1:5432"}`)
 	for _, name := range []string{"missing", "../db"} {
 		if _, err := ConnectLocal(t.Context(), root, name, "postgres", nil); err == nil {
 			t.Fatal("accepted undeclared service", name)
@@ -264,9 +264,9 @@ func TestConnectLocalRejectsRemoteAndProtocolSelections(t *testing.T) {
 	if _, err := ConnectLocal(ctx, root, "db", "postgres", nil); !errors.Is(err, context.Canceled) {
 		t.Fatal("lost cancellation", err)
 	}
-	// a missing configured CA cannot silently downgrade to plaintext.
-	root = localProject(t, `{"protocol":"postgres","target":{"type":"address","address":"127.0.0.1:5432","tls":{"ca_file":"missing.pem"}}}`)
-	if _, err := ConnectLocal(t.Context(), root, "db", "postgres", nil); err == nil || !strings.Contains(err.Error(), "trust") {
+	// a configured CA path cannot silently downgrade to plaintext.
+	root = localProject(t, "postgres", `{"address":"127.0.0.1:5432","tls":{"ca":"missing.pem"}}`)
+	if _, err := ConnectLocal(t.Context(), root, "db", "postgres", nil); err == nil || !strings.Contains(err.Error(), "tls.ca") {
 		t.Fatal("invalid TLS configuration was ignored", err)
 	}
 }

@@ -60,7 +60,7 @@ func groupFixture(t *testing.T) (*groupControl, ed25519.PrivateKey) {
 	group := "cloud"
 	return &groupControl{expires: time.Now().Add(time.Second), acks: make(chan controlv1.PublisherGroupAcknowledgement, 100), assignment: controlv1.PublisherGroupAssignments{
 		Member: controlv1.PublisherGroupMember{GroupId: "group-one", GroupName: group, ProjectKey: "project-one", PublisherIdentityId: "publisher-one", KeyId: "key-one", TeamId: "team-one"}, Revision: 1, ConfigurationHash: strings.Repeat("a", 64),
-		Services: []controlv1.PublisherGroupServiceAssignment{{Service: "db", ServiceId: "private-one", GrantId: "exact-grant", ServiceKind: "service", Configuration: controlv1.ProjectServiceConfiguration{PublisherGroup: &group, Target: "db.internal:5432"}}},
+		Services: []controlv1.PublisherGroupServiceAssignment{{Service: "db", ServiceId: "private-one", GrantId: "exact-grant", ServiceKind: "service", Configuration: controlv1.ProjectServiceConfiguration{Target: "db.internal:5432"}}},
 	}}, key
 }
 func receive(t *testing.T, channel <-chan string) string {
@@ -199,7 +199,6 @@ func TestSelectorRenameDoesNotRestartPublication(t *testing.T) {
 	control.mu.Lock()
 	control.assignment.Services = append([]controlv1.PublisherGroupServiceAssignment(nil), control.assignment.Services...)
 	control.assignment.Member.GroupName = "renamed"
-	control.assignment.Services[0].Configuration.PublisherGroup = new("renamed")
 	control.assignment.Revision++
 	control.assignment.ConfigurationHash = strings.Repeat("b", 64)
 	control.mu.Unlock()

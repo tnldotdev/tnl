@@ -11,6 +11,8 @@ import (
 	"encoding/pem"
 	"errors"
 	"strings"
+
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 //go:embed bundles.json
@@ -33,6 +35,28 @@ type Region struct {
 }
 
 var ErrBundle = errors.New("pinned regional RDS root bundle is unavailable or invalid")
+
+// BundleForHostname selects only the supplied RDS endpoint's region, offline.
+// custom DNS aliases need explicit CA material because they do not identify it.
+func BundleForHostname(hostname string) (string, error) {
+	canonical, err := naming.CanonicalizeHostname(hostname)
+	if err != nil || canonical != hostname {
+		return "", ErrBundle
+	}
+	suffix := ".rds.amazonaws.com"
+	china := strings.HasSuffix(hostname, suffix+".cn")
+	if china {
+		suffix += ".cn"
+	}
+	if !strings.HasSuffix(hostname, suffix) {
+		return "", ErrBundle
+	}
+	parts := strings.Split(strings.TrimSuffix(hostname, suffix), ".")
+	if len(parts) < 3 || strings.HasPrefix(parts[len(parts)-1], "cn-") != china {
+		return "", ErrBundle
+	}
+	return Bundle(parts[len(parts)-1])
+}
 
 func Bundle(region string) (string, error) {
 	var catalog Catalog

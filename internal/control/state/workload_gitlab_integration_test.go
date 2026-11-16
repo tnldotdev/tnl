@@ -9,6 +9,7 @@ func TestIntegrationWorkloadGitLabMigration(t *testing.T) {
 	d, url, now := newControlStateIntegrationDatabaseWithURL(t, "workload_gitlab_migration")
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
+	r = selectedProjectRequest(r, "production")
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}

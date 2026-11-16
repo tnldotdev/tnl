@@ -84,7 +84,7 @@ func (g *Group) Poll(ctx context.Context) (controlv1.PublisherGroupAssignments, 
 	g.member.GroupName = assignments.Member.GroupName
 	seen := map[string]bool{}
 	for _, a := range assignments.Services {
-		if a.Service == "" || seen[a.Service] || !opaqueid.Valid(a.GrantId, opaqueid.PublisherGrantPrefix) || a.Configuration.PublisherGroup == nil || *a.Configuration.PublisherGroup != g.member.GroupName {
+		if a.Service == "" || seen[a.Service] || !opaqueid.Valid(a.GrantId, opaqueid.PublisherGrantPrefix) {
 			return controlv1.PublisherGroupAssignments{}, ErrScope
 		}
 		seen[a.Service] = true

@@ -35,7 +35,7 @@ func runPublisherNamespaceRename(ctx context.Context, flags publisherNamespaceRe
 	if err != nil {
 		return err
 	}
-	applied, err := session.Authenticated().Control.GetProjectConfiguration(ctx, current.Team().Id, source.Key)
+	applied, err := session.Authenticated().Control.GetProjectConfiguration(ctx, current.Team().Id, source.Key, flags.Group)
 	if err != nil {
 		return err
 	}

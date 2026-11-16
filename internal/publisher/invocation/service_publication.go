@@ -374,7 +374,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 
 func CaptureServiceTargetTrust(ctx context.Context, flags ServiceOptions, protocol controlv1.ServiceProtocol, target string) (*targettrust.Snapshot, error) {
 	if flags.Service != "" {
-		return flags.Project.CaptureServiceTrust(ctx, nil, flags.Service, target)
+		return flags.Project.CaptureServiceTrust(ctx, flags.Service, target)
 	}
 	if !(flags.TargetTLS != nil && *flags.TargetTLS || flags.TargetCAFile != "" || flags.TargetTLSName != "") {
 		return nil, nil

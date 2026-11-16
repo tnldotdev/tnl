@@ -7,17 +7,17 @@ import (
 
 func TestManagedGroupUsesExistingNamespace(t *testing.T) {
 	for _, owner := range []string{"chase.studio.example.com", "studio.example.com", "ecstatic-penguin.tnl.dev"} {
-		namespace, err := GroupNamespace("production", "storefront", owner)
+		namespace, err := DeploymentNamespace("production", "storefront", owner)
 		if err != nil || namespace != "production.storefront."+owner || PublicURLWildcard("orders."+namespace, owner) != "*."+namespace {
 			t.Fatalf("namespace = %q, %v", namespace, err)
 		}
 	}
 	for _, group := range []string{"local", "Production", "a.b", "-invalid"} {
-		if _, err := GroupNamespace(group, "storefront", "dev.acme.com"); err == nil {
+		if _, err := DeploymentNamespace(group, "storefront", "dev.acme.com"); err == nil {
 			t.Fatalf("invalid group %q accepted", group)
 		}
 	}
-	if _, err := GroupNamespace("production", "storefront", strings.Repeat("a.", 115)+"example.com"); err == nil {
+	if _, err := DeploymentNamespace("production", "storefront", strings.Repeat("a.", 115)+"example.com"); err == nil {
 		t.Fatal("oversized validation record accepted")
 	}
 	if got := ProjectDNSLabel("tnl.dev", "apps/accounts"); got != "tnl-dev-apps-accounts" {
@@ -31,7 +31,7 @@ func TestProjectDNSLabelFitsLongMonorepoNamespace(t *testing.T) {
 	if label == "" || len(label) > 63 {
 		t.Fatalf("generated project label exceeds DNS bounds: %q", label)
 	}
-	if _, err := GroupNamespace("production", label, "chase.example.test"); err != nil {
+	if _, err := DeploymentNamespace("production", label, "chase.example.test"); err != nil {
 		t.Fatalf("automatic namespace rejected: %v", err)
 	}
 	if label != ProjectDNSLabel("company-monorepo", directory) || label == ProjectDNSLabel("company-monorepo", directory+"-other") {

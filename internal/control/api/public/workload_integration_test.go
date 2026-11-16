@@ -71,7 +71,11 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	continuous := policies["test"]
 	continuous.MaxDurationSeconds = 0
 	policies["continuous"] = continuous
-	body := controlv1.ApplyProjectConfigurationRequest{TeamId: team, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"cluster": {PublisherGroup: &group, Protocol: &protocol, Target: "", TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}, Webhooks: map[string]controlv1.ProjectWebhook{}}}
+	for name, policy := range policies {
+		policy.Deployment = group
+		policies[name] = policy
+	}
+	body := controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"cluster": protocol}, TeamId: team, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Workloads: &policies, Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"cluster": {Protocol: &protocol, Target: "", TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}, Webhooks: map[string]controlv1.ProjectWebhook{}}}
 	applied, err := owner.ApplyProjectConfiguration(ctx, "example", body)
 	if err != nil {
 		t.Fatal(err)
@@ -228,7 +232,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	if _, err = workloadControl.ApplyProjectConfiguration(ctx, "example", body); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("workload self-applied policy", err)
 	}
-	if _, err = workloadControl.GetProjectConfiguration(ctx, team, "example"); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if _, err = workloadControl.GetProjectConfiguration(ctx, team, "example", group); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("workload read manager target inventory", err)
 	}
 	authority, err := clientauthority.New(server.URL, server.Client(), credentials.AccessToken(session.Credential))
@@ -266,7 +270,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 		t.Fatal("revoked workload retained visitor access")
 	}
 	// human administration remains independently usable after job revocation.
-	if _, err = owner.GetProjectConfiguration(ctx, team, "example"); err != nil {
+	if _, err = owner.GetProjectConfiguration(ctx, team, "example", group); err != nil {
 		t.Fatal(err)
 	}
 	t.Run("retained and collected deletion ownership", func(t *testing.T) {

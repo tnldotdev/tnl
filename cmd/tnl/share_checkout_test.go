@@ -253,7 +253,7 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 	t.Cleanup(func() { http.DefaultTransport = original })
 	root := t.TempDir()
 	configPath := filepath.Join(root, "tnl.yml")
-	source := "version: 1\ntnl:\n  server: " + server.URL + "\n  team: " + teamID + "\n  publisher_groups:\n    remote: {}\n  services:\n    web:\n      public_url: {hostname: web.example.test}\n    api:\n      public_url: {hostname: api.example.test}\n    private: {}\n    database:\n      publisher_group: remote\n      protocol: postgres\n      target: {type: address, address: database.internal:5432}\n"
+	source := "version: 1\ntnl:\n  server: " + server.URL + "\n  team: " + teamID + "\n  services:\n    web: {}\n    api: {}\n    private: {}\n    database:\n      protocol: postgres\n  deployments:\n    local:\n      targets:\n        web:\n          public_url: {hostname: web.example.test}\n        api:\n          public_url: {hostname: api.example.test}\n        private: {}\n    remote:\n      targets:\n        database:\n          address: database.internal:5432\n"
 	if err := os.WriteFile(configPath, []byte(source), 0o600); err != nil {
 		t.Fatal(err)
 	}

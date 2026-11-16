@@ -10,10 +10,10 @@ import (
 
 func ConfiguredServices(project clientproject.Project) []Service {
 	services := make([]Service, 0, len(project.Config.Services))
+	if config.SelectedDeployment(project.Config) != "local" {
+		return services
+	}
 	for name, definition := range project.Config.Services {
-		if config.PublisherGroupName(definition) != "local" {
-			continue
-		}
 		readiness := Readiness{Path: "/"}
 		if definition.HTTP != nil && definition.HTTP.Readiness != nil {
 			readiness.Path = definition.HTTP.Readiness.Path

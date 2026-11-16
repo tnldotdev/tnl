@@ -10,14 +10,20 @@ import (
 func TestIntegrationAppliedPrivateLookupIsSourceBound(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "applied_private_lookup")
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}, "staging": {}}, Services: map[string]ProjectServiceConfiguration{
-		"orders": {PublisherGroup: "production", Name: "database", Protocol: "postgres", Target: "do-not-return.internal:5432"},
-		"other":  {PublisherGroup: "staging", Name: "database", Protocol: "postgres", Target: "other.internal:5432"},
+	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{
+		"orders": {Name: "database", Protocol: "postgres", Target: "do-not-return.internal:5432"},
+		"other":  {Name: "database", Protocol: "postgres", Target: "other.internal:5432"},
 		"local":  {Protocol: "http", Target: "app"},
 	}}
-	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
-	if err != nil {
-		t.Fatal(err)
+	var applied AppliedProjectConfiguration
+	for _, selection := range []struct{ deployment, service string }{{"local", "local"}, {"staging", "other"}, {"production", "orders"}} {
+		request := projectServiceSelection(r, selection.deployment, selection.service)
+		request.ExpectedRevision = applied.Revision
+		var err error
+		applied, err = d.ApplyProjectConfiguration(t.Context(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	id := ""
 	for _, service := range applied.Services {
@@ -30,7 +36,7 @@ func TestIntegrationAppliedPrivateLookupIsSourceBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := GetProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "orders", IdentityID: visitor, Now: now}
+	request := GetProjectServiceRequest{Deployment: "production", TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "orders", IdentityID: visitor, Now: now}
 	service, err := d.GetProjectService(t.Context(), request)
 	if err != nil || service.ID != id || service.Endpoint == nil {
 		t.Fatal("visitor did not resolve its exact offline service", service, err)
@@ -39,12 +45,13 @@ func TestIntegrationAppliedPrivateLookupIsSourceBound(t *testing.T) {
 	if err != nil || strings.Contains(string(encoded), "do-not-return.internal") {
 		t.Fatal("visitor metadata returned a target", err)
 	}
-	if _, err = d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, visitor); !errors.Is(err, ErrServiceAccess) {
+	if _, err = d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, visitor, "production"); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("visitor lookup granted manager access", err)
 	}
 	for _, mutate := range []func(*GetProjectServiceRequest){
 		func(r *GetProjectServiceRequest) { r.SourceFingerprint = strings.Repeat("b", 64) },
 		func(r *GetProjectServiceRequest) { r.ProjectKey = "another-source" },
+		func(r *GetProjectServiceRequest) { r.Deployment = "staging" },
 		func(r *GetProjectServiceRequest) { r.Service = "database" },
 		func(r *GetProjectServiceRequest) { r.Service = "other" },
 		func(r *GetProjectServiceRequest) { r.Service = "local" },
