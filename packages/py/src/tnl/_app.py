@@ -118,9 +118,8 @@ class PreparedService:
             assignment.public_url,
         )
         if self.service and (url != self.public_url or name != self.service):
-            if self._shutdown_until is None:
-                self._shutdown_until = _shutdown_deadline()
-            until = self._shutdown_until
+            # compensate this rejected registration without stopping its owner.
+            until = self._shutdown_until or _shutdown_deadline()
             if asyncio.get_running_loop().time() >= until:
                 raise TimeoutError("registration cleanup timed out; remote cleanup is unconfirmed")
             async with asyncio.timeout_at(until):

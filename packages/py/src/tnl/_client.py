@@ -66,7 +66,7 @@ class _Factory[C, T]:
         self._shutdown_until: float | None = None
         self._parent_shutdown_deadline = shutdown_deadline
         self._stopping = asyncio.Event()
-        self._timeout_failure: TimeoutError | None = None
+        self._timeout_failure: BaseException | None = None
         self._acquisition_stopped = acquisition_stopped
 
     async def _application[R](self, value: Awaitable[R]) -> R:
@@ -84,14 +84,23 @@ class _Factory[C, T]:
             if app in done:
                 return app.result()
             app.cancel()
-            app.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
-            self._timeout_failure = TimeoutError(
-                "application client callback did not finish before shutdown"
-            )
-            raise self._timeout_failure
+            timeout = TimeoutError("application client callback did not finish before shutdown")
         finally:
             stopping.cancel()
             await asyncio.gather(stopping, return_exceptions=True)
+        # the stop waiter may already be done; give cancellation a turn to run.
+        await asyncio.sleep(0)
+        # inspect completed work, but do not wait for an uninterruptible callback.
+        failure: BaseException = timeout
+        if app.done():
+            if not app.cancelled() and (cause := app.exception()) is not None:
+                failure = BaseExceptionGroup(
+                    "application callback shutdown failed", [timeout, cause]
+                )
+        else:
+            app.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
+        self._timeout_failure = failure
+        raise failure
 
     def __repr__(self) -> str:
         return "<tnl client factory (private)>"
@@ -187,7 +196,7 @@ class _Factory[C, T]:
         # a forked child must not close its parent's ordinary driver or native IPC.
         if self._pid != os.getpid():
             return
-        if self._timeout_failure is not None:
+        if self._timeout_failure is not None and self._closing is None:
             raise self._timeout_failure
         if (
             self._closed
@@ -280,4 +289,12 @@ class _Factory[C, T]:
                 failures.append(error)
             else:
                 self._on_closed = None
+        if self._timeout_failure is not None and failures:
+            # retries must retain the whole joined failure, not the last timeout.
+            self._timeout_failure = (
+                failures[0]
+                if len(failures) == 1
+                else BaseExceptionGroup("client cleanup failed", failures)
+            )
+            return [self._timeout_failure]
         return failures

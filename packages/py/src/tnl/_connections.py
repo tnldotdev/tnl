@@ -354,7 +354,24 @@ def _command(
                                         raise _error("invalid")
                             except BlockingIOError:
                                 continue
-                child.wait(timeout=max(0.001, deadline - time.monotonic()))
+                # eof does not prove process exit; keep the same stop fence and
+                # deadline while joining a helper that has closed its pipes.
+                while child.poll() is None:
+                    if interrupted is not None and interrupted():
+                        raise _InterruptedError(
+                            "sdk.connection_closed",
+                            "native selection was interrupted; remote cleanup is unconfirmed",
+                        )
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise _error("unavailable")
+                    try:
+                        child.wait(
+                            timeout=min(remaining, 0.05) if interrupted is not None else remaining
+                        )
+                    except subprocess.TimeoutExpired:
+                        if interrupted is None:
+                            raise
                 if child.returncode:
                     reason = None
                     retained = False

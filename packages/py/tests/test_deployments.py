@@ -11,6 +11,7 @@ from test_workload_connections import NativeFixture
 
 import tnl
 from tnl import _connections, _deployments
+from tnl._client import _Factory
 
 
 def test_root_exposes_only_project_bound_connections() -> None:
@@ -30,7 +31,7 @@ def test_local_deployment_requires_no_credential_and_reuses_driver_bindings(
         _connections._Scope, "stop", lambda scope, _until=None: stopped.append(scope)
     )
 
-    def command(_binary: Path, *args: str, input_value: object = None) -> object:
+    def command(_binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         calls.append(args)
         return {
             "schema": 1,
@@ -144,7 +145,7 @@ def test_local_protocols_use_account_free_native_settings(
     monkeypatch.setattr(_connections._Scope, "stop", lambda _self, _until=None: None)
     calls: list[tuple[str, ...]] = []
 
-    def command(_binary: Path, *args: str, input_value: object = None) -> object:
+    def command(_binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         calls.append(args)
         return {
             "schema": 1,
@@ -345,7 +346,7 @@ def deployment(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(_deployments.Deployment, "_local_connection", local)
     monkeypatch.setattr(_connections._Scope, "prepare", remote)
-    monkeypatch.setattr(_connections._Scope, "stop", lambda _scope: None)
+    monkeypatch.setattr(_connections._Scope, "stop", lambda _scope, _until=None: None)
     return tnl.create_client(
         project="acme/shop", services={"db": {"protocol": "postgres"}}, token="private"
     ).deployment(request.param)
@@ -371,6 +372,7 @@ def test_failed_driver_cleanup_stays_owned_until_retry_succeeds(
                 raise failure
 
         factory = deployment.client("db", create=create, close=close)
+        assert isinstance(factory, _Factory)
         value = await factory()
         if close_factory:
             with pytest.raises(RuntimeError) as rejected:
@@ -380,7 +382,14 @@ def test_failed_driver_cleanup_stays_owned_until_retry_succeeds(
             with pytest.raises(BaseExceptionGroup) as rejected_group:
                 await deployment.aclose()
             assert rejected_group.value.exceptions == (failure,)
+        assert factory in deployment._factories
+        original = factory._shutdown_until
+        deployment_until = deployment._shutdown_until
         await deployment.aclose()
+        assert factory._shutdown_until == original
+        if deployment_until is not None:
+            assert deployment._shutdown_until == deployment_until
+        assert factory not in deployment._factories
         assert created == [value] and attempts == [value, value]
         await deployment.aclose()
         assert attempts == [value, value]
@@ -394,6 +403,41 @@ def test_manually_closed_factories_release_deployment_capacity(deployment: tnl.D
             factory = deployment.client("db", create=lambda _: object(), close=lambda _: None)
             await factory.aclose()
         await deployment.aclose()
+
+    asyncio.run(run())
+
+
+def test_failed_factory_retry_cannot_restart_expired_deployment_budget(
+    deployment: tnl.Deployment,
+) -> None:
+    async def run() -> None:
+        attempts: list[object] = []
+        failure = RuntimeError("driver cleanup failed")
+
+        def close(value: object) -> None:
+            attempts.append(value)
+            raise failure
+
+        factory = deployment.client("db", create=lambda _: object(), close=close)
+        assert isinstance(factory, _Factory)
+        value = await factory()
+        until = asyncio.get_running_loop().time() + 0.03
+        deployment._shutdown_until = until
+        with pytest.raises(BaseExceptionGroup) as first:
+            await deployment.aclose()
+        assert first.value.exceptions == (failure,)
+        native_until = deployment._native_shutdown_until
+        expired = asyncio.Event()
+        asyncio.get_running_loop().call_at(until + 0.001, expired.set)
+        await asyncio.wait_for(expired.wait(), 1)
+        with pytest.raises(BaseExceptionGroup) as retried:
+            await deployment.aclose()
+        assert len(retried.value.exceptions) == 1
+        assert isinstance(retried.value.exceptions[0], TimeoutError)
+        assert factory in deployment._factories and factory._entries
+        assert attempts == [value]
+        assert deployment._shutdown_until == factory._shutdown_until == until
+        assert deployment._native_shutdown_until == native_until
 
     asyncio.run(run())
 

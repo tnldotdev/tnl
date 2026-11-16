@@ -117,6 +117,63 @@ def private_assignment() -> dict[str, object]:
     }
 
 
+def test_changed_registration_compensation_does_not_start_owner_shutdown_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        original = private_assignment()
+        changed = private_assignment()
+        changed["registration_id"] = "reg_" + "b" * 32
+        changed["public_url"] = "https://web.member.example"
+        project = cast(dict[str, object], changed["project"])
+        services = cast(dict[str, dict[str, object]], project["services"])
+        services["web"]["public"] = True
+        cleanups: list[dict[str, object]] = []
+        deadlines: list[float] = []
+
+        class Runtime(AssignmentRuntime):
+            async def request(
+                self, endpoint: Endpoint, operation: str, payload: dict[str, object] | None = None
+            ) -> object:
+                if operation == "unregister":
+                    assert payload is not None
+                    cleanups.append(dict(payload))
+                return await super().request(endpoint, operation, payload)
+
+        def deadline() -> float:
+            until = asyncio.get_running_loop().time() + 0.03
+            deadlines.append(until)
+            return until
+
+        monkeypatch.setattr(_app, "_shutdown_deadline", deadline)
+        native = Runtime(original)
+        prepared = tnl.PreparedService("/project", "web", None, native)
+        await prepared.start()
+        native.assignment = changed
+        try:
+            with pytest.raises(InvalidResponse):
+                await prepared._prepare()
+            assert isinstance(prepared._phase, _app._Prepared)
+            assert prepared._phase.registration_id == original["registration_id"]
+            assert prepared.public_url == ""
+            expired = asyncio.Event()
+            asyncio.get_running_loop().call_at(deadlines[0] + 0.001, expired.set)
+            await asyncio.wait_for(expired.wait(), 1)
+            native.assignment = original
+            await prepared.close()
+            assert len(deadlines) == 2 and deadlines[1] > deadlines[0]
+            assert [value["registration_id"] for value in cleanups] == [
+                changed["registration_id"],
+                original["registration_id"],
+            ]
+            assert all("shutdown_deadline" in value for value in cleanups)
+        finally:
+            native.assignment = original
+            await asyncio.gather(prepared.close(), return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
 def test_deferred_assignment_is_valid_only_at_acquisition() -> None:
     value = private_assignment()
     value["hostname"] = ""

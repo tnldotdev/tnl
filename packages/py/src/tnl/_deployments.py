@@ -151,6 +151,7 @@ class Deployment:
         self._publications: set[Publication] = set()
         self._publication_tasks: set[asyncio.Task[Publication]] = set()
         self._shutdown_until: float | None = None
+        self._native_shutdown_until: float | None = None
 
     def __repr__(self) -> str:
         return "<tnl deployment (private)>"
@@ -230,6 +231,8 @@ class Deployment:
             name,
             "--protocol",
             protocol,
+            deadline=self._native_shutdown_until,
+            interrupted=lambda: self._closed,
         )
         value = _object(
             raw,
@@ -440,12 +443,14 @@ class Deployment:
         self._closed = True
         if self._shutdown_until is None:
             self._shutdown_until = asyncio.get_running_loop().time() + 10
+        if self._native_shutdown_until is None:
+            remaining = max(0, self._shutdown_until - asyncio.get_running_loop().time())
+            self._native_shutdown_until = time.monotonic() + remaining
 
         async def cleanup() -> None:
             failures: list[BaseException] = []
-            assert self._shutdown_until is not None
-            remaining = max(0, self._shutdown_until - asyncio.get_running_loop().time())
-            native_until = time.monotonic() + remaining
+            assert self._native_shutdown_until is not None
+            native_until = self._native_shutdown_until
             # fence every publication and start native retirement before waiting
             # for a factory, late selection, or a single remote cleanup response.
             publications = tuple(self._publications)
