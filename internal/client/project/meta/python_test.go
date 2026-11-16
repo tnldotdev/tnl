@@ -114,6 +114,34 @@ async def use_clients() -> None:
     await get_database.aclose()
 `
 			}
+			clientArguments := `project="team/project"`
+			if scenario == "factory" {
+				clientArguments += `, services={"web": {"protocol": "http"}}`
+			}
+			usage += `
+from starlette.types import ASGIApp
+from typing import assert_type as assert_publication_type
+import tnl
+
+async def use_publications(app: ASGIApp) -> None:
+    selected = deployment(client=create_client(` + clientArguments + `), name="production")
+    assert_publication_type(await selected.publish(app), tnl.Publication)
+    assert_publication_type(await selected.publish(app, access="anonymous", limits=tnl.Limits(requests=2), require_post_quantum=True, telemetry=False), tnl.Publication)
+    await selected.publish("missing", app)  # type: ignore[call-overload]
+`
+			if scenario == "static" || scenario == "factory" {
+				usage += `
+    assert_publication_type(await selected.publish("web", app, telemetry=False), tnl.Publication)
+    await selected.publish("web", app, access="anonymous")  # type: ignore[call-overload]
+`
+			}
+			if scenario == "factory" {
+				usage = strings.ReplaceAll(usage, `    await selected.publish("missing", app)  # type: ignore[call-overload]`, `    assert_publication_type(await selected.publish("only-in-another-worktree", app), tnl.Publication)`)
+			}
+			if scenario == "static" || scenario == "single" {
+				usage += `    await selected.publish("database", app)  # type: ignore[call-overload]
+`
+			}
 			files, err := PythonFacade(configuration, path)
 			if err != nil {
 				t.Fatal(err)
