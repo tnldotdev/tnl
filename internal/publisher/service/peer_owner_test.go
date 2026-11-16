@@ -10,6 +10,7 @@ import (
 
 func peerOwnerPage(p *PeerSession, observed, expires time.Time) controlv1.ConnectorPeerPairCandidates {
 	return controlv1.ConnectorPeerPairCandidates{Items: []controlv1.ConnectorPeerPairCandidate{{PairId: p.identity.pairID, DeliveryGeneration: p.highwater,
+		Disposition: controlv1.ConnectorPeerPairDispositionCandidate, OwnerRevision: 1,
 		OwnerAuthority: &controlv1.ConnectorPeerPairOwnerAuthority{ObservedAt: observed, ExpiresAt: expires}}}}
 }
 

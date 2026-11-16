@@ -22,7 +22,6 @@ func publicSourceMetadata(t *testing.T, prepared *Prepared, header tunnelv1.Serv
 		t.Fatal("source fixture needs current serving policy")
 	}
 	now := view.AuthorityTime(time.Now())
-	prepared.sourceKey = [32]byte{1}
 	authority, key, err := visitortoken.IssueVisitorSourceAuthority(prepared.sourceKey, tunnelv1.VisitorSourceAuthority{
 		ServiceID: header.ServiceID, ServiceRunID: header.ServiceRunID, RunNumber: header.RunNumber, EndpointRevision: 1,
 		IngressID: header.PublicService.IngressID, IngressRunID: header.PublicService.IngressRunID,

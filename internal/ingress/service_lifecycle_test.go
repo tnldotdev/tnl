@@ -101,11 +101,11 @@ func TestPendingDirectMySQLServerFirstHalfClose(t *testing.T) {
 	if reason := admission.selectRun(key, p.config.Traffic.Default, netip.MustParseAddr("192.0.2.4"), false); reason != "" {
 		t.Fatal(reason)
 	}
-	pending := &budgetConn{Conn: ingress, beforeWrite: func(size int) error {
-		return admission.beforeWrite(t.Context(), false, size)
+	pending := &budgetConn{Conn: ingress, reserveWrite: func(size int) (int, error) {
+		return size, admission.beforeWrite(t.Context(), false, size)
 	}}
-	outbound := &budgetConn{Conn: upstream, beforeWrite: func(size int) error {
-		return admission.beforeWrite(t.Context(), true, size)
+	outbound := &budgetConn{Conn: upstream, reserveWrite: func(size int) (int, error) {
+		return size, admission.beforeWrite(t.Context(), true, size)
 	}}
 	done := make(chan error, 1)
 	go func() { _, err := streamcopy.Copy(pending, outbound); done <- err }()

@@ -286,7 +286,8 @@ func TestFeedbackPublisherContractKeepsSourceAndScopeOutOfBrowserInput(t *testin
 		t.Fatal("service did not supply report scope and incomplete demo source", control.create)
 	}
 	read, err := client.GetBrowserFeedbackThreadWithResponse(t.Context(), thread.Id)
-	if err != nil || read.JSON200 == nil || read.JSON200.Scope.ServiceId != thread.Scope.ServiceId || read.JSON200.Scope.ServiceRunId != runtime.runID ||
+	if err != nil || read.JSON200 == nil || read.JSON200.Scope.PreviewId != thread.Scope.PreviewId ||
+		read.JSON200.Scope.ServiceId != thread.Scope.ServiceId || read.JSON200.Scope.ServiceRunId != runtime.runID ||
 		read.JSON200.Scope.RunNumber != 2 || read.JSON200.Scope.Service != "web" || read.JSON200.SourceAtReport.SchemaVersion != 1 || read.JSON200.SourceAtReport.Complete {
 		t.Fatal("browser thread contract failed", err)
 	}

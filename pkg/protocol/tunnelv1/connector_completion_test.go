@@ -9,8 +9,8 @@ import (
 )
 
 func TestConnectorCompletionWireIsBoundedAndNotPermission(t *testing.T) {
-	want := ConnectorVisitorCompletion{Kind: ConnectorVisitorCompleted, VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", DeliveryGeneration: 7}
-	body := `{"kind":"connector_visitor_completed","visitor_connection_id":"vc_aaaaaaaaaaaaaaaaaaaaaa","delivery_generation":7}`
+	want := ConnectorVisitorCompletion{Kind: ConnectorVisitorCompleted, VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", DeliveryGeneration: 7, TerminalNumber: 1}
+	body := `{"kind":"connector_visitor_completed","visitor_connection_id":"vc_aaaaaaaaaaaaaaaaaaaaaa","delivery_generation":7,"terminal_number":1}`
 	wire := append(binary.BigEndian.AppendUint32(nil, uint32(len(body))), body...)
 	var encoded bytes.Buffer
 	if err := WriteConnectorVisitorCompletion(&encoded, want); err != nil || !bytes.Equal(encoded.Bytes(), wire) {
@@ -30,6 +30,8 @@ func TestConnectorCompletionWireIsBoundedAndNotPermission(t *testing.T) {
 	}
 	for _, invalid := range []string{
 		strings.Replace(body, `"delivery_generation":7`, `"delivery_generation":0`, 1),
+		strings.Replace(body, `,"terminal_number":1`, "", 1),
+		strings.Replace(body, `"terminal_number":1`, `"terminal_number":0`, 1),
 		strings.Replace(body, `"vc_aaaaaaaaaaaaaaaaaaaaaa"`, `""`, 1),
 		strings.Replace(body, `"connector_visitor_completed"`, `"unknown_completion"`, 1),
 		strings.TrimSuffix(body, "}") + `,"permission":{}}`,
@@ -59,9 +61,17 @@ func TestConnectorCompletionWireIsBoundedAndNotPermission(t *testing.T) {
 func FuzzConnectorControlMessage(f *testing.F) {
 	var seed bytes.Buffer
 	_ = WriteConnectorVisitorCompletion(&seed, ConnectorVisitorCompletion{
-		Kind: ConnectorVisitorCompleted, VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", DeliveryGeneration: 1,
+		Kind: ConnectorVisitorCompleted, VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", DeliveryGeneration: 1, TerminalNumber: 1,
 	})
 	f.Add(seed.Bytes())
+	for _, fixture := range append(connectorTerminalWireFixtures(), connectorTerminalMaximumWireFixtures()...) {
+		if _, reply := fixture.message.(ConnectorControlReply); !reply {
+			f.Add(connectorTerminalFrame(fixture.payload))
+		}
+	}
+	var update bytes.Buffer
+	_ = WriteConnectorPermissionUpdate(&update, permissionUpdateFixture())
+	f.Add(update.Bytes())
 	f.Fuzz(func(t *testing.T, wire []byte) {
 		message, err := ReadConnectorControlMessage(bytes.NewReader(wire))
 		if err != nil {
@@ -73,6 +83,10 @@ func FuzzConnectorControlMessage(f *testing.F) {
 			err = WriteConnectorVisitorCompletion(&out, message)
 		case ConnectorPermissionUpdate:
 			err = WriteConnectorPermissionUpdate(&out, message)
+		case ConnectorVisitorAbort:
+			err = WriteConnectorVisitorAbort(&out, message)
+		case ConnectorVisitorTerminalObserved:
+			err = WriteConnectorVisitorTerminalObserved(&out, message)
 		default:
 			t.Fatal("unknown typed control message")
 		}

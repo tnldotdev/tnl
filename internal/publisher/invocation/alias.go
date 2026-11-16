@@ -263,9 +263,13 @@ func projectAliasPublisher(state *clientstate.Database, services publisherServic
 		if err != nil {
 			return integrations.Snapshot{}, err
 		}
-		prefixes := append([]string{}, policy.prefixes...)
+		accessPolicy := &controlv1.ProjectHTTPAccess{Mode: &policy.access}
+		if len(policy.prefixes) != 0 {
+			prefixes := slices.Clone(policy.prefixes)
+			accessPolicy.Ip = &prefixes
+		}
 		declaration := controlv1.ProjectServiceConfiguration{Target: "app", RequirePostQuantum: new(parent.RequirePostQuantum),
-			Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &policy.access, Ip: &prefixes}, Limits: parent.HttpLimits}}
+			Http: &controlv1.ProjectServiceHTTP{Access: accessPolicy, Limits: parent.HttpLimits}}
 		trust, err := publisheridentity.ServiceTrust(parent)
 		if err != nil {
 			return integrations.Snapshot{}, err

@@ -17,6 +17,7 @@ type ServiceInventory struct {
 	ID, TeamID, TeamName, Name, ServiceRunID, VisitorAccess string
 	RunNumber                                               int64
 	CreatedAt                                               time.Time
+	RequirePostQuantum                                      bool
 }
 
 type ServiceVisitorValidity struct {

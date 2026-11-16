@@ -47,7 +47,7 @@ func TestIntegrationRecoveryReusesReservationDuringPlacement(t *testing.T) {
 	}
 	f.leases[restarted.RelayServiceID] = restarted
 
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	gate, err := f.database.pool.Begin(ctx)
 	if err != nil {
@@ -64,20 +64,14 @@ func TestIntegrationRecoveryReusesReservationDuringPlacement(t *testing.T) {
 		err error
 	}
 	done := make(chan hbResult, 1)
+	callCtx, stop := context.WithTimeout(ctx, time.Second)
+	defer stop()
 	workers.Go(func() {
-		run, err := f.database.HeartbeatServiceRun(ctx, f.service.ID, f.run.RunID, f.run.Token, f.run.ExpiresAt.Add(-time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+		run, err := f.database.HeartbeatServiceRun(callCtx, f.service.ID, f.run.RunID, f.run.Token, f.run.ExpiresAt.Add(-time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64})
 		done <- hbResult{run: run, err: err}
 	})
-	var res hbResult
-	select {
-	case <-time.After(2 * time.Second):
-		t.Fatal("same-service recovery waited for placement gate")
-	case res = <-done:
-		// recovery reusing the reserved slot must not wait on placement/allocation gate.
-	}
-	if err := gate.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
+	// recovery must return before releasing placement, within its actual caller.
+	res := awaitIntegrationResult(t, callCtx, done)
 	if res.err != nil {
 		t.Fatal(res.err)
 	}
@@ -95,20 +89,23 @@ func TestIntegrationRecoveryReusesReservationDuringPlacement(t *testing.T) {
 	if replaced == nil || unchanged == nil {
 		t.Fatalf("recovered slots not found: %+v", recovered.Connections)
 	}
-	if replaced.RelayServiceID != previous.RelayServiceID || replaced.PublisherConnectionID == previous.PublisherConnectionID || replaced.Revision != previous.Revision+1 {
+	if replaced.RelayServiceID != previous.RelayServiceID || replaced.PublisherConnectionID == previous.PublisherConnectionID || replaced.Revision != previous.Revision+1 || replaced.State != "assigned" {
 		t.Fatalf("recovery did not reuse reserved service: replaced=%+v previous=%+v", *replaced, previous)
 	}
-	if unchanged.PublisherConnectionID != surviving.PublisherConnectionID || unchanged.Revision != surviving.Revision || unchanged.RelayServiceID != surviving.RelayServiceID {
+	if unchanged.PublisherConnectionID != surviving.PublisherConnectionID || unchanged.Revision != surviving.Revision || unchanged.RelayServiceID != surviving.RelayServiceID || unchanged.State != "ready" {
 		t.Fatalf("surviving connection changed: unchanged=%+v surviving=%+v", *unchanged, surviving)
 	}
-	assertAssignmentTotals(t, f.database.pool, 2)
-	if _, err := f.database.ReadyServicePublisherConnection(t.Context(), previous.PublisherConnectionID, f.run.RunID, f.run.RunNumber, previous.Revision, RelayLeaseIdentity{RelayServiceID: previous.RelayServiceID, RelayID: oldRelayID, RelayRunID: oldRelayRunID, RelayLeaseRevision: uint64(oldRevision)}, f.run.ExpiresAt.Add(-time.Second)); !errors.Is(err, ErrServiceAccess) {
+	assertRestoredAssignmentState(t, ctx, f.database.pool, 2)
+	if err := gate.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.database.ReadyServicePublisherConnection(ctx, previous.PublisherConnectionID, f.run.RunID, f.run.RunNumber, previous.Revision, RelayLeaseIdentity{RelayServiceID: previous.RelayServiceID, RelayID: oldRelayID, RelayRunID: oldRelayRunID, RelayLeaseRevision: uint64(oldRevision)}, f.run.ExpiresAt.Add(-time.Second)); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("old readiness after recovery replacement = %v", err)
 	}
-	if _, err := f.database.ClaimServicePublisherConnection(t.Context(), replaced.PublisherConnectionID, f.service.ID, f.run.RunID, f.run.RunNumber, replaced.Revision, replaced.Credential, netip.MustParseAddr("127.0.0.1"), restarted.RelayLeaseIdentity, f.run.ExpiresAt.Add(-time.Second)); err != nil {
+	if _, err := f.database.ClaimServicePublisherConnection(ctx, replaced.PublisherConnectionID, f.service.ID, f.run.RunID, f.run.RunNumber, replaced.Revision, replaced.Credential, netip.MustParseAddr("127.0.0.1"), restarted.RelayLeaseIdentity, f.run.ExpiresAt.Add(-time.Second)); err != nil {
 		t.Fatalf("claim recovered assignment: %v", err)
 	}
-	assertAssignmentTotals(t, f.database.pool, 2)
+	assertRestoredAssignmentState(t, ctx, f.database.pool, 2)
 }
 
 func TestIntegrationClaimProgressesDuringReadinessPublication(t *testing.T) {

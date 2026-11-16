@@ -88,6 +88,17 @@ func TestIntegrationServiceEndpointEditRetainsCapturedConnectorIdentity(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	// creation spends elapsed authorization time before scheduling endpoint work.
+	// observe that actual schedule before testing readiness, not the earlier entry.
+	var scheduledAt time.Time
+	if err := conn.QueryRow(ctx, `SELECT dns_available_at FROM control.service_endpoints
+		WHERE service_id=$1 AND hostname=$2 AND retired_at IS NULL
+		AND dns_state='pending' AND public AND dns_automation`, service.ID, service.Endpoint.Hostname).Scan(&scheduledAt); err != nil {
+		t.Fatal("read the actual initial endpoint DNS schedule", err)
+	}
+	if scheduledAt.After(now) {
+		now = scheduledAt
+	}
 	if _, found, err := d.ClaimServiceEndpointDNSWork(ctx, "before-publication", now, time.Minute); err != nil || found {
 		t.Fatal("DNS published before the service had a ready certificate and publisher", found, err)
 	}

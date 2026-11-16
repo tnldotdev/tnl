@@ -160,6 +160,11 @@ func (d *Database) ConfigureService(ctx context.Context, serviceID, actorID stri
 		}
 	}
 	declarationChanged := !reflect.DeepEqual(previous, declaration)
+	if declarationChanged {
+		if err := requireServiceDeclarationEdit(ctx, tx, row, actorID, clock.current()); err != nil {
+			return result, err
+		}
+	}
 	changed := !serviceMetadataMatches(saved, metadata)
 	if err := requireServiceProtocolChange(ctx, tx, row, metadata.Protocol); err != nil {
 		return result, err
@@ -238,6 +243,42 @@ func (d *Database) ConfigureService(ctx context.Context, serviceID, actorID stri
 		return result, err
 	}
 	return result, nil
+}
+
+// the caller has checked current management and locked the service. cleanup and
+// metadata management do not confer another member's declaration ownership.
+func requireServiceDeclarationEdit(ctx context.Context, tx pgx.Tx, service controlstatedb.ControlService, actor string, now time.Time) error {
+	denied := ErrServiceAccess
+	if _, signed := serviceActor(ctx); signed {
+		denied = ErrServiceManagerRequired
+	}
+	owner, err := storedServiceSourceOwner(ctx, tx, service, false)
+	if err != nil {
+		if err == ErrServiceAccess {
+			return denied
+		}
+		return err
+	}
+	facts, err := serviceHostnameAuthority(ctx, tx, service.TeamID.String, actor, service.DomainID.String, now)
+	if err != nil {
+		if err == ErrServiceAccess {
+			return denied
+		}
+		return err
+	}
+	switch owner.scope {
+	case NamespaceScopeMember:
+		if owner.membership != facts.ActorMembershipID {
+			return denied
+		}
+	case NamespaceScopeShared:
+		if facts.ActorRole != "owner" && facts.ActorRole != "admin" {
+			return denied
+		}
+	default:
+		return denied
+	}
+	return nil
 }
 
 func requireServiceProtocolChange(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlService, protocol string) error {

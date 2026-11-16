@@ -19,7 +19,7 @@ var ErrConnectorPeerBindingStale = errors.New("connector network binding is stal
 func connectorPeerSessionKeyContext(id string) string { return "connector-peer-session/" + id }
 
 func (d *Database) connectorPeerSessionKey(pair controlstatedb.ControlConnectorPeerPair) (string, error) {
-	if len(pair.SessionKeyCiphertext) == 0 || !pair.SessionKeyStorageKeyID.Valid {
+	if !connectorPeerPairUnretired(pair) || len(pair.SessionKeyCiphertext) == 0 || !pair.SessionKeyStorageKeyID.Valid {
 		return "", ErrServiceAccess
 	}
 	return d.connectorPeerSecret(pair.SessionKeyStorageKeyID.String, connectorPeerSessionKeyContext(pair.ID), pair.SessionKeyCiphertext, pair.SessionKeyDigest)
@@ -41,7 +41,7 @@ func (d *Database) connectorPeerSecret(keyID, scope string, ciphertext, digest [
 // retained authority is independent of network readiness, but not of prior run
 // readiness, the original parent, metadata, publisher grants, or absolute expiry.
 func (d *Database) connectorPeerSessionAuthority(ctx context.Context, tx pgx.Tx, run controlstatedb.ControlServiceRun, pair controlstatedb.ControlConnectorPeerPair, now time.Time) (VisitorSubject, ed25519.PublicKey, time.Time, error) {
-	if pair.ServiceID != run.ServiceID || pair.ServiceRunID != run.ID || pair.RunNumber != run.RunNumber || pair.PublisherIdentityID != run.PublisherIdentityID ||
+	if !connectorPeerPairUnretired(pair) || pair.ServiceID != run.ServiceID || pair.ServiceRunID != run.ID || pair.RunNumber != run.RunNumber || pair.PublisherIdentityID != run.PublisherIdentityID ||
 		!pair.ExpiresAt.Time.After(now) || pair.LastAuthorizedAt.Time.After(now) || len(pair.SessionKeyCiphertext) == 0 ||
 		!run.ReadyAt.Valid || !run.Healthy || !activeServiceRun(run, now) || !run.CertificateExpiresAt.Valid || !run.CertificateExpiresAt.Time.After(now) {
 		return VisitorSubject{}, nil, time.Time{}, ErrServiceAccess
@@ -64,6 +64,9 @@ func (d *Database) connectorPeerSessionAuthority(ctx context.Context, tx pgx.Tx,
 // the owner row is the active binding projection. only one pending row exists;
 // callers retain the owner lock throughout projection, validation, and commit.
 func connectorPeerBindingRevision(ctx context.Context, tx pgx.Tx, pair controlstatedb.ControlConnectorPeerPair, generation int64, now time.Time) (controlstatedb.ControlConnectorPeerPair, bool, time.Time, error) {
+	if !connectorPeerPairUnretired(pair) {
+		return pair, false, time.Time{}, ErrServiceAccess
+	}
 	if generation == pair.DeliveryGeneration {
 		return pair, false, pair.ExpiresAt.Time, nil
 	}
@@ -82,6 +85,9 @@ func connectorPeerBindingRevision(ctx context.Context, tx pgx.Tx, pair controlst
 }
 
 func expireConnectorPeerPending(ctx context.Context, tx pgx.Tx, pair controlstatedb.ControlConnectorPeerPair, now time.Time) (controlstatedb.ControlConnectorPeerPair, error) {
+	if !connectorPeerPairUnretired(pair) {
+		return pair, ErrServiceAccess
+	}
 	if pair.RebindStatus.String != "pending" {
 		return pair, nil
 	}
@@ -93,20 +99,23 @@ func expireConnectorPeerPending(ctx context.Context, tx pgx.Tx, pair controlstat
 	if !expired && err == nil {
 		return pair, nil
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM control.connector_peer_pending_bindings WHERE pair_id=$1;
-		`, pair.ID); err != nil {
+	q := controlstatedb.New(tx)
+	if _, err := q.DeleteConnectorPeerPendingBinding(ctx, pair.ID); err != nil {
 		return pair, err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM control.connector_peer_pair_leg_claims WHERE pair_id=$1 AND delivery_generation<>$2`, pair.ID, pair.DeliveryGeneration); err != nil {
 		return pair, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE control.connector_peer_pairs SET rebind_status='expired' WHERE id=$1`, pair.ID); err != nil {
+	if err := connectorPeerPairWrite(q.ExpireConnectorPeerRebind(ctx, pair.ID)); err != nil {
 		return pair, err
 	}
-	return controlstatedb.New(tx).LockConnectorPeerPairForLegClaim(ctx, pair.ID)
+	return q.LockConnectorPeerPairForLegClaim(ctx, pair.ID)
 }
 
 func (d *Database) connectorPeerSnapshot(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlConnectorPeerPair, subject VisitorSubject, now time.Time, pending bool, bound time.Time) (ConnectorPeerPair, error) {
+	if !connectorPeerPairUnretired(row) {
+		return ConnectorPeerPair{}, ErrServiceAccess
+	}
 	p := ConnectorPeerPair{ID: row.ID, ServiceID: row.ServiceID, ServiceRunID: row.ServiceRunID, PublisherIdentityID: row.PublisherIdentityID,
 		Subject: subject, RunNumber: row.RunNumber, DeliveryGeneration: row.DeliveryGeneration, TrustRevision: row.TrustRevision,
 		OperationID: row.BindingOperationID, BindingChallenge: base64.RawURLEncoding.EncodeToString(row.BindingChallenge), ObservedAt: now, ExpiresAt: bound, BindingState: "active"}

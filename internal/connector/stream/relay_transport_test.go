@@ -24,7 +24,7 @@ func TestConnectorOwnsOneRelayUDPSocketUntilClose(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer p.Close()
+			defer p.Close(context.WithoutCancel(t.Context()))
 			var address string
 			if disabled {
 				if p.udpTransport == nil || p.socket != nil || p.ownedSocket {
@@ -53,7 +53,7 @@ func TestConnectorOwnsOneRelayUDPSocketUntilClose(t *testing.T) {
 					t.Fatal("relay legs did not borrow the connector's socket", address, remotes, err)
 				}
 			}
-			p.Close()
+			p.Close(context.WithoutCancel(t.Context()))
 			if session, err := p.config.RelayQUIC.Connect(setup, f.endpoints[0]); session != nil || err == nil {
 				t.Fatal("closed connector silently opened another UDP transport", err)
 			}

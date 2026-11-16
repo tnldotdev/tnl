@@ -33,6 +33,7 @@ func (s *serviceInventoryStore) ListAvailableServices(ctx context.Context, ident
 	}
 	return []controlstate.ServiceInventory{{
 		ID: "svc_bbbbbbbbbbbbbbbbbbbbbb", TeamID: "tm_aaaaaaaaaaaaaaaaaaaaaa", TeamName: "stored-team-name", Name: "web", VisitorAccess: reason,
+		RequirePostQuantum: true,
 		ServiceMetadata: controlstate.ServiceMetadata{Protocol: "http", TrustRevision: 4,
 			Endpoint: &controlstate.ServiceEndpoint{Hostname: "web.example.test", Port: 443, Public: true},
 			TLS:      &controlstate.ServiceTargetTLS{Hostname: "private-target", PEM: "private-ca-material"}},
@@ -74,7 +75,15 @@ func TestServiceInventoryHTTPPathUsesSameDefiningSummaryWithoutPrivateFacts(t *t
 			if len(page.Services) != 1 || page.Services[0].TeamName != "stored-team-name" || page.Services[0].VisitorAccess == "" || page.NextCursor == nil || *page.NextCursor != "svc_bbbbbbbbbbbbbbbbbbbbbb" {
 				t.Fatal("visitor summary lost actual identity, team, permission, or paging facts")
 			}
-			for _, secret := range []string{"private-target", "private-ca-material", "target_tls", "http_limits", "endpoint_revision", "ephemeral", "require_post_quantum"} {
+			var fields struct {
+				Services []map[string]json.RawMessage `json:"services"`
+			}
+			var required bool
+			if err := json.Unmarshal(response.Body.Bytes(), &fields); err != nil || len(fields.Services) != 1 ||
+				json.Unmarshal(fields.Services[0]["require_post_quantum"], &required) != nil || !required {
+				t.Fatal("visitor inventory lost the saved post-quantum policy")
+			}
+			for _, secret := range []string{"private-target", "private-ca-material", "target_tls", "http_limits", "endpoint_revision", "ephemeral"} {
 				if strings.Contains(response.Body.String(), secret) {
 					t.Fatal("visitor inventory exposed or synthesized a publisher-only/full-service field", secret)
 				}

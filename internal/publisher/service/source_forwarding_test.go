@@ -127,7 +127,7 @@ func (f *sourceForwardingFixture) opening(t *testing.T, slot int, header tunnelv
 		done <- f.bound.serveBody(t.Context(), ref, server, header, nil, func(context.Context) error {
 			f.capacity.Add(1)
 			return nil
-		})
+		}, nil)
 	}()
 	t.Cleanup(func() {
 		_ = client.Close()

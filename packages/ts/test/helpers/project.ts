@@ -52,6 +52,21 @@ export function testPublicProject(dev: boolean) {
   return { namespace: project.namespace, dev, services: project.services };
 }
 
+export function testPrivateAssignment() {
+  const project = testPublicProject(true);
+  return {
+    hostname: "api.member.example",
+    publicURL: "",
+    service: "api",
+    project: {
+      ...project,
+      services: {
+        api: { ...project.services.api, public: false },
+      },
+    },
+  };
+}
+
 export function testAliasAssignment() {
   const project = testPublicProject(true);
   return {

@@ -49,6 +49,39 @@ func lockServiceOwner(ctx context.Context, tx pgx.Tx, id string) error {
 	return nil
 }
 
+// cleanup joins the same authority queue as admission, but leaves busy owners
+// for a later pass. no child lock is acquired before this parent decision.
+func tryLockServiceOwner(ctx context.Context, tx pgx.Tx, id string) (bool, error) {
+	var teamID, guestID pgtype.Text
+	err := tx.QueryRow(ctx, `SELECT team_id,guest_id FROM control.services WHERE id=$1`, id).Scan(&teamID, &guestID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var locked string
+	if guestID.Valid && !teamID.Valid {
+		err = tx.QueryRow(ctx, `SELECT id FROM control.guest_trials WHERE id=$1 FOR UPDATE SKIP LOCKED`, guestID.String).Scan(&locked)
+	} else if teamID.Valid && !guestID.Valid {
+		var queued bool
+		if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock_shared(hashtextextended('tnl:local-team:' || $1::text,0))`, teamID.String).Scan(&queued); err != nil {
+			return false, err
+		}
+		if !queued {
+			return false, nil
+		}
+		err = tx.QueryRow(ctx, `SELECT id FROM control.teams WHERE id=$1 AND deleted_at IS NULL FOR SHARE SKIP LOCKED`, teamID.String).Scan(&locked)
+	} else {
+		// neither a missing owner nor two owners can authorize cleanup.
+		return false, nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func lockServiceAdmission(ctx context.Context, tx pgx.Tx, id string) error {
 	if err := lockServiceOwner(ctx, tx, id); err != nil {
 		return err

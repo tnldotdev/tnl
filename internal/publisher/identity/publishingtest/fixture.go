@@ -75,6 +75,7 @@ type Fixture struct {
 	visitorGrants                             map[string]visitorGrant
 	browsers                                  map[string]browserSession
 	handoffs                                  map[string]string
+	local                                     *localRuntime
 	t                                         *testing.T
 }
 
@@ -195,6 +196,9 @@ func (f *Fixture) canRead(e *enrollment, service controlv1.Service) bool {
 }
 
 func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
+	if f.serveLocal(w, r) {
+		return
+	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/discovery" {
 		f.forward(w, r, false)
 		return

@@ -477,7 +477,7 @@ func replenishServiceConnections(ctx context.Context, tx pgx.Tx, q *controlstate
 		return err
 	}
 	for _, slot := range stale {
-		if PublisherConnectionState(slot.State) == PublisherConnectionReady || PublisherConnectionState(slot.State) == PublisherConnectionConnected {
+		if PublisherConnectionState(slot.State) == PublisherConnectionAssigned || PublisherConnectionState(slot.State) == PublisherConnectionReady || PublisherConnectionState(slot.State) == PublisherConnectionConnected {
 			if _, err = q.ExpireServiceConnectionSlot(ctx, controlstatedb.ExpireServiceConnectionSlotParams{
 				PublisherConnectionID: slot.PublisherConnectionID, ServiceRunID: run.ID, Now: timestamptz(now),
 			}); err != nil {
@@ -488,6 +488,9 @@ func replenishServiceConnections(ctx context.Context, tx pgx.Tx, q *controlstate
 	rows, err := q.ListServiceConnectionSlots(ctx, run.ID)
 	if err != nil {
 		return err
+	}
+	if len(rows) != 2 {
+		return ErrServiceAccess
 	}
 	for _, slot := range rows {
 		state, err := privateAssignmentState(slot.State)
@@ -508,35 +511,79 @@ func replenishServiceConnections(ctx context.Context, tx pgx.Tx, q *controlstate
 		return err
 	}
 	rankRelayPlacements(services, run.PreferredRegions)
-	free := make(map[string]int64, len(replaced))
-	for _, old := range replaced {
-		if PublisherConnectionState(old.State) == PublisherConnectionAssigned {
-			free[old.RelayServiceID]++
+	// there are at most two replacement slots. try the complete set first;
+	// only an established run may make progress with a one-slot subset.
+	place := func(mask uint8) ([]controlstatedb.ControlServiceConnectionSlot, []relayServicePlacement) {
+		var selected []controlstatedb.ControlServiceConnectionSlot
+		occupied := make(map[string]bool, 2)
+		for id := range used {
+			occupied[id] = true
 		}
+		free := make(map[string]int64, 2)
+		for index, old := range replaced {
+			if mask&(1<<index) == 0 {
+				// closed placeholders still own their unique logical-service
+				// binding even though they no longer reserve capacity.
+				occupied[old.RelayServiceID] = true
+				continue
+			}
+			selected = append(selected, old)
+			if PublisherConnectionState(old.State) == PublisherConnectionAssigned {
+				free[old.RelayServiceID]++
+			}
+		}
+		available := func(service relayServicePlacement) bool {
+			return !occupied[service.relayServiceID] &&
+				service.assignments-free[service.relayServiceID] < service.capacity
+		}
+		choices := make([]relayServicePlacement, len(selected))
+		if run.ReadyAt.Valid {
+			// preserve slot ownership when its own service returns. otherwise
+			// the first closed slot could take the only returning service.
+			for index, old := range selected {
+				for _, service := range services {
+					if service.relayServiceID == old.RelayServiceID && available(service) {
+						choices[index] = service
+						occupied[service.relayServiceID] = true
+						break
+					}
+				}
+			}
+		}
+		for index := range selected {
+			if choices[index].relayServiceID != "" {
+				continue
+			}
+			for _, service := range services {
+				if available(service) {
+					choices[index] = service
+					occupied[service.relayServiceID] = true
+					break
+				}
+			}
+			if choices[index].relayServiceID == "" {
+				return nil, nil
+			}
+		}
+		return selected, choices
 	}
-	reserved := make(map[string]int64, len(replaced))
-	choices := make([]relayServicePlacement, 0, len(replaced))
-	for range replaced {
-		var choice *relayServicePlacement
-		for i := range services {
-			id := services[i].relayServiceID
-			if !used[id] && services[i].assignments-free[id]+reserved[id] < services[i].capacity {
-				choice = &services[i]
+	selected, choices := place(uint8(1<<len(replaced)) - 1)
+	if len(selected) == 0 && run.ReadyAt.Valid && len(replaced) == 2 {
+		for index := range replaced {
+			selected, choices = place(1 << index)
+			if len(selected) != 0 {
 				break
 			}
 		}
-		if choice == nil {
-			// failed placement must not roll back the surviving publisher
-			// connection or its one-relay routing projection.
-			return nil
-		}
-		used[choice.relayServiceID] = true
-		reserved[choice.relayServiceID]++
-		choices = append(choices, *choice)
+	}
+	if len(selected) == 0 {
+		// failed placement must not roll back the surviving publisher
+		// connection or its one-relay routing projection.
+		return nil
 	}
 	// remove all old slots before inserting any replacements: a selected relay
 	// service may still belong to another old slot in this same batch.
-	for _, old := range replaced {
+	for _, old := range selected {
 		count, err := q.DeleteServiceConnectionSlot(ctx, controlstatedb.DeleteServiceConnectionSlotParams{
 			PublisherConnectionID: old.PublisherConnectionID, ServiceRunID: run.ID, Now: timestamptz(now),
 		})
@@ -547,7 +594,7 @@ func replenishServiceConnections(ctx context.Context, tx pgx.Tx, q *controlstate
 			return ErrServiceAccess
 		}
 	}
-	for index, old := range replaced {
+	for index, old := range selected {
 		binding, err := checkedPrivateAssignmentBinding(old.ServiceID, old.ServiceRunID, old.PublisherConnectionID, old.RunNumber, old.ConnectionAssignmentRevision)
 		if err != nil {
 			return err

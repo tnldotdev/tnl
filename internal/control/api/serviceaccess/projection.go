@@ -59,7 +59,8 @@ func Summary(record controlstate.ServiceRecord) controlv1.ServiceSummary {
 	return controlv1.ServiceSummary{Id: s.Id, TeamId: s.TeamId, GuestId: s.GuestId, DomainId: s.DomainId, Name: s.Name,
 		Placement: s.Placement, Source: s.Source, Enabled: s.Enabled, Endpoint: s.Endpoint,
 		Protocol: s.Protocol, KubernetesAuth: s.KubernetesAuth, PublisherPool: s.PublisherPool,
-		TrustRevision: s.TrustRevision, CreatedAt: s.CreatedAt, ServiceRunId: s.ServiceRunId, RunNumber: s.RunNumber}
+		RequirePostQuantum: s.RequirePostQuantum,
+		TrustRevision:      s.TrustRevision, CreatedAt: s.CreatedAt, ServiceRunId: s.ServiceRunId, RunNumber: s.RunNumber}
 }
 
 func Grant(grant controlstate.ServiceGrant) controlv1.ServiceGrant {

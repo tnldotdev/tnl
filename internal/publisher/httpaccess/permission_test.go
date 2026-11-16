@@ -95,6 +95,41 @@ func TestLocalHTTPPermissionUsesPreparedHostPolicyAndTrustedSource(t *testing.T)
 	})
 }
 
+func TestLocalHTTPPermissionSNIIsCaseInsensitiveAndServiceBound(t *testing.T) {
+	policy, _, token := visitorfixture.Policy(t, false)
+	for _, test := range []struct {
+		name, sni, credential string
+		want                  error
+	}{
+		{"exact", "preview.example.test", token.Reveal(), nil},
+		{"uppercase", "PREVIEW.EXAMPLE.TEST", token.Reveal(), nil},
+		{"sibling", "sibling.example.test", token.Reveal(), visitortoken.ErrBinding},
+		{"missing_sni", "", token.Reveal(), visitortoken.ErrBinding},
+		{"invalid_sni", "preview.example.test:443", token.Reveal(), visitortoken.ErrBinding},
+		{"uppercase_missing_permission", "PREVIEW.EXAMPLE.TEST", "", visitortoken.ErrToken},
+		{"uppercase_invalid_permission", "PREVIEW.EXAMPLE.TEST", "invalid", visitortoken.ErrToken},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := visitorfixture.Request()
+			request.TLS.ServerName = test.sni
+			if test.credential != "" {
+				request.Header.Set(VisitorTokenHeader, test.credential)
+			}
+			permission, err := localHTTPPermission(request, policy, nil)
+			if test.want == nil {
+				if err != nil || permission.token != token || permission.anonymous {
+					t.Fatal("same-service SNI lost its verified permission", err)
+				}
+			} else if !errors.Is(err, test.want) {
+				t.Fatal("SNI or credential crossed its authorization boundary", err)
+			}
+			if request.TLS.ServerName != test.sni {
+				t.Fatal("authorization rewrote the observed TLS server name")
+			}
+		})
+	}
+}
+
 func TestServiceHTTPWorkloadCertificateNeverFallsBackToHumanCredentials(t *testing.T) {
 	policy, update, bearer := visitorfixture.ScopePolicy(t, visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}, "preview.example.test", 25443, false)
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("h", 32)))

@@ -191,7 +191,7 @@ export function parseProjectRuntime(value: unknown): ProjectRuntime {
   return parseValue(projectRuntimeSchema, value, "sdk.runtime_invalid");
 }
 
-/** returns the public hostnames that can reach this service. */
+/** returns the canonical hostnames that can reach this service. */
 export function serviceHostnames(assignment: {
   readonly hostname: string | undefined;
   readonly service: string;

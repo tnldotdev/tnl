@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -340,7 +341,7 @@ func (d *Database) serviceHTTPIdentityPermission(ctx context.Context, tx pgx.Tx,
 		return result, ErrVisitorSignIn
 	}
 	result.Authenticated, result.IdentityID, result.DisplayName = true, identity, person.DisplayName
-	_, err = q.VisitorCurrentMembership(ctx, controlstatedb.VisitorCurrentMembershipParams{TeamID: s.TeamID.String, IdentityID: identity})
+	membership, err := q.VisitorCurrentMembership(ctx, controlstatedb.VisitorCurrentMembershipParams{TeamID: s.TeamID.String, IdentityID: identity})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
 	}
@@ -355,6 +356,39 @@ func (d *Database) serviceHTTPIdentityPermission(ctx context.Context, tx pgx.Tx,
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
+	}
+	// current stored namespace ownership restores HTTP browser access only.
+	// connector/device and portable HTTP-grant permission still use the generic
+	// visitor rule above, not this path-specific decision.
+	if result.TeamMember {
+		owner, ownerErr := storedServiceSourceOwner(ctx, tx, s, false)
+		if ownerErr != nil && !errors.Is(ownerErr, ErrServiceAccess) {
+			return result, ownerErr
+		}
+		if ownerErr == nil && (owner.scope == NamespaceScopeShared || owner.membership == membership) {
+			facts, factsErr := serviceHostnameAuthority(ctx, tx, s.TeamID.String, identity, s.DomainID.String, now)
+			if factsErr != nil && !errors.Is(factsErr, ErrServiceAccess) {
+				return result, factsErr
+			}
+			if factsErr == nil {
+				ownershipErr := d.authorizeOwnedServiceHostname(ctx, tx, facts, owner, s.TeamID.String, s.DomainID.String, s.CertificateHostname, now)
+				if ownershipErr != nil && !errors.Is(ownershipErr, ErrServiceAccess) {
+					return result, ownershipErr
+				}
+				if ownershipErr == nil {
+					var deadline pgtype.Timestamptz
+					if err := tx.QueryRow(ctx, `SELECT control.company_subject_deadline($1,$2,$3,$4)`,
+						s.TeamID.String, identity, session, now).Scan(&deadline); err != nil {
+						return result, err
+					}
+					result.VisitAllowed, result.Reason = true, "owner"
+					if deadline.InfinityModifier == 0 {
+						result.ExpiresAt = optionalTime(deadline)
+					}
+					return result, nil
+				}
+			}
+		}
 	}
 	deadline, err := q.ServiceHTTPPreviewTeamPermission(ctx, controlstatedb.ServiceHTTPPreviewTeamPermissionParams{ServiceID: service, IdentityID: identity, ControlSessionID: session, Now: timestamptz(now)})
 	if err == nil {

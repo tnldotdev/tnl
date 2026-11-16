@@ -29,7 +29,7 @@ func TestIntegrationStateLockOrderPublisherRevocation(t *testing.T) {
 			}
 			heartbeat := make(chan error, 1)
 			workers.Go(func() {
-				_, err := f.database.HeartbeatServiceRun(ctx, f.service.ID, f.run.RunID, f.run.Token, f.run.ExpiresAt.Add(-time.Second), ServiceRunHealth{StreamCapacity: 64})
+				_, err := f.database.HeartbeatServiceRun(ctx, f.service.ID, f.run.RunID, f.run.Token, f.now.Add(time.Second), ServiceRunHealth{StreamCapacity: 64})
 				heartbeat <- err
 			})
 			pid := waitForPostgresBlock(t, ctx, f.database, int32(gate.Conn().PgConn().PID()), heartbeat)
@@ -47,13 +47,10 @@ func TestIntegrationStateLockOrderPublisherRevocation(t *testing.T) {
 				t.Fatal(err)
 			}
 			heartbeatErr, revokeErr := awaitIntegrationResult(t, ctx, heartbeat), awaitIntegrationResult(t, ctx, revoked)
-			if revokeErr != nil {
-				t.Fatalf("revocation = %v", revokeErr)
+			if heartbeatErr != nil || revokeErr != nil {
+				t.Fatalf("heartbeat = %v; revocation = %v", heartbeatErr, revokeErr)
 			}
-			if heartbeatErr != nil && !errors.Is(heartbeatErr, ErrServiceAccess) {
-				t.Fatalf("heartbeat = %v", heartbeatErr)
-			}
-			if _, err = f.database.HeartbeatServiceRun(ctx, f.service.ID, f.run.RunID, f.run.Token, f.run.ExpiresAt.Add(-time.Second), ServiceRunHealth{StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) {
+			if _, err = f.database.HeartbeatServiceRun(ctx, f.service.ID, f.run.RunID, f.run.Token, f.now.Add(3*time.Second), ServiceRunHealth{StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) {
 				t.Fatalf("post-revocation heartbeat = %v", err)
 			}
 			var closed bool
@@ -222,26 +219,28 @@ func TestIntegrationStateLockOrderApplyExpiration(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	workers := newIntegrationWorkers(t, cancel)
-	gate, err := d.pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	gate, key := newExpirationProgressCloseGate(t, ctx, d, prepared.RunID)
 	defer rollbackTestTransaction(t, gate)
-	if _, err = controlstatedb.New(gate).LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: prepared.RunID, ServiceID: service}); err != nil {
-		t.Fatal(err)
-	}
+	workers := newIntegrationWorkers(t, cancel)
+	defer workers.stop()
 	expired := make(chan error, 1)
 	workers.Go(func() {
-		_, err := d.ExpireServiceRuns(ctx, prepared.ExpiresAt)
+		count, err := d.ExpireServiceRuns(ctx, prepared.ExpiresAt)
+		if err == nil && count != 1 {
+			err = errors.New("admitted expiration did not close the exact prepared run")
+		}
 		expired <- err
 	})
-	pid := waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), expired)
+	// pause the actual close after owner/service/run acquisition, rather than
+	// holding a run that nonblocking cleanup must now skip.
+	pid := waitForExpirationProgressAdvisory(t, ctx, d, int32(gate.Conn().PgConn().PID()),
+		"ExclusiveLock", "ExclusiveLock", key, "-- name: CloseServiceRun", expired)
 	r.ExpectedRevision, r.Now = applied.Revision, prepared.ExpiresAt
 	r.Configuration.Services = map[string]ProjectServiceConfiguration{}
 	updated := make(chan error, 1)
 	workers.Go(func() { _, err := d.ApplyProjectConfiguration(ctx, r); updated <- err })
-	waitForPostgresBlock(t, ctx, d, pid, updated)
+	waitForExpirationProgressAdvisory(t, ctx, d, pid, "ShareLock", "ExclusiveLock",
+		"tnl:local-team:"+r.TeamID, "-- name: LockLocalTeamForMutation", updated)
 	if _, err = gate.Exec(ctx, `SELECT id FROM control.services WHERE id=$1 FOR UPDATE NOWAIT`, unrelated.ID); err != nil {
 		t.Fatalf("apply locked a service outside its project: %v", err)
 	}

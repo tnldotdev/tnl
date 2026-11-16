@@ -11,11 +11,13 @@ import (
 )
 
 type Querier interface {
+	AbortConnectorPeerRebind(ctx context.Context, arg AbortConnectorPeerRebindParams) (int64, error)
 	// verified_actor_email comes only from the consumed configured-issuer assertion;
 	// control sessions retain their stored verified email check.
 	AcceptServiceInvitation(ctx context.Context, arg AcceptServiceInvitationParams) (ControlServiceInvitation, error)
 	AcceptTeamInvitation(ctx context.Context, arg AcceptTeamInvitationParams) (int64, error)
 	AcknowledgeDeploymentPublisherConfiguration(ctx context.Context, arg AcknowledgeDeploymentPublisherConfigurationParams) error
+	ActivateConnectorPeerBinding(ctx context.Context, arg ActivateConnectorPeerBindingParams) (int64, error)
 	ActivateMemberSlug(ctx context.Context, arg ActivateMemberSlugParams) (int64, error)
 	ActiveCompanyMembership(ctx context.Context, arg ActiveCompanyMembershipParams) (bool, error)
 	ActiveTeamSubject(ctx context.Context, arg ActiveTeamSubjectParams) (bool, error)
@@ -71,6 +73,7 @@ type Querier interface {
 	// only a checked publisher report can advance this startup barrier. a retry
 	// retains a newer report, capped by the currently checked delivery authority.
 	ConfirmConnectorPeerPairPrepared(ctx context.Context, arg ConfirmConnectorPeerPairPreparedParams) (int64, error)
+	ConfirmConnectorPeerPendingPrepared(ctx context.Context, arg ConfirmConnectorPeerPendingPreparedParams) (int64, error)
 	ConsumeAuthenticationSeed(ctx context.Context, arg ConsumeAuthenticationSeedParams) (int64, error)
 	ConsumeCompanyLoginIntent(ctx context.Context, arg ConsumeCompanyLoginIntentParams) (int64, error)
 	ConsumeOIDCAssertion(ctx context.Context, arg ConsumeOIDCAssertionParams) (int64, error)
@@ -108,6 +111,8 @@ type Querier interface {
 	CreateTeamMembership(ctx context.Context, arg CreateTeamMembershipParams) error
 	CreateVisitorTokenSigningKey(ctx context.Context, arg CreateVisitorTokenSigningKeyParams) (ControlVisitorTokenKey, error)
 	DNSAuthorityReleaseReady(ctx context.Context, arg DNSAuthorityReleaseReadyParams) (pgtype.Bool, error)
+	DeleteConnectorPeerPairLegClaims(ctx context.Context, pairID string) (int64, error)
+	DeleteConnectorPeerPendingBinding(ctx context.Context, pairID string) (int64, error)
 	DeleteExpiredDeviceLogins(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteExpiredOIDCAssertionExchanges(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteExpiredShareCookies(ctx context.Context, now pgtype.Timestamptz) error
@@ -125,6 +130,7 @@ type Querier interface {
 	EnableIngressPool(ctx context.Context, arg EnableIngressPoolParams) (ControlIngressPool, error)
 	EnsureACMEAccount(ctx context.Context, arg EnsureACMEAccountParams) (ControlAcmeAccount, error)
 	EnsureVisitorTokenIssuer(ctx context.Context, issuer string) error
+	ExpireConnectorPeerRebind(ctx context.Context, pairID string) (int64, error)
 	ExpireServiceConnectionSlot(ctx context.Context, arg ExpireServiceConnectionSlotParams) (int64, error)
 	ExpireTeamInvitations(ctx context.Context, arg ExpireTeamInvitationsParams) ([]string, error)
 	FeedbackEventHighWater(ctx context.Context) (int64, error)
@@ -209,6 +215,7 @@ type Querier interface {
 	GetServiceCertificateRequest(ctx context.Context, arg GetServiceCertificateRequestParams) (ControlServiceCertificateRequest, error)
 	// local normalization uses the logical service key, not its generated saved name.
 	GetServiceConfiguration(ctx context.Context, serviceID string) (GetServiceConfigurationRow, error)
+	GetServiceCreationRequest(ctx context.Context, arg GetServiceCreationRequestParams) (GetServiceCreationRequestRow, error)
 	// starting a run requires its exact authenticated publisher, grant and key.
 	GetServiceRunPublisherIdentity(ctx context.Context, arg GetServiceRunPublisherIdentityParams) ([]byte, error)
 	GetServiceSource(ctx context.Context, serviceID pgtype.Text) (GetServiceSourceRow, error)
@@ -224,6 +231,8 @@ type Querier interface {
 	GuestRunAllowanceSpent(ctx context.Context, arg GuestRunAllowanceSpentParams) (string, error)
 	// preparation observations do not grant visitor permission or spend ready time.
 	GuestServiceServingDeadline(ctx context.Context, arg GuestServiceServingDeadlineParams) (pgtype.Timestamptz, error)
+	// the exact run token grants negative reads only while an existing window remains.
+	HasRetainedConnectorPeerPair(ctx context.Context, arg HasRetainedConnectorPeerPairParams) (bool, error)
 	HasTeamMembershipHistory(ctx context.Context, arg HasTeamMembershipHistoryParams) (bool, error)
 	InitializeConnectorPeerSession(ctx context.Context, arg InitializeConnectorPeerSessionParams) (ControlConnectorPeerPair, error)
 	InsertAdminAuditEvent(ctx context.Context, arg InsertAdminAuditEventParams) error
@@ -231,6 +240,9 @@ type Querier interface {
 	InsertCompanyAccessAudit(ctx context.Context, arg InsertCompanyAccessAuditParams) error
 	InsertCompanySessionContext(ctx context.Context, arg InsertCompanySessionContextParams) error
 	InsertConnectorPeerPair(ctx context.Context, arg InsertConnectorPeerPairParams) (ControlConnectorPeerPair, error)
+	// the following positive statements replace the operation owners' inline SQL
+	// after normal generation. storage guards fence those inline writers meanwhile.
+	InsertConnectorPeerPendingBinding(ctx context.Context, arg InsertConnectorPeerPendingBindingParams) (ControlConnectorPeerPendingBinding, error)
 	InsertDeviceLogin(ctx context.Context, arg InsertDeviceLoginParams) (int64, error)
 	InsertFeedbackEvent(ctx context.Context, arg InsertFeedbackEventParams) (ControlFeedbackEvent, error)
 	InsertGuestTrial(ctx context.Context, arg InsertGuestTrialParams) (ControlGuestTrial, error)
@@ -246,6 +258,7 @@ type Querier interface {
 	InsertServiceCertificateOrder(ctx context.Context, arg InsertServiceCertificateOrderParams) (ControlAcmeOrder, error)
 	InsertServiceCertificateRequest(ctx context.Context, arg InsertServiceCertificateRequestParams) error
 	InsertServiceConnectionSlot(ctx context.Context, arg InsertServiceConnectionSlotParams) (ControlServiceConnectionSlot, error)
+	InsertServiceCreationRequest(ctx context.Context, arg InsertServiceCreationRequestParams) error
 	InsertServiceGrant(ctx context.Context, arg InsertServiceGrantParams) (ControlVisitorGrant, error)
 	InsertServiceHTTPBrowserHandoff(ctx context.Context, arg InsertServiceHTTPBrowserHandoffParams) error
 	InsertServiceHTTPBrowserLogin(ctx context.Context, arg InsertServiceHTTPBrowserLoginParams) error
@@ -257,6 +270,7 @@ type Querier interface {
 	InvalidateDeploymentPublisherRuntimeHealth(ctx context.Context, publisherIdentityID string) error
 	// an uncertain delivery retry may only shorten the existing deadline.
 	LimitConnectorPeerPair(ctx context.Context, arg LimitConnectorPeerPairParams) (ControlConnectorPeerPair, error)
+	LimitConnectorPeerPendingForClaim(ctx context.Context, arg LimitConnectorPeerPendingForClaimParams) (int64, error)
 	// a fresh claim may shorten a prior installation, never silently grow it.
 	LimitConnectorPeerPreparedForClaim(ctx context.Context, arg LimitConnectorPeerPreparedForClaimParams) error
 	LimitGuestServiceRunExpiry(ctx context.Context, arg LimitGuestServiceRunExpiryParams) (ControlServiceRun, error)
@@ -313,11 +327,15 @@ type Querier interface {
 	ListServiceConfigurations(ctx context.Context, serviceIds []string) ([]ListServiceConfigurationsRow, error)
 	ListServiceConnectionSlots(ctx context.Context, serviceRunID string) ([]ControlServiceConnectionSlot, error)
 	// replace expired never-ready claims even with a live relay lease.
+	// disabled services cannot accept their outstanding unclaimed assignments.
 	// ready slots retain ownership and streams while their matching lease is live.
 	ListServiceConnectionSlotsNeedingReplacement(ctx context.Context, arg ListServiceConnectionSlotsNeedingReplacementParams) ([]ListServiceConnectionSlotsNeedingReplacementRow, error)
 	ListServiceGrants(ctx context.Context, arg ListServiceGrantsParams) ([]ControlVisitorGrant, error)
 	ListServiceHTTPGrants(ctx context.Context, serviceID string) ([]ListServiceHTTPGrantsRow, error)
 	ListServiceInvitations(ctx context.Context, arg ListServiceInvitationsParams) ([]ControlServiceInvitation, error)
+	// current exact namespace authority is checked under the team guard before this
+	// bounded point selection; it is never an administrator inventory fallback.
+	ListServiceReservationCandidates(ctx context.Context, arg ListServiceReservationCandidatesParams) ([]ControlService, error)
 	ListServicesForTeam(ctx context.Context, arg ListServicesForTeamParams) ([]ControlService, error)
 	ListShareServices(ctx context.Context, shareID string) ([]string, error)
 	ListShares(ctx context.Context, arg ListSharesParams) ([]ControlShare, error)
@@ -332,6 +350,9 @@ type Querier interface {
 	LockCertificateIssuanceControl(ctx context.Context) (bool, error)
 	LockCompanyLoginIntent(ctx context.Context, id string) (ControlCompanyLoginIntent, error)
 	LockConnectorPeerPairForLegClaim(ctx context.Context, id string) (ControlConnectorPeerPair, error)
+	LockConnectorPeerRetirementGuest(ctx context.Context, guestID string) (string, error)
+	// use the existing owner guard without requiring current team authority.
+	LockConnectorPeerRetirementTeam(ctx context.Context, teamID string) (string, error)
 	LockControlSessionByRefreshID(ctx context.Context, refreshTokenID string) (LockControlSessionByRefreshIDRow, error)
 	LockDNSAuthority(ctx context.Context, authorityReference string) (ControlDnsAuthority, error)
 	LockDNSAuthorityLocalDomain(ctx context.Context, authorityReference pgtype.Text) error
@@ -409,8 +430,9 @@ type Querier interface {
 	OpenServiceRecoveryEpisode(ctx context.Context, arg OpenServiceRecoveryEpisodeParams) error
 	OtherPreviewForTeamAccess(ctx context.Context, arg OtherPreviewForTeamAccessParams) (string, error)
 	OtherTeamAccessForService(ctx context.Context, arg OtherTeamAccessForServiceParams) (string, error)
+	PrepareConnectorPeerRebind(ctx context.Context, arg PrepareConnectorPeerRebindParams) (int64, error)
 	// caller locks the service, checks the live publisher grant and enrolled key,
-	// allocates one run number and captures its managed certificate plan.
+	// allocates one run number and captures its protocol and managed certificate plan.
 	// a retry with the same idempotency key returns the same prepared row.
 	// endpoint retirement does not revoke the saved connector identity. capture
 	// retained provenance only for this exact service, hostname and domain.
@@ -465,6 +487,10 @@ type Querier interface {
 	ReserveManagedLabel(ctx context.Context, arg ReserveManagedLabelParams) (string, error)
 	ResolveLoginTeam(ctx context.Context, selection string) (string, error)
 	RetainVisitorTokenSigningKey(ctx context.Context, arg RetainVisitorTokenSigningKeyParams) (int64, error)
+	RetireConnectorPeerAuditBindings(ctx context.Context, arg RetireConnectorPeerAuditBindingsParams) (int64, error)
+	// the caller holds owner -> service -> run -> exact pair and verifies both proofs.
+	// terminal retries compare the stored digest; no upsert or deadline advance exists.
+	RetireConnectorPeerPair(ctx context.Context, arg RetireConnectorPeerPairParams) (ControlConnectorPeerPair, error)
 	RetirePublisherKey(ctx context.Context, arg RetirePublisherKeyParams) (int64, error)
 	RetireVisitorTokenSigningKeys(ctx context.Context, now pgtype.Timestamptz) error
 	ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (pgtype.Timestamptz, error)
@@ -489,9 +515,12 @@ type Querier interface {
 	RotateServiceHTTPBrowserSession(ctx context.Context, arg RotateServiceHTTPBrowserSessionParams) error
 	SaveACMEAuthorizationWork(ctx context.Context, arg SaveACMEAuthorizationWorkParams) (ControlAcmeAuthorization, error)
 	SaveACMEOrderWork(ctx context.Context, arg SaveACMEOrderWorkParams) (ControlAcmeOrder, error)
+	SaveConnectorPeerAuditBinding(ctx context.Context, arg SaveConnectorPeerAuditBindingParams) (int64, error)
 	// two rows maximum per binding. an uncertain response requires a fresh proof from
 	// the same observed source and the same relay process, never the old nonce.
 	SaveConnectorPeerPairLegClaim(ctx context.Context, arg SaveConnectorPeerPairLegClaimParams) (string, error)
+	SaveConnectorPeerPendingPublisherProof(ctx context.Context, arg SaveConnectorPeerPendingPublisherProofParams) (int64, error)
+	SaveConnectorPeerPublisherProof(ctx context.Context, arg SaveConnectorPeerPublisherProofParams) (int64, error)
 	SaveDNSAuthorityWork(ctx context.Context, arg SaveDNSAuthorityWorkParams) (ControlDnsAuthority, error)
 	SaveProjectServiceDeclaration(ctx context.Context, arg SaveProjectServiceDeclarationParams) error
 	SaveRelayCertificateOrderWork(ctx context.Context, arg SaveRelayCertificateOrderWorkParams) (ControlRelayCertificateOrder, error)

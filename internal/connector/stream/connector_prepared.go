@@ -111,6 +111,10 @@ func (*preparedPermissionStop) Error() string {
 // the publisher independently checks the signed token, exact relay-attested
 // pair, current policy and C.
 func PrepareConnector(lifetime, setup context.Context, session muxsession.Session, run Run, entry tunnelv1.ConnectorPeerVisitorEntry) (_ *PreparedConnector, result error) {
+	return prepareConnector(lifetime, setup, session, run, entry, func() {})
+}
+
+func prepareConnector(lifetime, setup context.Context, session muxsession.Session, run Run, entry tunnelv1.ConnectorPeerVisitorEntry, accepted func()) (_ *PreparedConnector, result error) {
 	setup, finish := observability.ClientOperation(setup, "connector.visitor_setup")
 	defer func() { finish(result) }()
 	ctx := lifetime
@@ -138,8 +142,14 @@ func PrepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 		}
 		raw = selected
 	}
+	var rawClose sync.Once
+	var rawCloseErr error
+	closeRaw := func() error {
+		rawClose.Do(func() { rawCloseErr = raw.Close() })
+		return rawCloseErr
+	}
 	setupDone := make(chan struct{})
-	stopSetup := context.AfterFunc(setup, func() { defer close(setupDone); _ = raw.Close() })
+	stopSetup := context.AfterFunc(setup, func() { defer close(setupDone); _ = closeRaw() })
 	setupStopped := false
 	defer func() {
 		if !setupStopped && !stopSetup() {
@@ -149,7 +159,7 @@ func PrepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 	owned := false
 	defer func() {
 		if !owned {
-			_ = raw.Close()
+			result = errors.Join(result, closeRaw())
 		}
 	}()
 	deadline, _ := setup.Deadline()
@@ -168,6 +178,7 @@ func PrepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 	if err := tunnelv1.ReadConnectorPeerVisitorAccepted(raw, entry.VisitorConnectionID); err != nil {
 		return nil, err
 	}
+	accepted()
 	var connection net.Conn = raw
 	if run.Protocol == "tcp" {
 		trust := run.ServiceTLS.Clone()
@@ -439,13 +450,17 @@ func (p *PreparedConnector) Forward(ctx context.Context, local net.Conn) (result
 		}
 	}()
 	closed := make(chan struct{})
-	stop := context.AfterFunc(life, func() { defer close(closed); _ = local.Close(); _ = p.closePhysical() })
+	var localOnce sync.Once
+	var localErr error
+	closeLocal := func() error { localOnce.Do(func() { localErr = local.Close() }); return localErr }
+	stop := context.AfterFunc(life, func() { defer close(closed); _ = closeLocal(); _ = p.closePhysical() })
 	defer func() {
+		_ = closeLocal()
 		if !stop() {
 			<-closed
 		}
+		result = errors.Join(result, localErr)
 	}()
-	defer local.Close()
 	defer func() { p.finish(); result = errors.Join(result, p.closeErr) }()
 	_, err := streamcopy.Copy(local, &preparedConnectorUse{owner: p, ctx: life})
 	return err

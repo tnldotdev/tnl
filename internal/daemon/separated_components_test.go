@@ -290,6 +290,7 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, rate, shar
 		Transport: transport, Parallel: 4, StartParallel: max(1, *runtimeLoadStartParallel/len(separatedNames("publishers"))),
 		Concurrency: runtimeLoadAdmission.PublisherConcurrency, RateRequests: rateRequests,
 		ReadyTimeout: *runtimeLoadReadyTimeout, StopTimeout: 10 * time.Second, DrainTime: time.Second,
+		TraceStartup: *runtimeLoadTrace,
 		OnActivationFailure: func(index int) {
 			if err := captureSeparatedPublisherFailure(inspect, index); err != nil {
 				t.Logf("publisher failure snapshot: %v", err)

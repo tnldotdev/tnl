@@ -6,6 +6,22 @@ VALUES (sqlc.arg(id), sqlc.arg(team_id), sqlc.arg(name), sqlc.arg(name_scope), s
 -- name: LockService :one
 SELECT * FROM control.services WHERE id = sqlc.arg(id) FOR UPDATE;
 
+-- name: GetServiceCreationRequest :one
+SELECT service_id,request_digest FROM control.service_creation_requests
+WHERE created_by_identity_id=sqlc.arg(created_by_identity_id) AND idempotency_key=sqlc.arg(idempotency_key);
+
+-- name: InsertServiceCreationRequest :exec
+INSERT INTO control.service_creation_requests(created_by_identity_id,idempotency_key,service_id,request_digest,created_at)
+VALUES(sqlc.arg(created_by_identity_id),sqlc.arg(idempotency_key),sqlc.arg(service_id),sqlc.arg(request_digest),sqlc.arg(created_at));
+
+-- name: ListServiceReservationCandidates :many
+-- current exact namespace authority is checked under the team guard before this
+-- bounded point selection; it is never an administrator inventory fallback.
+SELECT * FROM control.services
+WHERE team_id=sqlc.arg(team_id) AND deleted_at IS NULL
+    AND (name=sqlc.arg(name) OR certificate_hostname=sqlc.arg(hostname))
+ORDER BY id LIMIT 2;
+
 -- name: GetService :one
 SELECT * FROM control.services WHERE id = sqlc.arg(id) AND deleted_at IS NULL;
 
@@ -136,7 +152,7 @@ AND idempotency_key = sqlc.arg(idempotency_key) FOR UPDATE;
 -- connector candidates already have native identity permission. public HTTP
 -- candidates are authorized by the existing HTTP permission owner before paging.
 -- keep offline services, bound each scan, and never select publisher-only trust.
-SELECT s.id, s.team_id, t.display_name AS team_name, s.name, s.created_at, s.protocol,s.publisher_pool,s.trust_revision,
+SELECT s.id, s.team_id, t.display_name AS team_name, s.name, s.created_at, s.protocol,s.publisher_pool,s.trust_revision,s.require_post_quantum,
     s.certificate_hostname,s.service_port,s.public,r.id AS service_run_id, r.run_number,
     COALESCE(permission.reason,'')::text AS visitor_access
 FROM control.services s
@@ -172,15 +188,16 @@ ORDER BY s.id LIMIT 101;
 
 -- name: PrepareServiceRun :one
 -- caller locks the service, checks the live publisher grant and enrolled key,
--- allocates one run number and captures its managed certificate plan.
+-- allocates one run number and captures its protocol and managed certificate plan.
 -- a retry with the same idempotency key returns the same prepared row.
 -- endpoint retirement does not revoke the saved connector identity. capture
 -- retained provenance only for this exact service, hostname and domain.
-INSERT INTO control.service_runs(preferred_regions, traffic_limits, id, service_id, team_id, guest_id, run_number,
+INSERT INTO control.service_runs(preferred_regions, traffic_limits, id, service_id, protocol, team_id, guest_id, run_number,
     publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key,
     request_digest, preparation_expires_at, assignment_seed_ciphertext,
     assignment_seed_storage_key_id, certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,certificate_hostname,certificate_namespace,require_post_quantum,state, created_at, publisher_expires_at)
-VALUES (sqlc.arg(preferred_regions), convert_from(sqlc.arg(traffic_limits)::bytea,'UTF8')::jsonb, sqlc.arg(id), sqlc.arg(service_id), sqlc.narg(team_id),
+VALUES (sqlc.arg(preferred_regions), convert_from(sqlc.arg(traffic_limits)::bytea,'UTF8')::jsonb, sqlc.arg(id), sqlc.arg(service_id),
+    (SELECT service.protocol FROM control.services service WHERE service.id=sqlc.arg(service_id)),sqlc.narg(team_id),
     (SELECT service.guest_id FROM control.services service WHERE service.id=sqlc.arg(service_id)),sqlc.arg(run_number),
     sqlc.arg(publisher_identity_id), sqlc.arg(publisher_grant_id), sqlc.arg(publisher_key_id),
     sqlc.arg(idempotency_key), sqlc.arg(request_digest),
@@ -302,6 +319,7 @@ ORDER BY connection_slot;
 
 -- name: ListServiceConnectionSlotsNeedingReplacement :many
 -- replace expired never-ready claims even with a live relay lease.
+-- disabled services cannot accept their outstanding unclaimed assignments.
 -- ready slots retain ownership and streams while their matching lease is live.
 SELECT slot.*, NOT EXISTS (
     SELECT 1 FROM control.relay_leases planned
@@ -310,6 +328,9 @@ SELECT slot.*, NOT EXISTS (
 ) AS unexpected FROM control.service_connection_slots slot
 WHERE slot.service_run_id = sqlc.arg(service_run_id)
     AND (slot.state = 'closed' OR slot.state IN ('assigned', 'connected') AND slot.credential_expires_at <= sqlc.arg(now)
+        OR slot.state = 'assigned' AND NOT EXISTS (
+            SELECT 1 FROM control.relay_services service
+            WHERE service.relay_service_id = slot.relay_service_id AND service.enabled)
         OR slot.state IN ('connected', 'ready') AND NOT EXISTS (
             SELECT 1 FROM control.relay_leases lease
             WHERE lease.relay_id = slot.relay_id AND lease.relay_run_id = slot.relay_run_id
@@ -323,13 +344,16 @@ UPDATE control.service_connection_slots slot SET state = 'closed', relay_id = NU
     relay_run_id = NULL, relay_lease_revision = NULL
 WHERE slot.publisher_connection_id = sqlc.arg(publisher_connection_id)
     AND slot.service_run_id = sqlc.arg(service_run_id)
-    AND slot.state IN ('connected', 'ready')
-    AND (slot.state = 'connected' AND slot.credential_expires_at <= sqlc.arg(now)
-        OR NOT EXISTS (SELECT 1 FROM control.relay_leases lease
-            WHERE lease.relay_id = slot.relay_id AND lease.relay_run_id = slot.relay_run_id
-              AND lease.relay_lease_revision = slot.relay_lease_revision
-              AND lease.relay_service_id = slot.relay_service_id
-              AND lease.lease_expires_at > sqlc.arg(now) AND NOT lease.draining));
+    AND (slot.state = 'assigned' AND NOT EXISTS (
+            SELECT 1 FROM control.relay_services service
+            WHERE service.relay_service_id = slot.relay_service_id AND service.enabled)
+        OR slot.state IN ('connected', 'ready')
+            AND (slot.state = 'connected' AND slot.credential_expires_at <= sqlc.arg(now)
+                OR NOT EXISTS (SELECT 1 FROM control.relay_leases lease
+                    WHERE lease.relay_id = slot.relay_id AND lease.relay_run_id = slot.relay_run_id
+                      AND lease.relay_lease_revision = slot.relay_lease_revision
+                      AND lease.relay_service_id = slot.relay_service_id
+                      AND lease.lease_expires_at > sqlc.arg(now) AND NOT lease.draining)));
 
 -- name: DeleteServiceConnectionSlot :execrows
 DELETE FROM control.service_connection_slots WHERE publisher_connection_id = sqlc.arg(publisher_connection_id)
@@ -362,7 +386,7 @@ UPDATE control.service_connection_slots slot SET state = 'ready'
 FROM control.service_runs run, control.relay_leases lease
 WHERE slot.publisher_connection_id = sqlc.arg(publisher_connection_id)
     AND slot.connection_assignment_revision = sqlc.arg(connection_assignment_revision)
-    AND slot.state = 'connected' AND slot.service_run_id = run.id
+    AND slot.state IN ('connected', 'ready') AND slot.service_run_id = run.id
     AND run.closed_at IS NULL AND run.publisher_expires_at > sqlc.arg(now)
     AND lease.relay_id = slot.relay_id AND lease.relay_run_id = slot.relay_run_id
     AND lease.relay_lease_revision = slot.relay_lease_revision

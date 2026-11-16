@@ -124,17 +124,29 @@ func connectorInnerPair(t *testing.T, ctx context.Context, verification *tls.Con
 
 func connectorInnerPairWithConfig(t *testing.T, ctx context.Context, verification *tls.Config, config *quic.Config) (muxsession.Session, muxsession.Session) {
 	t.Helper()
+	started := time.Now()
+	deadline, bounded := ctx.Deadline()
+	var remaining time.Duration
+	if bounded {
+		remaining = time.Until(deadline)
+	}
 	// use the fixture's independent root for this inner transport, rather than
 	// borrowing visitor or target key material for its client authentication.
 	certificate, trust := managedTestCertificate(t, verification.ServerName)
+	certificateReady := time.Now()
 	listener, err := muxsession.ListenQUIC("127.0.0.1:0", &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}, muxsession.QUICConfig{Config: config})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
-	client, err := (muxsession.QUICConnector{TLSConfig: trust, Config: muxsession.QUICConfig{Config: config}, Dialer: transporttest.QUICTransport(t)}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: trust.ServerName})
+	listenerReady := time.Now()
+	dialer := transporttest.QUICTransport(t)
+	dialStarted := time.Now()
+	client, err := (muxsession.QUICConnector{TLSConfig: trust, Config: muxsession.QUICConfig{Config: config}, Dialer: dialer}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: trust.ServerName})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("inner QUIC fixture dial failed: %v; bounded=%t remaining_on_entry=%s certificate=%s listen=%s socket=%s dial=%s total=%s",
+			err, bounded, remaining, certificateReady.Sub(started), listenerReady.Sub(certificateReady),
+			dialStarted.Sub(listenerReady), time.Since(dialStarted), time.Since(started))
 	}
 	server, err := listener.Accept(ctx)
 	if err != nil {
@@ -182,7 +194,7 @@ func TestConnectorServicePeerConsumerForwardsAndRejectsReplayLocally(t *testing.
 	client, server := connectorInnerPair(t, ctx, verification)
 	served := make(chan error, 1)
 	go func() { served <- serveConnectorInner(ctx, p, server) }()
-	connectorControl(t, ctx, client)
+	connectorControl(t, ctx, client, p)
 	open := func(entry tunnelv1.ConnectorPeerVisitorEntry) *tls.Conn {
 		raw, err := client.OpenStream(ctx)
 		if err != nil {
@@ -487,7 +499,7 @@ func TestConnectorServiceDeniedOpeningCannotResolveOrReadMySQLTarget(t *testing.
 	client, server := connectorInnerPair(t, ctx, verification)
 	served := make(chan error, 1)
 	go func() { served <- serveConnectorInner(ctx, p, server) }()
-	connectorControl(t, ctx, client)
+	connectorControl(t, ctx, client, p)
 	raw, err := client.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -547,7 +559,7 @@ func TestConnectorServiceRevokedGuardFencesDialWhileStopCallbackWaits(t *testing
 	client, server := connectorInnerPair(t, ctx, verification)
 	served := make(chan error, 1)
 	go func() { served <- serveConnectorInner(ctx, p, server) }()
-	connectorControl(t, ctx, client)
+	connectorControl(t, ctx, client, p)
 	raw, err := client.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -633,7 +645,7 @@ func TestConnectorServicePeerHTTPConsumerJoinsHandlerAndTarget(t *testing.T) {
 	client, server := connectorInnerPair(t, ctx, verification)
 	served := make(chan error, 1)
 	go func() { served <- serveConnectorInner(ctx, p, server) }()
-	connectorControl(t, ctx, client)
+	connectorControl(t, ctx, client, p)
 	raw, err := client.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -726,7 +738,7 @@ func TestConnectorServiceOwnerLossFencesBeforeCloseAndRetainsCUntilJoin(t *testi
 	go func() {
 		served <- serveConnectorInner(ctx, p, &heldConnectorSessionClose{Session: server, entered: entered, release: release})
 	}()
-	connectorControl(t, ctx, client)
+	connectorControl(t, ctx, client, p)
 	entry := opening("I")
 	raw, err := client.OpenStream(ctx)
 	if err != nil {
@@ -927,7 +939,7 @@ func TestConnectorPreparationCannotPublishAfterSetupCancellation(t *testing.T) {
 	client, server := connectorInnerPair(t, ctx, verification)
 	served := make(chan error, 1)
 	go func() { served <- serveConnectorInner(ctx, p, server) }()
-	connectorControl(t, ctx, client)
+	connectorControl(t, ctx, client, p)
 	defer func() { p.Close(); <-served }()
 	gate := &heldConnectorPreparation{Session: client, clearing: make(chan struct{}), release: make(chan struct{}), closing: make(chan struct{})}
 	release := sync.OnceFunc(func() { close(gate.release) })

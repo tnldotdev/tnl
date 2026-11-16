@@ -75,7 +75,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	r.ExpectedRevision = remoteApplied.Revision
 	initial := applyPrivateOwnershipRevision(t, d, r)
 	assertPrivateOwnershipEntry(t, d, r, initial, "local")
-	assertPrivateOwnershipAssignments(t, d, replicas, initial, now)
+	assertPrivateOwnershipAssignments(t, d, replicas, initial, r.ActorID, now)
 	realize := func() []appliedPrivateResource {
 		var resources []appliedPrivateResource
 		for i := range worktrees {
@@ -142,7 +142,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	}
 	assertPrivateOwnershipLocalCount(t, d, r, 0)
 	shared := inspectAppliedPrivateResource(t, d, r, deployment.Services[0].ServiceID, local.Name, true, outsider, extra)
-	assertPrivateOwnershipAssignments(t, d, replicas, deployment, now)
+	assertPrivateOwnershipAssignments(t, d, replicas, deployment, r.ActorID, now)
 	if members != 0 || active {
 		// a new binding needs explicit approval; earlier publishers stay unapproved.
 		enroll()
@@ -168,7 +168,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 			shared.runs = append(shared.runs, readyAppliedServiceRun(t, d, access, replica.private, approved, netip.MustParseAddr("127.0.0.1"), leases, now))
 		}
 	}
-	assertPrivateOwnershipAssignments(t, d, replicas, deployment, now)
+	assertPrivateOwnershipAssignments(t, d, replicas, deployment, r.ActorID, now)
 	assertPrivateOwnershipInventory(t, d, reader.IdentityID, []appliedPrivateResource{shared}, active, now)
 	if extra {
 		assertPrivateOwnershipInventory(t, d, outsider, []appliedPrivateResource{shared}, active, now)
@@ -198,7 +198,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	assertPrivateOwnershipEntry(t, d, r, deferred, "local")
 	assertAppliedPrivateRetired(t, d, r, shared)
 	assertPrivateOwnershipLocalCount(t, d, r, 0)
-	assertPrivateOwnershipAssignments(t, d, replicas, deferred, now)
+	assertPrivateOwnershipAssignments(t, d, replicas, deferred, r.ActorID, now)
 	assertPrivateOwnershipInventory(t, d, reader.IdentityID, nil, false, now)
 	assertPrivateOwnershipInventory(t, d, outsider, nil, false, now)
 	newLocals := realize()
@@ -230,10 +230,10 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	for _, resource := range newLocals {
 		assertAppliedPrivateRetired(t, d, r, resource)
 	}
-	assertPrivateOwnershipAssignments(t, d, replicas, regrouped, now)
+	assertPrivateOwnershipAssignments(t, d, replicas, regrouped, r.ActorID, now)
 	// neither the original nor the replacement approval follows a reused name.
 	enroll()
-	assertPrivateOwnershipAssignments(t, d, replicas, regrouped, now)
+	assertPrivateOwnershipAssignments(t, d, replicas, regrouped, r.ActorID, now)
 }
 
 type appliedPrivateResource struct {
@@ -309,8 +309,18 @@ func assertPrivateOwnershipEntry(t *testing.T, d *Database, r ApplyProjectConfig
 	}
 }
 
-func assertPrivateOwnershipAssignments(t *testing.T, d *Database, replicas []enrolledDeploymentReplica, status AppliedProjectConfiguration, now time.Time) {
+func assertPrivateOwnershipAssignments(t *testing.T, d *Database, replicas []enrolledDeploymentReplica, status AppliedProjectConfiguration, actor string, now time.Time) {
 	t.Helper()
+	desired := status.Configuration.Services["db"]
+	if status.Deployment != "local" {
+		if status.Configuration.Settings == nil || desired.DomainID == "" || desired.DomainID != status.Configuration.Settings.DomainID {
+			t.Fatal("desired configuration lost its captured domain")
+		}
+		saved, err := d.GetProjectConfiguration(t.Context(), status.TeamID, status.ProjectKey, actor, status.Deployment)
+		if err != nil || saved.Configuration.Services["db"].DomainID != desired.DomainID {
+			t.Fatal("desired domain did not persist independently of publisher assignments", err)
+		}
+	}
 	want := 0
 	approved := func(replica enrolledDeploymentReplica) bool {
 		return status.Services[0].Kind != "local" && slices.ContainsFunc(replica.assignments.Services, func(binding DeploymentPublisherServiceAssignment) bool {
@@ -346,7 +356,13 @@ func assertPrivateOwnershipAssignments(t *testing.T, d *Database, replicas []enr
 			t.Fatal("deployment lost its private assignment")
 		}
 		a := assignments.Services[0]
-		if a.Service != "db" || a.ServiceID != status.Services[0].ServiceID || a.TrustRevision != status.Services[0].TrustRevision || !reflect.DeepEqual(a.Configuration, status.Configuration.Services["db"]) {
+		if a.Configuration.Public != nil || a.Configuration.Hostname != "" || a.Configuration.DomainID != "" {
+			t.Fatal("publisher assignment retained control-owned endpoint settings")
+		}
+		// derive the expected boundary independently of the projection under test.
+		serving := desired
+		serving.Public, serving.Hostname, serving.DomainID = nil, "", ""
+		if a.Service != "db" || a.ServiceID != status.Services[0].ServiceID || a.TrustRevision != status.Services[0].TrustRevision || !reflect.DeepEqual(a.Configuration, serving) {
 			t.Fatal("deployment received wrong private resource or metadata", a)
 		}
 		var exact bool

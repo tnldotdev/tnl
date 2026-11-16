@@ -163,7 +163,8 @@ func dnsChallengeContext(ctx context.Context, queries *controlstatedb.Queries, s
 // after the callback returns, releasing its lock; connection loss releases
 // it too. the callback can still read through the pooled runtime connections.
 func (d *Database) WithDNSRecordLock(ctx context.Context, recordName string, run func() error) (retErr error) {
-	base := strings.TrimPrefix(strings.TrimSuffix(strings.ToLower(recordName), "."), "_acme-challenge.")
+	recordName = strings.TrimSuffix(strings.ToLower(recordName), ".")
+	base := strings.TrimPrefix(recordName, "_acme-challenge.")
 	if canonical, err := naming.CanonicalizeHostname(base); err != nil || canonical != base || run == nil {
 		return errors.New("controlstate: invalid DNS challenge lock")
 	}
@@ -187,7 +188,7 @@ func (d *Database) WithDNSRecordLock(ctx context.Context, recordName string, run
 		return fmt.Errorf("controlstate: begin DNS challenge lock: %w", err)
 	}
 	defer rollback(ctx, tx, "DNS challenge lock", &retErr)()
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "tnl:dns-record:"+base); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "tnl:dns-record:"+recordName); err != nil {
 		return fmt.Errorf("controlstate: lock DNS challenge: %w", err)
 	}
 	return run()

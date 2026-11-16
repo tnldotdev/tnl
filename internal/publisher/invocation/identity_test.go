@@ -149,7 +149,16 @@ func (f *serviceSetupFixture) serve(r *http.Request) (*http.Response, error) {
 			return serviceTestResponse(r, 200, f.saved), nil
 		}
 		if f.created {
+			if body.Reserve != nil && *body.Reserve && body.TeamId == f.saved.TeamId && body.Name == f.saved.Name &&
+				body.Placement != nil && body.Placement.Hostname != nil && *body.Placement.Hostname == f.saved.Endpoint.Hostname &&
+				body.Placement.DomainId != nil && *body.Placement.DomainId == *f.saved.DomainId && body.Configuration != nil {
+				f.creations[key] = struct{ request, service string }{string(encoded), f.saved.Id}
+				return serviceTestResponse(r, 200, f.saved), nil
+			}
 			return serviceTestResponse(r, 409, controlv1.Problem{Code: controlv1.Conflict, Status: 409}), nil
+		}
+		if body.Reserve == nil || !*body.Reserve {
+			f.t.Error("configured publication omitted exact reservation intent")
 		}
 		if body.Placement == nil || body.Placement.Hostname == nil || *body.Placement.Hostname != f.saved.Endpoint.Hostname ||
 			body.Placement.DomainId == nil || *body.Placement.DomainId != *f.saved.DomainId || body.Configuration == nil ||
@@ -219,7 +228,8 @@ func (f *serviceSetupFixture) serve(r *http.Request) (*http.Response, error) {
 		f.enrollments++
 		return serviceTestResponse(r, 201, controlv1.PublisherEnrollment{Id: f.enrollment,
 			EnrollmentKey: f.enrollment + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
-			ExpiresAt:     time.Now().Add(time.Minute), TeamId: f.saved.TeamId, Kind: "service", ServiceId: &f.saved.Id}), nil
+			ExpiresAt:     time.Now().Add(time.Minute), TeamId: f.saved.TeamId, Kind: "service", ServiceId: &f.saved.Id,
+			Protocols: new(controlv1.PublisherServiceProtocols{controlv1.ServiceProtocolHTTP})}), nil
 	case "POST /v1/publisher-enrollments/redeem":
 		var body authorityv1.RedeemPublisherEnrollmentRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -342,7 +352,7 @@ func TestReserveConfiguredServiceRereadsConflictAndLostUpdateReply(t *testing.T)
 			}
 			gets := f.gets
 			saved, err := reserveConfiguredService(t.Context(), f.services, declaration)
-			if err != nil || saved.Id != first.Id || f.creates != 1 || f.gets < gets+2 || f.changes != 1 {
+			if err != nil || saved.Id != first.Id || f.creates != 1 || f.gets < gets+1 || f.changes != 1 {
 				t.Fatal("uncertain update did not reread and confirm the same service", saved, err, f.creates, f.gets, f.changes)
 			}
 		})
@@ -391,9 +401,6 @@ func TestReserveConfiguredServiceRecoversUncertainCreation(t *testing.T) {
 			}
 			saved, err := reserveConfiguredService(t.Context(), f.services, controlv1.ProjectServiceConfiguration{Target: "app"})
 			wantAttempts := 2
-			if committed {
-				wantAttempts = 1
-			}
 			if err != nil || saved.Id != f.saved.Id || f.creates != 1 || len(keys) != wantAttempts {
 				t.Fatal("uncertain creation lost or duplicated the allocation", saved, f.creates, keys, err)
 			}
@@ -429,7 +436,7 @@ func TestReserveConfiguredServiceConcurrentCreationSelectsOneService(t *testing.
 			t.Fatal("concurrent creation selected another allocation", result.saved, result.err)
 		}
 	}
-	if f.creates != 1 || len(f.createKeys) != 1 {
-		t.Fatal("concurrent creation sent another allocation instead of rereading under the hostname lock", f.creates, f.createKeys)
+	if f.creates != 1 || len(f.createKeys) != 2 || f.createKeys[0] == f.createKeys[1] {
+		t.Fatal("concurrent independent reservations did not recover one service with separate operation receipts", f.creates, f.createKeys)
 	}
 }

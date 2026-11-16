@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,8 +31,16 @@ func TestServiceHTTPProtocolsKeepStreamingBodiesAndTrailers(t *testing.T) {
 			name, protocol = "http2", 2
 		}
 		t.Run(name, func(t *testing.T) {
+			var calls atomic.Int32
 			received := make(chan http.Header, 1)
 			client, _, _, token := serviceHTTPProtocolFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if r.Header.Get("Cookie") != "app=kept" || r.Header.Get("Authorization") != "Bearer application" || r.Header.Get("X-Api-Key") != "application-key" {
+					t.Error("cookie filtering changed application credentials")
+				}
+				if r.ContentLength != -1 {
+					t.Error("streaming upload acquired a known length", r.ContentLength)
+				}
 				if err := http.NewResponseController(w).EnableFullDuplex(); err != nil {
 					t.Error(err)
 					return
@@ -60,6 +69,10 @@ func TestServiceHTTPProtocolsKeepStreamingBodiesAndTrailers(t *testing.T) {
 				t.Fatal(err)
 			}
 			request.Header.Set(httpaccess.VisitorTokenHeader, token.Reveal())
+			request.Header.Set("Cookie", httpaccess.FeedbackBrowserCookieName+"=internal; app=kept")
+			request.Header.Set("Authorization", "Bearer application")
+			request.Header.Set("X-Api-Key", "application-key")
+			request.ContentLength = -1
 			request.Trailer = http.Header{"X-Upload-Digest": nil}
 			type result struct {
 				response *http.Response
@@ -92,6 +105,9 @@ func TestServiceHTTPProtocolsKeepStreamingBodiesAndTrailers(t *testing.T) {
 			}
 			if rest, err := io.ReadAll(body); err != nil || string(rest) != "done\n" || reply.response.Trailer.Get("X-Response-Digest") != "complete" {
 				t.Fatal("response body or trailers changed", string(rest), err)
+			}
+			if got := calls.Load(); got != 1 {
+				t.Fatal("streaming upload replayed the application request", got)
 			}
 		})
 	}

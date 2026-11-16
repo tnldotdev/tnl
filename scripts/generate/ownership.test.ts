@@ -40,7 +40,7 @@ it("validates exclusive team/trial ownership without generating union models", a
       { ...serviceFields, endpoint_revision: "1", ephemeral: true, require_post_quantum: false },
       {},
     ],
-    ["controlv1", "ServiceSummary", serviceFields, {}],
+    ["controlv1", "ServiceSummary", { ...serviceFields, require_post_quantum: false }, {}],
     [
       "controlv1",
       "ServiceRunPreparation",
@@ -93,7 +93,14 @@ it("validates exclusive team/trial ownership without generating union models", a
     [
       "controlv1",
       "PublisherGrant",
-      { id: "grant", kind: "service", service_id: service, created_at: now, expires_at: now },
+      {
+        id: "grant",
+        kind: "service",
+        service_id: service,
+        protocols: ["http"],
+        created_at: now,
+        expires_at: now,
+      },
       {},
     ],
     [

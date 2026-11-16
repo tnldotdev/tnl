@@ -22,12 +22,12 @@ func TestConnectorTLSHalfCloseKeepsBoundedRenewalAndResponse(t *testing.T) {
 			renewed := make(chan struct{}, 1)
 			var permissionGate ConnectorPermissionGate
 			done := tunnelWorker(t, cancel, func() error {
-				return ServeConnectorPermissionControl(ctx, control, func(got tunnelv1.ConnectorPermissionUpdate, responder *ConnectorPermissionResponder) {
+				return servePermissionTestControl(ctx, control, func(got tunnelv1.ConnectorPermissionUpdate, responder *ConnectorPermissionResponder) {
 					if got != permission {
 						t.Error("TLS half-close changed renewal permission")
 					}
 					renewed <- struct{}{}
-					_ = responder.Respond(got, got == permission)
+					_ = responder.Respond(ctx, got, got == permission)
 				}, func(tunnelv1.ConnectorVisitorCompletion) {}, func() {}, &permissionGate)
 			})
 			serverTLS, clientTLS := realTunnelTLS(t)

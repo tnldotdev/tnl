@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -25,7 +26,7 @@ func TestConnectorInterruptedRenewalReconnectsWithoutReplacingApplication(t *tes
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer p.Close()
+			defer p.Close(context.WithoutCancel(t.Context()))
 			inner, permissions, owner := p.connection, p.permissions, p.owner
 			local, app := net.Pipe()
 			defer app.Close()
@@ -101,7 +102,7 @@ func TestConnectorReconnectRetainsInnerSessionAndApplication(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer p.Close()
+			defer p.Close(context.WithoutCancel(t.Context()))
 			inner, endpoint, permissions, owner := p.connection, p.endpoint, p.permissions, p.owner
 			local, app := net.Pipe()
 			defer app.Close()
@@ -168,7 +169,7 @@ func TestConnectorReconnectRetainsOperationAcrossLostHelloAndActivationReplies(t
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer p.Close()
+			defer p.Close(context.WithoutCancel(t.Context()))
 			inner, permissions, owner, opened := p.connection, p.permissions, p.owner, f.opened.Load()
 			waitForRepair := func(old *connectorRelayLeg) *connectorRelayLeg {
 				t.Helper()
@@ -247,7 +248,7 @@ func TestConnectorReconnectCancellationAndAuthorityDeadline(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer p.Close()
+			defer p.Close(context.WithoutCancel(t.Context()))
 			armed.Store(true)
 			p.mu.Lock()
 			old := p.paths[0].leg
@@ -276,10 +277,15 @@ func TestConnectorReconnectCancellationAndAuthorityDeadline(t *testing.T) {
 				}
 			}
 			closed := make(chan struct{})
-			go func() { p.Close(); close(closed) }()
+			go func() { _ = p.Close(context.WithoutCancel(t.Context())); close(closed) }()
 			select {
 			case <-closed:
 			case <-time.After(time.Second):
+				// capture the blocked close phase before test cancellation
+				// changes the owner and fixture lifetimes being diagnosed.
+				stacks := make([]byte, 1<<20)
+				n := runtime.Stack(stacks, true)
+				t.Logf("reconnect close join goroutines (%s):\n%s", boundary, stacks[:n])
 				t.Fatal("reconnect did not cancel and join")
 			}
 			p.mu.Lock()

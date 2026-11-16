@@ -66,16 +66,28 @@ func TestNormalizeTarget(t *testing.T) {
 }
 
 func TestParseCanonicalTarget(t *testing.T) {
-	for _, target := range []string{"http://127.0.0.1:3000", "https://[::1]:443", "http://192.0.2.1:3000"} {
+	for _, target := range []string{
+		"http://127.0.0.1:3000", "http://[::1]:3000", "https://[::1]:443",
+		"http://192.0.2.1:3000", "https://127.0.0.1:3000", "http://app:3000", "https://api.example:443",
+	} {
 		parsed, err := ParseCanonicalTarget(target)
 		if err != nil || parsed.String() != target {
 			t.Fatalf("canonical target %q = %v, %v", target, parsed, err)
 		}
 	}
-	for _, target := range []string{"3000", "http://localhost:3000", "HTTP://127.0.0.1:03000", "http://127.0.0.1:3000/path"} {
-		if _, err := ParseCanonicalTarget(target); err == nil {
-			t.Fatalf("noncanonical target %q was accepted", target)
-		}
+	for _, target := range []string{
+		"3000", "http://localhost:3000", "HTTP://127.0.0.1:03000", "http://APP:3000", "https://api.example:0443",
+		"http://127.0.0.1", "https://api.example", "http://127.0.0.1:3000/", "http://127.0.0.1:3000/path",
+		"http://user@127.0.0.1:3000", "http://127.0.0.1:03000", "http://127.0.0.1:99999",
+		"http://[0:0:0:0:0:0:0:1]:3000",
+	} {
+		t.Run(target, func(t *testing.T) {
+			if _, err := ParseCanonicalTarget(target); err == nil {
+				t.Fatalf("noncanonical target %q was accepted", target)
+			} else if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.TargetInvalid {
+				t.Fatalf("ParseCanonicalTarget(%q) diagnostic = %q, %t", target, code, ok)
+			}
+		})
 	}
 }
 

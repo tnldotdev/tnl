@@ -48,21 +48,15 @@ func TestIntegrationFinalVisitorGrantsInventoryInvitationAndRevocation(t *testin
 	owner := f.project.ActorID
 	visitor := finalVisitorIdentity(t, d, f.now, "visitor@example.test")
 
-	check := func(person string, allowed bool, at time.Time) {
+	check := func(person string, allowed bool, at time.Time, wantErr error) {
 		t.Helper()
 		permission, err := finalServiceHTTPPermission(t.Context(), d, f.service.ID, person, at)
-		if !allowed {
-			if err == nil && permission.VisitAllowed {
-				t.Fatal("visitor allowed")
-			}
-			return
-		}
-		if err != nil || !permission.VisitAllowed {
-			t.Fatalf("allowed=%t want=%t: %+v %v", permission.VisitAllowed, allowed, permission, err)
+		if err != wantErr || permission.VisitAllowed != allowed {
+			t.Fatalf("allowed=%t want=%t: %+v error=%v want=%v", permission.VisitAllowed, allowed, permission, err, wantErr)
 		}
 	}
-	check(owner, true, f.now)
-	check(visitor, false, f.now)
+	check(owner, true, f.now, nil)
+	check(visitor, false, f.now, nil)
 	inventory, _, err := d.ListAvailableServices(t.Context(), visitor, "", controlv1.ServiceAccessPathConnector, f.now)
 	if err != nil || len(inventory) != 0 {
 		t.Fatalf("outsider inventory: %+v %v", inventory, err)
@@ -97,8 +91,8 @@ func TestIntegrationFinalVisitorGrantsInventoryInvitationAndRevocation(t *testin
 	if successes != 1 {
 		t.Fatalf("concurrent invitation successes=%d", successes)
 	}
-	check(visitor, true, f.now)
-	check(visitor, false, f.now.Add(time.Hour))
+	check(visitor, true, f.now, nil)
+	check(visitor, false, f.now.Add(time.Hour), nil)
 	var memberships int
 	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.team_memberships WHERE team_id=$1 AND identity_id=$2`, f.project.TeamID, visitor).Scan(&memberships); err != nil || memberships != 0 {
 		t.Fatalf("visitor gained membership: %d %v", memberships, err)
@@ -116,7 +110,7 @@ func TestIntegrationFinalVisitorGrantsInventoryInvitationAndRevocation(t *testin
 	if err = d.RevokeServiceInvitation(ownerCtx, f.service.ID, owner, invitation.ID, f.now); err != nil {
 		t.Fatal(err)
 	}
-	check(visitor, false, f.now)
+	check(visitor, false, f.now, nil)
 	visitorCtx := WithControlPrincipal(t.Context(), ControlPrincipal{IdentityID: visitor})
 	if _, err = d.CreateServiceGrant(visitorCtx, f.service.ID, visitor, "outsider", "team", "", nil, f.now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("visitor managed grants: %v", err)
@@ -129,11 +123,11 @@ func TestIntegrationFinalVisitorGrantsInventoryInvitationAndRevocation(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	check(member.IdentityID, true, f.now.Add(2*time.Hour))
+	check(member.IdentityID, true, f.now.Add(2*time.Hour), nil)
 	if err = d.RemoveMembership(t.Context(), owner, f.project.TeamID, member.ID, f.now); err != nil {
 		t.Fatal(err)
 	}
-	check(member.IdentityID, false, f.now)
+	check(member.IdentityID, false, f.now, ErrVisitorSignIn)
 	if err = d.RevokeServiceGrant(ownerCtx, f.service.ID, owner, grant.ID, f.now); err != nil {
 		t.Fatal(err)
 	}

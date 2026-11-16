@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -252,5 +253,110 @@ func TestServiceForwardingStream(t *testing.T) {
 	}
 	if err := await(t, done); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type connectorDialCleanupProbe struct {
+	muxsession.Session
+	cleanup error
+	cancel  func()
+	closes  atomic.Int32
+}
+
+func (s *connectorDialCleanupProbe) OpenStream(ctx context.Context) (muxsession.Stream, error) {
+	stream, err := s.Session.OpenStream(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return connectorDialCleanupRead{Stream: stream, cancel: s.cancel}, nil
+}
+
+func (s *connectorDialCleanupProbe) Close() error {
+	s.closes.Add(1)
+	return errors.Join(s.Session.Close(), s.cleanup)
+}
+
+type connectorDialCleanupRead struct {
+	muxsession.Stream
+	cancel func()
+}
+
+func (s connectorDialCleanupRead) Read(p []byte) (int, error) {
+	n, err := s.Stream.Read(p)
+	if err != nil && s.cancel != nil {
+		s.cancel()
+	}
+	return n, err
+}
+
+func TestConnectorDialRetainsOperationAndCleanupProvenance(t *testing.T) {
+	for _, boundary := range []string{"clean close", "failed close", "canceled failed close"} {
+		t.Run(boundary, func(t *testing.T) {
+			budget, stop := context.WithTimeout(t.Context(), 5*time.Second)
+			defer stop()
+			call, cancel := context.WithCancelCause(budget)
+			defer cancel(nil)
+			client, server := newMemoryPair(t)
+			cleanup, canceled := errors.New("owned transport close failed"), errors.New("connector dial canceled")
+			probe := &connectorDialCleanupProbe{Session: client}
+			if boundary != "clean close" {
+				probe.cleanup = cleanup
+			}
+			if boundary == "canceled failed close" {
+				probe.cancel = func() { cancel(canceled) }
+			}
+			proof := tunnelv1.ConnectorPairLegProof{PairID: "cpp_1234567890123456789012", DeliveryGeneration: 1,
+				ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012", RunNumber: 1,
+				PublisherIdentityID: "pub_1234567890123456789012", PublisherConnectionID: "pc_1234567890123456789012",
+				AssignmentRevision: 1, RelayServiceID: "relay-a", RelayID: "node-a", RelayRunID: "run-a", RelayLeaseRevision: 1,
+				RequestedAt: time.Now(), Nonce: make([]byte, 32), Signature: make([]byte, 64)}
+			done, served := make(chan struct{}), make(chan error, 1)
+			t.Cleanup(func() { _ = server.Close(); <-done })
+			go func() {
+				defer close(done)
+				stream, err := server.AcceptStream(budget)
+				if err == nil {
+					_, err = tunnelv1.ReadControl(stream)
+				}
+				if err == nil {
+					// an incomplete frame header loses the hello reply, not the request.
+					_, err = stream.Write([]byte{0})
+				}
+				if stream != nil {
+					err = errors.Join(err, stream.Close())
+				}
+				served <- err
+			}()
+			session, receipt, err := DialConnector(call, probe, tunnelv1.Message{Type: tunnelv1.Hello,
+				ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Connector, ConnectorPairLegProof: &proof}, "AQEBAQEBAQEBAQEBAQEBAQ")
+			select {
+			case serveErr := <-served:
+				if serveErr != nil {
+					t.Fatal("lost-reply fixture failed before truncating the response", serveErr)
+				}
+			case <-budget.Done():
+				t.Fatal("lost-reply fixture exceeded the case budget", context.Cause(budget))
+			}
+			if session != nil || receipt != (tunnelv1.ConnectorPairLegAccepted{}) || !errors.Is(err, io.ErrUnexpectedEOF) || probe.closes.Load() != 1 {
+				t.Fatal("failed hello exposed a session or lost its operation/close ownership", err, probe.closes.Load())
+			}
+			if boundary == "canceled failed close" && !errors.Is(err, canceled) {
+				t.Error("owned cancellation replaced the failed hello", err)
+			}
+			var marker *SessionCleanupError
+			marked := errors.As(err, &marker)
+			if probe.cleanup == nil {
+				if marked || errors.Is(err, cleanup) {
+					t.Error("successful physical cleanup acquired a cleanup failure", err)
+				}
+				return
+			}
+			if !errors.Is(err, cleanup) || !marked {
+				t.Error("failed physical cleanup lost its identity or marker", err)
+			}
+			if marked && (!errors.Is(marker, cleanup) || errors.Is(marker, io.ErrUnexpectedEOF) || errors.Is(marker, canceled)) {
+				t.Error("cleanup marker contains the independent operation or cancellation", marker)
+			}
+		})
 	}
 }

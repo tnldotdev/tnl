@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 // the local client has already half-closed its request, but has not consumed
@@ -115,7 +116,7 @@ func TestConnectorNativeDrainKeepsPacketCarriersUntilReturnCopyJoins(t *testing.
 					t.Fatal(err)
 				}
 				defer inner.Close()
-				control := connectorControl(t, ctx, inner)
+				control := connectorControl(t, ctx, inner, publisher)
 				entry := opening("N")
 				prepared, err := connectorstream.PrepareConnector(ctx, ctx, inner, connectorstream.Run{
 					ServiceID: entry.ServiceID, ServiceRunID: entry.ServiceRunID, RunNumber: entry.RunNumber,
@@ -140,10 +141,14 @@ func TestConnectorNativeDrainKeepsPacketCarriersUntilReturnCopyJoins(t *testing.
 				go func() {
 					defer close(copyJoined)
 					err := prepared.Forward(ctx, gate)
+					err = errors.Join(err, prepared.Close())
 					if err == nil {
-						// model the existing generic completion message only after the
-						// real connector copy owner has joined both directions.
-						err = control.Complete(ctx, entry.VisitorConnectionID, entry.DeliveryGeneration)
+						// both real copies and prepared physical cleanup have joined.
+						var exchange tunnel.ConnectorTerminalExchange
+						exchange, err = control.Complete(ctx, tunnelv1.ConnectorVisitorTerminalKey{VisitorConnectionID: entry.VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration})
+						if err == nil && (!exchange.Matched || !exchange.ObservedWritten || exchange.Result.Outcome != tunnelv1.ConnectorTerminalAccepted) {
+							err = errors.New("native completion did not match and observe its joined result")
+						}
 					}
 					copied <- err
 				}()

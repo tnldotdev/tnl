@@ -14,10 +14,13 @@ const MaxConnectorPermissionBytes = 4 << 10
 const ConnectorPermissionControl StreamKind = "connector_permission_control"
 const ConnectorPermissionControlAccepted StreamKind = "connector_permission_control_accepted"
 
+const ConnectorPermissionControlRevision uint32 = 2
+
 type connectorPermissionHello struct {
 	ProtocolVersion      uint32     `json:"protocol_version"`
 	Kind                 StreamKind `json:"kind"`
 	ApplicationAdmission bool       `json:"application_admission"`
+	ControlRevision      uint32     `json:"control_revision"`
 }
 
 func WriteConnectorPermissionHello(w io.Writer, accepted bool) error {
@@ -25,7 +28,9 @@ func WriteConnectorPermissionHello(w io.Writer, accepted bool) error {
 	if accepted {
 		kind = ConnectorPermissionControlAccepted
 	}
-	return writeJSONFrame(w, connectorPermissionHello{ProtocolVersion: Version, Kind: kind, ApplicationAdmission: true}, 256)
+	return writeJSONFrame(w, connectorPermissionHello{
+		ProtocolVersion: Version, Kind: kind, ApplicationAdmission: true, ControlRevision: ConnectorPermissionControlRevision,
+	}, 256)
 }
 
 func ReadConnectorPermissionHello(r io.Reader, accepted bool) error {
@@ -34,10 +39,13 @@ func ReadConnectorPermissionHello(r io.Reader, accepted bool) error {
 	if accepted {
 		kind = ConnectorPermissionControlAccepted
 	}
-	if err := readJSONFrame(r, &hello, 256); err != nil {
+	payload, err := readFramePayload(r, 256)
+	if err != nil {
 		return err
 	}
-	if hello.ProtocolVersion != Version || hello.Kind != kind || !hello.ApplicationAdmission {
+	if decodeConnectorControlPayload(payload, &hello) != nil ||
+		hello.ProtocolVersion != Version || hello.Kind != kind || !hello.ApplicationAdmission ||
+		hello.ControlRevision != ConnectorPermissionControlRevision {
 		return ErrConnectorPermissionUpdate
 	}
 	return nil
@@ -83,11 +91,12 @@ func WriteConnectorPermissionResult(w io.Writer, result ConnectorPermissionResul
 }
 
 func ReadConnectorPermissionResult(r io.Reader) (ConnectorPermissionResult, error) {
-	var result ConnectorPermissionResult
-	if err := readJSONFrame(r, &result, 256); err != nil {
+	payload, err := readFramePayload(r, 256)
+	if err != nil {
 		return ConnectorPermissionResult{}, err
 	}
-	if !result.valid() {
+	var result ConnectorPermissionResult
+	if decodeConnectorControlPayload(payload, &result) != nil || !result.valid() {
 		return ConnectorPermissionResult{}, ErrConnectorPermissionUpdate
 	}
 	return result, nil
@@ -108,7 +117,7 @@ func ReadConnectorPermissionUpdate(r io.Reader) (ConnectorPermissionUpdate, erro
 		return ConnectorPermissionUpdate{}, err
 	}
 	var u ConnectorPermissionUpdate
-	if decodeJSONPayload(payload, &u) != nil || !u.valid() {
+	if decodeConnectorControlPayload(payload, &u) != nil || !u.valid() {
 		return ConnectorPermissionUpdate{}, ErrConnectorPermissionUpdate
 	}
 	return u, nil

@@ -251,6 +251,10 @@ func TestConnectionPreparationInvalidResolvedRunClosesAdapterOnce(t *testing.T) 
 					t.Error("invalid resolved run reached pair rebind")
 					return controlv1.ConnectorPeerPairRebindState{}, connectorstream.ErrServiceConnection
 				},
+				RetirePair: func(context.Context, string, string, controlv1.ConnectorPeerPairRetireRequest) (controlv1.ConnectorPeerPairRetirement, error) {
+					t.Error("invalid resolved run reached pair retirement")
+					return controlv1.ConnectorPeerPairRetirement{}, connectorstream.ErrServiceConnection
+				},
 				Permission: func(context.Context, string) (controlv1.VisitorTokenResponse, error) {
 					t.Error("invalid resolved run reached visitor permission")
 					return controlv1.VisitorTokenResponse{}, connectorstream.ErrServiceConnection
@@ -328,6 +332,10 @@ func TestConnectionPreparationFailureJoinsResourcesAndReusesListener(t *testing.
 				RebindPair: func(context.Context, string, string, controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
 					t.Error("failed preparation reached pair rebind")
 					return controlv1.ConnectorPeerPairRebindState{}, failure
+				},
+				RetirePair: func(context.Context, string, string, controlv1.ConnectorPeerPairRetireRequest) (controlv1.ConnectorPeerPairRetirement, error) {
+					t.Error("failed preparation reached pair retirement")
+					return controlv1.ConnectorPeerPairRetirement{}, failure
 				},
 				Permission: func(context.Context, string) (controlv1.VisitorTokenResponse, error) {
 					t.Error("failed preparation reached visitor permission")

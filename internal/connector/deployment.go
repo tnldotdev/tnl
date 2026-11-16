@@ -58,11 +58,11 @@ func connectionDeployment(options ContextOptions) (projectConfiguration, connect
 	if err != nil {
 		return projectConfiguration{}, connectorruntime.Context{}, err
 	}
-	public, err := credential.PublicKey()
+	captured, err := credential.CaptureSigner()
 	if err != nil {
 		return projectConfiguration{}, connectorruntime.Context{}, err
 	}
-	encoded, err := json.Marshal([]any{credential.ControlURL, credential.Approval, public, names, r.Name})
+	encoded, err := json.Marshal([]any{credential.ControlURL, credential.Approval, captured.PublicKey(), names, r.Name})
 	if err != nil {
 		return projectConfiguration{}, connectorruntime.Context{}, err
 	}
@@ -139,10 +139,11 @@ func (d *deploymentConnection) selectService(ctx context.Context, name string) (
 
 func (d *deploymentConnection) controlFor(name, service string) (connectorstream.Control, error) {
 	credential := d.source.Credential
-	public, err := credential.PublicKey()
+	captured, err := credential.CaptureSigner()
 	if err != nil {
 		return nil, err
 	}
+	public := captured.PublicKey()
 	// resolve names only from the credential's fixed connect selection; control
 	// resolves the exact saved binding again and fences ID replacement below.
 	if credential.Approval.Permissions.Connect == nil {
@@ -175,7 +176,7 @@ func (d *deploymentConnection) controlFor(name, service string) (connectorstream
 			if identity != "" {
 				return connectorstream.Signer{}, connectorruntime.ErrUnauthorized
 			}
-			return connectorstream.Signer{Subject: credential.Subject(), PublicKey: public, Sign: func(message []byte) []byte { value, _ := credential.Sign(message); return value }}, nil
+			return connectorstream.Signer{Subject: credential.Subject(), PublicKey: public, Sign: captured.Sign}, nil
 		},
 		Resolve: resolve,
 		Pair: func(ctx context.Context, id string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
@@ -214,6 +215,7 @@ func (d *deploymentConnection) controlFor(name, service string) (connectorstream
 			body.Source = source
 			return d.api.RebindSourceConnectorPeerPair(ctx, id, pair, body)
 		},
+		RetirePair: d.api.RetireConnectorPeerPair,
 		Permission: func(ctx context.Context, id string) (controlv1.VisitorTokenResponse, error) {
 			if id != service {
 				return controlv1.VisitorTokenResponse{}, connectorruntime.ErrUnauthorized

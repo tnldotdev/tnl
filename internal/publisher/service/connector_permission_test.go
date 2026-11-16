@@ -22,13 +22,19 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func connectorControl(t *testing.T, ctx context.Context, client muxsession.Session) *tunnel.ConnectorPermissionWriter {
+func connectorControl(t *testing.T, ctx context.Context, client muxsession.Session, p *PeerSession) *tunnel.ConnectorPermissionWriter {
 	t.Helper()
-	writer, err := tunnel.OpenConnectorPermissionControl(ctx, ctx, client)
+	writer, err := tunnel.OpenConnectorPermissionControl(ctx, ctx, client, p.controlScope())
 	if err != nil {
 		t.Fatal("connector control handshake", err)
 	}
-	t.Cleanup(writer.Close)
+	t.Cleanup(func() {
+		// fixtures deliberately revoke/reset their actual peers. inspect every
+		// leaf so expected cancellation cannot hide independent cleanup errors.
+		if err := writer.Close(); !connectorAdmissionRoutineError(err) {
+			t.Error("connector control cleanup", err)
+		}
+	})
 	return writer
 }
 
@@ -114,7 +120,7 @@ func TestConnectorPermissionStaleBindingDoesNotRenewOrCloseCurrentAdmission(t *t
 	served := make(chan error, 1)
 	go func() { served <- serveConnectorInner(ctx, p, server) }()
 	defer func() { p.Close(); <-served }()
-	control := connectorControl(t, ctx, client)
+	control := connectorControl(t, ctx, client, p)
 	entry := opening("S")
 	traffic := openPermissionVisitor(t, ctx, client, trust, entry)
 	a := permissionAdmission(t, b, p, entry.VisitorConnectionID)
@@ -172,7 +178,7 @@ func TestConnectorPermissionPendingBindingWaitsForLocalActivation(t *testing.T) 
 	served := make(chan error, 1)
 	go func() { served <- serveConnectorInner(ctx, p, server) }()
 	defer func() { p.Close(); <-served }()
-	connectorControl(t, ctx, client)
+	connectorControl(t, ctx, client, p)
 	entry := opening("W")
 	_ = openPermissionVisitor(t, ctx, client, trust, entry)
 	a := permissionAdmission(t, b, p, entry.VisitorConnectionID)
@@ -267,7 +273,7 @@ func TestConnectorPermissionControlIsolatesPolicyWaitAndInvalidProof(t *testing.
 			served := make(chan error, 1)
 			go func() { served <- serveConnectorInner(ctx, p, server) }()
 			defer func() { p.Close(); <-served }()
-			control := connectorControl(t, ctx, client)
+			control := connectorControl(t, ctx, client, p)
 			first, second := opening("X"), opening("Y")
 			_ = openPermissionVisitor(t, ctx, client, trust, first)
 			healthy := openPermissionVisitor(t, ctx, client, trust, second)
@@ -390,6 +396,44 @@ func TestConnectorPermissionControlIsolatesPolicyWaitAndInvalidProof(t *testing.
 	}
 }
 
+func TestConnectorPermissionProofRefusalClassificationKeepsIndependentFailures(t *testing.T) {
+	independent := errors.New("independent renewal cleanup failure")
+	refusal := &connectorRenewalProofRefusal{err: visitortoken.ErrBinding}
+	physical := &muxsession.QUICTransportCloseError{Err: errors.Join(context.Canceled, independent)}
+	ack := &tunnel.ConnectorControlFailure{Origin: tunnel.ConnectorControlWriterFailure, Err: errors.Join(context.Canceled, independent)}
+	for _, test := range []struct {
+		name    string
+		err     error
+		routine bool
+	}{
+		{name: "untagged proof", err: visitortoken.ErrBinding},
+		{name: "tagged renewal proof", err: refusal, routine: true},
+		{name: "wrapped tagged proof", err: fmt.Errorf("renewal: %w", refusal), routine: true},
+		{name: "tagged proof and owned cancellation", err: errors.Join(refusal, context.Canceled), routine: true},
+		{name: "untagged proof and cancellation", err: errors.Join(visitortoken.ErrBinding, context.Canceled)},
+		{name: "unacknowledged proof and ack cancellation", err: errors.Join(visitortoken.ErrBinding,
+			&tunnel.ConnectorControlFailure{Origin: tunnel.ConnectorControlWriterFailure, Err: context.Canceled})},
+		{name: "tagged proof and independent close", err: errors.Join(refusal, context.Canceled, independent)},
+		{name: "tagged proof and ack failure", err: errors.Join(refusal, ack)},
+		{name: "tagged proof and typed physical failure", err: errors.Join(refusal, physical)},
+		{name: "typed physical cancellation", err: &muxsession.QUICTransportCloseError{Err: context.Canceled}},
+		{name: "joined cause is not exact refusal", err: &connectorRenewalProofRefusal{err: errors.Join(visitortoken.ErrBinding, independent)}},
+		{name: "wrapped cause is not exact refusal", err: &connectorRenewalProofRefusal{err: fmt.Errorf("proof: %w", visitortoken.ErrBinding)}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := connectorAdmissionRoutineError(test.err); got != test.routine {
+				t.Fatal("renewal provenance changed independent failure classification", got, test.err)
+			}
+		})
+	}
+	joined := errors.Join(refusal, ack, physical)
+	var retained *muxsession.QUICTransportCloseError
+	if !errors.Is(joined, visitortoken.ErrBinding) || !errors.Is(joined, independent) ||
+		!errors.Is(joined, context.Canceled) || !errors.As(joined, &retained) || retained != physical {
+		t.Fatal("renewal refusal lost an original proof, ack, or typed physical cause", joined)
+	}
+}
+
 func TestConnectorPermissionControlKeepsAll64ApplicationAdmissions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -398,7 +442,7 @@ func TestConnectorPermissionControlKeepsAll64ApplicationAdmissions(t *testing.T)
 	served := make(chan error, 1)
 	go func() { served <- serveConnectorInner(ctx, p, server) }()
 	defer func() { p.Close(); <-served }()
-	connectorControl(t, ctx, client)
+	connectorControl(t, ctx, client, p)
 	for i := range 64 {
 		entry := opening("A")
 		entry.VisitorConnectionID = fmt.Sprintf("vc_%022d", i)
@@ -420,13 +464,17 @@ type permissionHeldClose struct {
 	muxsession.Stream
 	entered, release chan struct{}
 	once             sync.Once
+	closeErr         error
 }
 
 func (s *permissionHeldClose) Close() error {
 	err := s.Stream.Close()
 	s.once.Do(func() { close(s.entered) })
 	<-s.release
-	return err
+	if s.closeErr == nil {
+		return err
+	}
+	return errors.Join(err, s.closeErr)
 }
 
 type permissionHeldSession struct {
@@ -459,7 +507,7 @@ func TestConnectorPermissionControlRetainsCapacityUntilRenewalAndPhysicalCloseJo
 	served := make(chan error, 1)
 	go func() { served <- serveConnectorInner(ctx, p, &permissionHeldSession{Session: server, held: held}) }()
 	defer func() { release(); p.Close(); <-served }()
-	control := connectorControl(t, ctx, client)
+	control := connectorControl(t, ctx, client, p)
 	entry := opening("V")
 	_ = openPermissionVisitor(t, ctx, client, trust, entry)
 	a := permissionAdmission(t, b, p, entry.VisitorConnectionID)
@@ -504,6 +552,112 @@ func TestConnectorPermissionControlRetainsCapacityUntilRenewalAndPhysicalCloseJo
 	}
 }
 
+func TestConnectorPermissionRejectedProofKeepsIndependentPhysicalFailure(t *testing.T) {
+	for _, boundary := range []string{"physical", "canceled physical", "typed physical"} {
+		t.Run(boundary, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			b, p, trust, opening, _ := connectorPeerFixture(t, permissionEchoTarget(t))
+			client, server := connectorInnerPair(t, ctx, trust)
+			independent := errors.New("independent rejected visitor physical cleanup failed")
+			var physical *muxsession.QUICTransportCloseError
+			closeErr := independent
+			switch boundary {
+			case "canceled physical":
+				closeErr = errors.Join(context.Canceled, independent)
+			case "typed physical":
+				physical = &muxsession.QUICTransportCloseError{Err: errors.Join(context.Canceled, independent)}
+				closeErr = physical
+			}
+			held := &permissionHeldClose{entered: make(chan struct{}), release: make(chan struct{}), closeErr: closeErr}
+			release := sync.OnceFunc(func() { close(held.release) })
+			defer release()
+			served, serveDone := make(chan error, 1), make(chan struct{})
+			go func() {
+				defer close(serveDone)
+				served <- serveConnectorInner(ctx, p, &permissionHeldSession{Session: server, held: held})
+			}()
+			defer func() { release(); p.Close(); <-serveDone }()
+			control := connectorControl(t, ctx, client, p)
+			defer func() {
+				if err := control.Close(); !connectorAdmissionRoutineError(err) {
+					t.Error("rejected proof control close", err)
+				}
+			}()
+			first, second := opening("J"), opening("K")
+			_ = openPermissionVisitor(t, ctx, client, trust, first)
+			healthy := openPermissionVisitor(t, ctx, client, trust, second)
+			a := permissionAdmission(t, b, p, first.VisitorConnectionID)
+			update := signedPermissionUpdate(t, b, p, second, 1, time.Now().Add(time.Minute))
+			update.VisitorConnectionID = first.VisitorConnectionID
+			if err := control.Renew(ctx, update); !errors.Is(err, tunnel.ErrConnectorPermissionRejected) ||
+				serviceWorkerError(err, tunnel.ErrConnectorPermissionRejected) != nil {
+				t.Fatal("invalid proof lost its exact rejected acknowledgement", err)
+			}
+			select {
+			case <-held.entered:
+			case <-ctx.Done():
+				t.Fatal("rejected proof did not enter physical cleanup", ctx.Err())
+			}
+			b.mu.Lock()
+			current, reserved := p.currentLocked(), b.reservedStreams
+			b.mu.Unlock()
+			if !current || reserved != 2 {
+				t.Fatal("proof rejection retired the peer or released unjoined capacity", current, reserved)
+			}
+			select {
+			case <-a.renewDone:
+				t.Fatal("renewal worker abandoned entered physical cleanup")
+			case <-a.joined:
+				t.Fatal("admission claimed joined before its physical close returned")
+			default:
+			}
+			renew := signedPermissionUpdate(t, b, p, second, 1, time.Now().Add(3*time.Second))
+			if err := control.Renew(ctx, renew); err != nil {
+				t.Fatal("held rejected visitor stopped sibling renewal", err)
+			}
+			_ = healthy.SetDeadline(time.Now().Add(time.Second))
+			if _, err := healthy.Write([]byte("held")); err != nil {
+				t.Fatal("held rejected visitor stopped sibling writes", err)
+			}
+			var echoed [4]byte
+			if _, err := io.ReadFull(healthy, echoed[:]); err != nil || string(echoed[:]) != "held" {
+				t.Fatal("held rejected visitor stopped sibling bytes", err)
+			}
+			release()
+			var result error
+			select {
+			case result = <-served:
+				<-serveDone
+			case <-ctx.Done():
+				t.Fatal("peer did not join independent physical failure", ctx.Err())
+			}
+			if !errors.Is(result, independent) || !errors.Is(result, visitortoken.ErrBinding) {
+				t.Fatal("proof refusal hid its original cause or independent physical failure", result)
+			}
+			if boundary != "physical" && !errors.Is(result, context.Canceled) {
+				t.Fatal("joined physical cancellation lost its cause", result)
+			}
+			if physical != nil {
+				var retained *muxsession.QUICTransportCloseError
+				if !errors.As(result, &retained) || retained != physical {
+					t.Fatal("proof refusal hid typed transport cleanup provenance", result)
+				}
+			}
+			select {
+			case <-a.renewDone:
+			default:
+				t.Fatal("peer returned before its renewal worker joined")
+			}
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			if b.reservedStreams != 0 || b.connectorPending != 0 || len(p.streams) != 0 {
+				t.Fatal("independent failure retained joined connector capacity")
+			}
+		})
+	}
+}
+
 func TestConnectorPermissionControlRenewsResponseAfterTLSCloseNotify(t *testing.T) {
 	for _, rejected := range []bool{false, true} {
 		t.Run(map[bool]string{false: "renewed", true: "rejected"}[rejected], func(t *testing.T) {
@@ -534,7 +688,7 @@ func TestConnectorPermissionControlRenewsResponseAfterTLSCloseNotify(t *testing.
 			served := make(chan error, 1)
 			go func() { served <- serveConnectorInner(ctx, p, server) }()
 			defer func() { resume(); p.Close(); <-served; _ = target.Close(); <-targetDone }()
-			control := connectorControl(t, ctx, client)
+			control := connectorControl(t, ctx, client, p)
 			entry := opening("Z")
 			secured := openPermissionVisitor(t, ctx, client, trust, entry)
 			a := permissionAdmission(t, b, p, entry.VisitorConnectionID)
@@ -631,7 +785,7 @@ func TestConnectorPermissionControlReservesCreditAgainstAllApplicationBackpressu
 		t.Run(map[bool]string{false: "initial windows", true: "maximum windows and batched credit"}[grown], func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 			defer cancel()
-			_, _, trust, _, _ := connectorPeerFixture(t, "127.0.0.1:1")
+			_, p, trust, _, _ := connectorPeerFixture(t, "127.0.0.1:1")
 			config := tunnel.ConnectorQUICConfig()
 			if grown {
 				// model every permitted application window already autotuned to
@@ -649,7 +803,7 @@ func TestConnectorPermissionControlReservesCreditAgainstAllApplicationBackpressu
 					accepted <- stream
 				}
 			}()
-			control := connectorControl(t, ctx, client)
+			control := connectorControl(t, ctx, client, p)
 			var stream muxsession.Stream
 			select {
 			case stream = <-accepted:
@@ -659,6 +813,12 @@ func TestConnectorPermissionControlReservesCreditAgainstAllApplicationBackpressu
 			var writers sync.WaitGroup
 			defer writers.Wait()
 			defer client.Close()
+			defer func() {
+				// join control before local session closure interrupts its reader.
+				if err := control.Close(); !connectorAdmissionRoutineError(err) {
+					t.Error("backpressure control close", err)
+				}
+			}()
 			payload := make([]byte, config.InitialStreamReceiveWindow)
 			filled := make(chan error, tunnel.MaxConnectorApplicationStreams)
 			excess := make(chan error, tunnel.MaxConnectorApplicationStreams)

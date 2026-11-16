@@ -29,6 +29,8 @@ type publicationReadiness struct {
 	observe    func(context.Context, Status) error
 	probe      func(context.Context, httpaccess.ReadinessRun, string, *httpaccess.ReadinessProof) error
 	localProbe func(context.Context, string) bool
+	resolver   targetplan.TargetResolver
+	targets    *targetplan.TargetBinding
 	everReady  atomic.Bool
 	mu         sync.Mutex
 	target     string
@@ -57,8 +59,14 @@ func newPublicationReadiness(ctx context.Context, cancel context.CancelCauseFunc
 	if job.ReadinessPath == "" {
 		job.ReadinessPath = "/"
 	}
-	r := &publicationReadiness{ctx: ctx, cancel: cancel, job: job, service: service, attempts: attempts, observe: observe, probe: VerifyServiceReadiness, target: job.Target}
+	r := &publicationReadiness{ctx: ctx, cancel: cancel, job: job, service: service, attempts: attempts, observe: observe, probe: VerifyServiceReadiness,
+		target: job.Target, resolver: targetplan.Resolver{}}
 	r.localProbe = r.checkTarget
+	if job.Protocol == "http" && job.Project != nil {
+		r.targets = &targetplan.TargetBinding{Resolve: func(ctx context.Context) (targetplan.TargetSnapshot, error) {
+			return targetplan.ResolveTargetSnapshot(ctx, *job.Project, job.ProjectService, r.resolver)
+		}}
+	}
 	return r
 }
 
@@ -84,6 +92,21 @@ func (r *publicationReadiness) checkTarget(ctx context.Context, address string) 
 		}
 	}
 	return publisherapp.ProbeServiceTarget(ctx, publisherapp.Service{Target: address, ServiceProtocol: "http", Readiness: publisherapp.Readiness{Path: r.job.ReadinessPath}}, transport).Ready
+}
+
+// discovery, the local request, and the identity fence share the original probe
+// deadline. HTTP keeps its run while each observation follows the current target.
+func (r *publicationReadiness) checkLocalTarget(ctx context.Context, address string) bool {
+	check, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if r.targets == nil {
+		return r.localProbe(check, address) && check.Err() == nil
+	}
+	selected, err := r.targets.Capture(check)
+	if err != nil || !r.localProbe(check, selected.Address) || check.Err() != nil {
+		return false
+	}
+	return r.targets.Current(check, selected) && check.Err() == nil
 }
 
 // the heartbeat reads a recent local observation; it never waits for target I/O.
@@ -194,7 +217,7 @@ func (r *installedReadinessRun) serve() {
 	go func() {
 		defer close(healthDone)
 		for healthCtx.Err() == nil {
-			healthy := r.owner.localProbe(healthCtx, r.target)
+			healthy := r.owner.checkLocalTarget(healthCtx, r.target)
 			if healthCtx.Err() != nil {
 				return
 			}

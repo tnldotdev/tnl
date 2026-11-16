@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 )
 
@@ -144,8 +145,8 @@ func TestConnectorHTTPStreamJoinsTargetDialAfterHandlerReturns(t *testing.T) {
 				default:
 				}
 				release()
-				if err := <-done; err != nil {
-					t.Fatal(err)
+				if err := <-done; !failure.Only(err, context.Canceled) {
+					t.Fatal("aborted HTTP forwarding lost cancellation or acquired an independent failure", err)
 				}
 				select {
 				case <-admission.stopped:

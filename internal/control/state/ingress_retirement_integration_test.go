@@ -10,7 +10,13 @@ import (
 
 func TestIntegrationIngressTerminalRetirementProof(t *testing.T) {
 	f := newServicePublicationFixture(t)
+	installPrivateTestCertificate(t, f.database, f.prepared, f.run, f.now)
 	f.readyConnections(t, f.now)
+	state, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token,
+		f.now, ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+	if err != nil || state.State != "ready" {
+		t.Fatal("terminal proof fixture did not establish a ready service run", state, err)
+	}
 	ingress, err := f.database.RegisterIngress(t.Context(), IngressRegistration{
 		IngressID: "terminal-retirement", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix),
 		ProtocolVersion: 1, HTTPS: true, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -113,9 +114,14 @@ func TestIntegrationGuestAuthorityPreparationRenewsWithoutStartingBudget(t *test
 		at := f.now.Add(elapsed)
 		started := time.Now()
 		renewed, err := f.heartbeat(at)
+		earliest := at.Add(5 * time.Second).Truncate(time.Microsecond)
 		latest := at.Add(time.Since(started) + 5*time.Second + time.Microsecond)
-		if err != nil || !renewed.ExpiresAt.After(at) || renewed.ExpiresAt.After(latest) {
+		if err != nil || renewed.ExpiresAt.Before(earliest) || renewed.ExpiresAt.After(latest) {
 			t.Fatalf("preparation observation bound = %v, %v", renewed.ExpiresAt, err)
+		}
+		var persisted time.Time
+		if err := f.database.pool.QueryRow(t.Context(), `SELECT publisher_expires_at FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&persisted); err != nil || !persisted.Equal(renewed.ExpiresAt) {
+			t.Fatalf("preparation response differs from issued run authority: %v, %v, %v", renewed.ExpiresAt, persisted, err)
 		}
 		stored := f.stored(t)
 		if stored.UsedReadyNs != int64(GuestReadyAllowance-5*time.Second) || stored.ReadyDeadline.Valid || stored.ServingUntil.Valid {
@@ -183,8 +189,8 @@ func TestIntegrationGuestAuthoritySettlementRollsBackWithClosure(t *testing.T) {
 		t.Fatal("injected closure failure succeeded")
 	}
 	after := f.stored(t)
-	if after.UsedReadyNs != before.UsedReadyNs || after.ActiveServiceRunID != before.ActiveServiceRunID {
-		t.Fatalf("failed closure settled allowance: %+v", after)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatal("failed closure changed the stored guest record")
 	}
 	var open bool
 	if err := f.database.pool.QueryRow(t.Context(), `SELECT closed_at IS NULL AND assignments_open FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&open); err != nil || !open {

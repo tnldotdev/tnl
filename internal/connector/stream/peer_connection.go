@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 
 	quic "github.com/quic-go/quic-go"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -31,9 +33,11 @@ type preparedOpening struct {
 }
 
 type connectorUse struct {
-	entry    tunnelv1.ConnectorPeerVisitorEntry
-	prepared *PreparedConnector
-	until    time.Time
+	entry       tunnelv1.ConnectorPeerVisitorEntry
+	prepared    *PreparedConnector
+	until       time.Time
+	terminalKey tunnelv1.ConnectorVisitorTerminalKey
+	admitted    bool
 }
 
 type connectorPath struct {
@@ -49,6 +53,17 @@ type connectorPath struct {
 type connectorConnection struct {
 	ctx             context.Context
 	cancel          context.CancelCauseFunc
+	packetCtx       context.Context
+	packetCancel    context.CancelCauseFunc
+	cleanup         *connectorCleanup
+	retirement      *connectorRetirement
+	parentStop      func() bool
+	parentDone      chan struct{}
+	packetStopOnce  sync.Once
+	packetStop      func() bool
+	packetStopDone  chan struct{}
+	closing         bool
+	closeErr        error
 	config          Config
 	signer          Signer
 	owner           string
@@ -86,40 +101,227 @@ type connectorConnection struct {
 	bindingCancel   context.CancelFunc
 	legUses         sync.WaitGroup
 	workers         sync.WaitGroup
+	servingWorkers  sync.WaitGroup
 	uses            sync.WaitGroup
+	useErr          error
 	once            sync.Once
 }
 
 func connectorTemporary(err error) bool {
-	var protocol *tunnel.ProtocolError
-	if errors.As(err, &protocol) {
-		return protocol.Code == tunnelv1.Unavailable
+	if classified, retry := connectorClassifiedTemporary(err); classified {
+		return retry
 	}
-	if _, definition, ok := failure.Describe(err); ok {
-		return definition.Retry == failure.RetryLater
+	if joined, retry := connectorJoinedTemporary(err); joined {
+		return retry
 	}
 	var network net.Error
 	return errors.As(err, &network) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
+// an explicit operation reason classifies its diagnostic causes. another typed
+// denial or owned cleanup failure still vetoes retry, regardless of tree order.
+func connectorClassifiedTemporary(err error) (classified, retry bool) {
+	retry = true
+	var visit func(error)
+	visit = func(err error) {
+		switch cause := err.(type) {
+		case *CleanupError, *tunnel.SessionCleanupError, *muxsession.QUICTransportCloseError, *connectorLegAttemptError:
+			classified, retry = true, false
+			return
+		case *tunnel.ProtocolError:
+			classified = true
+			retry = retry && cause.Code == tunnelv1.Unavailable
+			return
+		case *clientcontrol.ProblemError:
+			if cause.Status == http.StatusUnauthorized || cause.Status == http.StatusForbidden {
+				classified, retry = true, false
+			}
+		case *failure.Error:
+			definition, _ := failure.DefinitionFor(cause.Reason())
+			classified = true
+			retry = retry && definition.Retry == failure.RetryLater
+		case interface{ FailureReason() failure.Reason }:
+			if definition, ok := failure.DefinitionFor(cause.FailureReason()); ok {
+				classified = true
+				retry = retry && definition.Retry == failure.RetryLater
+			}
+		}
+		switch cause := err.(type) {
+		case interface{ Unwrap() []error }:
+			for _, child := range cause.Unwrap() {
+				visit(child)
+			}
+		case interface{ Unwrap() error }:
+			visit(cause.Unwrap())
+		}
+	}
+	visit(err)
+	return classified, retry
+}
+
+// a retryable network leaf cannot hide an independent joined failure.
+func connectorJoinedTemporary(err error) (bool, bool) {
+	switch cause := err.(type) {
+	case interface{ Unwrap() []error }:
+		children := cause.Unwrap()
+		if len(children) == 0 {
+			return true, false
+		}
+		for _, child := range children {
+			if !connectorTemporary(child) {
+				return true, false
+			}
+		}
+		return true, true
+	case interface{ Unwrap() error }:
+		return connectorJoinedTemporary(cause.Unwrap())
+	}
+	return false, false
+}
+
+// inspect each node before its children: typed failures can be childless, and
+// an EOF or cancellation inside failed cleanup never permits another attempt.
+func connectorRetryVeto(err error) bool {
+	switch cause := err.(type) {
+	case *CleanupError, *tunnel.SessionCleanupError, *muxsession.QUICTransportCloseError:
+		return true
+	case *tunnel.ProtocolError:
+		if connectorProtocolDisposition(cause.Code) == terminateConnection {
+			return true
+		}
+	case *clientcontrol.ProblemError:
+		if cause.Status == http.StatusUnauthorized || cause.Status == http.StatusForbidden {
+			return true
+		}
+	case *failure.Error:
+		definition, ok := failure.DefinitionFor(cause.Reason())
+		if !ok || definition.Retry != failure.RetryLater {
+			return true
+		}
+	case interface{ FailureReason() failure.Reason }:
+		if definition, ok := failure.DefinitionFor(cause.FailureReason()); ok && definition.Retry != failure.RetryLater {
+			return true
+		}
+	}
+	switch cause := err.(type) {
+	case interface{ Unwrap() []error }:
+		for _, child := range cause.Unwrap() {
+			if connectorRetryVeto(child) {
+				return true
+			}
+		}
+	case interface{ Unwrap() error }:
+		return connectorRetryVeto(cause.Unwrap())
+	}
+	return false
+}
+
+// an owned operation may also receive capacity rejection. unlike the legacy
+// reconnect scan, every independent child must permit retry.
+func connectorAttemptTemporary(err error) bool {
+	if err == nil || connectorRetryVeto(err) {
+		return false
+	}
+	switch cause := err.(type) {
+	case *tunnel.ProtocolError:
+		return connectorProtocolDisposition(cause.Code) == retryAttempt
+	}
+	switch cause := err.(type) {
+	case interface{ Unwrap() []error }:
+		children := cause.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !connectorAttemptTemporary(child) {
+				return false
+			}
+		}
+		return true
+	case interface{ Unwrap() error }:
+		if child := cause.Unwrap(); child != nil {
+			return connectorAttemptTemporary(child)
+		}
+	}
+	return connectorTemporary(err)
+}
+
+func connectorOwnedCancellationOnly(err, cause error) bool {
+	if err == nil {
+		return true
+	}
+	if connectorRetryVeto(err) {
+		return false
+	}
+	if failure.Only(err, cause) || failure.Only(err, context.Canceled) {
+		return true
+	}
+	switch wrapped := err.(type) {
+	case interface{ Unwrap() []error }:
+		children := wrapped.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !connectorOwnedCancellationOnly(child, cause) {
+				return false
+			}
+		}
+		return true
+	case interface{ Unwrap() error }:
+		if child := wrapped.Unwrap(); child != nil {
+			return connectorOwnedCancellationOnly(child, cause)
+		}
+	}
+	return false
+}
+
+func (p *connectorConnection) recordLegRecoveryFailure(err, canceled error) {
+	if connectorOwnedCancellationOnly(err, canceled) {
+		return
+	}
+	// the owned disposition already distinguished cancellation from cleanup.
+	// retain typed cleanup even when its underlying close returned Canceled.
+	p.mu.Lock()
+	p.useErr = errors.Join(p.useErr, err)
+	p.mu.Unlock()
+}
+
 func prepareConnectorConnection(ctx, setup context.Context, config Config, signer Signer) (_ *connectorConnection, result error) {
 	config.telemetry = config.Telemetry.BeginScope("connector")
 	config.Connectivity = config.telemetry.Connectivity(config.Connectivity)
-	life, cancel := context.WithCancelCause(ctx)
-	p := &connectorConnection{ctx: life, cancel: cancel, config: config, signer: signer, changed: make(chan struct{}), refill: make(chan struct{}, 1), recover: make(chan struct{}, 1), active: make(map[*connectorUse]struct{})}
-	p.bindingCtx, p.bindingCancel = context.WithCancel(life)
+	life, cancelServing := context.WithCancelCause(context.WithoutCancel(ctx))
+	packetLife, cancelPackets := context.WithCancelCause(context.WithoutCancel(ctx))
+	if config.cleanup == nil {
+		config.cleanup = newConnectorCleanup(ctx, config.CleanupContext)
+	}
+	p := &connectorConnection{ctx: life, packetCtx: packetLife, packetCancel: cancelPackets, cleanup: config.cleanup,
+		config: config, signer: signer, changed: make(chan struct{}), refill: make(chan struct{}, 1), recover: make(chan struct{}, 1),
+		active: make(map[*connectorUse]struct{}), parentDone: make(chan struct{}), packetStopDone: make(chan struct{})}
+	cancel := func(cause error) {
+		p.cleanup.begin()
+		cancelServing(cause)
+		cleanup := p.cleanup.context()
+		p.packetStopOnce.Do(func() {
+			p.packetStop = context.AfterFunc(cleanup, func() { defer close(p.packetStopDone); cancelPackets(context.Cause(cleanup)) })
+		})
+	}
+	p.cancel = cancel
+	p.parentStop = context.AfterFunc(ctx, func() { defer close(p.parentDone); cancel(context.Cause(ctx)) })
+	// stopping serving fences new leg work, but an entered renewal must not
+	// destroy its packet carrier merely because its reply is still in flight.
+	p.bindingCtx, p.bindingCancel = context.WithCancel(packetLife)
 	stage := "owner"
 	defer func() {
 		if result != nil {
-			p.Close()
-			result = fmt.Errorf("prepare connector %s: %w", stage, result)
+			result = fmt.Errorf("prepare connector %s: %w", stage, errors.Join(result, p.Close(p.cleanup.context())))
 		}
 	}()
 	if !config.Connectivity.DisableDirect {
 		p.socket = config.PeerSocket
 		if p.socket == nil {
 			// inability to open UDP must not prevent TLS/TCP relay delivery.
-			p.socket, _ = peer.ListenSocket(life, "udp", ":0")
+			p.socket, _ = peer.ListenSocket(packetLife, "udp", ":0")
 			p.ownedSocket = p.socket != nil
 		}
 		if p.socket != nil && config.RelayQUIC == nil {
@@ -144,6 +346,13 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	var key [32]byte
 	stage = "pair"
 	p.pair, key, p.until, create, result = prepareConnectorPair(setup, config.Control, signer, p.run, p.owner)
+	if p.pair.PairId != "" {
+		captureErr := p.captureRetirement(p.pair)
+		result = errors.Join(result, captureErr)
+		if result == nil {
+			p.cleanup.observe(earliestConnectorDeadline(p.until, p.run.ValidUntil))
+		}
+	}
 	if result != nil {
 		return nil, result
 	}
@@ -164,7 +373,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	p.config = config
 	for slot := range 2 {
 		starts.Go(func() {
-			p.paths[slot].leg, results[slot] = connectConnectorLeg(setup, life, config, signer, p.pair, key, slot)
+			p.paths[slot].leg, results[slot] = connectConnectorLeg(setup, packetLife, config, signer, p.pair, key, slot)
 		})
 	}
 	starts.Wait()
@@ -198,7 +407,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	if p.socket != nil {
 		direct = peer.NewCarrierSlot()
 	}
-	p.endpoint, result = peer.New(life, peer.Config{Key: frameKey, Role: 0, Paths: [2]peer.Carrier{p.paths[0].carrier, p.paths[1].carrier}, Direct: direct, Binding: initialBinding})
+	p.endpoint, result = peer.New(packetLife, peer.Config{Key: frameKey, Role: 0, Paths: [2]peer.Carrier{p.paths[0].carrier, p.paths[1].carrier}, Direct: direct, Binding: initialBinding})
 	if result != nil {
 		return nil, result
 	}
@@ -221,7 +430,8 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		return nil, result
 	}
 	stage = "permission control"
-	p.permissions, result = tunnel.OpenConnectorPermissionControl(life, setup, p.session)
+	scope := tunnelv1.ConnectorControlScope{ServiceID: p.pair.ServiceId, ServiceRunID: p.pair.ServiceRunId, RunNumber: uint64(p.pair.RunNumber), PublisherIdentityID: p.pair.PublisherIdentityId, PairID: p.pair.PairId}
+	p.permissions, result = tunnel.OpenConnectorPermissionControl(packetLife, setup, p.session, scope)
 	if result != nil {
 		return nil, result
 	}
@@ -242,6 +452,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	if !validConnectorPermission(p.run, p.permission) {
 		return nil, ErrServiceConnection
 	}
+	p.cleanup.observe(earliestConnectorDeadline(p.until, p.run.ValidUntil, p.permission.ExpiresAt))
 	stage = "application openings"
 	if result = p.fillOpenings(); result != nil {
 		return nil, result
@@ -255,12 +466,14 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		p.mu.Unlock()
 		preparedRun := p.run
 		preparedRun.ValidUntil = earliestConnectorDeadline(preparedRun.ValidUntil, p.until, opening.until)
-		prepared, err := PrepareConnector(life, setup, p.session, preparedRun, opening.entry)
+		use := &connectorUse{entry: opening.entry, until: opening.until, terminalKey: connectorTerminalKey(opening.entry)}
+		p.warm = use
+		p.active[use] = struct{}{}
+		prepared, err := prepareConnector(life, setup, p.session, preparedRun, opening.entry, func() { use.admitted = true })
+		use.prepared = prepared
 		if err != nil {
 			return nil, err
 		}
-		p.warm = &connectorUse{entry: opening.entry, prepared: prepared, until: opening.until}
-		p.active[p.warm] = struct{}{}
 	}
 	if setup.Err() != nil || !p.currentLocked() {
 		return nil, errors.Join(ErrServiceConnection, context.Cause(setup))
@@ -269,9 +482,9 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		p.connectivity = peer.NewConnectivity(p.socket, p.connection, p.endpoint, true, config.Connectivity, p.admitDirectPacket)
 		p.connectivity.SetBinding(connectorConnectivityBinding(p.pair))
 	}
-	p.workers.Go(p.watch)
-	p.workers.Go(p.refresh)
-	p.workers.Go(func() {
+	p.servingWorkers.Go(p.watch)
+	p.servingWorkers.Go(p.refresh)
+	p.servingWorkers.Go(func() {
 		for {
 			select {
 			case <-life.Done():
@@ -285,11 +498,11 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		}
 	})
 	for slot := range 2 {
-		p.workers.Go(func() { p.maintainLeg(slot) })
+		p.servingWorkers.Go(func() { p.maintainLeg(slot) })
 	}
 	if p.socket != nil {
 		p.workers.Go(func() {
-			if err := p.connectivity.Serve(life); err != nil && life.Err() == nil {
+			if err := p.connectivity.Serve(packetLife); err != nil && packetLife.Err() == nil {
 				p.cancel(err)
 			}
 		})
@@ -345,7 +558,7 @@ func (p *connectorConnection) currentLocked() bool {
 }
 
 func (p *connectorConnection) ownerCurrentLocked() bool {
-	return p.ctx.Err() == nil && (p.permissions == nil || p.permissions.Err() == nil) && p.until.After(time.Now()) && p.run.ValidUntil.After(time.Now()) && p.permission.ExpiresAt.After(time.Now())
+	return !p.closing && p.ctx.Err() == nil && p.authorityCurrentLocked(time.Now())
 }
 
 func (p *connectorConnection) notifyLocked() { close(p.changed); p.changed = make(chan struct{}) }
@@ -417,6 +630,7 @@ func (p *connectorConnection) watch() {
 			until = earliestConnectorDeadline(until, p.preparedUntil)
 		}
 		changed := p.changed
+		var stopCause error
 		if !current {
 			cause := context.Cause(p.ctx)
 			if cause == nil && p.permissions != nil {
@@ -428,9 +642,13 @@ func (p *connectorConnection) watch() {
 			if cause == nil {
 				cause = fmt.Errorf("connector authority expired (pair=%s run=%s permission=%s): %w", p.until.Format(time.RFC3339Nano), p.run.ValidUntil.Format(time.RFC3339Nano), p.permission.ExpiresAt.Format(time.RFC3339Nano), ErrServiceConnection)
 			}
-			p.cancel(cause)
+			p.cleanup.begin()
+			stopCause = cause
 		}
 		p.mu.Unlock()
+		if stopCause != nil {
+			p.cancel(stopCause)
+		}
 		if expiredDelivery {
 			p.requestRecovery(connectorRebinding)
 			continue
@@ -478,9 +696,13 @@ func (p *connectorConnection) refresh() {
 		case <-ticker.C:
 		case <-p.recover:
 		}
-		if err := p.recoverBinding(); err != nil {
-			if !connectorTemporary(err) && p.ctx.Err() == nil {
-				p.cancel(fmt.Errorf("recover connector binding: %w", err))
+		if result := p.recoverBinding(); result.err != nil {
+			if cause := context.Cause(p.ctx); cause != nil {
+				p.recordLegRecoveryFailure(result.err, cause)
+				return
+			}
+			if !result.retry {
+				p.cancel(fmt.Errorf("recover connector binding: %w", result.err))
 				return
 			}
 		}
@@ -584,6 +806,7 @@ func (p *connectorConnection) refreshAuthority() error {
 	// current, independently reported installation deadline on this owner.
 	p.preparedUntil, p.reportedUntil = preparedUntil, reportedUntil
 	p.run, p.pair, p.until, p.permission = next, pair, bound, permission
+	p.cleanup.observe(earliestConnectorDeadline(bound, next.ValidUntil, permission.ExpiresAt))
 	if !paused {
 		p.openings = openings
 	}
@@ -655,11 +878,16 @@ func (p *connectorConnection) maintainLeg(slot int) {
 		}
 		disposition, err := p.maintainConnectorLeg(binding, slot, leg, changed)
 		p.legUses.Done()
+		if cause := context.Cause(p.ctx); cause != nil {
+			p.recordLegRecoveryFailure(err, cause)
+			return
+		}
 		if binding.Err() != nil {
-			if connectorTerminalProtocol(err) {
+			if connectorRetryVeto(err) || connectorTerminalProtocol(err) {
 				p.cancel(fmt.Errorf("maintain connector leg %d: %w", slot, err))
 				return
 			}
+			p.recordLegRecoveryFailure(err, context.Cause(binding))
 			continue // the coordinator joins old work before staging replacements.
 		}
 		if disposition == rebindConnection || disposition == retirePath {
@@ -690,6 +918,8 @@ func (p *connectorConnection) maintainConnectorLeg(binding context.Context, slot
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
+	case <-p.ctx.Done():
+		return retirePath, context.Cause(p.ctx)
 	case <-binding.Done():
 		return retirePath, context.Cause(binding)
 	case <-leg.session.Done():
@@ -700,6 +930,9 @@ func (p *connectorConnection) maintainConnectorLeg(binding context.Context, slot
 	p.mu.Lock()
 	pair, until := p.pair, p.until
 	p.mu.Unlock()
+	if cause := context.Cause(p.ctx); cause != nil {
+		return retirePath, cause
+	}
 	call, stop := context.WithDeadline(binding, minConnectorCall(earliestConnectorDeadline(until, leg.until)))
 	defer stop()
 	var proof tunnelv1.ConnectorPairLegProof
@@ -713,8 +946,14 @@ func (p *connectorConnection) maintainConnectorLeg(binding context.Context, slot
 		request, keyErr := opaqueid.New(opaqueid.IdempotencyPrefix)
 		err = keyErr
 		if err == nil {
+			if cause := context.Cause(p.ctx); cause != nil {
+				return retirePath, cause
+			}
 			receipt, err = leg.session.RenewConnectorLeg(call, request, proof, leg.receipt)
 		}
+	}
+	if cause := context.Cause(p.ctx); cause != nil {
+		return retirePath, errors.Join(err, cause)
 	}
 	if err == nil && call.Err() == nil && leg.until.After(time.Now()) {
 		nextUntil := started.Add(receipt.ExpiresAt.Sub(receipt.ObservedAt))
@@ -731,8 +970,21 @@ func (p *connectorConnection) maintainConnectorLeg(binding context.Context, slot
 }
 
 func (p *connectorConnection) reconnectLeg(binding context.Context, slot int, previous *connectorRelayLeg) (reconnectDisposition, error) {
-	_ = p.paths[slot].carrier.Install(nil)
-	_ = previous.Close()
+	// replacement setup is serving work, unlike an entered renewal on the
+	// retained carrier. join both cancellation sources before returning.
+	reconnect, cancel := context.WithCancelCause(binding)
+	stopped := make(chan struct{})
+	stopServing := context.AfterFunc(p.ctx, func() { defer close(stopped); cancel(context.Cause(p.ctx)) })
+	defer func() {
+		cancel(context.Canceled)
+		if !stopServing() {
+			<-stopped
+		}
+	}()
+	binding = reconnect
+	if cleanup := connectorCleanupFailure(errors.Join(p.paths[slot].carrier.Install(nil), previous.Close())); cleanup != nil {
+		return terminateConnection, errors.Join(context.Cause(p.ctx), cleanup)
+	}
 	// retain this operation across lost hello or activation replies. each
 	// candidate still carries a fresh signed proof and socket-source claim.
 	replacement, err := nextConnectorLegReplacement(previous)
@@ -745,6 +997,9 @@ func (p *connectorConnection) reconnectLeg(binding context.Context, slot int, pr
 		until := earliestConnectorDeadline(previous.until, p.until, p.preparedUntil, p.run.ValidUntil, p.permission.ExpiresAt)
 		current := p.currentLocked() && pair.Relays[slot] == previous.relay
 		p.mu.Unlock()
+		if cause := context.Cause(p.ctx); cause != nil {
+			return retirePath, cause
+		}
 		if !current || !until.After(time.Now()) {
 			return retirePath, ErrServiceConnection
 		}
@@ -758,7 +1013,7 @@ func (p *connectorConnection) reconnectLeg(binding context.Context, slot int, pr
 		case <-timer.C:
 		}
 		attempt, finish := context.WithDeadline(call, minConnectorCall(until))
-		next, err := prepareConnectorLeg(attempt, p.ctx, p.config, p.signer, pair, p.key, slot, replacement, tunnelv1.ConnectorHandoffID{})
+		next, err := prepareConnectorLeg(attempt, p.packetCtx, p.config, p.signer, pair, p.key, slot, replacement, tunnelv1.ConnectorHandoffID{})
 		if err == nil {
 			err = context.Cause(attempt)
 		}
@@ -766,7 +1021,7 @@ func (p *connectorConnection) reconnectLeg(binding context.Context, slot int, pr
 		stop()
 		if err != nil {
 			if next != nil {
-				_ = next.Close()
+				err = errors.Join(err, connectorCleanupFailure(next.Close()))
 			}
 			if disposition := connectorReconnectError(err); disposition != retryAttempt {
 				return disposition, err
@@ -777,12 +1032,20 @@ func (p *connectorConnection) reconnectLeg(binding context.Context, slot int, pr
 		current = p.currentLocked() && until.After(time.Now()) && p.pair.Relays[slot] == previous.relay
 		p.mu.Unlock()
 		if !current {
-			_ = next.Close()
-			return retirePath, ErrServiceConnection
+			closeErr := connectorCleanupFailure(next.Close())
+			if closeErr != nil {
+				return terminateConnection, errors.Join(ErrServiceConnection, context.Cause(p.ctx), closeErr)
+			}
+			if cause := context.Cause(p.ctx); cause != nil {
+				return retirePath, errors.Join(cause, closeErr)
+			}
+			return retirePath, errors.Join(ErrServiceConnection, closeErr)
 		}
 		// no authority lock spans physical cancellation or joined carrier work.
 		if err := p.paths[slot].carrier.Install(connectorLegCarrier{next}); err != nil {
-			_ = next.Close()
+			if cleanup := connectorCleanupFailure(next.Close()); cleanup != nil {
+				return terminateConnection, errors.Join(err, cleanup)
+			}
 			return retirePath, err
 		}
 		p.mu.Lock()
@@ -794,9 +1057,14 @@ func (p *connectorConnection) reconnectLeg(binding context.Context, slot int, pr
 		}
 		p.mu.Unlock()
 		if !current {
-			_ = p.paths[slot].carrier.Install(nil)
-			_ = next.Close()
-			return retirePath, ErrServiceConnection
+			closeErr := connectorCleanupFailure(errors.Join(p.paths[slot].carrier.Install(nil), next.Close()))
+			if closeErr != nil {
+				return terminateConnection, errors.Join(ErrServiceConnection, context.Cause(p.ctx), closeErr)
+			}
+			if cause := context.Cause(p.ctx); cause != nil {
+				return retirePath, errors.Join(cause, closeErr)
+			}
+			return retirePath, errors.Join(ErrServiceConnection, closeErr)
 		}
 		return retryAttempt, nil
 	}
@@ -811,16 +1079,44 @@ const (
 	rebindConnection
 )
 
+func connectorProtocolDisposition(code tunnelv1.ErrorCode) reconnectDisposition {
+	switch code {
+	case tunnelv1.Unavailable, tunnelv1.CapacityExceeded:
+		return retryAttempt
+	case tunnelv1.StaleConnectionAssignment, tunnelv1.StaleNetworkBinding:
+		return rebindConnection
+	default:
+		return terminateConnection
+	}
+}
+
 // a raced candidate's temporary error must not hide another candidate's
 // authorization rejection. capacity can clear as the old socket joins cleanup.
 func connectorReconnectError(err error) reconnectDisposition {
+	if connectorRetryVeto(err) {
+		return terminateConnection
+	}
+	if attempt, ok := err.(*connectorLegAttemptError); ok {
+		return attempt.disposition(false)
+	}
 	terminal, stale, retryable := false, false, false
 	var visit func(error)
 	visit = func(err error) {
+		if _, owned := err.(*connectorLegAttemptError); owned {
+			// only the direct owned return carries its decision. do not promote
+			// a nested attempt through an unrelated aggregate or wrapper.
+			terminal = true
+			return
+		}
 		if protocol, ok := err.(*tunnel.ProtocolError); ok {
-			retryable = retryable || protocol.Code == tunnelv1.CapacityExceeded
-			stale = stale || protocol.Code == tunnelv1.StaleConnectionAssignment || protocol.Code == tunnelv1.StaleNetworkBinding
-			terminal = terminal || protocol.Code != tunnelv1.Unavailable && protocol.Code != tunnelv1.CapacityExceeded && protocol.Code != tunnelv1.StaleConnectionAssignment && protocol.Code != tunnelv1.StaleNetworkBinding
+			switch connectorProtocolDisposition(protocol.Code) {
+			case retryAttempt:
+				retryable = true
+			case rebindConnection:
+				stale = true
+			default:
+				terminal = true
+			}
 		}
 		retryable = retryable || connectorTemporary(err)
 		switch wrapped := err.(type) {
@@ -863,7 +1159,7 @@ func (p *connectorConnection) Forward(ctx context.Context, local net.Conn) (resu
 			p.mu.Unlock()
 			return ErrServiceConnection
 		}
-		use = &connectorUse{entry: p.openings[0].entry, until: p.openings[0].until}
+		use = &connectorUse{entry: p.openings[0].entry, until: p.openings[0].until, terminalKey: connectorTerminalKey(p.openings[0].entry)}
 		p.openings = p.openings[1:]
 		p.active[use] = struct{}{}
 	}
@@ -879,6 +1175,30 @@ func (p *connectorConnection) Forward(ctx context.Context, local net.Conn) (resu
 	case p.refill <- struct{}{}:
 	default:
 	}
+	result = p.forwardUse(ctx, local, use, run, entry)
+	result = p.terminalUse(use, result)
+	// a visitor's setup/copy failure is not an owner authority decision. the
+	// control and authority workers still fence the owner on their own failures.
+	return result
+}
+
+func (p *connectorConnection) forwardUse(ctx context.Context, local net.Conn, use *connectorUse, run Run, entry tunnelv1.ConnectorPeerVisitorEntry) (result error) {
+	var closeOnce sync.Once
+	var closeErr error
+	closeLocal := func() error { closeOnce.Do(func() { closeErr = local.Close() }); return closeErr }
+	localDone := make(chan struct{})
+	stopLocal := context.AfterFunc(p.ctx, func() { defer close(localDone); _ = closeLocal() })
+	defer func() {
+		cleanupErr := closeLocal()
+		if !stopLocal() {
+			<-localDone
+		}
+		if use.prepared != nil {
+			cleanupErr = errors.Join(cleanupErr, use.prepared.Close())
+		}
+		p.recordUseCleanup(cleanupErr)
+		result = errors.Join(result, cleanupErr)
+	}()
 	if use.prepared == nil {
 		setup, cancel := context.WithCancel(ctx)
 		stopped := make(chan struct{})
@@ -889,7 +1209,11 @@ func (p *connectorConnection) Forward(ctx context.Context, local net.Conn) (resu
 				<-stopped
 			}
 		}()
-		prepared, err := PrepareConnector(p.ctx, setup, p.session, run, entry)
+		prepared, err := prepareConnector(p.ctx, setup, p.session, run, entry, func() {
+			p.mu.Lock()
+			use.admitted = true
+			p.mu.Unlock()
+		})
 		if err != nil {
 			return err
 		}
@@ -907,63 +1231,117 @@ func (p *connectorConnection) Forward(ctx context.Context, local net.Conn) (resu
 			return err
 		}
 	}
-	result = use.prepared.Forward(ctx, local)
-	result = errors.Join(result, use.prepared.Close())
-	if result == nil {
-		// both raw copy directions joined, including a return FIN after a
-		// request-side half-close. this receipt grants no serving authority.
-		finish, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		result = p.permissions.Complete(finish, entry.VisitorConnectionID, entry.DeliveryGeneration)
-	}
-	return result
+	return use.prepared.Forward(ctx, &connectorLocalConn{Conn: local, close: closeLocal})
 }
 
-func (p *connectorConnection) Close() {
+type connectorLocalConn struct {
+	net.Conn
+	close func() error
+}
+
+func (c *connectorLocalConn) Close() error { return c.close() }
+func (c *connectorLocalConn) CloseWrite() error {
+	if writer, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return writer.CloseWrite()
+	}
+	return errors.ErrUnsupported
+}
+
+func (p *connectorConnection) Close(ctx context.Context) error {
 	p.once.Do(func() {
-		p.mu.Lock()
+		// publish the actual serving stop before closing changes currentLocked.
+		// reconnect workers can then return its cause, not a synthetic failure.
 		p.cancel(context.Canceled)
+		p.mu.Lock()
+		p.closing = true
 		warm := p.warm
 		p.warm = nil
 		p.mu.Unlock()
+		caller := ctx
+		until, _ := p.cleanup.context().Deadline()
+		if deadline, ok := caller.Deadline(); ok {
+			until = earliestConnectorDeadline(until, deadline)
+		}
+		call, finish := context.WithDeadline(p.cleanup.context(), until)
+		defer finish()
+		ctx = call
+		if cause := context.Cause(caller); cause != nil {
+			finish()
+			p.packetCancel(cause)
+		}
+		ctxDone := make(chan struct{})
+		stopCaller := context.AfterFunc(caller, func() { defer close(ctxDone); finish(); p.packetCancel(context.Cause(caller)) })
+		defer func() {
+			if !stopCaller() {
+				<-ctxDone
+			}
+		}()
+		add := func(err error) {
+			if err != nil && !muxsession.NormalSessionCloseOnly(err) {
+				p.closeErr = errors.Join(p.closeErr, err)
+			}
+		}
+		p.servingWorkers.Wait()
+		if warm != nil {
+			var err error
+			if warm.prepared != nil {
+				err = warm.prepared.Close()
+			}
+			// unused accepted preparation is genuine joined abort work.
+			abortErr := p.terminalUse(warm, errors.Join(context.Canceled, err))
+			if !failure.Only(abortErr, context.Canceled) {
+				add(abortErr)
+			}
+		}
+		p.uses.Wait()
+		if p.retirement != nil {
+			add(p.retirement.retire(ctx, p.config.Control, p.owner))
+		}
 		if p.session != nil {
-			_ = p.session.Close()
+			add(p.session.Close())
 		}
 		if p.permissions != nil {
-			p.permissions.Close()
+			add(p.permissions.Close())
 		}
+		p.packetCancel(context.Canceled)
 		if p.transport != nil {
-			_ = p.transport.Close()
+			add(p.transport.Close())
 		}
 		if p.endpoint != nil {
-			_ = p.endpoint.Close()
+			add(p.endpoint.Close())
 		}
 		p.workers.Wait()
 		if p.ownedSocket {
-			_ = p.socket.Close()
+			add(p.socket.Close())
 		}
 		if op := p.rebind; op != nil {
 			for _, leg := range op.legs {
 				if leg != nil {
-					_ = leg.Close()
+					add(leg.Close())
 				}
 			}
 		}
 		for _, path := range p.paths {
 			if path.carrier != nil {
-				_ = path.carrier.Close()
+				add(path.carrier.Close())
 			}
 			if path.leg != nil {
-				_ = path.leg.Close()
+				add(path.leg.Close())
 			}
 		}
-		if warm != nil {
-			_ = warm.prepared.Close()
-		}
-		p.uses.Wait()
 		if p.udpTransport != nil {
-			_ = p.udpTransport.Close()
+			add(p.udpTransport.Close())
 		}
+		if p.parentStop != nil && !p.parentStop() {
+			<-p.parentDone
+		}
+		if p.packetStop != nil && !p.packetStop() {
+			<-p.packetStopDone
+		}
+		p.mu.Lock()
+		add(p.useErr)
+		p.mu.Unlock()
+		add(context.Cause(ctx))
 		if !p.recoveryStarted.IsZero() && p.paths[0].leg != nil {
 			outcome := telemetryv1.Canceled
 			if cause := context.Cause(p.ctx); cause != nil && cause != context.Canceled {
@@ -973,4 +1351,5 @@ func (p *connectorConnection) Close() {
 		}
 		p.config.telemetry.Close()
 	})
+	return p.closeErr
 }

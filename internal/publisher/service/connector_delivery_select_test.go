@@ -35,7 +35,7 @@ func TestConnectorSimultaneousDrainAndReceiptHonorPublishedDeadline(t *testing.T
 		for attempt := range 32 {
 			t.Run(outcome+"/"+strconv.Itoa(attempt), func(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
-					bound, peer, admission, entry := newConnectorDeliveryAdmission(t, config.ProtocolTCP, 3*time.Second)
+					bound, peer, admission, entry, receipts := newConnectorDeliveryAdmission(t, config.ProtocolTCP, 3*time.Second)
 					released := make(chan struct{})
 					release := sync.OnceFunc(func() { close(released) })
 					defer release()
@@ -45,6 +45,8 @@ func TestConnectorSimultaneousDrainAndReceiptHonorPublishedDeadline(t *testing.T
 					go func() { done <- admission.finishDelivery(nil) }()
 					<-boundary.entered
 					before := time.Now()
+					receipts.Complete(peer, tunnelv1.ConnectorVisitorCompletion{Kind: tunnelv1.ConnectorVisitorCompleted,
+						VisitorConnectionID: entry.VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration})
 					time.Sleep(500 * time.Millisecond)
 					until := before.Add(time.Second)
 					var want error
@@ -55,8 +57,6 @@ func TestConnectorSimultaneousDrainAndReceiptHonorPublishedDeadline(t *testing.T
 					if err := bound.startDrain(until); err != nil {
 						t.Fatal(err)
 					}
-					peer.completeVisitor(tunnelv1.ConnectorVisitorCompletion{Kind: tunnelv1.ConnectorVisitorCompleted,
-						VisitorConnectionID: entry.VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration})
 					if outcome == "revoked" {
 						admission.cancel()
 						want = context.Canceled

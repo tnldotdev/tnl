@@ -17,12 +17,31 @@ func endpointReadinessFixture(t *testing.T, exact bool) servicePublicationFixtur
 		}
 		actor := f.actor(t)
 		domain := deploymentCustomDomain(t, f.database, ApplyProjectConfigurationRequest{TeamID: f.service.TeamID, ActorID: actor}, f.now)
+		var membership, source, slug string
+		if err := f.database.pool.QueryRow(t.Context(), `SELECT claim.membership_id,claim.local_source_key,reservation.member_slug
+		    FROM control.service_endpoints endpoint
+		    JOIN control.service_namespace_claims claim ON claim.namespace=endpoint.namespace AND claim.local_source_key=endpoint.local_source_key AND claim.domain_id=endpoint.domain_id
+		    JOIN control.team_memberships member ON member.id=claim.membership_id AND member.team_id=$2
+		    JOIN control.member_slug_reservations reservation ON reservation.id=member.slug_reservation_id
+		    WHERE endpoint.service_id=$1 AND endpoint.retired_at IS NULL AND claim.retired_at IS NULL`,
+			f.service.ID, f.service.TeamID).Scan(&membership, &source, &slug); err != nil {
+			t.Fatal("exact endpoint lost its saved member owner", err)
+		}
+		hostname := "selected." + slug + "." + domain.CanonicalDomain
 		var err error
 		f.service, err = f.database.ConfigureService(t.Context(), f.service.ID, actor, f.service.ServiceMetadata,
-			&ProjectServiceConfiguration{Target: "localhost:3000", DomainID: domain.ID, Hostname: "selected.custom.example.test", Public: new(true)},
+			&ProjectServiceConfiguration{Target: "localhost:3000", DomainID: domain.ID, Hostname: hostname, Public: new(true)},
 			ServiceUpdateConditions{}, f.now)
 		if err != nil {
 			t.Fatal(err)
+		}
+		var retained bool
+		if err := f.database.pool.QueryRow(t.Context(), `SELECT claim.membership_id=$2 AND claim.local_source_key=$3 AND claim.owner_team_id IS NULL
+		    FROM control.service_endpoints endpoint
+		    JOIN control.service_namespace_claims claim ON claim.namespace=endpoint.namespace AND claim.local_source_key=endpoint.local_source_key AND claim.domain_id=endpoint.domain_id
+		    WHERE endpoint.service_id=$1 AND endpoint.hostname=$4 AND endpoint.retired_at IS NULL AND claim.retired_at IS NULL`,
+			f.service.ID, membership, source, hostname).Scan(&retained); err != nil || !retained || f.service.Endpoint.Hostname != hostname {
+			t.Fatal("exact endpoint changed its saved member owner or hostname", err)
 		}
 		f.start(t, "exact-endpoint", f.now)
 	}

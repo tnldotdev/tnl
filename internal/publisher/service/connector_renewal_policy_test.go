@@ -141,7 +141,7 @@ func TestConnectorRenewalWaitsForBackgroundRevisionWithinOriginalGuard(t *testin
 			client, server := connectorInnerPair(t, ctx, verification)
 			served := make(chan error, 1)
 			go func() { served <- serveConnectorInner(ctx, p, server) }()
-			connectorControl(t, ctx, client)
+			connectorControl(t, ctx, client, p)
 			defer func() { p.Close(); <-served; <-targetDone }()
 			raw, err := client.OpenStream(ctx)
 			if err != nil {

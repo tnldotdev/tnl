@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -404,9 +405,31 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		repaired.Connections[1].Revision != survivor.Revision {
 		t.Fatalf("replacement assignment: %+v, %v", repaired, err)
 	}
-	if _, err = d.ReadyServicePublisherConnection(ctx, survivor.PublisherConnectionID, prepared.RunID,
-		prepared.RunNumber, survivor.Revision, lease(survivor.RelayServiceID), now); !errors.Is(err, controlstate.ErrServiceAccess) {
-		t.Fatalf("survivor was replayed as a new assignment: %v", err)
+	readSurvivor := func() string {
+		t.Helper()
+		var row string
+		if err := conn.QueryRow(ctx, `SELECT to_jsonb(slot)::text FROM control.service_connection_slots slot
+			WHERE publisher_connection_id=$1 AND service_run_id=$2 AND state='ready'`,
+			survivor.PublisherConnectionID, prepared.RunID).Scan(&row); err != nil {
+			t.Fatal("read the exact ready survivor", err)
+		}
+		return row
+	}
+	beforeReadyRetry := readSurvivor()
+	readyRetry, err := d.ReadyServicePublisherConnection(ctx, survivor.PublisherConnectionID, prepared.RunID,
+		prepared.RunNumber, survivor.Revision, lease(survivor.RelayServiceID), now)
+	wantSurvivor := controlstate.ServicePublisherConnection{ServiceID: service.ID, RunID: prepared.RunID,
+		ConnectionID: survivor.PublisherConnectionID, RelayServiceID: survivor.RelayServiceID,
+		RunNumber: prepared.RunNumber, Revision: survivor.Revision}
+	if err != nil || readyRetry != wantSurvivor || readSurvivor() != beforeReadyRetry {
+		t.Fatal("exact ready retry changed the surviving assignment", readyRetry, err)
+	}
+	duplicate, err := d.ClaimServicePublisherConnection(ctx, survivor.PublisherConnectionID, service.ID,
+		prepared.RunID, prepared.RunNumber, survivor.Revision, survivor.Credential,
+		netip.MustParseAddr("127.0.0.1"), lease(survivor.RelayServiceID), now)
+	if !failure.Only(err, controlstate.ErrServiceAccess) || duplicate != (controlstate.ServicePublisherConnection{}) ||
+		readSurvivor() != beforeReadyRetry {
+		t.Fatal("duplicate claim adopted or changed the ready survivor", duplicate, err)
 	}
 	if _, err = d.ClaimServicePublisherConnection(ctx, lost.PublisherConnectionID, service.ID,
 		prepared.RunID, prepared.RunNumber, lost.Revision, lost.Credential, netip.MustParseAddr("127.0.0.1"), lease(lost.RelayServiceID), now); !errors.Is(err, controlstate.ErrServiceAccess) {

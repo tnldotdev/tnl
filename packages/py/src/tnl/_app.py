@@ -89,6 +89,9 @@ class PreparedService:
         assignment = parse_assignment(
             await self._native.request(endpoint, "prepare", payload), endpoint
         )
+        # acquisition may precede endpoint allocation; prepared apps may not.
+        if not assignment.hostname:
+            raise InvalidResponse()
         ident, name, host, url = (
             assignment.registration_id,
             assignment.service,

@@ -30,16 +30,18 @@ func permissionControlPair(t *testing.T, client, server muxsession.Session) (*Co
 		}
 		return stream
 	})
-	writer, err := OpenConnectorPermissionControl(ctx, ctx, client)
+	writer, err := OpenConnectorPermissionControl(ctx, ctx, client, permissionControlScope())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(writer.Close)
+	t.Cleanup(func() { _ = writer.Close() })
 	return writer, await(t, accepted)
 }
 
 func TestConnectorPermissionControlRequiresRoleOwnedSuspensionGate(t *testing.T) {
-	if err := ServeConnectorPermissionControl(t.Context(), nil, func(tunnelv1.ConnectorPermissionUpdate, *ConnectorPermissionResponder) {
+	client, server := newMemoryPair(t)
+	_, control := permissionControlPair(t, client, server)
+	if err := servePermissionTestControl(t.Context(), control, func(tunnelv1.ConnectorPermissionUpdate, *ConnectorPermissionResponder) {
 		t.Error("missing gate dispatched a permission update")
 	}, func(tunnelv1.ConnectorVisitorCompletion) {}, func() { t.Error("invalid configuration fenced a running owner") }, nil); err == nil {
 		t.Fatal("permission control accepted a missing suspension gate")
@@ -80,7 +82,7 @@ func TestConnectorPermissionControlRejectsOldPeersBeforeApplicationBytes(t *test
 					}
 					return err
 				})
-				if _, err := OpenConnectorPermissionControl(ctx, ctx, client); err == nil {
+				if _, err := OpenConnectorPermissionControl(ctx, ctx, client, permissionControlScope()); err == nil {
 					t.Fatal("old publisher acknowledged the new protocol")
 				}
 				if err := await(t, old); err == nil {
@@ -102,9 +104,9 @@ func TestConnectorPermissionControlIndependentOfRawDataDeadlinesAndHalfClose(t *
 	updates := make(chan tunnelv1.ConnectorPermissionUpdate, 4)
 	var permissionGate ConnectorPermissionGate
 	done := tunnelWorker(t, func() { cancel() }, func() error {
-		return ServeConnectorPermissionControl(ctx, control, func(u tunnelv1.ConnectorPermissionUpdate, responder *ConnectorPermissionResponder) {
+		return servePermissionTestControl(ctx, control, func(u tunnelv1.ConnectorPermissionUpdate, responder *ConnectorPermissionResponder) {
 			updates <- u
-			_ = responder.Respond(u, true)
+			_ = responder.Respond(ctx, u, true)
 		}, func(tunnelv1.ConnectorVisitorCompletion) {}, func() {}, &permissionGate)
 	})
 	raw, err := client.transport.OpenStream(ctx)
@@ -195,9 +197,9 @@ func TestConnectorPermissionControlSkipsMalformedBoundedUpdate(t *testing.T) {
 	updates := make(chan tunnelv1.ConnectorPermissionUpdate, 1)
 	var permissionGate ConnectorPermissionGate
 	done := tunnelWorker(t, cancel, func() error {
-		return ServeConnectorPermissionControl(ctx, control, func(update tunnelv1.ConnectorPermissionUpdate, responder *ConnectorPermissionResponder) {
+		return servePermissionTestControl(ctx, control, func(update tunnelv1.ConnectorPermissionUpdate, responder *ConnectorPermissionResponder) {
 			updates <- update
-			_ = responder.Respond(update, true)
+			_ = responder.Respond(ctx, update, true)
 		}, func(tunnelv1.ConnectorVisitorCompletion) {}, func() {}, &permissionGate)
 	})
 	if _, err := writer.stream.Write([]byte{0, 0, 0, 1, '{'}); err != nil {
@@ -216,7 +218,7 @@ func TestConnectorPermissionACKCannotReleaseAnotherVisitorOrFutureRequest(t *tes
 		t.Run(boundary, func(t *testing.T) {
 			client, server := newMemoryPair(t)
 			writer, control := permissionControlPair(t, client, server)
-			done := tunnelWorker(t, writer.Close, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
+			done := tunnelWorker(t, func() { _ = writer.Close() }, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
 			update, err := tunnelv1.ReadConnectorPermissionUpdate(control)
 			if err != nil {
 				t.Fatal(err)
@@ -249,14 +251,14 @@ func TestConnectorPermissionStaleGrantsNothingAndKeepsControlReusable(t *testing
 	stale.Store(true)
 	var permissionGate ConnectorPermissionGate
 	done := tunnelWorker(t, cancel, func() error {
-		return ServeConnectorPermissionControl(ctx, control, func(update tunnelv1.ConnectorPermissionUpdate, responder *ConnectorPermissionResponder) {
+		return servePermissionTestControl(ctx, control, func(update tunnelv1.ConnectorPermissionUpdate, responder *ConnectorPermissionResponder) {
 			if responder.suspension != &permissionGate {
 				t.Error("permission replies lost the role-owned suspension gate")
 			}
 			if stale.Swap(false) {
-				_ = responder.RespondStale(update)
+				_ = responder.RespondStale(ctx, update)
 			} else {
-				_ = responder.Respond(update, true)
+				_ = responder.Respond(ctx, update, true)
 			}
 		}, func(tunnelv1.ConnectorVisitorCompletion) {}, func() {}, &permissionGate)
 	})
@@ -277,7 +279,7 @@ func TestConnectorPermissionLateDuplicateACKCannotReleaseNextRenewal(t *testing.
 	writer, control := permissionControlPair(t, client, server)
 	firstCtx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
-	first := tunnelWorker(t, writer.Close, func() error { return writer.Renew(firstCtx, connectorPermissionFixture()) })
+	first := tunnelWorker(t, func() { _ = writer.Close() }, func() error { return writer.Renew(firstCtx, connectorPermissionFixture()) })
 	old, err := tunnelv1.ReadConnectorPermissionUpdate(control)
 	if err != nil {
 		t.Fatal(err)
@@ -285,7 +287,7 @@ func TestConnectorPermissionLateDuplicateACKCannotReleaseNextRenewal(t *testing.
 	if err := await(t, first); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("ACK wait escaped its original caller deadline", err)
 	}
-	next := tunnelWorker(t, writer.Close, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
+	next := tunnelWorker(t, func() { _ = writer.Close() }, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
 	current, err := tunnelv1.ReadConnectorPermissionUpdate(control)
 	if err != nil {
 		t.Fatal(err)
@@ -377,7 +379,7 @@ func TestConnectorPermissionCancellationJoinsPhysicalCallback(t *testing.T) {
 					stopOwner = cancel
 					var permissionGate ConnectorPermissionGate
 					done = tunnelWorker(t, release, func() error {
-						return ServeConnectorPermissionControl(ctx, held, func(tunnelv1.ConnectorPermissionUpdate, *ConnectorPermissionResponder) {}, func(tunnelv1.ConnectorVisitorCompletion) {}, func() {}, &permissionGate)
+						return servePermissionTestControl(ctx, held, func(tunnelv1.ConnectorPermissionUpdate, *ConnectorPermissionResponder) {}, func(tunnelv1.ConnectorVisitorCompletion) {}, func() {}, &permissionGate)
 					})
 				}
 				stopOwner()

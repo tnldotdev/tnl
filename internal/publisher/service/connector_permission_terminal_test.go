@@ -203,7 +203,7 @@ func TestConnectorSignedNonemptyInitialPrefixThenRawTranscript(t *testing.T) {
 	served := make(chan error, 1)
 	go func() { served <- serveConnectorInner(ctx, p, server) }()
 	defer func() { p.Close(); <-served }()
-	connectorControl(t, ctx, client)
+	connectorControl(t, ctx, client, p)
 	raw, err := client.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -226,7 +226,7 @@ func TestConnectorInitialPrefixAndRawReadsRemainConcurrentSafe(t *testing.T) {
 	left, right := net.Pipe()
 	defer left.Close()
 	defer right.Close()
-	conn := &connectorOwnedConn{Conn: left, prefix: bytes.NewReader(bytes.Repeat([]byte{'A'}, 512))}
+	conn := &connectorOwnedConn{Conn: left, admission: &connectorAdmission{ctx: t.Context()}, prefix: bytes.NewReader(bytes.Repeat([]byte{'A'}, 512))}
 	written := make(chan error, 1)
 	go func() { _, err := right.Write(bytes.Repeat([]byte{'B'}, 512)); _ = right.Close(); written <- err }()
 	type result struct {

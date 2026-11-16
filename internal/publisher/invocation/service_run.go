@@ -23,6 +23,7 @@ import (
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
 func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publisherapp.Service) (publisherapp.Configuration, error) {
@@ -109,7 +110,11 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	}
 	publication := &publisherapp.ServicePublication{Options: clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, ServiceID: saved.Id,
 		Server: auth.ServerEndpoint, Project: project.Root, Target: service.Target, Service: service.Name, ServiceProtocol: saved.Protocol}, Check: readiness.check, URL: readiness.publicURL}
-	base := publisherservice.RunConfig{Telemetry: a.Telemetry, Control: native, State: profile, Access: native.Access,
+	framework := telemetryv1.PublicationReadyFramework(service.Framework)
+	if !framework.Valid() {
+		framework = ""
+	}
+	base := publisherservice.RunConfig{Telemetry: a.Telemetry, Framework: framework, Control: native, State: profile, Access: native.Access,
 		PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId,
 		ServiceID: saved.Id, Target: plan.Target, Metadata: publisheridentity.ServiceMetadata(saved), InspectionMode: policy.Mode,
 		ProjectRoot: project.Root, ProjectService: service.Name}
@@ -144,6 +149,22 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	}
 	publication.Run = func(ctx context.Context, tunnel *clientstate.Tunnel, observe func(uint64, bool) error, summary inspection.Observer) error {
 		base.ObserveSummary = summary
+		address, closeTarget, err := targetplan.ServiceTarget(ctx, plan)
+		if err != nil {
+			return err
+		}
+		defer closeTarget()
+		base.Target = address
+		base.AdmitRequest = func(r *http.Request) error {
+			current := readiness.load()
+			if ctx.Err() != nil || !a.manager.CurrentRun(service.Name, service.RegistrationID, service.Target, current.run.Number) {
+				return publisherapp.ErrRegistrationStale
+			}
+			if saved.Protocol != controlv1.ServiceProtocolHTTP && (readiness.load() != current || !binding.Current(r.Context(), current.target)) {
+				return publisherapp.ErrRegistrationStale
+			}
+			return nil
+		}
 		if saved.Protocol == controlv1.ServiceProtocolHTTP {
 			stop, err := attachRuntimeIntegrations(ctx, a.state, project.Project, service, tunnel, &base)
 			if err != nil {
@@ -176,16 +197,6 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 				prepared = readiness.prepare(pending, preparation)
 				notified = false
 				return observe(uint64(preparation.RunNumber), false)
-			}
-			cfg.AdmitRequest = func(r *http.Request) error {
-				current := readiness.load()
-				if ctx.Err() != nil || !a.manager.CurrentRun(service.Name, service.RegistrationID, service.Target, current.run.Number) {
-					return publisherapp.ErrRegistrationStale
-				}
-				if saved.Protocol != controlv1.ServiceProtocolHTTP && (readiness.load() != current || !binding.Current(r.Context(), current.target)) {
-					return publisherapp.ErrRegistrationStale
-				}
-				return nil
 			}
 			cfg.ReadinessProof = readinessProof
 			cfg.Healthy = func(probe context.Context) bool {

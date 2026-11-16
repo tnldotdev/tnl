@@ -103,7 +103,7 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if pair.ServiceID != run.ServiceID || pair.ServiceRunID != run.ID || pair.RunNumber != run.RunNumber ||
+	if !connectorPeerPairUnretired(pair) || pair.ServiceID != run.ServiceID || pair.ServiceRunID != run.ID || pair.RunNumber != run.RunNumber ||
 		pair.PublisherIdentityID != run.PublisherIdentityID || !pair.ExpiresAt.Time.After(now) {
 		return result, ErrServiceAccess
 	}
@@ -179,9 +179,9 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
 	if pending {
-		_, err = tx.Exec(ctx, `UPDATE control.connector_peer_pending_bindings SET
-			publisher_prepared_until=CASE WHEN publisher_prepared_until IS NULL THEN NULL ELSE LEAST(publisher_prepared_until,$2) END,
-			publisher_proved_until=CASE WHEN publisher_proved_until IS NULL THEN NULL ELSE LEAST(publisher_proved_until,$2) END WHERE pair_id=$1`, pair.ID, deadline)
+		err = connectorPeerPairWrite(q.LimitConnectorPeerPendingForClaim(ctx, controlstatedb.LimitConnectorPeerPendingForClaimParams{
+			PairID: pair.ID, ConfirmedUntil: timestamptz(deadline),
+		}))
 	} else {
 		err = q.LimitConnectorPeerPreparedForClaim(ctx, controlstatedb.LimitConnectorPeerPreparedForClaimParams{PairID: pair.ID, ConfirmedUntil: timestamptz(deadline)})
 	}

@@ -180,7 +180,11 @@ func (s *Session) answerServiceCapacity(ctx context.Context, stream muxsession.S
 	s.capacityMu.Lock()
 	entry := s.capacityRequests[request.Stream.VisitorConnectionID]
 	s.capacityMu.Unlock()
-	if entry == nil || !tunnelv1.SameServiceStream(entry.header, request.Stream) {
+	if entry == nil {
+		_ = tunnelv1.WriteReturnFrame(stream, tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnRejected, Code: tunnelv1.Unavailable})
+		return
+	}
+	if !tunnelv1.SameServiceStream(entry.header, request.Stream) {
 		_ = tunnelv1.WriteReturnFrame(stream, tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnRejected, Code: tunnelv1.StaleConnectionAssignment})
 		return
 	}

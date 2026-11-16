@@ -71,7 +71,8 @@ func (d *Database) RebindConnectorPeerPair(ctx context.Context, serviceID, pairI
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if pair.ID != pairID || pair.RunNumber != p.RunNumber || pair.PublisherIdentityID != p.PublisherIdentityID || pair.TrustRevision != p.TrustRevision {
+	if !connectorPeerPairUnretired(pair) || !bytes.Equal(pair.OwnerPublicKey, authority.PublicKey) ||
+		pair.ID != pairID || pair.RunNumber != p.RunNumber || pair.PublisherIdentityID != p.PublisherIdentityID || pair.TrustRevision != p.TrustRevision {
 		return result, ErrServiceAccess
 	}
 	if subject.Kind == tunnelv1.VisitorHumanDevice {
@@ -145,12 +146,16 @@ func (d *Database) RebindConnectorPeerPair(ctx context.Context, serviceID, pairI
 		}
 		generation := pair.HighWaterGeneration + 1
 		pendingUntil := minTime(pair.ExpiresAt.Time, minTime(now.Add(10*time.Second), minTime(authority.ConnectorUntil, authority.Permission.ExpiresAt)))
-		if _, err = tx.Exec(ctx, `INSERT INTO control.connector_peer_pending_bindings(pair_id,delivery_generation,operation_id,challenge,slots,key_ciphertext,key_digest,storage_key_id,created_at,pending_until)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, pair.ID, generation, p.OperationID, challenge, string(slots), sealed, hash[:], d.storageKey.CurrentID(), now, pendingUntil); err != nil {
-			return result, err
+		if _, err = q.InsertConnectorPeerPendingBinding(ctx, controlstatedb.InsertConnectorPeerPendingBindingParams{
+			PairID: pair.ID, DeliveryGeneration: generation, OperationID: p.OperationID, Challenge: challenge,
+			Slots: slots, KeyCiphertext: sealed, KeyDigest: hash[:], StorageKeyID: d.storageKey.CurrentID(),
+			Now: timestamptz(now), PendingUntil: timestamptz(pendingUntil),
+		}); err != nil {
+			return result, publisherLookupError(err, ErrServiceAccess)
 		}
-		if _, err = tx.Exec(ctx, `UPDATE control.connector_peer_pairs SET high_water_generation=$2,rebind_operation_id=$3,rebind_generation=$2,rebind_status='pending',
-			rebind_prepare_digest=$4,rebind_activate_digest=NULL,rebind_abort_digest=NULL WHERE id=$1`, pair.ID, generation, p.OperationID, digest[:]); err != nil {
+		if err = connectorPeerPairWrite(q.PrepareConnectorPeerRebind(ctx, controlstatedb.PrepareConnectorPeerRebindParams{
+			PairID: pair.ID, DeliveryGeneration: generation, OperationID: p.OperationID, RequestDigest: digest[:],
+		})); err != nil {
 			return result, err
 		}
 		until = minTime(until, pendingUntil)
@@ -186,10 +191,13 @@ func (d *Database) RebindConnectorPeerPair(ctx context.Context, serviceID, pairI
 			return result, err
 		}
 		until = minTime(until, minTime(bound, minTime(binding.recheckAt, revision.PublisherProvedUntil.Time)))
-		if _, err = tx.Exec(ctx, `UPDATE control.connector_peer_pairs SET slots=$2,delivery_generation=$3,key_ciphertext=$4,key_digest=$5,storage_key_id=$6,
-			binding_operation_id=$7,binding_challenge=$8,publisher_prepared_until=$9,publisher_proved_until=$10,publisher_proof_digest=$11,
-			rebind_status='active',rebind_activate_digest=$12 WHERE id=$1`, pair.ID, string(revision.Slots), revision.DeliveryGeneration, revision.KeyCiphertext, revision.KeyDigest,
-			revision.StorageKeyID, revision.BindingOperationID, revision.BindingChallenge, revision.PublisherPreparedUntil, revision.PublisherProvedUntil, revision.PublisherProofDigest, digest[:]); err != nil {
+		if err = connectorPeerPairWrite(q.ActivateConnectorPeerBinding(ctx, controlstatedb.ActivateConnectorPeerBindingParams{
+			PairID: pair.ID, Slots: revision.Slots, DeliveryGeneration: revision.DeliveryGeneration,
+			KeyCiphertext: revision.KeyCiphertext, KeyDigest: revision.KeyDigest, StorageKeyID: revision.StorageKeyID,
+			OperationID: revision.BindingOperationID, Challenge: revision.BindingChallenge,
+			PublisherPreparedUntil: revision.PublisherPreparedUntil, PublisherProvedUntil: revision.PublisherProvedUntil,
+			PublisherProofDigest: revision.PublisherProofDigest, RequestDigest: digest[:],
+		})); err != nil {
 			return result, err
 		}
 		if err = saveConnectorPeerAuditBinding(ctx, tx, revision, binding, binding.expiresAt); err != nil {
@@ -201,7 +209,7 @@ func (d *Database) RebindConnectorPeerPair(ctx context.Context, serviceID, pairI
 		if _, err = tx.Exec(ctx, `DELETE FROM control.connector_peer_pair_leg_claims WHERE pair_id=$1 AND delivery_generation<>$2`, pair.ID, revision.DeliveryGeneration); err != nil {
 			return result, err
 		}
-		if _, err = tx.Exec(ctx, `DELETE FROM control.connector_peer_pending_bindings WHERE pair_id=$1`, pair.ID); err != nil {
+		if err = connectorPeerPairWrite(q.DeleteConnectorPeerPendingBinding(ctx, pair.ID)); err != nil {
 			return result, err
 		}
 	case "abort":
@@ -220,10 +228,10 @@ func (d *Database) RebindConnectorPeerPair(ctx context.Context, serviceID, pairI
 		if _, err = tx.Exec(ctx, `DELETE FROM control.connector_peer_pair_leg_claims WHERE pair_id=$1 AND delivery_generation=$2`, pair.ID, p.ExpectedGeneration); err != nil {
 			return result, err
 		}
-		if _, err = tx.Exec(ctx, `DELETE FROM control.connector_peer_pending_bindings WHERE pair_id=$1`, pair.ID); err != nil {
+		if err = connectorPeerPairWrite(q.DeleteConnectorPeerPendingBinding(ctx, pair.ID)); err != nil {
 			return result, err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE control.connector_peer_pairs SET rebind_status='aborted',rebind_abort_digest=$2 WHERE id=$1`, pair.ID, digest[:]); err != nil {
+		if err = connectorPeerPairWrite(q.AbortConnectorPeerRebind(ctx, controlstatedb.AbortConnectorPeerRebindParams{PairID: pair.ID, RequestDigest: digest[:]})); err != nil {
 			return result, err
 		}
 	}

@@ -23,11 +23,19 @@ func TestIntegrationRouteCreationAndDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if service.Recovered {
+		t.Fatal("first creation returned a recovered receipt")
+	}
 	if service.TeamID != actor.TeamID || service.DomainID != actor.DomainID || service.Endpoint.Hostname != actor.CanonicalHostname || service.Endpoint.Port != 443 || !service.Enabled || service.TrustRevision != 1 {
 		t.Fatal("creation lost the exact service ownership, endpoint, or trust revision")
 	}
 	repeated, err := d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, "web", "create", ServicePlacement{}, now.Add(time.Second), ServiceMetadata{}, &declaration)
-	if err != nil || !reflect.DeepEqual(service, repeated) {
+	if err != nil || !repeated.Recovered {
+		t.Fatal("create replay did not return a recovered receipt", err)
+	}
+	firstSaved, repeatedSaved := service, repeated
+	firstSaved.Recovered, repeatedSaved.Recovered = false, false
+	if !reflect.DeepEqual(firstSaved, repeatedSaved) {
 		t.Fatal("create replay changed the saved service", err)
 	}
 	changed := declaration
@@ -163,14 +171,21 @@ func TestIntegrationConcurrentRouteCreation(t *testing.T) {
 					results <- result{service, err}
 				})
 			}
-			successes, conflicts := 0, 0
+			successes, conflicts, fresh, recovered := 0, 0, 0, 0
 			var winner ServiceRecord
 			for range 4 {
 				result := awaitIntegrationResult(t, ctx, results)
 				switch {
 				case result.err == nil:
 					successes++
-					if winner.ID != "" && !reflect.DeepEqual(winner, result.service) {
+					if result.service.Recovered {
+						recovered++
+					} else {
+						fresh++
+					}
+					winnerSaved, resultSaved := winner, result.service
+					winnerSaved.Recovered, resultSaved.Recovered = false, false
+					if winner.ID != "" && !reflect.DeepEqual(winnerSaved, resultSaved) {
 						t.Fatal("concurrent retries changed service identity")
 					}
 					winner = result.service
@@ -186,6 +201,9 @@ func TestIntegrationConcurrentRouteCreation(t *testing.T) {
 			}
 			if successes != want || conflicts != 4-want {
 				t.Fatal("unexpected contention result", successes, conflicts)
+			}
+			if fresh != 1 || recovered != want-1 {
+				t.Fatal("contention did not return exactly one fresh receipt and recovered retries", fresh, recovered)
 			}
 			if !sameRequest {
 				if !winner.Ephemeral || winner.ExpiresAt != nil {

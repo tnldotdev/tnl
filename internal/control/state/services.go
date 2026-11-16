@@ -34,6 +34,7 @@ type ServiceRecord struct {
 	Ephemeral, RequirePostQuantum       bool
 	ExpiresAt                           *time.Time
 	CreatedAt                           time.Time
+	Recovered                           bool `json:"-"`
 }
 
 type ServiceGrant struct {
@@ -145,11 +146,29 @@ func requireStoredServiceManagement(ctx context.Context, tx pgx.Tx, service cont
 	}
 	// ownership comes from exactly one stored source, never the creator, a
 	// hostname suffix, or a publisher's current ability to serve the service.
+	var allocated, applied bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.publisher_namespace_allocations WHERE service_id=$1),
+	    EXISTS(SELECT 1 FROM control.applied_project_services WHERE service_id=$1)`, service.ID).Scan(&allocated, &applied); err != nil {
+		return err
+	}
+	if applied {
+		return denied
+	}
+	if !allocated {
+		owner, err := storedServiceSourceOwner(ctx, tx, service, retained)
+		if errors.Is(err, ErrServiceAccess) {
+			return denied
+		}
+		if err != nil {
+			return err
+		}
+		if owner.scope != NamespaceScopeMember || owner.membership != member.id {
+			return denied
+		}
+		return nil
+	}
 	var owned bool
 	err := tx.QueryRow(ctx, `SELECT
-	    NOT EXISTS(SELECT 1 FROM control.applied_project_services WHERE service_id=$1)
-	    AND CASE WHEN EXISTS(SELECT 1 FROM control.publisher_namespace_allocations WHERE service_id=$1)
-	    THEN
 	        NOT EXISTS(SELECT 1 FROM control.local_project_services WHERE service_id=$1)
 	        AND NOT EXISTS(SELECT 1 FROM control.service_endpoints
 	            WHERE service_id=$1 AND (local_source_key<>'' OR deployment_id IS NOT NULL))
@@ -160,18 +179,8 @@ func requireStoredServiceManagement(ctx context.Context, tx pgx.Tx, service cont
 	            JOIN control.publisher_identities publisher ON publisher.id=allocation.publisher_identity_id
 	            WHERE allocation.service_id=$1 AND allocation.deployment_id IS NULL
 	              AND publisher.team_id=$2 AND grant_record.kind='namespace'
-	              AND grant_record.namespace_scope='member' AND grant_record.membership_id=$3)
-	    ELSE
-	        (SELECT count(*)=1 AND COALESCE(bool_and(
-	            endpoint.hostname=$4 AND endpoint.local_source_key<>''
-	            AND endpoint.deployment_id IS NULL AND claim.deployment_id IS NULL
-	            AND claim.membership_id=$3 AND (claim.retired_at IS NULL OR $5)),false)
-	        FROM control.service_endpoints endpoint
-	        LEFT JOIN control.service_namespace_claims claim
-	          ON claim.namespace=endpoint.namespace
-	          AND claim.local_source_key=endpoint.local_source_key AND claim.domain_id=endpoint.domain_id
-	        WHERE endpoint.service_id=$1 AND (endpoint.retired_at IS NULL OR $5 AND endpoint.hostname=$4))
-	    END`, service.ID, service.TeamID, member.id, service.CertificateHostname, retained).Scan(&owned)
+	              AND grant_record.namespace_scope='member' AND grant_record.membership_id=$3)`,
+		service.ID, service.TeamID, member.id).Scan(&owned)
 	if err != nil {
 		return err
 	}
@@ -182,6 +191,7 @@ func requireStoredServiceManagement(ctx context.Context, tx pgx.Tx, service cont
 }
 
 func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, key string, placement ServicePlacement, now time.Time, metadata ServiceMetadata, configuration *ProjectServiceConfiguration) (result ServiceRecord, retErr error) {
+	clock := newAuthorizationClock(now)
 	public, ephemeral, postQuantum := false, false, false
 	if configuration != nil {
 		// normalize a private copy of the canonical declaration. metadata and
@@ -229,12 +239,13 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 		Placement     ServicePlacement
 		Metadata      ServiceMetadata
 		Configuration *ProjectServiceConfiguration
-	}{teamID, name, placement, ServiceMetadata{Protocol: metadata.Protocol, TLS: metadata.TLS, PublisherPool: metadata.PublisherPool}, configuration})
+		Reserve       bool
+	}{teamID, name, placement, ServiceMetadata{Protocol: metadata.Protocol, TLS: metadata.TLS, PublisherPool: metadata.PublisherPool}, configuration, placement.Reserve})
 	if err != nil {
 		return result, err
 	}
 	digest := sha256.Sum256(intent)
-	tx, err := d.pool.Begin(ctx)
+	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
 	if err != nil {
 		return result, err
 	}
@@ -245,13 +256,90 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 	} else if err != nil {
 		return result, err
 	}
-	if err = serviceManager(ctx, tx, teamID, actorID); err != nil {
+	var parentUntil *time.Time
+	if _, signed := serviceActor(ctx); !signed {
+		if principal, present := ctx.Value(controlPrincipalKey{}).(ControlPrincipal); present {
+			if principal.IdentityID != actorID {
+				return result, ErrServiceAccess
+			}
+			until, err := currentVisitorParentSession(ctx, tx, principal, clock.current())
+			if err != nil {
+				return result, errors.Join(ErrServiceAccess, err)
+			}
+			parentUntil = &until
+		}
+	}
+	member, err := serviceMembershipForActor(ctx, tx, teamID, actorID, clock.current())
+	if err != nil {
 		return result, err
 	}
-	var existing string
-	err = tx.QueryRow(ctx, `SELECT id FROM control.services WHERE created_by_identity_id=$1 AND idempotency_key=$2`, actorID, key).Scan(&existing)
+	commit := func() error {
+		return finishServiceCreation(ctx, tx, teamID, actorID, member, parentUntil, clock)
+	}
+	if !placement.Reserve && !member.administrator() {
+		if _, signed := serviceActor(ctx); signed {
+			return result, ErrServiceManagerRequired
+		}
+		return result, ErrServiceAccess
+	}
+	q := controlstatedb.New(tx)
+	var selectedOwner serviceSourceOwner
+	if placement.Reserve {
+		selectedOwner, err = d.serviceReservationOwner(ctx, tx, teamID, actorID, name, placement, configuration, clock.current())
+		if err != nil {
+			return result, err
+		}
+	}
+	receipt, err := q.GetServiceCreationRequest(ctx, controlstatedb.GetServiceCreationRequestParams{CreatedByIdentityID: actorID, IdempotencyKey: key})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
+	}
+	existing := receipt.ServiceID
+	if existing != "" && !bytes.Equal(receipt.RequestDigest, digest[:]) {
+		return result, ErrServiceConflict
+	}
+	saveReceipt := func(service string) error {
+		return q.InsertServiceCreationRequest(ctx, controlstatedb.InsertServiceCreationRequestParams{
+			CreatedByIdentityID: actorID, IdempotencyKey: key, ServiceID: service, RequestDigest: digest[:], CreatedAt: timestamptz(clock.current()),
+		})
+	}
+	if placement.Reserve {
+		if existing == "" {
+			candidates, readErr := q.ListServiceReservationCandidates(ctx, controlstatedb.ListServiceReservationCandidatesParams{
+				TeamID: text(teamID), Name: name, Hostname: placement.Hostname,
+			})
+			if readErr != nil {
+				return result, readErr
+			}
+			if len(candidates) > 1 {
+				return result, ErrServiceConflict
+			}
+			if len(candidates) == 1 {
+				existing = candidates[0].ID
+			}
+		}
+		if existing != "" {
+			row, readErr := q.LockService(ctx, existing)
+			if readErr != nil {
+				return result, readErr
+			}
+			result, err = reservedServiceRecord(ctx, tx, row, member, name, placement, selectedOwner)
+			if err != nil {
+				return ServiceRecord{}, err
+			}
+			if receipt.ServiceID == "" {
+				if err = saveReceipt(existing); err != nil {
+					return ServiceRecord{}, err
+				}
+			}
+			if err = commit(); err != nil {
+				return ServiceRecord{}, err
+			}
+			return result, nil
+		}
+		if !member.administrator() && metadata.Protocol != "http" {
+			return result, ErrServiceAccess
+		}
 	}
 	if existing != "" {
 		row, err := controlstatedb.New(tx).LockService(ctx, existing)
@@ -263,7 +351,7 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 			return result, err
 		}
 		if row.DeletedAt.Valid || !row.Enabled || row.TeamID.String != teamID || row.CreatedByIdentityID.String != actorID ||
-			row.Name != name || row.NameScope != "member/"+actorID+"/"+placement.WorktreeKey ||
+			row.Name != name || row.NameScope != "member/"+actorID+"/"+placement.WorktreeKey && row.NameScope != "shared" ||
 			!bytes.Equal(row.RequestDigest, digest[:]) || !serviceMetadataMatches(saved, metadata) ||
 			row.PublisherPool != metadata.PublisherPool || row.Public != public || row.Ephemeral != ephemeral || row.RequirePostQuantum != postQuantum {
 			return result, ErrServiceConflict
@@ -289,16 +377,37 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 		if err != nil {
 			return result, err
 		}
-		if err = tx.Commit(ctx); err != nil {
-			return result, err
+		result.Recovered = true
+		if err = commit(); err != nil {
+			return ServiceRecord{}, err
 		}
 		return result, nil
 	}
 	if err = requireNewServiceWork(ctx, controlstatedb.New(tx), MaintenanceControlServiceCreation); err != nil {
 		return result, err
 	}
+	nameScope := "member/" + actorID + "/" + placement.WorktreeKey
+	if placement.Hostname != "" && placement.SourceKey == "" {
+		domain := placement.DomainID
+		if domain == "" {
+			if err := tx.QueryRow(ctx, `SELECT COALESCE(default_domain_id,'') FROM control.teams WHERE id=$1`, teamID).Scan(&domain); err != nil {
+				return result, err
+			}
+		}
+		facts, factsErr := serviceHostnameAuthority(ctx, tx, teamID, actorID, domain, clock.current())
+		if factsErr != nil {
+			return result, factsErr
+		}
+		owner, ownerErr := d.newServiceSourceOwner(ctx, tx, facts, teamID, placement.Hostname, "adhoc/"+placement.WorktreeKey+"/"+name, true, true)
+		if ownerErr != nil {
+			return result, ownerErr
+		}
+		if owner.scope == NamespaceScopeShared {
+			nameScope = "shared"
+		}
+	}
 	_, err = controlstatedb.New(tx).InsertService(ctx, controlstatedb.InsertServiceParams{
-		ID: id, TeamID: text(teamID), Name: name, NameScope: "member/" + actorID + "/" + placement.WorktreeKey, CreatedByIdentityID: text(actorID),
+		ID: id, TeamID: text(teamID), Name: name, NameScope: nameScope, CreatedByIdentityID: text(actorID),
 		IdempotencyKey: key, RequestDigest: digest[:], Now: timestamptz(now),
 	})
 	var pgErr *pgconn.PgError
@@ -324,36 +433,42 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 			return result, err
 		}
 	}
-	if err = d.ensureLocalServiceEndpoint(ctx, tx, id, actorID, name, placement, public, now); err != nil {
+	if err = d.ensureLocalServiceEndpoint(ctx, tx, id, actorID, name, placement, public, clock.current()); err != nil {
 		return result, err
 	}
 	row, err := controlstatedb.New(tx).LockService(ctx, id)
 	if err != nil {
 		return result, err
 	}
-	// the initial manager receives a revocable exact-service grant. this
-	// default grant still requires a current owner/admin membership.
-	ownerGrantID, err := opaqueid.New(opaqueid.ServiceGrantPrefix)
-	if err != nil {
-		return result, err
-	}
-	ownerDigest := sha256.Sum256([]byte("service-owner:" + id))
-	if _, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,service_id,team_id,kind,identity_id,auto_owner,created_by_identity_id,idempotency_key,request_digest,created_at)
-	    VALUES($1,$2,$3,'identity',$4,true,$4,$5,$6,$7)`, ownerGrantID, id, teamID, actorID, "owner/"+id, ownerDigest[:], now); err != nil {
-		return result, err
-	}
 	if err = auditPrivateMutation(ctx, tx, id, actorID, "service.create", id, now); err != nil {
 		return result, err
 	}
-	if err = auditPrivateMutation(ctx, tx, id, actorID, "grant.create", ownerGrantID, now); err != nil {
-		return result, err
+	// ordinary administrator creation retains its revocable visitor default.
+	// a member reservation grants no connector visitor authority, including
+	// no dormant auto-owner grant; HTTP browser ownership is path-specific.
+	if member.administrator() {
+		ownerGrantID, err := opaqueid.New(opaqueid.ServiceGrantPrefix)
+		if err != nil {
+			return result, err
+		}
+		ownerDigest := sha256.Sum256([]byte("service-owner:" + id))
+		if _, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,service_id,team_id,kind,identity_id,auto_owner,created_by_identity_id,idempotency_key,request_digest,created_at)
+		    VALUES($1,$2,$3,'identity',$4,true,$4,$5,$6,$7)`, ownerGrantID, id, teamID, actorID, "owner/"+id, ownerDigest[:], now); err != nil {
+			return result, err
+		}
+		if err = auditPrivateMutation(ctx, tx, id, actorID, "grant.create", ownerGrantID, now); err != nil {
+			return result, err
+		}
 	}
 	result, err = checkedServiceRecord(row)
 	if err != nil {
 		return result, err
 	}
-	if err = tx.Commit(ctx); err != nil {
+	if err = saveReceipt(id); err != nil {
 		return result, err
+	}
+	if err = commit(); err != nil {
+		return ServiceRecord{}, err
 	}
 	return result, nil
 }

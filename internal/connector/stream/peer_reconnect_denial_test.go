@@ -3,11 +3,13 @@ package stream
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -22,7 +24,7 @@ func TestConnectorReconnectStopsOnAuthorizationDenial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer p.Close(context.WithoutCancel(t.Context()))
 	f.denied.Store(true)
 	p.mu.Lock()
 	old := p.paths[0].leg
@@ -46,7 +48,7 @@ func TestConnectorReconnectStopsOnAuthorizationDenial(t *testing.T) {
 	if !errors.As(context.Cause(p.ctx), &rejected) || rejected.Code != tunnelv1.Unauthenticated {
 		t.Fatal("denial lost classification", context.Cause(p.ctx))
 	}
-	p.Close()
+	p.Close(context.WithoutCancel(t.Context()))
 	if attempts := f.assignments[0].Load() - claims; attempts < 1 || attempts > 2 {
 		t.Fatal("delivered denial started another two-candidate attempt", attempts)
 	}
@@ -89,6 +91,25 @@ func TestConnectorReconnectRetryClassification(t *testing.T) {
 	} {
 		if got := connectorReconnectError(test.err); got != test.want {
 			t.Fatal("wrong reconnect retry decision", test.err, got, test.want)
+		}
+	}
+}
+
+func TestConnectorReconnectCleanupAndChildlessDenialVetoesEOF(t *testing.T) {
+	for _, veto := range []error{
+		&CleanupError{Err: io.EOF},
+		&tunnel.SessionCleanupError{Err: io.EOF},
+		&muxsession.QUICTransportCloseError{Err: io.EOF},
+		fmt.Errorf("wrapped authority result: %w", connectorChildlessDenial{}),
+	} {
+		for _, err := range []error{
+			errors.Join(io.ErrUnexpectedEOF, veto),
+			errors.Join(veto, io.ErrUnexpectedEOF),
+			errors.Join(&tunnel.ProtocolError{Code: tunnelv1.StaleNetworkBinding}, veto),
+		} {
+			if connectorReconnectError(err) != terminateConnection || connectorTemporary(err) {
+				t.Fatal("EOF or stale binding hid owned cleanup or a childless authority denial", err)
+			}
 		}
 	}
 }

@@ -49,8 +49,22 @@ func (r *MetadataResolver) Seed(server string, client *auth.Client) {
 }
 
 func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) {
+	return r.generate(ctx, nil)
+}
+
+// generate for preparation includes only the selected control-issued local
+// endpoint in addition to ordinary metadata. it never realizes another service.
+func (r *MetadataResolver) GenerateForLocalService(ctx context.Context, selected controlv1.LocalProjectService) (meta.Metadata, error) {
+	service, found := r.project.Config.Services[selected.Service]
+	if !found || config.SelectedDeployment(r.project.Config) != "local" || config.Protocol(service) != "http" {
+		return meta.Metadata{}, errors.New("preparation metadata requires a selected local HTTP service")
+	}
+	return r.generate(ctx, &selected)
+}
+
+func (r *MetadataResolver) generate(ctx context.Context, selected *controlv1.LocalProjectService) (meta.Metadata, error) {
 	deployment := config.SelectedDeployment(r.project.Config)
-	hasPublic := r.project.Config.OAuth || len(r.project.Config.Webhooks) != 0 || len(r.project.Config.Aliases) != 0 || deployment != "local" && len(r.project.Config.Services) != 0
+	hasPublic := selected != nil || r.project.Config.OAuth || len(r.project.Config.Webhooks) != 0 || len(r.project.Config.Aliases) != 0 || deployment != "local" && len(r.project.Config.Services) != 0
 	for _, service := range r.project.Config.Services {
 		hasPublic = hasPublic || config.Protocol(service) == "http" && service.Public != nil && *service.Public
 	}
@@ -103,7 +117,7 @@ func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) 
 	for name := range r.project.Config.Services {
 		service := r.project.Config.Services[name]
 		localEndpoint := config.Protocol(service) == "http" && service.Public != nil && *service.Public
-		if !localEndpoint && !referenced[name] && deployment == "local" {
+		if !localEndpoint && !referenced[name] && deployment == "local" && (selected == nil || selected.Service != name) {
 			continue
 		}
 		names = append(names, name)
@@ -153,6 +167,8 @@ func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) 
 			}
 			namespace, _ := serviceContext.Namespace(domain)
 			serviceMetadata, err = meta.NewEndpoint(namespace, endpoint.Hostname, string(assigned.Protocol), endpoint.Port, endpoint.Public)
+		} else if selected != nil && selected.Service == name {
+			serviceMetadata, err = r.localEndpointMetadata(name, serviceContext, *selected)
 		} else {
 			serviceMetadata, err = r.localServiceMetadata(ctx, name, effective, serviceContext)
 			if errors.Is(err, clientcontrol.ErrNotFound) {
@@ -164,7 +180,7 @@ func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) 
 		if err != nil {
 			return meta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
 		}
-		if deployment == "local" && !serviceMetadata.Public && !referenced[name] {
+		if deployment == "local" && !serviceMetadata.Public && !referenced[name] && (selected == nil || selected.Service != name) {
 			continue
 		}
 		if paths := config.ServicePaths(r.project.Config.Services[name]); len(paths) > 0 {
@@ -208,10 +224,17 @@ func (r *MetadataResolver) localServiceMetadata(ctx context.Context, name string
 	if err != nil {
 		return meta.Service{}, err
 	}
-	if assigned.Service != name || assigned.WorktreeKey != worktree || assigned.ServiceId == "" || assigned.Metadata == nil || assigned.Metadata.Endpoint == nil || assigned.Metadata.Protocol != controlv1.ServiceProtocolHTTP {
+	return r.localEndpointMetadata(name, current, assigned)
+}
+
+func (r *MetadataResolver) localEndpointMetadata(name string, current team.Context, assigned controlv1.LocalProjectService) (meta.Service, error) {
+	if assigned.Service != name || assigned.WorktreeKey != r.project.LocalWorktreeKey() || assigned.ServiceId == "" || assigned.Metadata == nil || assigned.Metadata.Endpoint == nil || assigned.Metadata.Protocol != controlv1.ServiceProtocolHTTP {
 		return meta.Service{}, errors.New("control returned another local HTTP service")
 	}
 	endpoint := assigned.Metadata.Endpoint
+	if assigned.Hostname != nil && *assigned.Hostname != endpoint.Hostname {
+		return meta.Service{}, errors.New("control returned mismatched local HTTP hostnames")
+	}
 	domain, err := team.ReadyDomainForHostname(current.Domains(), endpoint.Hostname)
 	if err != nil {
 		return meta.Service{}, err

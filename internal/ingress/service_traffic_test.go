@@ -101,7 +101,7 @@ func (c *trafficWriteRecorder) Write(value []byte) (int, error) {
 func TestBudgetConnCannotBypassDirectionalAccounting(t *testing.T) {
 	connection := new(trafficWriteRecorder)
 	var charged int
-	budget := &budgetConn{Conn: connection, beforeWrite: func(size int) error { charged += size; return nil }}
+	budget := &budgetConn{Conn: connection, reserveWrite: func(size int) (int, error) { charged += size; return size, nil }}
 	if _, ok := any(budget).(io.ReaderFrom); ok {
 		t.Fatal("ReaderFrom bypasses the write budget")
 	}

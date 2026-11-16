@@ -42,18 +42,25 @@ func serviceActor(ctx context.Context) (serviceActorProof, bool) {
 	return p, ok
 }
 
-// consumeServiceActor resolves the account again in the operation's transaction;
-// an earlier account lookup is not authorization. successful reads consume too.
-func consumeServiceActor(ctx context.Context, q *controlstatedb.Queries, actor string, now time.Time) (OIDCIdentity, error) {
-	p, ok := serviceActor(ctx)
-	if !ok || p.nonce == "" || p.identity.Nonce != p.nonce ||
+func validateServiceActorProof(p serviceActorProof, now time.Time) error {
+	if p.nonce == "" || p.identity.Nonce != p.nonce ||
 		!p.identity.AssertionExpiry.After(now) || p.identity.AssertionDigest == ([32]byte{}) ||
 		p.identity.IssuedAt.IsZero() || p.identity.IssuedAt.After(now) ||
 		p.identity.IssuedAt.Before(now.Add(-5*time.Minute)) ||
 		p.identity.AssertionExpiry.After(p.identity.IssuedAt.Add(5*time.Minute)) {
-		return OIDCIdentity{}, ErrControlAuthentication
+		return ErrControlAuthentication
 	}
 	if !validStateText(p.identity.AssertionID) || len(p.identity.AssertionID) > 256 {
+		return ErrControlAuthentication
+	}
+	return nil
+}
+
+// consumeServiceActor resolves the account again in the operation's transaction;
+// an earlier account lookup is not authorization. successful reads consume too.
+func consumeServiceActor(ctx context.Context, q *controlstatedb.Queries, actor string, now time.Time) (OIDCIdentity, error) {
+	p, ok := serviceActor(ctx)
+	if !ok || validateServiceActorProof(p, now) != nil {
 		return OIDCIdentity{}, ErrControlAuthentication
 	}
 	i, err := q.FindOIDCIdentity(ctx, controlstatedb.FindOIDCIdentityParams{Issuer: text(p.identity.Issuer), Subject: text(p.identity.Subject)})
@@ -95,17 +102,28 @@ func serviceActorManager(ctx context.Context, tx pgx.Tx, team, actor string, now
 func serviceMembershipForActor(ctx context.Context, tx pgx.Tx, team, actor string, now time.Time) (member serviceMembership, err error) {
 	q := controlstatedb.New(tx)
 	_, signed := serviceActor(ctx)
-	denied := ErrServiceAccess
-	var identity OIDCIdentity
+	var identity *OIDCIdentity
 	if signed {
-		denied = ErrServiceManagerRequired
 		if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
-			return member, publisherLookupError(err, denied)
+			return member, publisherLookupError(err, ErrServiceManagerRequired)
 		}
-		identity, err = consumeServiceActor(ctx, q, actor, now)
+		consumed, err := consumeServiceActor(ctx, q, actor, now)
 		if err != nil {
 			return member, err
 		}
+		identity = &consumed
+	}
+	return currentServiceMembership(ctx, tx, team, actor, identity, now)
+}
+
+// currentServiceMembership repeats the defining permission checks without
+// consuming a signed assertion again. callers retain the operation's team guard.
+func currentServiceMembership(ctx context.Context, tx pgx.Tx, team, actor string, identity *OIDCIdentity, now time.Time) (member serviceMembership, err error) {
+	q := controlstatedb.New(tx)
+	signed := identity != nil
+	denied := ErrServiceAccess
+	if signed {
+		denied = ErrServiceManagerRequired
 	}
 	var required, exception, active bool
 	query := `SELECT m.id,m.role,t.company_sign_in_required,m.personal_account_exception,control.active_membership(m.id,$3)

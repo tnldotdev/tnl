@@ -27,6 +27,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -178,14 +179,15 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 					SourceIP: source.Unmap().String(), EventType: "http.decision", Outcome: outcome, Reason: reason})
 			}
 			defer report()
-			if !serviceendpoint.MatchesHTTPAuthority(f.Hostname, f.Port, r.Host) || client.ConnectionState().ServerName != f.Hostname {
+			state := client.ConnectionState()
+			hostname, nameErr := naming.CanonicalizeHostname(state.ServerName)
+			if !serviceendpoint.MatchesHTTPAuthority(f.Hostname, f.Port, r.Host) || nameErr != nil || hostname != f.Hostname {
 				servicestream.DenyHTTP(w, r, http.StatusMisdirectedRequest)
 				return
 			}
 			// only the validated forwarding metadata supplies the visitor source.
 			// reserved feedback requests need these same TLS and source facts.
 			r.RemoteAddr = f.Source.String()
-			state := client.ConnectionState()
 			r.TLS = &state
 			if code := proxy.ValidateRequest(r, f.Hostname); code != "" {
 				diagnostic.WriteHTTP(w, r, code, "")
@@ -222,10 +224,6 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 				probe, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 				defer cancel()
 				r = r.WithContext(probe)
-				if err := reserveCapacity(r.Context()); err != nil {
-					servicestream.DenyHTTP(w, r, http.StatusServiceUnavailable)
-					return
-				}
 				if _, enabled, _ := f.Policy.Current(); !enabled {
 					servicestream.DenyHTTP(w, r, http.StatusServiceUnavailable)
 					return
@@ -257,6 +255,17 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 			defer reservation.Finish()
 			if err := reserveCapacity(r.Context()); err != nil {
 				reservation.Refund()
+				var capacity *tunnel.ProtocolError
+				if errors.As(err, &capacity) && capacity != nil && capacity.Code == tunnelv1.CapacityExceeded && failure.Only(err, capacity) {
+					reason = "capacity"
+					if r.ProtoMajor == 1 {
+						w.Header().Set("Connection", "close")
+					}
+					_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second))
+					w.Header().Set("Retry-After", "1")
+					diagnostic.WriteHTTP(w, r, diagnostic.RequestLimitReached, "saturated")
+					return
+				}
 				outcome, reason = "failed", "unavailable"
 				servicestream.DenyHTTP(w, r, http.StatusServiceUnavailable)
 				return

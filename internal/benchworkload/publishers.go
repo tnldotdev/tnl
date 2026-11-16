@@ -58,6 +58,7 @@ type PublisherConfig struct {
 	QUICDisablePathMTUDiscovery bool
 	QUICQlog                    bool
 	QUICKeepAlive               time.Duration
+	TraceStartup                bool
 	Parallel                    int
 	Concurrency                 int
 	RateRequests                int
@@ -410,6 +411,10 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedServi
 		go func() {
 			began := time.Now()
 			ready := make(chan struct{})
+			var startup *publisherStartupTrace
+			if g.config.TraceStartup {
+				startup = &publisherStartupTrace{}
+			}
 			go func() {
 				cfg := g.base
 				var cleanup func(context.Context) error
@@ -452,6 +457,9 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedServi
 					case TransportTCP:
 						cfg.RelayQUIC = disabledConnector{}
 					}
+					if startup != nil {
+						cfg = observePublisherStartup(cfg, startup)
+					}
 					process.err = g.run(runCtx, cfg)
 					if cause := context.Cause(runCtx); cause != nil && !failure.Only(cause, context.Canceled) {
 						process.err = errors.Join(process.err, cause)
@@ -484,6 +492,9 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedServi
 				err = ctx.Err()
 			case <-serviceCtx.Done():
 				err = serviceCtx.Err()
+			}
+			if err != nil && startup != nil {
+				err = fmt.Errorf("%w; startup_observation=%s", err, startup.failureJSON())
 			}
 			activated <- activation{process, err}
 		}()

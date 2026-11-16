@@ -298,7 +298,8 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		frontTLS.NextProtos = []string{"h2", "http/1.1"}
 	}
 	frontTLS.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
-		if hello.ServerName != s.Hostname && !(s.Protocol == config.ProtocolMySQL && hello.ServerName == "") {
+		hostname, err := naming.CanonicalizeHostname(hello.ServerName)
+		if (err != nil || hostname != s.Hostname) && !(s.Protocol == config.ProtocolMySQL && hello.ServerName == "") {
 			return nil, ErrEndpoint
 		}
 		return nil, nil
@@ -326,10 +327,11 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 			return err
 		}
 		admissionDone(nil)
-		return httpVisitor.Frontend.Forward(ctx, secured, HTTPTarget{Address: s.Target, Handler: s.Handler, Transport: transport, Drain: s.HTTPDrain,
+		// capture the input stop before owned cleanup cancels the lifetime.
+		return errors.Join(httpVisitor.Frontend.Forward(ctx, secured, HTTPTarget{Address: s.Target, Handler: s.Handler, Transport: transport, Drain: s.HTTPDrain,
 			Mounts: s.Mounts, ResolveTarget: s.ResolveHTTPTarget,
 			Connections: targetConnections(s.HTTPRequests), proxy: s.HTTPProxy,
-			lifetime: ctx, track: trackTarget, enter: enterTargetWork})
+			lifetime: ctx, track: trackTarget, enter: enterTargetWork}), context.Cause(ctx))
 	}
 	authCtx, authDone := observability.PublisherOperation(setup, "visitor_authorization")
 	decision, err := s.Visitor.authorize(authCtx, secured.ConnectionState())
@@ -428,7 +430,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		// preserve *tls.Conn here so net/http can serve the negotiated HTTP/2;
 		// every handler also rechecks admission before application work.
 		target.Handler, target.Drain = s.Handler, s.HTTPDrain
-		return target.Serve(live, secured, s.Hostname, wrap, s.HTTPResponseHooks)
+		return errors.Join(target.Serve(live, secured, s.Hostname, wrap, s.HTTPResponseHooks), context.Cause(ctx))
 	}
 	if backend == nil {
 		backend, err = dial(setup)

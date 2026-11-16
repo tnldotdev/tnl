@@ -40,22 +40,20 @@ func assertConnectorPairCandidatePages(t *testing.T, d *Database, pair Connector
 		var generation int64
 		err = d.pool.QueryRow(ctx, `INSERT INTO control.connector_peer_pairs
 			(id,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,subject_id,parent_control_session_id,
-			owner_key,idempotency_key,request_digest,key_digest,key_ciphertext,delivery_id,storage_key_id,slots,
+			owner_key,idempotency_key,owner_public_key,request_digest,key_digest,key_ciphertext,delivery_id,storage_key_id,slots,
 			delivery_generation,created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at)
 			SELECT $2,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,$2,parent_control_session_id,
-			owner_key,idempotency_key,request_digest,key_digest,key_ciphertext,$3,storage_key_id,slots,
-			nextval('control.connector_peer_delivery_generation'),created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at
-			FROM control.connector_peer_pairs WHERE id=$1 RETURNING delivery_generation`, pair.ID, id, delivery).Scan(&generation)
+			owner_key,idempotency_key,owner_public_key,request_digest,key_digest,key_ciphertext,$3,storage_key_id,slots,
+			nextval('control.connector_peer_delivery_generation'),
+			CASE WHEN $4 THEN created_at-interval '1 minute' ELSE created_at END,
+			CASE WHEN $4 THEN last_authorized_at-interval '1 minute' ELSE last_authorized_at END,
+			last_request_at,replay_fence_until,CASE WHEN $4 THEN $5::timestamptz-interval '1 microsecond' ELSE expires_at END
+			FROM control.connector_peer_pairs WHERE id=$1 RETURNING delivery_generation`, pair.ID, id, delivery, i == 0, now).Scan(&generation)
 		if err != nil {
 			t.Fatal(err)
 		}
 		inserted = append(inserted, id)
-		if i == 0 {
-			if _, err := d.pool.Exec(ctx, `UPDATE control.connector_peer_pairs SET created_at=$2,last_authorized_at=$2,expires_at=$3 WHERE id=$1`,
-				id, now.Add(-time.Minute), now.Add(-time.Microsecond)); err != nil {
-				t.Fatal(err)
-			}
-		} else {
+		if i != 0 {
 			expected[id] = generation
 		}
 	}

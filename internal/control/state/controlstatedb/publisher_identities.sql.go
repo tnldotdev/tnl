@@ -134,7 +134,7 @@ func (q *Queries) GetPublisherDomain(ctx context.Context, arg GetPublisherDomain
 }
 
 const getPublisherGrant = `-- name: GetPublisherGrant :one
-SELECT id, publisher_identity_id, team_id, guest_id, created_by_identity_id, kind, service_id, domain_id, namespace, membership_id, namespace_scope, created_at, expires_at, revoked_at FROM control.publisher_grants WHERE id = $1 AND publisher_identity_id = $2 FOR SHARE
+SELECT id, publisher_identity_id, team_id, guest_id, created_by_identity_id, kind, service_id, protocols, domain_id, namespace, membership_id, namespace_scope, created_at, expires_at, revoked_at FROM control.publisher_grants WHERE id = $1 AND publisher_identity_id = $2 FOR SHARE
 `
 
 type GetPublisherGrantParams struct {
@@ -153,6 +153,7 @@ func (q *Queries) GetPublisherGrant(ctx context.Context, arg GetPublisherGrantPa
 		&i.CreatedByIdentityID,
 		&i.Kind,
 		&i.ServiceID,
+		&i.Protocols,
 		&i.DomainID,
 		&i.Namespace,
 		&i.MembershipID,
@@ -242,8 +243,8 @@ func (q *Queries) InsertPublisherAllocation(ctx context.Context, arg InsertPubli
 }
 
 const insertPublisherEnrollment = `-- name: InsertPublisherEnrollment :one
-INSERT INTO control.publisher_enrollments(id, enrollment_key_digest, team_id, name, identity_kind, grant_kind, service_id, domain_id, namespace, membership_id, namespace_scope, created_by_identity_id, created_at, expires_at, ownership, owner_membership_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id, enrollment_key_digest, team_id, name, identity_kind, grant_kind, service_id, domain_id, namespace, membership_id, namespace_scope, created_by_identity_id, ownership, owner_membership_id, created_at, expires_at, redeemed_identity_id, redeemed_key_id, redeemed_grant_id, redeemed_public_key, redeemed_at
+INSERT INTO control.publisher_enrollments(id, enrollment_key_digest, team_id, name, identity_kind, grant_kind, service_id, domain_id, namespace, membership_id, namespace_scope, protocols, created_by_identity_id, created_at, expires_at, ownership, owner_membership_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::text[], $13, $14, $15, $16, $17) RETURNING id, enrollment_key_digest, team_id, name, identity_kind, grant_kind, service_id, domain_id, namespace, membership_id, namespace_scope, protocols, created_by_identity_id, ownership, owner_membership_id, created_at, expires_at, redeemed_identity_id, redeemed_key_id, redeemed_grant_id, redeemed_public_key, redeemed_at
 `
 
 type InsertPublisherEnrollmentParams struct {
@@ -258,6 +259,7 @@ type InsertPublisherEnrollmentParams struct {
 	Namespace           pgtype.Text
 	MembershipID        pgtype.Text
 	NamespaceScope      pgtype.Text
+	Protocols           []string
 	CreatedByIdentityID string
 	CreatedAt           pgtype.Timestamptz
 	ExpiresAt           pgtype.Timestamptz
@@ -278,6 +280,7 @@ func (q *Queries) InsertPublisherEnrollment(ctx context.Context, arg InsertPubli
 		arg.Namespace,
 		arg.MembershipID,
 		arg.NamespaceScope,
+		arg.Protocols,
 		arg.CreatedByIdentityID,
 		arg.CreatedAt,
 		arg.ExpiresAt,
@@ -297,6 +300,7 @@ func (q *Queries) InsertPublisherEnrollment(ctx context.Context, arg InsertPubli
 		&i.Namespace,
 		&i.MembershipID,
 		&i.NamespaceScope,
+		&i.Protocols,
 		&i.CreatedByIdentityID,
 		&i.Ownership,
 		&i.OwnerMembershipID,
@@ -312,12 +316,12 @@ func (q *Queries) InsertPublisherEnrollment(ctx context.Context, arg InsertPubli
 }
 
 const insertPublisherGrant = `-- name: InsertPublisherGrant :one
-INSERT INTO control.publisher_grants(id, publisher_identity_id, team_id, guest_id, created_by_identity_id, kind, service_id, domain_id, namespace, membership_id, namespace_scope, created_at, expires_at)
+INSERT INTO control.publisher_grants(id, publisher_identity_id, team_id, guest_id, created_by_identity_id, kind, service_id, domain_id, namespace, membership_id, namespace_scope, protocols, created_at, expires_at)
 SELECT $1,publisher.id,publisher.team_id,publisher.guest_id,$2,
     $3,$4,$5,$6,
-    $7,$8,$9,$10
-FROM control.publisher_identities publisher WHERE publisher.id=$11
-RETURNING id, publisher_identity_id, team_id, guest_id, created_by_identity_id, kind, service_id, domain_id, namespace, membership_id, namespace_scope, created_at, expires_at, revoked_at
+    $7,$8,$9::text[],$10,$11
+FROM control.publisher_identities publisher WHERE publisher.id=$12
+RETURNING id, publisher_identity_id, team_id, guest_id, created_by_identity_id, kind, service_id, protocols, domain_id, namespace, membership_id, namespace_scope, created_at, expires_at, revoked_at
 `
 
 type InsertPublisherGrantParams struct {
@@ -329,6 +333,7 @@ type InsertPublisherGrantParams struct {
 	Namespace           pgtype.Text
 	MembershipID        pgtype.Text
 	NamespaceScope      pgtype.Text
+	Protocols           []string
 	CreatedAt           pgtype.Timestamptz
 	ExpiresAt           pgtype.Timestamptz
 	PublisherIdentityID string
@@ -344,6 +349,7 @@ func (q *Queries) InsertPublisherGrant(ctx context.Context, arg InsertPublisherG
 		arg.Namespace,
 		arg.MembershipID,
 		arg.NamespaceScope,
+		arg.Protocols,
 		arg.CreatedAt,
 		arg.ExpiresAt,
 		arg.PublisherIdentityID,
@@ -357,6 +363,7 @@ func (q *Queries) InsertPublisherGrant(ctx context.Context, arg InsertPublisherG
 		&i.CreatedByIdentityID,
 		&i.Kind,
 		&i.ServiceID,
+		&i.Protocols,
 		&i.DomainID,
 		&i.Namespace,
 		&i.MembershipID,
@@ -438,7 +445,7 @@ func (q *Queries) InsertPublisherKey(ctx context.Context, arg InsertPublisherKey
 }
 
 const listPublisherGrants = `-- name: ListPublisherGrants :many
-SELECT id, publisher_identity_id, team_id, guest_id, created_by_identity_id, kind, service_id, domain_id, namespace, membership_id, namespace_scope, created_at, expires_at, revoked_at FROM control.publisher_grants WHERE publisher_identity_id = $1 ORDER BY id
+SELECT id, publisher_identity_id, team_id, guest_id, created_by_identity_id, kind, service_id, protocols, domain_id, namespace, membership_id, namespace_scope, created_at, expires_at, revoked_at FROM control.publisher_grants WHERE publisher_identity_id = $1 ORDER BY id
 `
 
 func (q *Queries) ListPublisherGrants(ctx context.Context, publisherIdentityID string) ([]ControlPublisherGrant, error) {
@@ -458,6 +465,7 @@ func (q *Queries) ListPublisherGrants(ctx context.Context, publisherIdentityID s
 			&i.CreatedByIdentityID,
 			&i.Kind,
 			&i.ServiceID,
+			&i.Protocols,
 			&i.DomainID,
 			&i.Namespace,
 			&i.MembershipID,
@@ -517,7 +525,7 @@ func (q *Queries) ListPublisherIdentities(ctx context.Context, arg ListPublisher
 }
 
 const lockPublisherEnrollment = `-- name: LockPublisherEnrollment :one
-SELECT id, enrollment_key_digest, team_id, name, identity_kind, grant_kind, service_id, domain_id, namespace, membership_id, namespace_scope, created_by_identity_id, ownership, owner_membership_id, created_at, expires_at, redeemed_identity_id, redeemed_key_id, redeemed_grant_id, redeemed_public_key, redeemed_at FROM control.publisher_enrollments WHERE id = $1 FOR UPDATE
+SELECT id, enrollment_key_digest, team_id, name, identity_kind, grant_kind, service_id, domain_id, namespace, membership_id, namespace_scope, protocols, created_by_identity_id, ownership, owner_membership_id, created_at, expires_at, redeemed_identity_id, redeemed_key_id, redeemed_grant_id, redeemed_public_key, redeemed_at FROM control.publisher_enrollments WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockPublisherEnrollment(ctx context.Context, id string) (ControlPublisherEnrollment, error) {
@@ -535,6 +543,7 @@ func (q *Queries) LockPublisherEnrollment(ctx context.Context, id string) (Contr
 		&i.Namespace,
 		&i.MembershipID,
 		&i.NamespaceScope,
+		&i.Protocols,
 		&i.CreatedByIdentityID,
 		&i.Ownership,
 		&i.OwnerMembershipID,
@@ -635,7 +644,7 @@ func (q *Queries) PublisherScopeAvailable(ctx context.Context, arg PublisherScop
 }
 
 const readPublisherGrant = `-- name: ReadPublisherGrant :one
-SELECT id, publisher_identity_id, team_id, guest_id, created_by_identity_id, kind, service_id, domain_id, namespace, membership_id, namespace_scope, created_at, expires_at, revoked_at FROM control.publisher_grants WHERE id = $1 AND publisher_identity_id = $2
+SELECT id, publisher_identity_id, team_id, guest_id, created_by_identity_id, kind, service_id, protocols, domain_id, namespace, membership_id, namespace_scope, created_at, expires_at, revoked_at FROM control.publisher_grants WHERE id = $1 AND publisher_identity_id = $2
 `
 
 type ReadPublisherGrantParams struct {
@@ -654,6 +663,7 @@ func (q *Queries) ReadPublisherGrant(ctx context.Context, arg ReadPublisherGrant
 		&i.CreatedByIdentityID,
 		&i.Kind,
 		&i.ServiceID,
+		&i.Protocols,
 		&i.DomainID,
 		&i.Namespace,
 		&i.MembershipID,

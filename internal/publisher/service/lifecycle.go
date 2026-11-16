@@ -10,6 +10,7 @@ import (
 	"time"
 
 	quic "github.com/quic-go/quic-go"
+	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	serviceconfig "github.com/tnldotdev/tnl/internal/config"
@@ -30,6 +31,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
 // RunControl is the exact service authority boundary. a person
@@ -49,7 +51,9 @@ type RunControl interface {
 type SlotSession = tunnel.SlotSession
 
 type RunConfig struct {
-	Telemetry                                             *clienttelemetry.Collector
+	Telemetry *clienttelemetry.Collector
+	// framework is optional; unknown generated enum values are omitted.
+	Framework                                             telemetryv1.PublicationReadyFramework
 	PreferredRegions                                      []string
 	Control                                               RunControl
 	State                                                 *clientstate.Store
@@ -419,57 +423,84 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	completed := false
 	publisherExpires := state.PublisherExpiresAt
 	defer func() {
-		if result == nil && (completed || ctx.Err() != nil) {
-			until := time.Now().Add(config.DrainTime)
-			if publisherExpires.Before(until) {
-				until = publisherExpires
+		until := time.Now().Add(config.DrainTime)
+		if publisherExpires.Before(until) {
+			until = publisherExpires
+		}
+		finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), until)
+		defer cancel()
+		interrupt := bound.fenceDrain(until)
+		status.Ready, status.Draining = false, true
+		status.LastCheck = time.Now()
+		report()
+		drained := make(chan error, 1)
+		visitorsJoined := make(chan struct{})
+		peersJoined := make(chan struct{})
+		if peersDone == nil {
+			close(peersJoined)
+		}
+		var invalidationDone <-chan struct{}
+		invalidationStarted := false
+		invalidate := func() {
+			if invalidationStarted {
+				return
 			}
-			finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), until)
-			defer cancel()
-			result = errors.Join(result, bound.startDrain(until))
-			status.Ready, status.Draining = false, true
-			status.LastCheck = time.Now()
-			report()
-			drained := make(chan error, 1)
-			visitorsJoined := make(chan struct{})
-			go func() {
-				// relay drain retires connector packet carriers. keep those
-				// carriers until admitted visitors and HTTP delivery receipts join,
-				// then retire peers and drain the public paths under the original
-				// deadline. startDrain already fences new publisher work.
-				visitorErr := bound.joinDrain()
-				close(visitorsJoined)
-				stopPeers()
-				drained <- errors.Join(visitorErr, paths.StopAdmissions(finish))
-			}()
-		drain:
-			for {
-				select {
-				case err := <-drained:
-					result = errors.Join(result, err)
+			invalidationStarted = true
+			// fence authority now; never enter a potentially blocking physical
+			// close in the owner's failure/deadline selection loop.
+			bound.mu.Lock()
+			bound.closed = true
+			bound.mu.Unlock()
+			stopRun()
+			done := make(chan struct{})
+			invalidationDone = done
+			go func() { bound.Invalidate(); close(done) }()
+		}
+		if result != nil || !completed && ctx.Err() == nil {
+			invalidate()
+		}
+		go func() {
+			interruptionErr := interrupt()
+			visitorErr := bound.joinDrain()
+			close(visitorsJoined)
+			stopPeers()
+			<-peersJoined
+			drained <- errors.Join(interruptionErr, visitorErr, paths.StopAdmissions(finish))
+		}()
+		deadline := finish.Done()
+	drain:
+		for {
+			select {
+			case err := <-drained:
+				drained = nil
+				result = errors.Join(result, err)
+				if invalidationDone == nil {
 					break drain
-				case err := <-certificateDone:
-					certificateDone = nil
-					result = errors.Join(result, serviceWorkerError(err, context.Canceled))
-					cancel()
-					stopRun()
-					bound.Invalidate()
-				case err := <-peersDone:
-					peersDone = nil
-					result = errors.Join(result, serviceWorkerError(err, context.Canceled))
-					select {
-					case <-visitorsJoined:
-						// expected peer retirement after admitted visitors join.
-					default:
-						cancel()
-						stopRun()
-						bound.Invalidate()
-					}
+				}
+			case <-invalidationDone:
+				invalidationDone = nil
+				if drained == nil {
+					break drain
+				}
+			case <-deadline:
+				deadline = nil
+				result = errors.Join(result, context.DeadlineExceeded)
+				invalidate()
+			case err := <-certificateDone:
+				certificateDone = nil
+				result = errors.Join(result, serviceWorkerError(err, context.Canceled))
+				invalidate()
+			case err := <-peersDone:
+				peersDone = nil
+				result = errors.Join(result, serviceWorkerError(err, context.Canceled))
+				close(peersJoined)
+				select {
+				case <-visitorsJoined:
+					// expected peer retirement after admitted visitors join.
+				default:
+					invalidate()
 				}
 			}
-		} else {
-			stopRun()
-			bound.Invalidate()
 		}
 		result = errors.Join(result, paths.Close())
 	}()
@@ -482,7 +513,41 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	defer ticker.Stop()
 	ready := false
 	heartbeatOK := true
-	currentReadiness := func(connected [2]SlotSession, now time.Time) bool {
+	startupConfirmationAttempted := false
+	refreshHeartbeat := func() (stop bool, err error) {
+		if !state.PublisherExpiresAt.After(time.Now()) {
+			return true, ErrPrivateStream
+		}
+		checkCtx, cancel := context.WithDeadline(ctx, state.PublisherExpiresAt)
+		next, err := heartbeat(checkCtx)
+		cancel()
+		if err != nil {
+			heartbeatOK = false
+			status.Ready = false
+			status.LastCheck = time.Now()
+			report()
+			if ctx.Err() != nil {
+				return true, serviceWorkerError(err, ctx.Err())
+			}
+			reason, _ := failure.ReasonOf(err)
+			if reason != failure.ServerUnavailable && reason != failure.ServerRateLimited {
+				return true, err
+			}
+			// a surviving slot remains usable only until the last confirmed
+			// publisher deadline; retry without reviving stale authority.
+			return false, nil
+		}
+		state = next
+		publisherExpires = state.PublisherExpiresAt
+		heartbeatOK = true
+		for slot := range uint8(2) {
+			if err := paths.Set(slot, bound.assignmentKey(slot)); err != nil {
+				return true, err
+			}
+		}
+		return false, nil
+	}
+	localReadiness := func(connected [2]SlotSession, now time.Time) bool {
 		// native policies use their own permission port (zero), not an HTTP
 		// endpoint shape. every protocol still needs its exact current policy.
 		connectionsReady := connected[0] != nil && connected[1] != nil || ready && (connected[0] != nil || connected[1] != nil)
@@ -490,10 +555,15 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		bound.mu.Lock()
 		current := !bound.closed
 		bound.mu.Unlock()
+		return ctx.Err() == nil && current && prepared.currentPolicy() && certificateErr == nil &&
+			status.ConfigurationCurrent && status.TargetHealthy && state.PublisherExpiresAt.After(now) && connectionsReady
+	}
+	controlReadiness := func() bool {
 		endpointReady := !approved.Endpoint.Public || state.PublicEndpointReady && state.EndpointRevision == approved.EndpointRevision
-		return ctx.Err() == nil && current && endpointReady && prepared.currentPolicy() && certificateErr == nil && heartbeatOK &&
-			status.ConfigurationCurrent && status.TargetHealthy && state.PublisherExpiresAt.After(now) &&
-			state.State == controlv1.ServiceRunStateState("ready") && (state.Healthy == nil || *state.Healthy) && connectionsReady
+		return endpointReady && state.State == controlv1.ServiceRunStateState("ready") && (state.Healthy == nil || *state.Healthy)
+	}
+	currentReadiness := func(connected [2]SlotSession, now time.Time) bool {
+		return localReadiness(connected, now) && heartbeatOK && controlReadiness()
 	}
 	for {
 		connected, changed := paths.Snapshot()
@@ -527,7 +597,30 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 					}
 				}
 				ready = true
+				payload := telemetryv1.PublicationReady{ServerKind: telemetryv1.SelfHosted, PublishMode: telemetryv1.App}
+				if config.Control.ControlURL() == clientserver.DefaultURL {
+					payload.ServerKind = telemetryv1.Hosted
+				}
+				if config.Demo {
+					payload.PublishMode = telemetryv1.Demo
+				}
+				if framework := config.Framework; framework.Valid() {
+					payload.Framework = &framework
+				}
+				telemetry.Ready(payload)
 				startup(nil)
+			}
+		}
+		if !ready && !startupConfirmationAttempted && !controlReadiness() {
+			// reporting can run user code. confirm current local prerequisites
+			// again before spending the one startup attempt, including on failure.
+			current, _ := paths.Snapshot()
+			if localReadiness(current, time.Now()) {
+				startupConfirmationAttempted = true
+				if stop, err := refreshHeartbeat(); stop {
+					return err
+				}
+				continue
 			}
 		}
 		expires := time.NewTimer(time.Until(state.PublisherExpiresAt))
@@ -551,37 +644,12 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			return ErrPrivateStream
 		case <-changed:
 			expires.Stop()
+		case <-prepared.certificateInstalled:
+			expires.Stop()
 		case <-ticker.C:
 			expires.Stop()
-			if !state.PublisherExpiresAt.After(time.Now()) {
-				return ErrPrivateStream
-			}
-			checkCtx, cancel := context.WithDeadline(ctx, state.PublisherExpiresAt)
-			next, err := heartbeat(checkCtx)
-			cancel()
-			if err != nil {
-				heartbeatOK = false
-				status.Ready = false
-				status.LastCheck = time.Now()
-				report()
-				if ctx.Err() != nil {
-					return serviceWorkerError(err, ctx.Err())
-				}
-				reason, _ := failure.ReasonOf(err)
-				if reason != failure.ServerUnavailable && reason != failure.ServerRateLimited {
-					return err
-				}
-				// a surviving slot remains usable only until the last confirmed
-				// publisher deadline; retry without reviving stale authority.
-				continue
-			}
-			state = next
-			publisherExpires = state.PublisherExpiresAt
-			heartbeatOK = true
-			for slot := range uint8(2) {
-				if err := paths.Set(slot, bound.assignmentKey(slot)); err != nil {
-					return err
-				}
+			if stop, err := refreshHeartbeat(); stop {
+				return err
 			}
 		}
 	}
@@ -594,6 +662,8 @@ func serviceWorkerError(err, stopped error) error {
 		return nil
 	}
 	switch wrapped := err.(type) {
+	case *muxsession.QUICTransportCloseError:
+		return err
 	case interface{ Unwrap() []error }:
 		var failures []error
 		for _, cause := range wrapped.Unwrap() {

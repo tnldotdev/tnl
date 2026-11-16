@@ -160,6 +160,39 @@ paths:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRenewal" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/connector-peer-pairs/{pair_id}/retire:
+    post:
+      operationId: retireConnectorPeerPair
+      tags: [connectors]
+      summary: Retire one exact connector pair without renewing serving authority
+      description: "Authenticate with the original enrolled signing key and the exact pair's existing stable session-key MAC. Omit Authorization entirely, including empty headers. No current parent credential or serving permission is required. Sign the handwritten ConnectorPeerPairRetireProof bytes, not this HTTP JSON object. Retirement ends this pair across network rebinds, never a sibling or replacement pair. Retain the identical signed body and owner key after an uncertain reply. Confirmation is bounded by the unchanged max(expires_at, replay_fence_until); missing, replaced, or retention-expired pairs are not confirmed retired. A successful response proves a committed retirement, not publisher observation, remote join, or delivery of a terminal result."
+      security: []
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - name: pair_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRetireRequest" }
+      responses:
+        "200":
+          description: Exact committed retirement or authenticated identical retry confirmation; never cache
+          headers:
+            Cache-Control:
+              description: Retirement receipts must not be cached.
+              schema: { type: string, const: "no-store" }
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRetirement" }
+        "400": { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "403": { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "409": { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "503": { $ref: "../openapi.yaml#/components/responses/Problem" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind:
     post:
       operationId: rebindConnectorPeerPair

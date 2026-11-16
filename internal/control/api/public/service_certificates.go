@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
@@ -73,7 +74,14 @@ func (h *handler) CreateServiceCertificateIssuance(w http.ResponseWriter, r *htt
 		return
 	}
 	if value.NewOrder {
-		h.config.Metrics.ObserveCertificateOrder("service", string(value.DomainKind), "exact")
+		plan := "exact"
+		for _, identifier := range value.CertificatePlan.Identifiers {
+			if strings.HasPrefix(identifier, "*.") {
+				plan = "wildcard"
+				break
+			}
+		}
+		h.config.Metrics.ObserveCertificateOrder("service", string(value.DomainKind), plan)
 	}
 	writeJSON(w, http.StatusCreated, serviceCertificateResponse(value))
 }

@@ -437,12 +437,19 @@ func (a *appRuntime) prepare(ctx context.Context, request publisherprotocol.Prep
 	if err := meta.Write(ctx, a.project.Root, metadata); err != nil {
 		return publisherprotocol.Assignment{}, err
 	}
-	selected := metadata.Services[name]
-	id, err := a.manager.Reserve(name, request.Owner, request.PID, selected.URL)
+	selected, found := metadata.Services[name]
+	if !found || selected.Protocol != "http" {
+		return publisherprotocol.Assignment{}, errors.New("preparation requires its selected HTTP endpoint")
+	}
+	publicURL := ""
+	if selected.Public {
+		publicURL = selected.URL
+	}
+	id, err := a.manager.Reserve(name, request.Owner, request.PID, publicURL)
 	if err != nil {
 		return publisherprotocol.Assignment{}, err
 	}
-	assignment := publisherprotocol.Assignment{Version: 1, RegistrationID: id, Service: name, Hostname: selected.Hostname, PublicURL: selected.URL, Project: metadata.Public(true)}
+	assignment := publisherprotocol.Assignment{Version: 1, RegistrationID: id, Service: name, Hostname: selected.Hostname, PublicURL: publicURL, Project: metadata.Public(true)}
 	a.mu.Lock()
 	if previous, found := a.prepared[id]; found && previous.telemetryDisabled != request.TelemetryDisabled {
 		a.mu.Unlock()

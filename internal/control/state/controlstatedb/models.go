@@ -219,6 +219,10 @@ type ControlConnectorPeerPair struct {
 	ParentControlSessionID pgtype.Text
 	OwnerKey               string
 	IdempotencyKey         string
+	OwnerPublicKey         []byte
+	OwnerRevision          int64
+	RetiredAt              pgtype.Timestamptz
+	RetireRequestDigest    []byte
 	RequestDigest          []byte
 	LastRenewalDigest      []byte
 	PublisherPreparedUntil pgtype.Timestamptz
@@ -754,6 +758,7 @@ type ControlPublisherEnrollment struct {
 	Namespace           pgtype.Text
 	MembershipID        pgtype.Text
 	NamespaceScope      pgtype.Text
+	Protocols           []string
 	CreatedByIdentityID string
 	Ownership           string
 	OwnerMembershipID   pgtype.Text
@@ -774,6 +779,7 @@ type ControlPublisherGrant struct {
 	CreatedByIdentityID pgtype.Text
 	Kind                string
 	ServiceID           pgtype.Text
+	Protocols           []string
 	DomainID            pgtype.Text
 	Namespace           pgtype.Text
 	MembershipID        pgtype.Text
@@ -1028,6 +1034,14 @@ type ControlServiceConnectionSlot struct {
 	SessionOpen                  bool
 }
 
+type ControlServiceCreationRequest struct {
+	CreatedByIdentityID string
+	IdempotencyKey      string
+	ServiceID           string
+	RequestDigest       []byte
+	CreatedAt           pgtype.Timestamptz
+}
+
 type ControlServiceEndpoint struct {
 	Hostname              string
 	ServiceID             string
@@ -1122,6 +1136,7 @@ type ControlServiceNamespaceClaim struct {
 	DeploymentID   pgtype.Text
 	LocalSourceKey string
 	MembershipID   pgtype.Text
+	OwnerTeamID    pgtype.Text
 	DomainID       string
 	CreatedAt      pgtype.Timestamptz
 	RetiredAt      pgtype.Timestamptz
@@ -1178,6 +1193,7 @@ type ControlServiceRun struct {
 	ServiceID                  string
 	TeamID                     pgtype.Text
 	GuestID                    pgtype.Text
+	Protocol                   string
 	RunNumber                  int64
 	PublisherIdentityID        string
 	PublisherGrantID           string

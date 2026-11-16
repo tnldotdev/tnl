@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -167,6 +168,30 @@ func TestClientDoesNotFollowAuthenticatedRedirects(t *testing.T) {
 }
 
 func TestClientConfiguresServiceWithTrustRevision(t *testing.T) {
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	expires := created.Add(time.Hour)
+	want := controlv1.Service{
+		Id: "svc_test", Name: "web", TeamId: "team_test", DomainId: new("domain_test"),
+		Protocol: controlv1.ServiceProtocolHTTP, Enabled: true, CreatedAt: created,
+		TrustRevision: 5, EndpointRevision: 9, Ephemeral: true, ExpiresAt: &expires,
+		Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.example.test", Port: 443, Public: true},
+		Placement: &controlv1.ServicePlacement{
+			DomainId: new("domain_test"), Hostname: new("web.example.test"),
+			WorktreeKey: new("worktree_test"), WorktreeLabel: new("checkout"),
+		},
+		HttpLimits: &controlv1.ProjectHTTPApplicationLimits{
+			Total: new(20), Concurrency: new(3),
+			Rate: &controlv1.ProjectApplicationRate{Count: 2, Per: "1m", Burst: new(7)},
+		},
+		RequirePostQuantum: true, ServiceRunId: new("srun_test"), RunNumber: new(int64(37)),
+		Source: &controlv1.LocalServiceSource{
+			ProjectKey: "project_test", Service: "web", SourceFingerprint: "source_test", WorktreeKey: "worktree_test",
+		},
+		TargetTls: &controlv1.ServiceTargetTLS{
+			Hostname: "origin.internal", System: true,
+			Digest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPut || request.URL.Path != "/v1/services/svc_test" {
 			t.Errorf("request = %s %s", request.Method, request.URL.Path)
@@ -180,8 +205,24 @@ func TestClientConfiguresServiceWithTrustRevision(t *testing.T) {
 		} else if string(body["protocol"]) != `"http"` || string(body["publisher_pool"]) != "false" || string(body["expected_trust_revision"]) != `"4"` {
 			t.Errorf("update body = %#v", body)
 		}
+		var configuration struct {
+			Target string `json:"target"`
+			HTTP   struct {
+				Access struct {
+					Mode json.RawMessage `json:"mode"`
+					IP   json.RawMessage `json:"ip"`
+				} `json:"access"`
+			} `json:"http"`
+		}
+		if err := json.Unmarshal(body["configuration"], &configuration); err != nil {
+			t.Error(err)
+		} else if configuration.Target != "app" || string(configuration.HTTP.Access.Mode) != `"restricted"` || string(configuration.HTTP.Access.IP) != "[]" {
+			t.Errorf("configuration lost its explicit empty HTTP IP policy: %s", body["configuration"])
+		}
 		response.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(response).Encode(controlv1.Service{Id: "svc_test", Name: "web", Protocol: controlv1.ServiceProtocolHTTP, TrustRevision: 5})
+		if err := json.NewEncoder(response).Encode(want); err != nil {
+			t.Error(err)
+		}
 	}))
 	defer server.Close()
 	client, err := New(server.URL, server.Client(), "access")
@@ -190,12 +231,17 @@ func TestClientConfiguresServiceWithTrustRevision(t *testing.T) {
 	}
 	service, err := client.ConfigureService(t.Context(), "svc_test", controlv1.UpdateServiceRequest{
 		Protocol: controlv1.ServiceProtocolHTTP, PublisherPool: false, ExpectedTrustRevision: 4,
+		Configuration: &controlv1.ProjectServiceConfiguration{
+			Target: "app", Http: &controlv1.ProjectServiceHTTP{
+				Access: &controlv1.ProjectHTTPAccess{Mode: new(controlv1.Restricted), Ip: new([]string{})},
+			},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if service.Id != "svc_test" || service.TrustRevision != 5 {
-		t.Fatalf("updated service = %#v", service)
+	if !reflect.DeepEqual(service, want) {
+		t.Fatalf("updated service = %#v, want %#v", service, want)
 	}
 }
 

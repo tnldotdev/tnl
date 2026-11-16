@@ -70,7 +70,11 @@ func run() error {
 		return err
 	}
 	selected := metadata.Services["web"]
-	assignment := publisherprotocol.Assignment{Version: 1, RegistrationID: "reg_0123456789abcdef0123456789abcdef", Service: "web", Hostname: selected.Hostname, PublicURL: selected.URL, Project: metadata.Public(true)}
+	publicURL := ""
+	if selected.Public {
+		publicURL = selected.URL
+	}
+	assignment := publisherprotocol.Assignment{Version: 1, RegistrationID: "reg_0123456789abcdef0123456789abcdef", Service: "web", Hostname: selected.Hostname, PublicURL: publicURL, Project: metadata.Public(true)}
 	if *metadataOnly {
 		return json.NewEncoder(os.Stdout).Encode(assignment)
 	}
@@ -115,7 +119,7 @@ func run() error {
 			return publisherprotocol.Assignment{}, errors.New("unexpected fixture preparation")
 		}
 		value := assignment
-		id, err := manager.Reserve(name, request.Owner, request.PID, selected.URL)
+		id, err := manager.Reserve(name, request.Owner, request.PID, publicURL)
 		value.RegistrationID = id
 		return value, err
 	}}

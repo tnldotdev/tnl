@@ -29,6 +29,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
@@ -622,7 +623,7 @@ func (f *PublishingFixture) runOperation(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		f.mu.Lock()
-		if run.issuance == nil || run.issuance.Id != body.IssuanceId || run.issuance.NotAfter == nil || !run.issuance.NotAfter.Equal(body.NotAfter) {
+		if run.closed || f.current[service] != id || !f.canInstallCertificate(run, body) {
 			f.mu.Unlock()
 			w.WriteHeader(400)
 			return
@@ -696,6 +697,37 @@ func (f *PublishingFixture) runOperation(w http.ResponseWriter, r *http.Request,
 		f.t.Errorf("unexpected service run operation %s %s", r.Method, r.URL.Path)
 		http.NotFound(w, r)
 	}
+}
+
+// caninstallcertificate requires the fixture lock. an issuance remains usable
+// after its originating run closes, but only its actual retained material and
+// captured publisher, owner, domain, and complete plan can authorize installation.
+func (f *PublishingFixture) canInstallCertificate(current *publishingRunState, body controlv1.ServiceCertificateInstalledRequest) bool {
+	if current.Preparation.CertificatePlan == nil || body.IssuanceId == "" || body.RunNumber != current.Setup.RunNumber {
+		return false
+	}
+	for _, origin := range f.runs {
+		issuance := origin.issuance
+		if issuance == nil || issuance.Id != body.IssuanceId {
+			continue
+		}
+		source, destination := origin.Preparation, current.Preparation
+		if source.CertificatePlan == nil || source.PublisherIdentityId == "" ||
+			issuance.PublisherIdentityId != source.PublisherIdentityId || source.PublisherIdentityId != destination.PublisherIdentityId ||
+			source.TeamId != destination.TeamId || source.GuestId != destination.GuestId ||
+			source.DomainId == "" || source.DomainId != destination.DomainId ||
+			issuance.ServiceId != source.ServiceId || issuance.ServiceRunId != source.ServiceRunId || issuance.RunNumber != source.RunNumber ||
+			!certificateidentity.SamePlan(issuance.CertificatePlan, *source.CertificatePlan) ||
+			!certificateidentity.SamePlan(issuance.CertificatePlan, *destination.CertificatePlan) ||
+			issuance.State != controlv1.CertificateIssuanceStateWaitingForInstall && issuance.State != controlv1.CertificateIssuanceStateInstalled ||
+			issuance.CertificatePem == nil || issuance.NotBefore == nil || issuance.NotAfter == nil || !issuance.NotAfter.Equal(body.NotAfter) {
+			return false
+		}
+		leaf, err := certificateidentity.ValidateIssuedCertificate([]byte(*issuance.CertificatePem), origin.csr, issuance.CertificatePlan.Identifiers, time.Now())
+		return err == nil && leaf.NotBefore.Equal(*issuance.NotBefore) && leaf.NotAfter.Equal(*issuance.NotAfter) &&
+			leaf.VerifyHostname(destination.Hostname) == nil && leaf.CheckSignatureFrom(f.ca) == nil
+	}
+	return false
 }
 
 func publishingRelay(t *testing.T, tlsConfig *tls.Config, f *PublishingFixture) string {

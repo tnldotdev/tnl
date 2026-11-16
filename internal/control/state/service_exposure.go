@@ -7,10 +7,16 @@ func projectServicePublic(service ProjectServiceConfiguration) bool {
 	return service.Public != nil && *service.Public
 }
 
-// publication mechanics and endpoint reachability have separate lifetimes.
-// the endpoint owner fences the first allocated port; retained exposure changes
-// cannot revoke a publisher grant or close an authorized private run.
+// endpoint settings remain with control's validated endpoint owner, not a
+// publisher's serving definition. desired reconciliation retains the full value.
+func appliedPublicationConfiguration(service ProjectServiceConfiguration) ProjectServiceConfiguration {
+	service.Public = nil
+	service.Hostname = ""
+	service.DomainID = ""
+	return service
+}
+
+// only changes to the serving definition replace existing publication authority.
 func sameAppliedPublication(previous, current ProjectServiceConfiguration) bool {
-	previous.Public, current.Public = nil, nil
-	return reflect.DeepEqual(previous, current)
+	return reflect.DeepEqual(appliedPublicationConfiguration(previous), appliedPublicationConfiguration(current))
 }

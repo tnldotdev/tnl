@@ -162,10 +162,7 @@ func (p *PeerSession) serveRelayPackets(ctx context.Context) error {
 		connectivityDone = make(chan error, 1)
 		go func() {
 			err := connectivity.Serve(p.ctx)
-			if err != nil && p.ctx.Err() == nil {
-				p.stop()
-			}
-			connectivityDone <- err
+			connectivityDone <- p.finishConnectivity(session, err)
 		}()
 	}
 	result := p.serveSession(session)
@@ -173,6 +170,25 @@ func (p *PeerSession) serveRelayPackets(ctx context.Context) error {
 		result = errors.Join(result, <-connectivityDone)
 	}
 	return result
+}
+
+func (p *PeerSession) finishConnectivity(session muxsession.Session, err error) error {
+	if err != nil && session != nil {
+		select {
+		case <-session.Done():
+			// connectivity reads raw QUIC errors. record an actual normal
+			// whole-session end before any stop can fence that observation.
+			if muxsession.NormalSessionCloseOnly(session.Err()) && muxsession.NormalSessionCloseOnly(err) {
+				p.observeSessionEnd(session)
+				return nil
+			}
+		default:
+		}
+	}
+	if err != nil && p.ctx.Err() == nil {
+		p.stop()
+	}
+	return err
 }
 
 func (b PeerBinding) connectivityBinding() peer.ConnectivityBinding {

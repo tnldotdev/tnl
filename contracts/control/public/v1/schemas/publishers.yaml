@@ -118,6 +118,13 @@ schemas:
       stopped_at: { type: string, format: date-time }
       active: { type: boolean }
       deployment: { $ref: "../openapi.yaml#/components/schemas/PublisherDeploymentObservation" }
+  PublisherServiceProtocols:
+    type: array
+    minItems: 1
+    maxItems: 5
+    uniqueItems: true
+    items: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+    description: Immutable protocols authorized for one actual exact service grant. The current service protocol must be included before the grant can authorize publication. Service edits, token exchange, key rotation, and retries never widen this set. This is independent of public reachability and visitor permission.
   PublisherGrant:
     type: object
     additionalProperties: false
@@ -131,6 +138,8 @@ schemas:
         enum: [namespace, service, deployment_credential]
       service_id:
         $ref: "../openapi.yaml#/components/schemas/ServiceID"
+      protocols:
+        $ref: "../openapi.yaml#/components/schemas/PublisherServiceProtocols"
       team_id:
         $ref: "../openapi.yaml#/components/schemas/TeamID"
         x-go-type-skip-optional-pointer: true
@@ -152,6 +161,10 @@ schemas:
         format: date-time
     not:
       anyOf:
+        - properties: { kind: { const: service } }
+          not: { required: [service_id, protocols] }
+        - required: [protocols]
+          properties: { kind: { not: { const: service } } }
         - required: [team_id, guest_id]
         - not:
             anyOf:
@@ -224,20 +237,25 @@ schemas:
   CreatePublisherGrantRequest:
     type: object
     additionalProperties: false
-    description: Select exactly one service or namespace within the team.
+    description: Select exactly one service or namespace within the team. Exact protocols are captured at issuance. An ordinary member may request only HTTP for an owned HTTP service; an administrator defaults to the explicitly stored currently supported protocol set and may narrow it. Namespace authority retains its existing restrictions and cannot select protocols.
     required: [team_id]
+    dependentRequired:
+      protocols: [service_id]
     properties:
       team_id:
         $ref: "../openapi.yaml#/components/schemas/TeamID"
       domain_id:
         $ref: "../openapi.yaml#/components/schemas/DomainID"
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      protocols: { $ref: "../openapi.yaml#/components/schemas/PublisherServiceProtocols" }
       expires_at: { type: string, format: date-time }
   CreatePublisherEnrollmentRequest:
     type: object
     additionalProperties: false
-    description: Enroll with one exact service or namespace.
+    description: Enroll with one exact service or namespace. Exact protocols are authorized and stored now, not inferred from the service definition or issuer role at redemption. An ordinary member's exact service enrollment is HTTP-only and member-owned. Administrators retain explicit native capability and may request a narrower protocol set. Namespace enrollment retains its current restrictions.
     required: [team_id, name, kind]
+    dependentRequired:
+      protocols: [service_id]
     properties:
       team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
       name: { type: string, minLength: 1, maxLength: 63 }
@@ -248,6 +266,7 @@ schemas:
         x-enum-varnames: [EnrollmentOwnerMember, EnrollmentOwnerTeam]
         description: Member-owned publishers stop with that membership. Team ownership requires a shared service and current team administration; the creator remains audit history only. Defaults to member for namespaces and team for shared services.
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      protocols: { $ref: "../openapi.yaml#/components/schemas/PublisherServiceProtocols" }
       domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
   PublisherEnrollment:
     type: object
@@ -266,8 +285,15 @@ schemas:
       namespace:
         type: string
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      protocols: { $ref: "../openapi.yaml#/components/schemas/PublisherServiceProtocols" }
       expires_at:
         type: string
         format: date-time
       enrollment_key:
         type: string
+    not:
+      anyOf:
+        - properties: { kind: { const: service } }
+          not: { required: [service_id, protocols] }
+        - required: [protocols]
+          properties: { kind: { not: { const: service } } }

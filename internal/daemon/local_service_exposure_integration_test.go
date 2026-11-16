@@ -240,6 +240,7 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 func TestIntegrationLocalServicePortReleaseRetainsLiveConnector(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	f := newServiceRuntimeFixture(t, false, nil)
+	startSeparatedPrivateIngressWithServicePorts(t, f, 0, nil)
 	target := startPrivateEchoTarget(t, f.owner)
 	protocol := controlv1.Tcp
 	binding := controlv1.ProjectServiceConfiguration{Protocol: &protocol, Target: target.address, Public: new(true)}

@@ -22,10 +22,10 @@ SELECT * FROM control.publisher_identity_keys WHERE id = sqlc.arg(id) AND publis
 UPDATE control.publisher_identity_keys SET retired_at = sqlc.arg(now) WHERE id = sqlc.arg(id) AND retired_at IS NULL;
 
 -- name: InsertPublisherGrant :one
-INSERT INTO control.publisher_grants(id, publisher_identity_id, team_id, guest_id, created_by_identity_id, kind, service_id, domain_id, namespace, membership_id, namespace_scope, created_at, expires_at)
+INSERT INTO control.publisher_grants(id, publisher_identity_id, team_id, guest_id, created_by_identity_id, kind, service_id, domain_id, namespace, membership_id, namespace_scope, protocols, created_at, expires_at)
 SELECT sqlc.arg(id),publisher.id,publisher.team_id,publisher.guest_id,sqlc.narg(created_by_identity_id),
     sqlc.arg(kind),sqlc.narg(service_id),sqlc.narg(domain_id),sqlc.narg(namespace),
-    sqlc.narg(membership_id),sqlc.narg(namespace_scope),sqlc.arg(created_at),sqlc.narg(expires_at)
+    sqlc.narg(membership_id),sqlc.narg(namespace_scope),sqlc.narg(protocols)::text[],sqlc.arg(created_at),sqlc.narg(expires_at)
 FROM control.publisher_identities publisher WHERE publisher.id=sqlc.arg(publisher_identity_id)
 RETURNING *;
 
@@ -39,8 +39,8 @@ UPDATE control.publisher_grants SET revoked_at = COALESCE(revoked_at, sqlc.arg(n
 UPDATE control.publisher_identities SET revoked_at = COALESCE(revoked_at, sqlc.arg(now)) WHERE id = sqlc.arg(id) AND team_id = sqlc.arg(team_id);
 
 -- name: InsertPublisherEnrollment :one
-INSERT INTO control.publisher_enrollments(id, enrollment_key_digest, team_id, name, identity_kind, grant_kind, service_id, domain_id, namespace, membership_id, namespace_scope, created_by_identity_id, created_at, expires_at, ownership, owner_membership_id)
-VALUES (sqlc.arg(id), sqlc.arg(enrollment_key_digest), sqlc.arg(team_id), sqlc.arg(name), sqlc.arg(identity_kind), sqlc.arg(grant_kind), sqlc.narg(service_id), sqlc.narg(domain_id), sqlc.narg(namespace), sqlc.narg(membership_id), sqlc.narg(namespace_scope), sqlc.arg(created_by_identity_id), sqlc.arg(created_at), sqlc.arg(expires_at), sqlc.arg(ownership), sqlc.narg(owner_membership_id)) RETURNING *;
+INSERT INTO control.publisher_enrollments(id, enrollment_key_digest, team_id, name, identity_kind, grant_kind, service_id, domain_id, namespace, membership_id, namespace_scope, protocols, created_by_identity_id, created_at, expires_at, ownership, owner_membership_id)
+VALUES (sqlc.arg(id), sqlc.arg(enrollment_key_digest), sqlc.arg(team_id), sqlc.arg(name), sqlc.arg(identity_kind), sqlc.arg(grant_kind), sqlc.narg(service_id), sqlc.narg(domain_id), sqlc.narg(namespace), sqlc.narg(membership_id), sqlc.narg(namespace_scope), sqlc.narg(protocols)::text[], sqlc.arg(created_by_identity_id), sqlc.arg(created_at), sqlc.arg(expires_at), sqlc.arg(ownership), sqlc.narg(owner_membership_id)) RETURNING *;
 
 -- name: LockPublisherEnrollment :one
 SELECT * FROM control.publisher_enrollments WHERE id = sqlc.arg(id) FOR UPDATE;

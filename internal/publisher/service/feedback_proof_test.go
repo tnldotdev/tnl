@@ -184,7 +184,7 @@ func TestFeedbackConnectorProofUsesActualAdmissionAndAcceptedRenewal(t *testing.
 	served := make(chan error, 1)
 	go func() { served <- serveConnectorInner(ctx, peer, server) }()
 	defer func() { peer.Close(); <-served }()
-	writer := connectorControl(t, ctx, client)
+	writer := connectorControl(t, ctx, client, peer)
 	entry := opening("F")
 	raw, err := client.OpenStream(ctx)
 	if err != nil {

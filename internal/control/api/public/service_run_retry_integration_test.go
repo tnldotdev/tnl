@@ -192,6 +192,7 @@ func TestIntegrationPrivatePublisherRecoversCommittedLostResponses(t *testing.T)
 	if err := json.Unmarshal(bodies[0], &bound); err != nil || bound.RunNumber != prep.RunNumber {
 		t.Fatal("PostgreSQL did not retain the recovered run", err)
 	}
+	assertServiceEndpointRetryRestoration(t, ctx, client, service)
 	// another invocation is a permanent conflict, not ambiguous response loss.
 	conflict, stop := context.WithTimeout(ctx, time.Second)
 	defer stop()

@@ -21,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -109,6 +110,9 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 		}
 	}()
 	if err != nil {
+		if selected.denialReason == controlv1.ObservationCapacity {
+			outcome = observability.VisitorCapacityDenied
+		}
 		if selected.serviceID != "" {
 			reason := string(selected.denialReason)
 			if reason == "" {
@@ -168,7 +172,7 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 	capacityDone := make(chan struct{})
 	var capacityOnce sync.Once
 	var capacityErr error
-	reserveCapacity := func(call context.Context) (result error) {
+	reserveCapacity := func(call context.Context, relay ingressv1.ServiceRelay) (result error) {
 		defer func() {
 			capacityOnce.Do(func() {
 				capacityErr = result
@@ -179,25 +183,31 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 			})
 		}()
 		current, err := p.lease(time.Now())
-		if err != nil || !samePrivateLease(current, lease) || call.Err() != nil || !setupDeadline.After(time.Now()) {
+		if err != nil || !samePrivateLease(current, lease) || ctx.Err() != nil || call.Err() != nil || !setupDeadline.After(time.Now()) {
 			return ErrServiceAdmission
 		}
-		if reason := admission.reserveForVisitor(); reason != "" {
-			p.rejectCapacity(reason)
-			p.observeTraffic("capacity", "denied")
-			return &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
-		}
-		if selected.access == clientCertificateAccess {
-			if err := p.acknowledgeCertificateCapacity(call, control, lease, *selected.certificate); err != nil {
-				return err
+		reserve := func() error {
+			if reason := admission.reserveForVisitor(); reason != "" {
+				p.rejectCapacity(reason)
+				p.observeTraffic("capacity", "denied")
+				return &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
 			}
+			if selected.access == clientCertificateAccess {
+				if err := p.acknowledgeCertificateCapacity(call, control, lease, *selected.certificate); err != nil {
+					return err
+				}
+			}
+			current, err = p.lease(time.Now())
+			if err != nil || !samePrivateLease(current, lease) || ctx.Err() != nil || call.Err() != nil || !setupDeadline.After(time.Now()) {
+				return ErrServiceAdmission
+			}
+			admission.meterOrdinaryBytes()
+			return nil
 		}
-		current, err = p.lease(time.Now())
-		if err != nil || !samePrivateLease(current, lease) || call.Err() != nil || !setupDeadline.After(time.Now()) {
-			return ErrServiceAdmission
+		if selected.access == httpRequestAccess {
+			return p.services.reserveHTTP(selected.http, relay, lease, source.Addr().Unmap(), reserve)
 		}
-		admission.meterOrdinaryBytes()
-		return nil
+		return reserve()
 	}
 	metadata := proxyproto.Header{Source: source, Destination: destination}
 	if route := selected.http; selected.access == httpRequestAccess {
@@ -252,7 +262,9 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 		}, ConnectionSlot: uint8(relay.ConnectionSlot), RelayServiceID: relay.RelayServiceId, RelayID: relay.RelayId, RelayRunID: relay.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLeaseRevision), LeaseExpiresAt: relay.LeaseExpiresAt}
 		attemptCtx, stopAttempt := backendAttemptContext(setup, len(relays)-attempt)
 		attemptStarted := time.Now()
-		backend, err := p.openPrivateRelay(attemptCtx, relay, header, proxy, initial, deadline, reserveCapacity)
+		backend, err := p.openPrivateRelay(attemptCtx, relay, header, proxy, initial, deadline, func(call context.Context) error {
+			return reserveCapacity(call, relay)
+		})
 		stopAttempt()
 		if p.config.Observer != nil {
 			duration := time.Since(attemptStarted)
@@ -315,26 +327,28 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 				return errors.Join(err, backend.Close())
 			}
 			defer release()
+			connection = httpCopyConn(connection, cancel)
+			backend = httpCopyConn(backend, cancel)
 		}
-		public := &budgetConn{Conn: connection, beforeWrite: func(size int) error {
-			return admission.beforeWrite(live, false, size)
+		reserveWrite := func(upload bool, size int) (int, error) {
+			if selected.access == httpRequestAccess {
+				return admission.reserveHTTPCopy(live, upload, size)
+			}
+			return size, admission.beforeWrite(live, upload, size)
+		}
+		public := &budgetConn{Conn: connection, reserveWrite: func(size int) (int, error) {
+			return reserveWrite(false, size)
 		}}
-		upstream := &budgetConn{Conn: backend, beforeWrite: func(size int) error {
-			return admission.beforeWrite(live, true, size)
+		upstream := &budgetConn{Conn: backend, reserveWrite: func(size int) (int, error) {
+			return reserveWrite(true, size)
 		}}
 		done := make(chan struct{})
 		var guardErr error
 		go func() {
 			defer close(done)
 			defer cancel()
-			timer := time.NewTimer(time.Until(setupDeadline))
-			select {
-			case <-capacityDone:
-				timer.Stop()
-				if capacityErr != nil {
-					guardErr = errors.Join(ErrServiceAdmission, capacityErr)
-					break
-				}
+			guardErr = waitCopyCapacity(live, setupDeadline, capacityDone, &capacityErr)
+			if guardErr == nil {
 				switch selected.access {
 				case clientCertificateAccess:
 					guardErr = p.watchCertificateAccess(live, control, lease, *selected.certificate, selected.expiresAt)
@@ -344,11 +358,6 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 				default:
 					guardErr = ErrServiceAdmission
 				}
-			case <-timer.C:
-				guardErr = ErrServiceAdmission
-			case <-live.Done():
-				timer.Stop()
-				guardErr = context.Cause(live)
 			}
 			guardErr = errors.Join(guardErr, connection.Close(), backend.Close())
 		}()
@@ -390,6 +399,38 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 		return result
 	}
 	return errors.Join(ErrServiceAdmission, openingErr)
+}
+
+// a full close must wake channel- and bandwidth-blocked http copies before
+// physical cleanup. admission capacity remains owned until both copies join.
+func httpCopyConn(connection net.Conn, cancel context.CancelFunc) net.Conn {
+	return &ownedConn{Conn: connection, close: sync.OnceValue(func() error {
+		cancel()
+		return connection.Close()
+	})}
+}
+
+// prefer a completed decision over an obsolete setup timer, but never treat a
+// failed decision as permission. done publishes result before it is read here.
+// after success the guard watches live, not this pending-only deadline.
+func waitCopyCapacity(ctx context.Context, deadline time.Time, done <-chan struct{}, result *error) error {
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	case <-timer.C:
+		select {
+		case <-done:
+		default:
+			return ErrServiceAdmission
+		}
+	}
+	if *result != nil {
+		return errors.Join(ErrServiceAdmission, *result)
+	}
+	return nil
 }
 
 // a native publisher already checked certificate access before asking for
@@ -467,7 +508,10 @@ func (p *Server) retireClosedTrafficRuns(ctx context.Context, lease ingressv1.In
 	check, cancel := context.WithTimeout(ctx, p.config.RecheckTimeout)
 	defer cancel()
 	closed, err := p.config.Control.ClosedServiceRuns(check, lease.IngressId, request)
-	if err != nil || len(closed.Closed) > len(candidates) {
+	current := p.config.CurrentLease()
+	deadline, _ := check.Deadline()
+	if err != nil || check.Err() != nil || !deadline.After(time.Now()) || !samePrivateLease(current, lease) ||
+		!current.LeaseExpiresAt.After(time.Now()) || current.Draining || len(closed.Closed) > len(candidates) {
 		return
 	}
 	for _, ref := range closed.Closed {
@@ -476,7 +520,10 @@ func (p *Server) retireClosedTrafficRuns(ctx context.Context, lease ingressv1.In
 		}
 		delete(requested, ref)
 	}
-	p.traffic.retireTerminal(closed.Closed)
+	lease.LeaseExpiresAt = privateMinTime(lease.LeaseExpiresAt, current.LeaseExpiresAt)
+	if len(closed.Closed) != 0 && p.services.retireTerminal(lease, closed.Closed) {
+		p.traffic.retireTerminal(closed.Closed)
+	}
 }
 
 // public service admission uses the claim immediately, rather than installing history.

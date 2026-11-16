@@ -345,15 +345,19 @@ func (a *trafficAdmission) bytes(ctx context.Context, key trafficKey, upload boo
 // copy buffers cannot bypass accounting. each write is bounded for low byte rates.
 type budgetConn struct {
 	net.Conn
-	beforeWrite func(int) error
+	reserveWrite func(int) (int, error)
 }
 
 func (c *budgetConn) Write(p []byte) (int, error) {
 	written := 0
 	for len(p) > 0 {
-		n := min(len(p), 32<<10)
-		if err := c.beforeWrite(n); err != nil {
+		requested := min(len(p), 32<<10)
+		n, err := c.reserveWrite(requested)
+		if err != nil {
 			return written, err
+		}
+		if n <= 0 || n > requested {
+			return written, errors.New("ingress: invalid traffic reservation")
 		}
 		count, err := c.Conn.Write(p[:n])
 		written += count

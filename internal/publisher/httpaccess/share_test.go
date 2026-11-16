@@ -147,3 +147,39 @@ func TestSharePreparationFailureDoesNotLogCauses(t *testing.T) {
 		}
 	}
 }
+
+func TestShareRedirectKeepsExactDestinationAndHostBoundCookies(t *testing.T) {
+	redemption := controlv1.ShareRedemption{
+		ShareId:      "shr_0123456789abcdefghijkl",
+		CookieSecret: base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("c", 32))),
+		NextUrl:      "https://preview.example.test/settings?tab=profile&next=a%2Fb&next=a+b",
+		ExpiresAt:    time.Now().Add(time.Hour).Truncate(time.Second),
+		Permission: controlv1.VisitorTokenResponse{
+			VisitorToken: "signed-share-permission", ExpiresAt: time.Now().Add(5 * time.Minute).Truncate(time.Second),
+		},
+	}
+	response := httptest.NewRecorder()
+	ShareRedirect(response, redemption)
+	cookies := response.Result().Cookies()
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != redemption.NextUrl ||
+		response.Header().Get("Referrer-Policy") != "no-referrer" || response.Header().Get("Cache-Control") != "no-store" || len(cookies) != 2 {
+		t.Fatal("ordinary share redirect changed its destination or private response", response.Code, response.Header())
+	}
+	want := map[string]string{
+		VisitorTokenCookie: redemption.Permission.VisitorToken,
+		ShareCookieName:    redemption.ShareId + "." + redemption.CookieSecret,
+	}
+	seen := make(map[string]bool)
+	for _, cookie := range cookies {
+		value, ok := want[cookie.Name]
+		expires := redemption.Permission.ExpiresAt
+		if cookie.Name == ShareCookieName {
+			expires = redemption.ExpiresAt
+		}
+		if !ok || seen[cookie.Name] || cookie.Value != value || !cookie.Secure || !cookie.HttpOnly || cookie.Path != "/" || cookie.Domain != "" ||
+			cookie.SameSite != http.SameSiteLaxMode || !cookie.Expires.Equal(expires) {
+			t.Fatal("ordinary share redirect changed a host-bound credential cookie", cookie.Name)
+		}
+		seen[cookie.Name] = true
+	}
+}

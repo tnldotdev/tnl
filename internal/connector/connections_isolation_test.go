@@ -199,20 +199,36 @@ func TestConnectionCleanupRevokesSessionWhileFailedRequestsUseOneBudget(t *testi
 }
 
 func TestConnectionCloseHonorsCallerBudget(t *testing.T) {
-	b := &connectorConnectionBackend{}
-	blocked := make(chan struct{})
-	b.workers.Go(func() { <-blocked })
+	lifetime, stop := context.WithCancel(t.Context())
+	b := &connectorConnectionBackend{lifetime: lifetime, cancel: stop}
+	entered, exited := make(chan struct{}), make(chan struct{})
+	b.workers.Go(func() {
+		close(entered)
+		<-lifetime.Done()
+		close(exited)
+	})
+	var caller sync.WaitGroup
+	defer func() { stop(); caller.Wait(); b.workers.Wait() }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("owned worker did not start")
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	done := make(chan error, 1)
-	go func() { done <- b.Close(ctx) }()
+	caller.Go(func() { done <- b.Close(ctx) })
 	select {
 	case err := <-done:
 		if !errors.Is(err, context.Canceled) {
-			t.Error("cleanup did not report incomplete join", err)
+			t.Error("cleanup lost its canceled caller budget", err)
+		}
+		select {
+		case <-exited:
+		default:
+			t.Error("Close returned before its canceled worker joined")
 		}
 	case <-time.After(time.Second):
 		t.Error("Close ignored its caller budget")
 	}
-	close(blocked)
 }

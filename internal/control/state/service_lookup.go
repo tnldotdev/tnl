@@ -169,7 +169,8 @@ func (d *Database) ListAvailableServices(ctx context.Context, identityID, cursor
 				}
 			}
 			page = append(page, ServiceInventory{ServiceMetadata: metadata, ID: row.ID, TeamID: row.TeamID.String, TeamName: row.TeamName, VisitorAccess: reason,
-				Name: row.Name, CreatedAt: row.CreatedAt.Time, ServiceRunID: row.ServiceRunID.String, RunNumber: row.RunNumber.Int64, KubernetesAuth: kube})
+				Name: row.Name, CreatedAt: row.CreatedAt.Time, ServiceRunID: row.ServiceRunID.String, RunNumber: row.RunNumber.Int64, KubernetesAuth: kube,
+				RequirePostQuantum: row.RequirePostQuantum})
 		}
 		if len(rows) < 101 {
 			break

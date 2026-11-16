@@ -41,15 +41,32 @@ func (c *Client) CreateService(ctx context.Context, team, name, key string, meta
 }
 
 func (c *Client) CreateServiceAt(ctx context.Context, team, name, key string, placement *controlv1.ServicePlacement, metadata controlv1.ServiceMetadata, configuration *controlv1.ProjectServiceConfiguration) (controlv1.Service, error) {
+	service, _, err := c.createServiceAt(ctx, team, name, key, placement, metadata, configuration, false)
+	return service, err
+}
+
+// reserve uses the canonical creation operation's exact recovery decision. it
+// never needs team inventory or a separate hostname lookup API.
+func (c *Client) ReserveServiceAt(ctx context.Context, team, name, key string, placement *controlv1.ServicePlacement, metadata controlv1.ServiceMetadata, configuration *controlv1.ProjectServiceConfiguration) (controlv1.Service, bool, error) {
+	return c.createServiceAt(ctx, team, name, key, placement, metadata, configuration, true)
+}
+
+func (c *Client) createServiceAt(ctx context.Context, team, name, key string, placement *controlv1.ServicePlacement, metadata controlv1.ServiceMetadata, configuration *controlv1.ProjectServiceConfiguration, reserve bool) (controlv1.Service, bool, error) {
 	body := controlv1.CreateServiceRequest{TeamId: team, Name: name, Placement: placement,
 		TargetTls: metadata.TargetTls, PublisherPool: &metadata.PublisherPool, Configuration: configuration}
+	if reserve {
+		body.Reserve = new(true)
+	}
 	if metadata.Protocol != "" {
 		body.Protocol = &metadata.Protocol
 	}
-	return requestWithAccess[controlv1.Service](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreateService(ctx, &controlv1.CreateServiceParams{IdempotencyKey: key},
-			body, editors...)
+	created := false
+	service, err := requestWithAccess[controlv1.Service](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		response, err := c.api.CreateService(ctx, &controlv1.CreateServiceParams{IdempotencyKey: key}, body, editors...)
+		created = response != nil && response.StatusCode == http.StatusCreated
+		return response, err
 	})
+	return service, created, err
 }
 
 func (c *Client) ListServices(ctx context.Context, team string) ([]controlv1.ServiceSummary, error) {

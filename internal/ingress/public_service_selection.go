@@ -62,6 +62,15 @@ func (s *Server) selectPublicRun(ctx context.Context, lease ingressv1.IngressLea
 				selected.denialReason = controlv1.ObservationIPPolicy
 				return selected, ErrServiceAdmission
 			}
+			selected.relays = nil
+			for _, relay := range run.run.ConnectedRelays {
+				if relay.LeaseExpiresAt.After(time.Now()) {
+					selected.relays = append(selected.relays, relay)
+				}
+			}
+			if len(selected.relays) == 0 {
+				continue
+			}
 			reason := capacity.selectRun(trafficKey{service: selected.serviceID, id: selected.runID, run: uint64(selected.number)}, selected.limits, source.Addr().Unmap(), selected.anonymous)
 			if reason == "" {
 				return selected, nil

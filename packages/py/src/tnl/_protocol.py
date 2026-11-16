@@ -145,9 +145,10 @@ def parse_assignment(value: object, endpoint: Endpoint) -> Assignment:
     ):
         raise InvalidResponse()
     name = service_name(assignment.get("service"))
-    without_endpoint = assignment.get("hostname") == "" and assignment.get("public_url") == ""
-    host = "" if without_endpoint else hostname(assignment.get("hostname"))
-    url = "" if without_endpoint else text(assignment.get("public_url"))
+    raw_host = assignment.get("hostname")
+    host = "" if raw_host == "" else hostname(raw_host)
+    public_url = assignment.get("public_url")
+    url = "" if public_url == "" else text(public_url)
     project = object_value(
         assignment.get("project"),
         {"namespace", "dev", "services", "oauth", "webhooks", "aliases", "worktree"},
@@ -166,18 +167,17 @@ def parse_assignment(value: object, endpoint: Endpoint) -> Assignment:
         key = service_name(key)
         validated[key] = _service_metadata(key, raw)
     own = validated.get(name)
-    if (
-        name != endpoint.service
-        or endpoint.scope != "app"
-        or without_endpoint
-        and own is not None
-        or not without_endpoint
-        and (
-            own is None
-            or own.get("protocol") != "http"
-            or own.get("hostname") != host
-            or own.get("url") != url
-        )
+    if name != endpoint.service or endpoint.scope != "app":
+        raise InvalidResponse()
+    if host == "":
+        if url != "" or own is not None:
+            raise InvalidResponse()
+    elif (
+        own is None
+        or own.get("protocol") != "http"
+        or own.get("hostname") != host
+        or own.get("url") != f"https://{host}"
+        or url != (own["url"] if own["public"] else "")
     ):
         raise InvalidResponse()
     return Assignment(ident, name, host, url)

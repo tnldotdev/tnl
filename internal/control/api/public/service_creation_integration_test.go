@@ -63,7 +63,7 @@ func TestIntegrationCreateServiceDeclarationAPI(t *testing.T) {
 			t.Fatalf("create status=%d want=%d error=%v body=%s", response.StatusCode, want, err, data)
 		}
 		var service controlv1.Service
-		if want == http.StatusCreated {
+		if want == http.StatusCreated || want == http.StatusOK {
 			if err := json.Unmarshal(data, &service); err != nil {
 				t.Fatal(err)
 			}
@@ -88,8 +88,8 @@ func TestIntegrationCreateServiceDeclarationAPI(t *testing.T) {
 	equivalent := *configuration
 	equivalent.Target = "origin.internal:8080"
 	body.Configuration = &equivalent
-	retry, _ := create(body, "one-service", http.StatusCreated)
-	if retry.Id != first.Id || retry.EndpointRevision != first.EndpointRevision {
+	retry, _ := create(body, "one-service", http.StatusOK)
+	if retry.Id != first.Id || retry.EndpointRevision != first.EndpointRevision || retry.RequirePostQuantum != first.RequirePostQuantum {
 		t.Fatal("HTTP retry created another service or endpoint")
 	}
 	body.Protocol = new(controlv1.Tcp)

@@ -201,6 +201,8 @@ func newIntegrationPublishingIdentity(t *testing.T, controlOrigin string, contro
 // the exact native grant. the service owner never inherits that control session.
 func (i *integrationPublishingIdentity) prepareService(t *testing.T, target string, quic, tcp muxsession.Connector, declaration controlv1.ProjectServiceConfiguration) (controlv1.Service, publisherservice.RunConfig) {
 	t.Helper()
+	prepareCtx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
 	declaration.Protocol, declaration.Public = new(controlv1.ServiceProtocolHTTP), new(true)
 	if declaration.Hostname == nil {
 		declaration.Hostname = &i.hostname
@@ -226,13 +228,13 @@ func (i *integrationPublishingIdentity) prepareService(t *testing.T, target stri
 	}
 	digest := sha256.Sum256([]byte(*declaration.Hostname))
 	name := "fixture-" + hex.EncodeToString(digest[:8])
-	saved, err := i.routes.CreateServiceAt(t.Context(), i.teamID, name, "fixture:"+*declaration.Hostname,
+	saved, err := i.routes.CreateServiceAt(prepareCtx, i.teamID, name, "fixture:"+*declaration.Hostname,
 		&controlv1.ServicePlacement{DomainId: &i.domainID, Hostname: declaration.Hostname},
 		controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP}, &declaration)
 	if err != nil {
 		t.Fatal("save fixture service", err)
 	}
-	native, identity, err := publisheridentity.EnsureServiceOwner(t.Context(), i.state, i.routes, i.authority, saved)
+	native, identity, err := publisheridentity.EnsureServiceOwner(prepareCtx, i.state, i.routes, i.authority, saved)
 	if err != nil {
 		t.Fatal("enroll fixture service publisher", err)
 	}
@@ -240,7 +242,7 @@ func (i *integrationPublishingIdentity) prepareService(t *testing.T, target stri
 		Control: native, Access: native.Access, State: i.state, ServiceID: saved.Id,
 		PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId,
 		Target: strings.TrimPrefix(target, "http://"), Metadata: publisheridentity.ServiceMetadata(saved),
-		RelayQUIC: quic, RelayTCP: tcp, DrainTime: time.Second, HeartbeatInterval: 100 * time.Millisecond,
+		RelayQUIC: quic, RelayTCP: tcp, DrainTime: time.Second, HeartbeatInterval: 15 * time.Second,
 	}
 }
 

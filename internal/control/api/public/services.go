@@ -11,9 +11,11 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/api/serviceaccess"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/httpjson"
+	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -83,6 +85,40 @@ func targetTLSInput(t *controlv1.ServiceTargetTLS) *controlstate.ServiceTargetTL
 	return &controlstate.ServiceTargetTLS{Hostname: t.Hostname, System: t.System, Digest: t.Digest, PEM: optionalFeedbackString(t.Pem)}
 }
 
+func decodeServiceConfiguration(raw json.RawMessage) (*controlstate.ProjectServiceConfiguration, error) {
+	// check presence before optional generated pointers can erase supplied nulls.
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := httpjson.Decode(decoder, &value); err != nil {
+		return nil, err
+	}
+	if err := config.RejectNullValues(value); err != nil {
+		return nil, err
+	}
+	var declaration controlv1.ProjectServiceConfiguration
+	if err := httpjson.Decode(json.NewDecoder(bytes.NewReader(raw)), &declaration); err != nil {
+		return nil, err
+	}
+	// api input accepts equivalent prefixes; configuration values stay strict.
+	if declaration.Http != nil && declaration.Http.Access != nil && declaration.Http.Access.Ip != nil {
+		prefixes, err := authorization.CanonicalizeIPPrefixes(*declaration.Http.Access.Ip)
+		if err != nil {
+			return nil, err
+		}
+		declaration.Http.Access.Ip = &prefixes
+	}
+	encoded, err := json.Marshal(declaration)
+	if err != nil {
+		return nil, err
+	}
+	var configuration controlstate.ProjectServiceConfiguration
+	if err := json.Unmarshal(encoded, &configuration); err != nil {
+		return nil, err
+	}
+	return &configuration, nil
+}
+
 func (h *handler) ConfigureService(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
 	var body struct {
 		ExpectedTrustRevision       int64                     `json:"expected_trust_revision,string"`
@@ -118,16 +154,12 @@ func (h *handler) ConfigureService(w http.ResponseWriter, r *http.Request, id co
 	}
 	var configuration *controlstate.ProjectServiceConfiguration
 	if len(body.Configuration) > 0 {
-		var declaration *controlv1.ProjectServiceConfiguration
-		if err := httpjson.Decode(json.NewDecoder(bytes.NewReader(body.Configuration)), &declaration); err != nil || declaration == nil {
+		decoded, err := decodeServiceConfiguration(body.Configuration)
+		if err != nil {
 			writeProblem(w, 400, controlv1.InvalidRequest, "invalid service declaration")
 			return
 		}
-		encoded, err := json.Marshal(declaration)
-		if err != nil || json.Unmarshal(encoded, &configuration) != nil {
-			writeProblem(w, 400, controlv1.InvalidRequest, "invalid service declaration")
-			return
-		}
+		configuration = decoded
 	}
 	conditions := controlstate.ServiceUpdateConditions{}
 	if len(body.ExpectedConfigurationDigest) > 0 {
@@ -154,7 +186,14 @@ func (h *handler) ConfigureService(w http.ResponseWriter, r *http.Request, id co
 
 func (h *handler) CreateService(w http.ResponseWriter, r *http.Request, _ controlv1.CreateServiceParams) {
 	var body controlv1.CreateServiceRequest
-	if decodeJSONLimited(w, r, &body, 2<<20) != nil || r.Header.Get("Idempotency-Key") == "" {
+	var raw json.RawMessage
+	if decodeJSONLimited(w, r, &raw, 2<<20) != nil ||
+		httpjson.Decode(json.NewDecoder(bytes.NewReader(raw)), &body) != nil || r.Header.Get("Idempotency-Key") == "" {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service request")
+		return
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil || fields == nil || bytes.Equal(bytes.TrimSpace(fields["reserve"]), []byte("null")) {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service request")
 		return
 	}
@@ -163,12 +202,13 @@ func (h *handler) CreateService(w http.ResponseWriter, r *http.Request, _ contro
 		return
 	}
 	var configuration *controlstate.ProjectServiceConfiguration
-	if body.Configuration != nil {
-		encoded, err := json.Marshal(body.Configuration)
-		if err != nil || json.Unmarshal(encoded, &configuration) != nil {
+	if rawConfiguration, present := fields["configuration"]; present {
+		decoded, err := decodeServiceConfiguration(rawConfiguration)
+		if err != nil {
 			writeProblem(w, 400, controlv1.InvalidRequest, "invalid service declaration")
 			return
 		}
+		configuration = decoded
 	}
 	metadata := controlstate.ServiceMetadata{TLS: targetTLSInput(body.TargetTls)}
 	if configuration == nil {
@@ -185,6 +225,7 @@ func (h *handler) CreateService(w http.ResponseWriter, r *http.Request, _ contro
 		return
 	}
 	placement := controlstate.ServicePlacement{DNSAutomation: h.config.DNSAutomation}
+	placement.Reserve = body.Reserve != nil && *body.Reserve
 	if body.Placement != nil {
 		placement.DomainID = optionalFeedbackString(body.Placement.DomainId)
 		placement.Hostname = optionalFeedbackString(body.Placement.Hostname)
@@ -196,7 +237,11 @@ func (h *handler) CreateService(w http.ResponseWriter, r *http.Request, _ contro
 		serviceVisitorError(r.Context(), w, "create service", err)
 		return
 	}
-	writeJSON(w, 201, serviceaccess.Service(record))
+	status := http.StatusCreated
+	if record.Recovered {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, serviceaccess.Service(record))
 }
 
 func (h *handler) ListServices(w http.ResponseWriter, r *http.Request, params controlv1.ListServicesParams) {
@@ -481,7 +526,8 @@ func (h *handler) ListAvailableServices(w http.ResponseWriter, r *http.Request, 
 		entry := controlv1.ServiceSummary{Id: row.ID, TeamId: row.TeamID, TeamName: row.TeamName, Name: row.Name,
 			Enabled: true, CreatedAt: row.CreatedAt, Protocol: controlv1.ServiceProtocol(row.Protocol),
 			PublisherPool: row.PublisherPool, TrustRevision: row.TrustRevision, KubernetesAuth: row.KubernetesAuth,
-			VisitorAccess: controlv1.ServiceSummaryVisitorAccess(row.VisitorAccess)}
+			RequirePostQuantum: row.RequirePostQuantum,
+			VisitorAccess:      controlv1.ServiceSummaryVisitorAccess(row.VisitorAccess)}
 		if endpoint := row.Endpoint; endpoint != nil {
 			entry.Endpoint = &controlv1.ServiceEndpoint{Hostname: endpoint.Hostname, Port: endpoint.Port, Public: endpoint.Public}
 		}

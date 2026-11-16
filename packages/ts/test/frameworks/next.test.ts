@@ -5,6 +5,7 @@ import * as z from "zod";
 import {
   createProjectFixture,
   temporaryDirectory,
+  testPrivateAssignment,
   testPublicProject,
   withCurrentDirectory,
 } from "../helpers/project.js";
@@ -205,6 +206,22 @@ const developmentPhase = "phase-development-server";
 const context: NextConfigContext = { defaultConfig: {} };
 
 describe("withTnl", () => {
+  test("allows the connector-only canonical origin without enabling public access", async () => {
+    const selected = testPrivateAssignment();
+    const bootstrap = await startTestBootstrap({ responseBody: JSON.stringify(selected) });
+    await withProcessEnvironment(
+      { ...bootstrap.environment, __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3200" },
+      async () => {
+        const result = await withTnl({ allowedDevOrigins: ["existing.example"] })(
+          developmentPhase,
+          context,
+        );
+        expect(result.allowedDevOrigins).toEqual(["existing.example", selected.hostname]);
+        expect(JSON.parse(result.env?.TNL_PROJECT_RUNTIME ?? "null")).toEqual(selected.project);
+      },
+    );
+  });
+
   test("allows entry and mounted service aliases in development", async () => {
     const bootstrap = await startTestBootstrap({
       responseBody: JSON.stringify(testAliasAssignment()),

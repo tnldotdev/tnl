@@ -2,10 +2,22 @@ package state
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+func connectorPairConstraintInsert(owner, idempotency, parent, delivery string) string {
+	return fmt.Sprintf(`INSERT INTO control.connector_peer_pairs
+		(id,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,subject_id,parent_control_session_id,
+		owner_key,idempotency_key,owner_public_key,request_digest,key_digest,key_ciphertext,delivery_id,storage_key_id,slots,
+		delivery_generation,created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at)
+		SELECT 'cpp_aaaaaaaaaaaaaaaaaaaaaa',service_id,service_run_id,run_number,publisher_identity_id,subject_kind,subject_id,%s,
+		%s,%s,owner_public_key,request_digest,key_digest,key_ciphertext,%s,storage_key_id,slots,
+		nextval('control.connector_peer_delivery_generation'),created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at
+		FROM control.connector_peer_pairs WHERE id=$1`, parent, owner, idempotency, delivery)
+}
 
 func TestIntegrationConnectorPeerPairSchemaConstraints(t *testing.T) {
 	f := newConnectorPairFixture(t)
@@ -30,11 +42,11 @@ func TestIntegrationConnectorPeerPairSchemaConstraints(t *testing.T) {
 		id                string
 	}{
 		{"stable owner", `UPDATE control.connector_peer_pairs SET owner_key='different-owner' WHERE id=$1`, "23514", pair.ID},
-		{"required owner", `UPDATE control.connector_peer_pairs SET owner_key=NULL WHERE id=$1`, "23502", pair.ID},
-		{"parent foreign key", `UPDATE control.connector_peer_pairs SET parent_control_session_id='missing-control-session' WHERE id=$1`, "23503", pair.ID},
-		{"owner uniqueness", `UPDATE control.connector_peer_pairs SET owner_key='observations',idempotency_key='observations' WHERE id=$1`, "23505", other.ID},
-		{"delivery uniqueness", `UPDATE control.connector_peer_pairs SET delivery_id=(SELECT delivery_id FROM control.connector_peer_pairs WHERE id=$2) WHERE id=$1`, "23505", other.ID},
-		{"nonzero delivery", `UPDATE control.connector_peer_pairs SET delivery_id=decode(repeat('00',16),'hex') WHERE id=$1`, "23514", pair.ID},
+		{"required owner", connectorPairConstraintInsert("NULL", "'new-owner'", "parent_control_session_id", "delivery_id"), "23502", pair.ID},
+		{"parent foreign key", connectorPairConstraintInsert("'new-owner'", "'new-owner'", "'missing-control-session'", "decode(repeat('03',16),'hex')"), "23503", pair.ID},
+		{"owner uniqueness", connectorPairConstraintInsert("'observations'", "'observations'", "parent_control_session_id", "decode(repeat('03',16),'hex')"), "23505", other.ID},
+		{"delivery uniqueness", connectorPairConstraintInsert("'duplicate-delivery-owner'", "'duplicate-delivery-owner'", "parent_control_session_id", "(SELECT delivery_id FROM control.connector_peer_pairs WHERE id=$2)"), "23505", other.ID},
+		{"nonzero delivery", connectorPairConstraintInsert("'new-owner'", "'new-owner'", "parent_control_session_id", "decode(repeat('00',16),'hex')"), "23514", pair.ID},
 		{"replay horizon", `UPDATE control.connector_peer_pairs SET replay_fence_until=last_request_at+interval '1 minute' WHERE id=$1`, "23514", pair.ID},
 		{"claim positive bound", `UPDATE control.connector_peer_pair_leg_claims SET confirmed_until=checked_at WHERE pair_id=$1`, "23514", pair.ID},
 		{"claim negative bound", `UPDATE control.connector_peer_pair_leg_claims SET confirmed_until=checked_at-interval '1 microsecond' WHERE pair_id=$1`, "23514", pair.ID},
@@ -97,6 +109,8 @@ func TestIntegrationConnectorPeerPairShapeCatalog(t *testing.T) {
 			"owner_key": "text NO", "idempotency_key": "text NO", "delivery_id": "bytea NO",
 			"parent_control_session_id": "text YES", "replay_fence_until": "timestamp with time zone NO",
 			"last_renewal_digest": "bytea YES", "publisher_prepared_until": "timestamp with time zone YES",
+			"owner_public_key": "bytea NO", "owner_revision": "bigint NO",
+			"retired_at": "timestamp with time zone YES", "retire_request_digest": "bytea YES",
 		},
 		"connector_peer_pair_leg_claims": {
 			"pair_id": "text NO", "connection_slot": "smallint NO", "source_ip": "inet NO",

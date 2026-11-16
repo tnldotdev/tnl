@@ -7,8 +7,6 @@ import (
 	"errors"
 	"reflect"
 
-	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
@@ -84,71 +82,34 @@ func reserveConfiguredService(ctx context.Context, services publisherServices, d
 		}
 		return saved, nil
 	}
-	lookup := func() (controlv1.Service, error) {
-		inventory, err := services.routes.ListServices(ctx, services.teamID)
-		if err != nil {
-			return controlv1.Service{}, err
-		}
-		for _, service := range inventory {
-			if service.Name != name && (service.Endpoint == nil || service.Endpoint.Hostname != services.hostname) {
-				continue
-			}
-			saved, err := services.routes.GetService(ctx, service.Id)
-			if err == nil && saved.Id != service.Id {
-				err = publisheridentity.ErrScope
-			}
-			if err == nil {
-				err = check(saved)
-			}
-			return saved, err
-		}
-		return controlv1.Service{}, clientcontrol.ErrNotFound
+	key, err := randomIdempotencyKey()
+	if err != nil {
+		return controlv1.Service{}, err
 	}
-	current, err := lookup()
-	if failure.Only(err, clientcontrol.ErrNotFound) {
-		// creation alone needs the local hostname lock. configured declarations
-		// are compared and replaced by control, including unchanged live retries.
-		lock, lockErr := clientstate.LockHostnameContext(ctx, services.state, services.hostname)
-		if lockErr != nil {
-			return controlv1.Service{}, lockErr
+	var current controlv1.Service
+	var created bool
+	// control atomically creates or recovers the exact service. retain one
+	// request key through lost replies; no local lock or inventory can prove
+	// that an uncertain remote mutation did not commit.
+	for range 3 {
+		current, created, err = services.routes.ReserveServiceAt(ctx, services.teamID, name, key,
+			&controlv1.ServicePlacement{DomainId: &services.domainID, Hostname: &services.hostname},
+			controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP, TargetTls: publisheridentity.ServiceTargetTLS(trust)}, &declaration)
+		if err == nil {
+			break
 		}
-		defer func() { result = errors.Join(result, lock.Close()) }()
-		current, err = lookup()
-		if failure.Only(err, clientcontrol.ErrNotFound) {
-			key, keyErr := randomIdempotencyKey()
-			if keyErr != nil {
-				return controlv1.Service{}, keyErr
-			}
-			// a key belongs to this creation attempt, not every future service at
-			// this hostname. retries retain it until the exact allocation is known.
-			for attempt := range 3 {
-				current, err = services.routes.CreateServiceAt(ctx, services.teamID, name, key,
-					&controlv1.ServicePlacement{DomainId: &services.domainID, Hostname: &services.hostname},
-					controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP, TargetTls: publisheridentity.ServiceTargetTLS(trust)}, &declaration)
-				if err == nil {
-					return approved(current, declaration, trust)
-				}
-				if !retryServiceReservation(ctx, err) {
-					return controlv1.Service{}, err
-				}
-				// a conflict or lost reply can mean creation committed. recover the
-				// saved service before retrying; never invent another allocation.
-				recovered, readErr := lookup()
-				if readErr == nil {
-					current, err = recovered, nil
-					break
-				}
-				if !failure.Only(readErr, clientcontrol.ErrNotFound) || attempt == 2 {
-					return controlv1.Service{}, errors.Join(err, readErr)
-				}
-			}
-			if err != nil {
-				return controlv1.Service{}, err
-			}
+		if !retryServiceReservation(ctx, err) {
+			return controlv1.Service{}, err
 		}
 	}
 	if err != nil {
 		return controlv1.Service{}, err
+	}
+	if err := check(current); err != nil {
+		return controlv1.Service{}, err
+	}
+	if created {
+		return approved(current, declaration, trust)
 	}
 	for attempt := 0; attempt < 3; attempt++ {
 		desired, desiredTrust := declaration, trust
@@ -214,8 +175,8 @@ func retryServiceReservation(ctx context.Context, err error) bool {
 	return reason == failure.ServerConflict || reason == failure.ServerUnavailable
 }
 
-func selectNativeProjectPublisher(ctx context.Context, services publisherServices, declaration controlv1.ProjectServiceConfiguration) (*publisheridentity.Native, controlv1.Service, error) {
-	saved, err := reserveConfiguredService(ctx, services, declaration)
+func selectNativeProjectPublisher(ctx context.Context, services publisherServices, declaration controlv1.ProjectServiceConfiguration, selectIntent ...func(controlv1.Service, *controlv1.ProjectServiceConfiguration) (*controlv1.ProjectServiceConfiguration, error)) (*publisheridentity.Native, controlv1.Service, error) {
+	saved, err := reserveConfiguredService(ctx, services, declaration, selectIntent...)
 	if err != nil {
 		return nil, controlv1.Service{}, err
 	}

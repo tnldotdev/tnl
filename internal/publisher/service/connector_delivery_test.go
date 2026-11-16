@@ -10,10 +10,11 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func newConnectorDeliveryAdmission(t *testing.T, protocol config.ProtocolName, lifetime time.Duration) (*Bound, *PeerSession, *connectorAdmission, tunnelv1.ConnectorPeerVisitorEntry) {
+func newConnectorDeliveryAdmission(t *testing.T, protocol config.ProtocolName, lifetime time.Duration, wrap ...func(muxsession.Stream) muxsession.Stream) (*Bound, *PeerSession, *connectorAdmission, tunnelv1.ConnectorPeerVisitorEntry, *modeledConnectorTerminal) {
 	t.Helper()
 	bound, peer, _, opening, _ := connectorPeerFixture(t, "127.0.0.1:1")
 	bound.prepared.managedProtocol = protocol
@@ -28,7 +29,8 @@ func newConnectorDeliveryAdmission(t *testing.T, protocol config.ProtocolName, l
 	ctx, cancel := context.WithCancel(t.Context())
 	wire := &drainingConnectorWire{closed: make(chan struct{})}
 	admission := &connectorAdmission{peer: peer, ctx: ctx, caller: ctx, cancel: cancel, stream: wire,
-		state: readyConnectorAdmission{}, completed: make(chan struct{}), entry: entry, permission: permission}
+		state: readyConnectorAdmission{}, completed: make(chan struct{}), entry: entry, permission: permission,
+		terminalKey: tunnelv1.ConnectorVisitorTerminalKey{VisitorConnectionID: entry.VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration}, joined: make(chan struct{})}
 	admission.guard, err = bound.prepared.policy.BindConnector(permission, netip.MustParseAddr("192.0.2.1"), bound.prepared.metadataRevision, admission.stopAndClose)
 	if err != nil {
 		t.Fatal(err)
@@ -38,14 +40,17 @@ func newConnectorDeliveryAdmission(t *testing.T, protocol config.ProtocolName, l
 	}
 	admission.audit.VisitorConnectionID, admission.audit.DeliveryGeneration = entry.VisitorConnectionID, entry.DeliveryGeneration
 	peer.streams[admission] = struct{}{}
+	receipts := newModeledConnectorTerminal(t, peer, wrap...)
 	t.Cleanup(func() {
 		cancel()
-		admission.guard.Close()
+		err := admission.finishDelivery(context.Canceled)
+		joinModeledConnectorAdmission(admission, err)
+		bound.terminalWorkers.Wait()
 		bound.mu.Lock()
 		delete(peer.streams, admission)
 		bound.mu.Unlock()
 	})
-	return bound, peer, admission, entry
+	return bound, peer, admission, entry, receipts
 }
 
 func TestConnectorNormalCompletionKeepsExactReceiptAndImmediateRevocation(t *testing.T) {
@@ -53,7 +58,7 @@ func TestConnectorNormalCompletionKeepsExactReceiptAndImmediateRevocation(t *tes
 		for _, finish := range []string{"consumed", "revoked", "canceled"} {
 			t.Run(string(protocol)+"/"+finish, func(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
-					bound, peer, admission, entry := newConnectorDeliveryAdmission(t, protocol, 2*time.Second)
+					bound, peer, admission, entry, receipts := newConnectorDeliveryAdmission(t, protocol, 2*time.Second)
 					before := time.Now()
 					done := make(chan error, 1)
 					go func() { done <- admission.finishDelivery(nil) }()
@@ -64,9 +69,9 @@ func TestConnectorNormalCompletionKeepsExactReceiptAndImmediateRevocation(t *tes
 					wrongVisitor, wrongGeneration := receipt, receipt
 					wrongVisitor.VisitorConnectionID = "vc_aaaaaaaaaaaaaaaaaaaaaa"
 					wrongGeneration.DeliveryGeneration++
-					peer.completeVisitor(wrongVisitor)
-					peer.completeVisitor(wrongGeneration)
-					(&PeerSession{bound: bound, streams: make(map[*connectorAdmission]struct{})}).completeVisitor(receipt)
+					receipts.Complete(peer, wrongVisitor)
+					receipts.Complete(peer, wrongGeneration)
+					receipts.Complete(&PeerSession{bound: bound, streams: make(map[*connectorAdmission]struct{})}, receipt)
 					synctest.Wait()
 					select {
 					case err := <-done:
@@ -82,8 +87,8 @@ func TestConnectorNormalCompletionKeepsExactReceiptAndImmediateRevocation(t *tes
 						admission.cancel()
 						want = context.Canceled
 					default:
-						peer.completeVisitor(receipt)
-						peer.completeVisitor(receipt)
+						receipts.Complete(peer, receipt)
+						receipts.Complete(peer, receipt)
 					}
 					if err := <-done; !errors.Is(err, want) || !time.Now().Equal(before) {
 						t.Fatal("normal completion lost exact receipt or immediate revocation", err, want, time.Since(before))
@@ -106,7 +111,7 @@ func TestConnectorMissingReceiptKeepsAuthoritySnapshotAcrossRenewalAndLateDrain(
 					if drain == "shorter" {
 						lifetime = 2 * time.Second
 					}
-					bound, peer, admission, entry := newConnectorDeliveryAdmission(t, protocol, lifetime)
+					bound, peer, admission, entry, _ := newConnectorDeliveryAdmission(t, protocol, lifetime)
 					before := time.Now()
 					done := make(chan error, 1)
 					go func() { done <- admission.finishDelivery(nil) }()

@@ -333,7 +333,7 @@ func TestConnectorPeerConnectivityMalformedWireReturnsNoPartialMessage(t *testin
 	for _, length := range []int{0, 1, 3, 4, len(wire) - 1} {
 		_, err := ReadConnectorPeerConnectivity(bytes.NewReader(wire[:length]))
 		want := io.ErrUnexpectedEOF
-		if length == 0 || length == 4 {
+		if length == 0 {
 			want = io.EOF
 		}
 		if !errors.Is(err, ErrConnectorPeerConnectivity) || !errors.Is(err, want) {

@@ -949,8 +949,11 @@ func workloadPublicEndpointDialer(t *testing.T, server *ingress.Server, port int
 		life, cancel := context.WithCancel(t.Context())
 		go func() {
 			defer close(done)
-			_ = server.AcceptPublic(life, accepted, netip.MustParseAddrPort("192.0.2.44:4242"),
+			err := server.AcceptPublic(life, accepted, netip.MustParseAddrPort("192.0.2.44:4242"),
 				netip.AddrPortFrom(netip.MustParseAddr("203.0.113.10"), uint16(port)), hostname, nil)
+			if err != nil && life.Err() == nil {
+				t.Logf("workload public endpoint forwarding failed: %v", err)
+			}
 		}()
 		t.Cleanup(func() { cancel(); _ = conn.Close(); <-done })
 		return conn, nil

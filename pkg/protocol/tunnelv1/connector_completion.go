@@ -15,10 +15,11 @@ type ConnectorVisitorCompletion struct {
 	Kind                StreamKind `json:"kind"`
 	VisitorConnectionID string     `json:"visitor_connection_id"`
 	DeliveryGeneration  int64      `json:"delivery_generation"`
+	TerminalNumber      uint64     `json:"terminal_number"`
 }
 
 func (c ConnectorVisitorCompletion) valid() bool {
-	return c.Kind == ConnectorVisitorCompleted && opaqueid.Valid(c.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) && c.DeliveryGeneration > 0
+	return c.Kind == ConnectorVisitorCompleted && opaqueid.Valid(c.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) && c.DeliveryGeneration > 0 && c.TerminalNumber > 0
 }
 
 type ConnectorControlMessage interface{ connectorControlMessage() }
@@ -30,11 +31,11 @@ func WriteConnectorVisitorCompletion(w io.Writer, c ConnectorVisitorCompletion) 
 	if !c.valid() {
 		return ErrConnectorPermissionUpdate
 	}
-	return writeJSONFrame(w, c, 256)
+	return writeJSONFrame(w, c, MaxConnectorTerminalBytes)
 }
 
-// ReadConnectorControlMessage consumes one bounded update or completion. existing
-// permission updates have no kind; completion has a distinct closed wire shape.
+// the request decoder accepts only updates, completion, abort, and observed.
+// permission updates alone have no kind.
 func ReadConnectorControlMessage(r io.Reader) (ConnectorControlMessage, error) {
 	payload, err := readFramePayload(r, MaxConnectorPermissionBytes)
 	if err != nil {
@@ -46,19 +47,35 @@ func ReadConnectorControlMessage(r io.Reader) (ConnectorControlMessage, error) {
 	if json.Unmarshal(payload, &header) != nil {
 		return nil, ErrConnectorPermissionUpdate
 	}
-	if header.Kind == ConnectorVisitorCompleted {
+	if header.Kind != "" && len(payload) > MaxConnectorTerminalBytes {
+		return nil, ErrConnectorPermissionUpdate
+	}
+	switch header.Kind {
+	case ConnectorVisitorCompleted:
 		var c ConnectorVisitorCompletion
-		if decodeJSONPayload(payload, &c) != nil || !c.valid() {
+		if decodeConnectorControlPayload(payload, &c) != nil || !c.valid() {
 			return nil, ErrConnectorPermissionUpdate
 		}
 		return c, nil
-	}
-	if header.Kind == "" {
+	case ConnectorVisitorAborted:
+		var a ConnectorVisitorAbort
+		if decodeConnectorControlPayload(payload, &a) != nil || !a.valid() {
+			return nil, ErrConnectorPermissionUpdate
+		}
+		return a, nil
+	case ConnectorVisitorTerminalObservedKind:
+		var o ConnectorVisitorTerminalObserved
+		if decodeConnectorControlPayload(payload, &o) != nil || !o.valid() {
+			return nil, ErrConnectorPermissionUpdate
+		}
+		return o, nil
+	case "":
 		var u ConnectorPermissionUpdate
-		if decodeJSONPayload(payload, &u) != nil || !u.valid() {
+		if decodeConnectorControlPayload(payload, &u) != nil || !u.valid() {
 			return nil, ErrConnectorPermissionUpdate
 		}
 		return u, nil
+	default:
+		return nil, ErrConnectorPermissionUpdate
 	}
-	return nil, ErrConnectorPermissionUpdate
 }

@@ -55,6 +55,9 @@ func TestConnectionPreparationRetirementCleanupOrder(t *testing.T) {
 							RebindPair: func(context.Context, string, string, controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
 								panic("unexpected rebind")
 							},
+							RetirePair: func(context.Context, string, string, controlv1.ConnectorPeerPairRetireRequest) (controlv1.ConnectorPeerPairRetirement, error) {
+								panic("unexpected retirement")
+							},
 							Permission: func(context.Context, string) (controlv1.VisitorTokenResponse, error) { panic("unexpected permission") },
 							Close:      func(context.Context) error { closes.Add(1); return cleanup.err },
 						})
