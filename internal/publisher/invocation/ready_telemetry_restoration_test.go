@@ -185,10 +185,16 @@ func readyTelemetryBarrier(t *testing.T, collector *clienttelemetry.Collector, c
 
 type readyTelemetryControl struct {
 	*cliFallbackObservationControl
-	server string
+	server      string
+	discoveries atomic.Int32
 }
 
 func (c *readyTelemetryControl) ControlURL() string { return c.server }
+
+func (c *readyTelemetryControl) Discovery(context.Context) (controlv1.ControlDiscovery, error) {
+	c.discoveries.Add(1)
+	return controlv1.ControlDiscovery{BrowserLoginAvailable: new(false)}, nil
+}
 
 func (c *readyTelemetryControl) ReadPublisherVisitorPolicy(ctx context.Context, request controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
 	update, err := c.cliFallbackObservationControl.ReadPublisherVisitorPolicy(ctx, request, token)
@@ -295,6 +301,9 @@ func TestReadyTelemetryRestorationFollowsActualPublicationObservation(t *testing
 				}
 				cancel()
 				result := readyTelemetryAwait(t, published)
+				if control.discoveries.Load() != 1 {
+					t.Error("ready telemetry publication did not capture discovery exactly once")
+				}
 				if mode == "success" && result != nil || mode != "success" && !errors.Is(result, reportErr) {
 					t.Error("actual publication lost its readiness observation result", result)
 				}
