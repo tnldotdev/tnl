@@ -2085,6 +2085,7 @@ CREATE TABLE control.deployment_management_grants (
     team_id text NOT NULL,
     project_key text NOT NULL,
     all_deployments boolean NOT NULL,
+    temporary_publication text NOT NULL DEFAULT '' CHECK (temporary_publication IN ('','restricted','anonymous')),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     idempotency_key text NOT NULL,
     request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
@@ -2106,7 +2107,7 @@ CREATE TABLE control.deployment_management_services (
     grant_id text NOT NULL,
     team_id text NOT NULL,
     project_key text NOT NULL,
-    capability text NOT NULL CHECK (capability IN ('manage','connect')),
+    capability text NOT NULL CHECK (capability IN ('manage','connect','publish')),
     service text NOT NULL,
     protocol text NOT NULL CHECK (protocol IN ('http','tcp','mysql','postgres','kubernetes')),
     revoked_at timestamptz,
@@ -2126,6 +2127,8 @@ $$;
 -- +goose StatementEnd
 CREATE TRIGGER retire_deployment_management_service AFTER UPDATE OR DELETE ON control.project_services
 FOR EACH ROW EXECUTE FUNCTION control.retire_deployment_management_service();
+ALTER TABLE control.publisher_namespace_allocations ADD COLUMN deployment_id text
+    REFERENCES control.deployments(id) ON DELETE RESTRICT;
 -- namespace claims outlive deployment names and runs. reuse waits for certificate,
 -- DNS and forwarding retirement; a config rename never changes this owner.
 CREATE TABLE control.service_namespace_claims (
@@ -2181,6 +2184,12 @@ $$;
 CREATE FUNCTION control.service_namespace_reusable(scope text,observed timestamptz) RETURNS boolean LANGUAGE sql STABLE AS $$
     SELECT EXISTS(SELECT 1 FROM control.service_namespace_claims claim WHERE claim.namespace=scope AND claim.retired_at IS NOT NULL AND claim.reusable_after<=observed)
       AND NOT EXISTS(SELECT 1 FROM control.service_endpoints endpoint WHERE endpoint.namespace=scope AND(endpoint.retired_at IS NULL OR endpoint.dns_state<>'removed'))
+      AND NOT EXISTS(SELECT 1 FROM control.public_urls url WHERE url.namespace=scope
+          AND (url.lifecycle_state<>'deleted' OR url.dns_state NOT IN('unmanaged','removed')
+              OR EXISTS(SELECT 1 FROM control.publish_runs run WHERE run.public_url_id=url.id AND(run.certificate_not_after>observed OR run.closed_at IS NULL AND run.publisher_expires_at>observed))
+              OR EXISTS(SELECT 1 FROM control.acme_orders issuance WHERE issuance.public_url_id=url.id
+                  AND(issuance.not_after>observed OR issuance.state NOT IN('failed','canceled','installed','waiting_for_install') OR issuance.finalization_possible AND issuance.not_after IS NULL
+                      OR EXISTS(SELECT 1 FROM control.acme_authorizations auth WHERE auth.order_id=issuance.id AND(auth.state IN('presenting','presented','validating','valid','cleaning') OR auth.presented_at IS NOT NULL AND auth.cleanup_completed_at IS NULL))))))
       AND NOT EXISTS(SELECT 1 FROM control.service_runs run WHERE run.certificate_scope=scope AND(run.certificate_expires_at>observed OR run.closed_at IS NULL AND run.publisher_expires_at>observed))
       AND NOT EXISTS(SELECT 1 FROM control.acme_orders issuance WHERE issuance.certificate_scope=scope
         AND(issuance.not_after>observed OR issuance.state NOT IN('failed','canceled','installed','waiting_for_install') OR issuance.finalization_possible AND issuance.not_after IS NULL
@@ -2276,7 +2285,8 @@ CREATE TABLE control.deployment_publisher_members (
 );
 -- +goose StatementBegin
 CREATE FUNCTION control.deployment_credential_available(approval text) RETURNS boolean LANGUAGE sql STABLE AS $$
-    SELECT EXISTS(SELECT 1 FROM control.deployment_management_services scope WHERE scope.grant_id=approval)
+    SELECT (EXISTS(SELECT 1 FROM control.deployment_management_services scope WHERE scope.grant_id=approval)
+        OR EXISTS(SELECT 1 FROM control.deployment_management_grants grant_record WHERE grant_record.grant_id=approval AND grant_record.temporary_publication<>''))
     AND NOT EXISTS(SELECT 1 FROM control.deployment_management_services scope
         LEFT JOIN control.project_services declaration ON declaration.team_id=scope.team_id AND declaration.project_key=scope.project_key
         AND declaration.name=scope.service AND declaration.protocol=scope.protocol

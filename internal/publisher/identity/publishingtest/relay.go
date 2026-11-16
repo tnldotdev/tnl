@@ -109,9 +109,19 @@ func (f *Fixture) startRelay(ctx context.Context, setup controlv1.PublishRunSetu
 // Visit carries a real HTTPS request through an authenticated publisher
 // connection, including the unchanged PROXY v2 boundary and visitor TLS.
 func (f *Fixture) Visit(ctx context.Context, address string) (int, []byte, error) {
-	u, err := url.Parse(address)
+	response, body, err := f.VisitHTTP(ctx, address, nil)
 	if err != nil {
 		return 0, nil, err
+	}
+	return response.StatusCode, body, nil
+}
+
+// VisitHTTP returns the response headers and buffered body after closing the
+// visitor stream, so callers can assert browser redirects without following them.
+func (f *Fixture) VisitHTTP(ctx context.Context, address string, headers http.Header) (*http.Response, []byte, error) {
+	u, err := url.Parse(address)
+	if err != nil {
+		return nil, nil, err
 	}
 	f.mu.Lock()
 	var selected relaySession
@@ -124,16 +134,16 @@ func (f *Fixture) Visit(ctx context.Context, address string) (int, []byte, error
 	setup := f.setups[selected.ref.PublishRunID]
 	f.mu.Unlock()
 	if selected.session == nil {
-		return 0, nil, errors.New("publisher connection is not ready")
+		return nil, nil, errors.New("publisher connection is not ready")
 	}
 	id, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 	r := selected.ref
 	stream, err := selected.session.OpenVisitorStream(ctx, tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: id, PublicURLID: r.PublicURLID, PublishRunID: r.PublishRunID, PublishRunNumber: r.PublishRunNumber, PublisherConnectionID: r.PublisherConnectionID, ConnectionAssignmentRevision: r.ConnectionAssignmentRevision}, nil, tunnel.ReturnEvents{})
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 	defer stream.Close()
 	deadline := time.Now().Add(5 * time.Second)
@@ -143,7 +153,7 @@ func (f *Fixture) Visit(ctx context.Context, address string) (int, []byte, error
 	_ = stream.SetDeadline(deadline)
 	master, err := publicSourceKey(setup)
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 	now := time.Now()
 	authority, child, err := visitortoken.IssueVisitorSourceAuthority(master, tunnelv1.VisitorSourceAuthority{
@@ -151,7 +161,7 @@ func (f *Fixture) Visit(ctx context.Context, address string) (int, []byte, error
 		IngressID: "fixture-ingress", IngressRunID: "fixture-process", IngressLeaseRevision: 1, VisitorPolicyRevision: 1, ValidUntil: now.Add(10 * time.Second).Unix(),
 	}, now)
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 	header := proxyproto.Header{Source: netip.MustParseAddrPort("127.0.0.1:45123"), Destination: netip.MustParseAddrPort("127.0.0.1:443")}
 	proof, err := visitortoken.SignVisitorSource(child, authority, f.sourceSequence.Add(1), tunnelv1.VisitorSourceBinding{
@@ -159,35 +169,36 @@ func (f *Fixture) Visit(ctx context.Context, address string) (int, []byte, error
 		VisitorID: id, Source: header.Source, Destination: header.Destination,
 	}, now)
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 	wire, err := proof.MarshalBinary()
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 	header.VisitorSourceProof = string(wire)
 	metadata, err := proxyproto.Encode(header)
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 	if _, err := stream.Write(metadata); err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 	connection := tls.Client(stream, &tls.Config{MinVersion: tls.VersionTLS13, ServerName: u.Hostname()})
 	defer connection.Close()
 	request, err := http.NewRequestWithContext(ctx, "GET", address, nil)
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
+	request.Header = headers.Clone()
 	request.Close = true
 	if err := request.Write(connection); err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 	response, err := http.ReadResponse(bufio.NewReader(connection), request)
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
-	return response.StatusCode, body, err
+	return response, body, err
 }

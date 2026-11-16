@@ -57,6 +57,10 @@ tags:
   - name: service-audit
     description: Read the team's bounded service access and lifecycle audit history.
 paths:
+  /v1/projects/{project_key}/deployments/{deployment}/public-urls/{service}:
+    $ref: "./paths/deployment-publication.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1public-urls~1{service}"
+  /v1/projects/{project_key}/deployments/{deployment}/public-urls:
+    $ref: "./paths/deployment-publication.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1public-urls"
   /v1/projects/{project_key}/retire:
     $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1{project_key}~1retire"
   /v1/projects/{project_key}/status:
@@ -476,6 +480,14 @@ components:
       $ref: "./schemas/deployment-credentials.yaml#/schemas/DeploymentCredentialServiceSelection"
     DeploymentCredentialServiceProtocols:
       $ref: "./schemas/deployment-credentials.yaml#/schemas/DeploymentCredentialServiceProtocols"
+    DeploymentPublishSelection:
+      $ref: "./schemas/deployment-credentials.yaml#/schemas/DeploymentPublishSelection"
+    DeploymentPublication:
+      $ref: "./schemas/deployment-publication.yaml#/schemas/DeploymentPublication"
+    DeploymentPublishApproval:
+      $ref: "./schemas/deployment-credentials.yaml#/schemas/DeploymentPublishApproval"
+    DeploymentTemporaryPublication:
+      $ref: "./schemas/deployment-credentials.yaml#/schemas/DeploymentTemporaryPublication"
     CreateDeploymentPublisherEnrollmentRequest:
       $ref: "./schemas/deployment-publishers.yaml#/schemas/CreateDeploymentPublisherEnrollmentRequest"
     DeploymentPublisherEnrollment:

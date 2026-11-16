@@ -63,7 +63,6 @@ export type {
   RevokeDeploymentPublisherResponse,
   RevokeDeploymentPublisherResponses,
   ServiceEndpoint,
-  ServiceId,
   ServiceProtocol,
   TeamIdQuery,
   UpdateDeploymentData,

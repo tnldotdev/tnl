@@ -129,7 +129,8 @@ INSERT INTO control.publish_runs (
     'starting',
     sqlc.arg(created_at),
     sqlc.arg(last_heartbeat_at),
-    sqlc.arg(publisher_expires_at)
+    LEAST(sqlc.arg(publisher_expires_at)::timestamptz,
+        (SELECT expires_at FROM control.publisher_grants WHERE id=sqlc.narg(publisher_grant_id)))
 FROM version
 RETURNING *;
 

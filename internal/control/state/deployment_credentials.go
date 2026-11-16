@@ -26,6 +26,7 @@ type RegisterDeploymentCredentialRequest struct {
 	Name, IdempotencyKey string
 	PublicKey            ed25519.PublicKey
 	Permissions          map[string][]string
+	TemporaryPublication string
 	DeploymentIDs        []string
 	AllDeployments       bool
 	Lifetime             time.Duration
@@ -33,18 +34,29 @@ type RegisterDeploymentCredentialRequest struct {
 }
 
 type DeploymentCredential struct {
-	ClientID       string                       `json:"client_id"`
-	KeyID          string                       `json:"key_id"`
-	GrantID        string                       `json:"grant_id"`
-	TeamID         string                       `json:"team_id"`
-	ProjectKey     string                       `json:"project_key"`
-	Permissions    map[string]map[string]string `json:"permissions"`
-	DeploymentIDs  []string                     `json:"deployment_ids"`
-	AllDeployments bool                         `json:"all_deployments"`
-	ExpiresAt      time.Time                    `json:"expires_at"`
+	ClientID       string                          `json:"client_id"`
+	KeyID          string                          `json:"key_id"`
+	GrantID        string                          `json:"grant_id"`
+	TeamID         string                          `json:"team_id"`
+	ProjectKey     string                          `json:"project_key"`
+	Permissions    DeploymentCredentialPermissions `json:"permissions"`
+	DeploymentIDs  []string                        `json:"deployment_ids"`
+	AllDeployments bool                            `json:"all_deployments"`
+	ExpiresAt      time.Time                       `json:"expires_at"`
 }
 
 type deploymentCredentialScope struct{ team string }
+
+type DeploymentCredentialPermissions struct {
+	Manage  map[string]string          `json:"manage,omitempty"`
+	Connect map[string]string          `json:"connect,omitempty"`
+	Publish *DeploymentPublishApproval `json:"publish,omitempty"`
+}
+
+type DeploymentPublishApproval struct {
+	Services  map[string]string `json:"services,omitempty"`
+	Temporary string            `json:"temporary,omitempty"`
+}
 
 func (s deploymentCredentialScope) publisherScope() PublisherScope {
 	return PublisherScope{TeamID: s.team, Kind: DeploymentCredentialGrant}
@@ -55,12 +67,12 @@ func (s deploymentCredentialScope) publisherScope() PublisherScope {
 func (d *Database) RegisterDeploymentCredential(ctx context.Context, r RegisterDeploymentCredentialRequest) (result DeploymentCredential, retErr error) {
 	clock := newAuthorizationClock(r.Now)
 	if r.AccessToken != "" || !naming.ValidServiceName(r.Name) || !validIdempotencyKey(r.IdempotencyKey) || len(r.PublicKey) != ed25519.PublicKeySize ||
-		len(r.Permissions) < 1 || len(r.Permissions) > 2 || len(r.DeploymentIDs) > 128 || r.AllDeployments == (len(r.DeploymentIDs) > 0) || r.Lifetime < time.Minute || r.Lifetime > 30*24*time.Hour {
+		len(r.Permissions) == 0 && r.TemporaryPublication == "" || len(r.Permissions) > 3 || len(r.DeploymentIDs) > 128 || r.AllDeployments == (len(r.DeploymentIDs) > 0) || r.Lifetime < time.Minute || r.Lifetime > 30*24*time.Hour || r.TemporaryPublication != "" && r.TemporaryPublication != "restricted" && r.TemporaryPublication != "anonymous" {
 		return result, ErrProjectConfigurationInvalid
 	}
 	permissions := make(map[string][]string, len(r.Permissions))
 	for capability, names := range r.Permissions {
-		if capability != "manage" && capability != "connect" || len(names) < 1 || len(names) > 128 {
+		if capability != "manage" && capability != "connect" && capability != "publish" || len(names) < 1 || len(names) > 128 {
 			return result, ErrProjectConfigurationInvalid
 		}
 		names = slices.Clone(names)
@@ -87,7 +99,8 @@ func (d *Database) RegisterDeploymentCredential(ctx context.Context, r RegisterD
 		DeploymentIDs  []string
 		AllDeployments bool
 		Lifetime       time.Duration
-	}{r.Name, r.PublicKey, r.Permissions, r.DeploymentIDs, r.AllDeployments, r.Lifetime})
+		Temporary      string
+	}{r.Name, r.PublicKey, r.Permissions, r.DeploymentIDs, r.AllDeployments, r.Lifetime, r.TemporaryPublication})
 	if err != nil {
 		return result, err
 	}
@@ -139,9 +152,9 @@ func (d *Database) RegisterDeploymentCredential(ctx context.Context, r RegisterD
 		for _, declaration := range declarations {
 			protocols[declaration.Name] = declaration.Protocol
 		}
-		for _, names := range r.Permissions {
+		for capability, names := range r.Permissions {
 			for _, name := range names {
-				if protocols[name] == "" {
+				if protocols[name] == "" || capability == "publish" && protocols[name] != "http" {
 					return result, ErrProjectConfigurationInvalid
 				}
 			}
@@ -151,8 +164,8 @@ func (d *Database) RegisterDeploymentCredential(ctx context.Context, r RegisterD
 		if err != nil {
 			return result, err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO control.deployment_management_grants(grant_id,team_id,project_key,all_deployments,created_by_identity_id,idempotency_key,request_digest,initial_key_id)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, identity.GrantID, r.TeamID, r.ProjectKey, r.AllDeployments, r.ActorID, r.IdempotencyKey, digest[:], identity.KeyID)
+		_, err = tx.Exec(ctx, `INSERT INTO control.deployment_management_grants(grant_id,team_id,project_key,all_deployments,created_by_identity_id,idempotency_key,request_digest,initial_key_id,temporary_publication)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, identity.GrantID, r.TeamID, r.ProjectKey, r.AllDeployments, r.ActorID, r.IdempotencyKey, digest[:], identity.KeyID, r.TemporaryPublication)
 		if err != nil {
 			return result, err
 		}
@@ -170,12 +183,17 @@ func (d *Database) RegisterDeploymentCredential(ctx context.Context, r RegisterD
 		}
 		result = DeploymentCredential{ClientID: identity.ID, KeyID: identity.KeyID, GrantID: identity.GrantID, TeamID: r.TeamID, ProjectKey: r.ProjectKey, AllDeployments: r.AllDeployments, ExpiresAt: until}
 	}
-	result.Permissions, result.DeploymentIDs, err = deploymentCredentialSelection(ctx, q, result.GrantID)
+	var selected map[string]map[string]string
+	selected, result.DeploymentIDs, err = deploymentCredentialSelection(ctx, q, result.GrantID)
 	if err != nil {
 		return DeploymentCredential{}, err
 	}
 	if !result.ExpiresAt.After(clock.current()) {
 		return DeploymentCredential{}, ErrDeploymentCredentialUnavailable
+	}
+	result.Permissions = DeploymentCredentialPermissions{Manage: selected["manage"], Connect: selected["connect"]}
+	if len(selected["publish"]) > 0 || r.TemporaryPublication != "" {
+		result.Permissions.Publish = &DeploymentPublishApproval{Services: selected["publish"], Temporary: r.TemporaryPublication}
 	}
 	if err = commitDeployment(ctx, tx, r.DeploymentScope); err != nil {
 		return DeploymentCredential{}, err

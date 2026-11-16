@@ -119,6 +119,17 @@ API. A declaration cannot remove or change the protocol of a retained binding.
 Control keeps each deployment's encrypted serving configuration and revision
 separate from the project's desired configuration and apply revision.
 
+An HTTP binding can reference an existing public URL record instead of a private
+service. Apply saves its deployment ownership and visitor policy. An app-owned
+binding defers its listener to the application; installed workers receive only
+explicit targets. They compose `publisher.Run`, not another publication engine.
+
+Deployment credentials independently approve management, connections, named HTTP
+publication, and temporary allocation. Control stores temporary provenance in the
+existing namespace allocation table and reuses URL expiration and deletion.
+Native preparation narrows that credential to one URL without issuing another
+grant. Retiring a namespace waits for public URL and service authority alike.
+
 Project status includes deployment identity so two bindings called `db` remain
 distinct. Project retirement removes all deployment bindings and local worktree
 realizations in the same transaction, while retaining the project's source

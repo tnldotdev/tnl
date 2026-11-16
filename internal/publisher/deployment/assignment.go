@@ -22,19 +22,27 @@ import (
 // installed jobs and foreground callers compose this operation without giving it
 // a registry or transferring their process lifetime to it.
 type AssignmentPublisher struct {
-	Telemetry *clienttelemetry.Collector
-	Member    controlv1.DeploymentPublisherIdentity
-	Private   ed25519.PrivateKey
-	State     *clientstate.Store
-	Control   publisheridentity.NativeControl
-	Authority publisheridentity.AssertionExchanger
-	Discovery *publisherdiscovery.Resolver
+	Telemetry       *clienttelemetry.Collector
+	Member          controlv1.DeploymentPublisherIdentity
+	Private         ed25519.PrivateKey
+	State           *clientstate.Store
+	Control         publisheridentity.NativeControl
+	Authority       publisheridentity.AssertionExchanger
+	Discovery       *publisherdiscovery.Resolver
+	ServerDiscovery ServerDiscovery
+}
+
+type ServerDiscovery interface {
+	Discovery(context.Context) (controlv1.ControlDiscovery, error)
 }
 
 func (AssignmentPublisher) String() string   { return "deployment publications" }
 func (AssignmentPublisher) GoString() string { return "deployment publications" }
 
 func (p AssignmentPublisher) Publish(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
+	if assignment.ServiceKind == "public_url" {
+		return p.publishPublicURL(ctx, assignment, health)
+	}
 	if assignment.ServiceKind != "service" || assignment.Configuration.Protocol == nil || assignment.TrustRevision < 1 || p.Member.DeploymentId == "" || p.Member.DeploymentName == "" || p.Member.DeploymentName == "local" {
 		return ErrAssignment
 	}
