@@ -17,20 +17,6 @@ CREATE TABLE publisher_provision_journal (
     PRIMARY KEY (server_origin, kind, binding_key, revision)
 ) STRICT;
 
-CREATE TABLE service_client_certificates (
-    server_origin TEXT NOT NULL,
-    identity_id TEXT NOT NULL,
-    service_id TEXT NOT NULL,
-    device_id TEXT NOT NULL,
-    private_key_ciphertext BLOB NOT NULL,
-    csr_der BLOB,
-    -- successful request retained for session rebinding; csr_der is a pending renewal
-    issued_csr_der BLOB,
-    csr_created_at INTEGER NOT NULL DEFAULT 0,
-    certificate_pem BLOB,
-    issuer_pem BLOB,
-    PRIMARY KEY(server_origin,identity_id,service_id,device_id)
-);
 CREATE TABLE server_profiles (
     id INTEGER PRIMARY KEY,
     origin TEXT NOT NULL UNIQUE,
@@ -104,7 +90,7 @@ CREATE TABLE control_sessions (
 
 CREATE TABLE local_tunnels (
     id TEXT PRIMARY KEY CHECK (length(id) = 26 AND substr(id, 1, 4) = 'tun_'),
-    command TEXT NOT NULL CHECK (command IN ('publish', 'dev')),
+    command TEXT NOT NULL CHECK (command = 'publish'),
     process_id INTEGER NOT NULL CHECK (process_id > 0),
     server_origin TEXT NOT NULL REFERENCES server_profiles (origin) ON DELETE RESTRICT,
     project_root TEXT NOT NULL,

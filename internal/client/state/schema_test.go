@@ -103,3 +103,53 @@ func TestV1ProjectJournalAndHandoffState(t *testing.T) {
 		}
 	}
 }
+
+func TestV1RetiredClientSchema(t *testing.T) {
+	ctx := t.Context()
+	root := filepath.Join(t.TempDir(), "state")
+	database, err := Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	t.Run("unused service certificate cache", func(t *testing.T) {
+		var tables int
+		if err := database.db.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_schema
+			WHERE type = 'table' AND name = 'service_client_certificates'`).Scan(&tables); err != nil {
+			t.Fatal(err)
+		}
+		if tables != 0 {
+			t.Fatal("client state retained the unused service certificate cache")
+		}
+	})
+
+	t.Run("retired dev command", func(t *testing.T) {
+		const server = "https://control.example.test"
+		now := time.Now().UTC().UnixNano()
+		if _, err := database.db.ExecContext(t.Context(), `INSERT INTO server_profiles
+			(origin, created_at, last_used_at) VALUES (?, ?, ?)`, server, now, now); err != nil {
+			t.Fatal(err)
+		}
+		const insert = `INSERT INTO local_tunnels
+			(id, command, process_id, server_origin, project_root, target, state,
+			 started_at, updated_at, heartbeat_at, lease_expires_at)
+			VALUES (?, ?, 1, ?, ?, 'http://127.0.0.1:3000', 'starting', ?, ?, ?, ?)`
+		const tunnel = "tun_0123456789abcdefghijkl"
+		if _, err := database.db.ExecContext(t.Context(), insert,
+			tunnel, "publish", server, root, now, now, now, now+int64(time.Minute)); err != nil {
+			t.Fatal("rejected the supported publish command", err)
+		}
+		if _, err := database.db.ExecContext(t.Context(), insert,
+			"tun_1123456789abcdefghijkl", "dev", server, root, now, now, now, now+int64(time.Minute)); err == nil {
+			t.Error("insert accepted the retired dev command")
+		}
+		if _, err := database.db.ExecContext(t.Context(), `UPDATE local_tunnels SET command = 'dev' WHERE id = ?`, tunnel); err == nil {
+			t.Error("update accepted the retired dev command")
+		}
+		var command string
+		if err := database.db.QueryRowContext(t.Context(), `SELECT command FROM local_tunnels WHERE id = ?`, tunnel).Scan(&command); err != nil || command != "publish" {
+			t.Fatal("rejected update changed the saved command", command, err)
+		}
+	})
+}
