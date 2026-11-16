@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
 import secrets
 import socket
 from dataclasses import dataclass
@@ -21,50 +20,9 @@ from ._protocol import (
     NativeUnavailable,
     RegistrationLost,
     TnlError,
-    hostname,
-    object_value,
+    parse_assignment,
     service_name,
-    text,
 )
-
-
-def _service_metadata(name: str, value: object) -> dict[str, object]:
-    item = object_value(
-        value, {"protocol", "namespace", "hostname", "port", "public", "url", "paths"}
-    )
-    hostname(item.get("namespace"))
-    host = hostname(item.get("hostname"))
-    protocol, port = item.get("protocol"), item.get("port")
-    if (
-        protocol not in ("http", "tcp", "postgres", "mysql", "kubernetes")
-        or type(port) is not int
-        or not 1 <= port <= 65535
-        or type(item.get("public")) is not bool
-    ):
-        raise InvalidResponse()
-    url = item.get("url", "")
-    if protocol in ("http", "kubernetes"):
-        if url != f"https://{host}:{port}" and not (port == 443 and url == f"https://{host}"):
-            raise InvalidResponse()
-    elif url != "":
-        raise InvalidResponse()
-    paths = item.get("paths", {})
-    if not isinstance(paths, dict) or len(paths) > 32 or protocol != "http" and paths:
-        raise InvalidResponse()
-    for prefix, raw in paths.items():
-        prefix = text(prefix, 256)
-        mount = object_value(raw, {"service", "url", "stripPrefix"})
-        if (
-            re.fullmatch(r"/(?:[A-Za-z0-9._~-]+/)*[A-Za-z0-9._~-]+", prefix) is None
-            or any(segment in (".", "..") for segment in prefix.split("/"))
-            or prefix == "/__tnl"
-            or prefix.startswith("/__tnl/")
-            or service_name(mount.get("service")) == name
-            or mount.get("url") != f"{url}{prefix}"
-            or type(mount.get("stripPrefix")) is not bool
-        ):
-            raise InvalidResponse()
-    return item
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,54 +86,15 @@ class PreparedService:
         }
         if self._service is not None:
             payload["service"] = self._service
-        assignment = object_value(
-            await self._native.request(endpoint, "prepare", payload),
-            {"version", "registration_id", "service", "hostname", "public_url", "project"},
+        assignment = parse_assignment(
+            await self._native.request(endpoint, "prepare", payload), endpoint
         )
-        ident = text(assignment.get("registration_id"), 128)
-        if (
-            type(assignment.get("version")) is not int
-            or assignment["version"] != 1
-            or re.fullmatch(r"reg_[a-f0-9]{32}", ident) is None
-        ):
-            raise InvalidResponse()
-        name = service_name(assignment.get("service"))
-        without_endpoint = assignment.get("hostname") == "" and assignment.get("public_url") == ""
-        host = "" if without_endpoint else hostname(assignment.get("hostname"))
-        url = "" if without_endpoint else text(assignment.get("public_url"))
-        project = object_value(
-            assignment.get("project"),
-            {"namespace", "dev", "services", "oauth", "webhooks", "aliases", "worktree"},
+        ident, name, host, url = (
+            assignment.registration_id,
+            assignment.service,
+            assignment.hostname,
+            assignment.public_url,
         )
-        services = project.get("services")
-        if not isinstance(services, dict) or len(services) > 32 or project.get("dev") is not True:
-            raise InvalidResponse()
-        if (
-            project.get("namespace") != ""
-            or services
-            or any(key in project for key in ("oauth", "webhooks", "aliases"))
-        ):
-            hostname(project.get("namespace"))
-        validated = {}
-        for key, raw in services.items():
-            key = service_name(key)
-            validated[key] = _service_metadata(key, raw)
-        own = validated.get(name)
-        if (
-            name != endpoint.service
-            or endpoint.scope != "app"
-            or (without_endpoint and own is not None)
-            or (
-                not without_endpoint
-                and (
-                    own is None
-                    or own.get("protocol") != "http"
-                    or own.get("hostname") != host
-                    or own.get("url") != url
-                )
-            )
-        ):
-            raise InvalidResponse()
         if self.service and (url != self.public_url or name != self.service):
             await self._native.request(
                 endpoint,

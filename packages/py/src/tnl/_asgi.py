@@ -7,26 +7,28 @@ import os
 import re
 import secrets
 import socket
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
 import uvicorn
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ._native import NativeRuntime
 from ._protocol import (
     Endpoint,
     InvalidResponse,
     NativeUnavailable,
+    PublicationCleanupFailed,
     RegistrationLost,
     Status,
     TnlError,
+    parse_assignment,
     parse_registration,
     parse_status,
+    service_name,
 )
 
 _native = NativeRuntime()
@@ -55,13 +57,91 @@ async def _join_cleanup[T](task: asyncio.Task[T]) -> T:
     return result
 
 
+def _server_shutdown_deadline() -> asyncio.Timeout:
+    return asyncio.timeout(15)
+
+
 class _OwnedServer(uvicorn.Server):
-    tunnel: Tunnel | None = None
+    tunnel: Publication | None = None
+    server_driven_shutdown = False
+
+    def __init__(self, config: uvicorn.Config, app: ASGIApp) -> None:
+        super().__init__(config)
+        self._asgi_workers: set[asyncio.Task[None]] = set()
+        self._forcing = False
+        self._worker_failures: list[BaseException] = []
+
+        async def owned(scope: Scope, receive: Receive, send: Send) -> None:
+            task = asyncio.current_task()
+            assert task is not None
+            self._asgi_workers.add(task)
+            try:
+                await app(scope, receive, send)
+            except BaseException as cause:
+                # uvicorn consumes lifespan exceptions. retain independent
+                # application failures that occur while forced shutdown joins it.
+                if self._forcing and not isinstance(cause, asyncio.CancelledError):
+                    self._worker_failures.append(cause)
+                raise
+            finally:
+                self._asgi_workers.discard(task)
+
+        config.app = owned
 
     async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
+        self.server_driven_shutdown = self.tunnel is not None
+        failures: list[BaseException] = []
         if self.tunnel is not None:
-            await self.tunnel.unregister()
-        await super().shutdown(sockets)
+            try:
+                await self.tunnel.unregister()
+            except BaseException as cause:
+                failures.append(cause)
+        # server-driven shutdown still owns its listeners, connections, and asgi
+        # lifespan when native cleanup fails. preserve both independent failures.
+        try:
+            # aclose already shields caller cancellation. internal deadline
+            # cancellation must reach this work instead of waiting forever.
+            await super().shutdown(sockets)
+        except BaseException as cause:
+            failures.append(cause)
+        if len(failures) == 1:
+            raise failures[0]
+        if failures:
+            raise BaseExceptionGroup("native and ASGI shutdown failed", failures)
+
+    async def join_workers(self) -> None:
+        workers = self._asgi_workers | self.server_state.tasks
+        if workers:
+            # cancelling this wait at the deadline does not lose the worker
+            # identities that force_shutdown must cancel and join.
+            await asyncio.wait(workers)
+
+    async def force_shutdown(self, serve: asyncio.Task[None]) -> list[BaseException]:
+        self._forcing = self.force_exit = True
+        for server in self.servers:
+            server.close()
+        for connection in tuple(self.server_state.connections):
+            connection.shutdown()
+        workers = self._asgi_workers | self.server_state.tasks
+        serve.cancel()
+        for task in workers:
+            task.cancel()
+        results = await asyncio.gather(serve, *workers, return_exceptions=True)
+        failures: list[BaseException] = []
+        for cause in [*results, *self._worker_failures]:
+            if isinstance(cause, BaseExceptionGroup):
+                canceled, remaining = cause.split(asyncio.CancelledError)
+                if canceled is not None:
+                    cause = remaining
+            if (
+                isinstance(cause, BaseException)
+                and not isinstance(cause, asyncio.CancelledError)
+                and not any(previous is cause for previous in failures)
+            ):
+                failures.append(cause)
+        for server in self.servers:
+            await server.wait_closed()
+        return failures
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,8 +220,8 @@ def _limit_payload(value: Limits | None) -> dict[str, object] | None:
     return result
 
 
-class Tunnel:
-    """one temporary public URL and its owned ASGI listener."""
+class Publication:
+    """one public URL publication and its owned ASGI adapter listener."""
 
     def __init__(
         self,
@@ -159,8 +239,19 @@ class Tunnel:
         limits: Limits | None,
         require_post_quantum: bool = False,
         telemetry: bool = True,
+        deployment: dict[str, str] | None = None,
+        service: str | None = None,
+        on_close: Callable[[Publication], None] | None = None,
+        environment: Mapping[str, str] | None = None,
     ) -> None:
         self._native = native
+        self._deployment = None if deployment is None else dict(deployment)
+        self._service = service
+        self._on_close = on_close
+        self._environment = dict(os.environ if environment is None else environment)
+        self._assigned_url: str | None = None
+        self._pid = os.getpid()
+        self._loop = asyncio.get_running_loop()
         self._server = server
         self._serve_task = serve_task
         self._listener = listener
@@ -177,8 +268,10 @@ class Tunnel:
             "pid": os.getpid(),
             "target": self._target,
             "telemetry_disabled": not telemetry
-            or os.getenv("TNL_NO_TELEMETRY", "").lower() in {"1", "true"},
+            or self._environment.get("TNL_NO_TELEMETRY", "").lower() in {"1", "true"},
         }
+        if self._deployment is not None:
+            self._payload["deployment"] = self._deployment
         if publisher_credential_file is not None:
             self._payload["publisher_credential_file"] = publisher_credential_file
         if publisher_identity_id is not None:
@@ -187,6 +280,7 @@ class Tunnel:
             self._payload["server_url"] = server_url
         self._registration: dict[str, object] | None = None
         self._registration_uncertain = False
+        self._unregister_reply_lost = False
         self._initial_registration: asyncio.Task[None] | None = None
         if access_mode is not None:
             self._payload["access_mode"] = access_mode
@@ -225,7 +319,12 @@ class Tunnel:
             if self._closed:
                 return
             self._endpoint = await self._native.start(
-                self._directory, invocation_id=self._id, state_dir=self._state_dir
+                self._directory,
+                invocation_id=self._id if self._service is None else None,
+                service=self._service,
+                state_dir=self._state_dir,
+                publications=self._deployment is not None,
+                environment=self._environment,
             )
             await self._acknowledge_registration()
 
@@ -235,8 +334,42 @@ class Tunnel:
         # owner, PID, target, and policy until its idempotent reply is reconciled.
         self._registration_uncertain = True
         try:
+            if self._service is not None:
+                assignment = parse_assignment(
+                    await self._native.request(
+                        self._endpoint,
+                        "prepare",
+                        {
+                            "version": 1,
+                            "directory": self._directory,
+                            "service": self._service,
+                            "framework": "python",
+                            "owner": self._owner,
+                            "pid": self._pid,
+                            "telemetry_disabled": self._payload["telemetry_disabled"],
+                        },
+                    ),
+                    self._endpoint,
+                )
+                self._registration = {
+                    "version": 1,
+                    "registration_id": assignment.registration_id,
+                    "owner": self._owner,
+                    "target": self._target,
+                }
+                # prepare acknowledged this reservation before url validation.
+                self._registration_uncertain = False
+                if not assignment.public_url or (
+                    self._assigned_url is not None and self._assigned_url != assignment.public_url
+                ):
+                    raise InvalidResponse()
+                self._assigned_url = assignment.public_url
+                self._registration_uncertain = True
+                await self._native.request(self._endpoint, "register", self._registration)
+                self._registration_uncertain = False
+                return
             self._registration = parse_registration(
-                await self._native.request(self._endpoint, "ad-hoc/register", self._payload),
+                await self._native.request(self._endpoint, "publications/register", self._payload),
                 self._owner,
                 self._target,
             )
@@ -251,7 +384,7 @@ class Tunnel:
         self._initial_registration = asyncio.create_task(self._register())
         await asyncio.shield(self._initial_registration)
         self._monitor = asyncio.create_task(self._follow())
-        await self._ready
+        await asyncio.shield(self._ready)
 
     async def unregister(self) -> None:
         await _join_cleanup(asyncio.create_task(self._unregister()))
@@ -267,7 +400,9 @@ class Tunnel:
         async with self._registration_lock:
             for attempt in range(3):
                 try:
-                    if self._registration_uncertain:
+                    if self._registration_uncertain and not (
+                        self._service is not None and self._registration is not None
+                    ):
                         await self._acknowledge_registration()
                     break
                 except NativeUnavailable:
@@ -280,16 +415,32 @@ class Tunnel:
                         await self._native.request(self._endpoint, "unregister", self._registration)
                         break
                     except RegistrationLost:
+                        if self._unregister_reply_lost:
+                            # a replacement owner or expired outcome cannot
+                            # acknowledge the lost result of the original call.
+                            raise NativeUnavailable() from None
                         break
+                    except PublicationCleanupFailed:
+                        self._registration = None
+                        self._registration_uncertain = False
+                        self._unregister_reply_lost = False
+                        raise
                     except NativeUnavailable:
+                        self._unregister_reply_lost = True
                         if attempt == 2:
                             raise
                         await asyncio.sleep(0.1)
+                    except InvalidResponse:
+                        self._unregister_reply_lost = True
+                        raise
                 self._registration = None
+                self._unregister_reply_lost = False
 
     def _observe(self, status: Status) -> None:
         if status.public_url is not None:
-            if self._url is not None and status.public_url != self._url:
+            if (self._url is not None and status.public_url != self._url) or (
+                self._assigned_url is not None and status.public_url != self._assigned_url
+            ):
                 raise InvalidResponse()
             self._url = status.public_url
         if status.publish_run_number is not None:
@@ -313,7 +464,7 @@ class Tunnel:
                 assert self._endpoint is not None and self._registration is not None
                 status = parse_status(
                     await self._native.request(self._endpoint, "status"),
-                    self._id,
+                    self._service or self._id,
                     str(self._registration["registration_id"]),
                     self._target,
                 )
@@ -352,9 +503,34 @@ class Tunnel:
             pass
 
     async def wait(self) -> None:
-        await asyncio.shield(self._finished)
+        self._check()
+        primary: BaseException | None = None
+        try:
+            await asyncio.shield(self._finished)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as cause:
+            primary = cause
+        if self._server.server_driven_shutdown:
+            try:
+                await self.aclose()
+            except BaseException as cleanup:
+                if primary is not None and primary is not cleanup:
+                    raise BaseExceptionGroup(
+                        "publication and ASGI shutdown failed", [primary, cleanup]
+                    ) from None
+                raise
+        if primary is not None:
+            raise primary
 
-    async def close(self) -> None:
+    def _check(self) -> None:
+        if self._pid != os.getpid() or self._loop is not asyncio.get_running_loop():
+            raise TnlError(
+                "sdk.client_context_changed", "create a publication in this process and loop"
+            )
+
+    async def aclose(self) -> None:
+        self._check()
         if self._cleanup_task is None or (self._cleanup_task.done() and not self._close_complete):
             self._cleanup_task = asyncio.create_task(self._close())
         await _join_cleanup(self._cleanup_task)
@@ -369,35 +545,60 @@ class Tunnel:
                 await self._monitor
             # an error retains the listener and registration for a later close
             # retry. only a joined native cleanup may stop the application's ASGI.
-            await self.unregister()
-            cleanup: list[Exception] = []
+            cleanup: list[BaseException] = []
+            try:
+                await self.unregister()
+            except PublicationCleanupFailed as cause:
+                cleanup.append(cause)
             self._server.tunnel = None
             self._server.should_exit = True
             try:
-                await asyncio.wait_for(self._serve_task, 15)
-            except (Exception, asyncio.CancelledError) as cause:
-                if isinstance(cause, Exception):
+                async with _server_shutdown_deadline():
+                    await asyncio.shield(self._serve_task)
+                    await self._server.join_workers()
+            except BaseException as cause:
+                if not isinstance(cause, asyncio.CancelledError):
                     cleanup.append(cause)
-                self._server.force_exit = True
-                self._serve_task.cancel()
-                try:
-                    await self._serve_task
-                except asyncio.CancelledError:
-                    pass
+                # a completed failed serve task is already joined. reawaiting it
+                # would raise again before marking local cleanup complete.
+                for joined in await self._server.force_shutdown(self._serve_task):
+                    if not any(previous is joined for previous in cleanup):
+                        cleanup.append(joined)
             finally:
                 self._listener.close()
             self._close_complete = True
+            if self._on_close is not None:
+                self._on_close(self)
+            failure: BaseException | None = None
+            if len(cleanup) == 1:
+                failure = cleanup[0]
+            elif cleanup:
+                failure = BaseExceptionGroup("publisher and ASGI cleanup failed", cleanup)
             if not self._finished.done():
-                if cleanup:
-                    self._finished.set_exception(cleanup[0])
+                if failure is not None:
+                    self._finished.set_exception(failure)
                 else:
                     self._finished.set_result(None)
             if not self._ready.done():
                 self._ready.set_exception(RegistrationLost())
-            if len(cleanup) == 1:
-                raise cleanup[0]
-            if cleanup:
-                raise ExceptionGroup("publisher and ASGI cleanup failed", cleanup)
+            if failure is not None:
+                raise failure
+
+    async def __aenter__(self) -> Publication:
+        self._check()
+        if self._closed:
+            raise RegistrationLost()
+        return self
+
+    async def __aexit__(self, _type: object, primary: object, _traceback: object) -> None:
+        try:
+            await self.aclose()
+        except BaseException as cleanup:
+            if isinstance(primary, BaseException):
+                raise BaseExceptionGroup(
+                    "publication operation and cleanup failed", [primary, cleanup]
+                ) from None
+            raise
 
 
 async def _start_asgi(app: ASGIApp) -> tuple[_OwnedServer, asyncio.Task[None], socket.socket]:
@@ -414,7 +615,8 @@ async def _start_asgi(app: ASGIApp) -> tuple[_OwnedServer, asyncio.Task[None], s
                 log_level="critical",
                 access_log=False,
                 timeout_graceful_shutdown=10,
-            )
+            ),
+            app,
         )
         task = asyncio.create_task(server.serve(sockets=[listener]))
         while not server.started:
@@ -434,8 +636,7 @@ async def _start_asgi(app: ASGIApp) -> tuple[_OwnedServer, asyncio.Task[None], s
         raise
 
 
-@asynccontextmanager
-async def open(
+async def start_publication(
     app: ASGIApp,
     *,
     publisher_credential_file: str | Path | None = None,
@@ -447,8 +648,28 @@ async def open(
     limits: Limits | None = None,
     require_post_quantum: bool = False,
     telemetry: bool = True,
-) -> AsyncIterator[Tunnel]:
+    deployment: dict[str, str] | None = None,
+    service: str | None = None,
+    on_close: Callable[[Publication], None] | None = None,
+    on_start: Callable[[Publication], None] | None = None,
+    environment: Mapping[str, str] | None = None,
+) -> Publication:
     """start ASGI, register its bound listener, and wait for native routability."""
+    if service is not None:
+        service_name(service)
+    if deployment is not None and (
+        service is not None
+        or server is not None
+        or publisher_identity_id is not None
+        or publisher_credential_file is not None
+    ):
+        raise TnlError("sdk.configuration_invalid", "select one captured publication owner")
+    if (service is not None or deployment is not None and "service" in deployment) and (
+        access is not None or limits is not None or require_post_quantum
+    ):
+        raise TnlError(
+            "sdk.configuration_invalid", "named publication uses saved visitor policy and limits"
+        )
     if not callable(app):
         raise TnlError("sdk.configuration_invalid", "pass an ASGI app")
     if not isinstance(require_post_quantum, bool):
@@ -459,8 +680,15 @@ async def open(
         raise TnlError("sdk.configuration_invalid", "select a publisher file or publisher ID")
     # a running connector owner does not inherit later changes to the app's env.
     # send the path, never the credential contents, with this invocation.
-    if publisher_credential_file is None and publisher_identity_id is None:
-        publisher_credential_file = os.getenv("TNL_PUBLISHER_CREDENTIAL_FILE")
+    if (
+        publisher_credential_file is None
+        and publisher_identity_id is None
+        and deployment is None
+        and service is None
+    ):
+        publisher_credential_file = (os.environ if environment is None else environment).get(
+            "TNL_PUBLISHER_CREDENTIAL_FILE"
+        )
     if publisher_credential_file is not None and (
         not isinstance(publisher_credential_file, str | Path)
         or not Path(publisher_credential_file).is_absolute()
@@ -492,7 +720,7 @@ async def open(
     _limit_payload(limits)
     root = str(Path(directory or os.getcwd()).resolve())
     asgi_server, task, listener = await _start_asgi(app)
-    tunnel = Tunnel(
+    tunnel = Publication(
         _native,
         asgi_server,
         task,
@@ -507,13 +735,19 @@ async def open(
         limits,
         require_post_quantum,
         telemetry,
+        deployment,
+        service,
+        on_close,
+        environment,
     )
     try:
+        if on_start is not None:
+            on_start(tunnel)
         await tunnel.start()
-        yield tunnel
+        return tunnel
     except BaseException as primary:
         try:
-            await tunnel.close()
+            await tunnel.aclose()
         except BaseException as cleanup:
             if isinstance(primary, asyncio.CancelledError) and isinstance(
                 cleanup, asyncio.CancelledError
@@ -523,5 +757,3 @@ async def open(
                 "ASGI operation and cleanup failed", [primary, cleanup]
             ) from None
         raise
-    else:
-        await tunnel.close()

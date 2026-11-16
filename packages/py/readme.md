@@ -16,11 +16,15 @@ import tnl
 from myapp import app
 
 async def main():
-    async with tnl.open(app) as tunnel:
-        print(tunnel.url)
-        await tunnel.wait()
+    client = tnl.create_client(project="my-team/my-project")
+    async with client.deployment("local") as local:
+        async with await local.publish(app) as publication:
+            print(publication.url)
+            await publication.wait()
 
 asyncio.run(main())
 ```
 
-Stop the script to remove the temporary URL. See the [publishing guide](https://tnl.dev/docs/publish), [quickstart](https://tnl.dev/docs), and [main README](https://github.com/tnldotdev/tnl#readme).
+Stop the script to remove the temporary URL. `publish("web", app)` uses a configured local service or an approved saved remote URL. Remote publication requires a registered deployment credential; connection-only sources cannot publish. The returned `Publication` is routable, supports `wait()` and retryable `aclose()`, and is an async context manager.
+
+See the [publishing guide](https://tnl.dev/docs/publish), [quickstart](https://tnl.dev/docs), and [main README](https://github.com/tnldotdev/tnl#readme).

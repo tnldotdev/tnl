@@ -125,7 +125,7 @@ func LoadFile(path, server string, control NativeControl, authority AssertionExc
 	return NewNative(control, authority, i, key)
 }
 
-// ResolveAdHoc selects one scoped identity for tnl.open and app-owned HTTP
+// ResolveAdHoc selects one scoped identity for temporary app-owned HTTP
 // publication. explicit selection wins over the local developer default; a
 // configured file always wins over that default and fails closed on errors.
 func ResolveAdHoc(ctx context.Context, state *clientstate.Store, control NativeControl, authority EnrollmentAuthority, server, team, domain, namespace, publisherCredentialFile, enrollmentKey, publisherIdentityID string, adapter *Native) (*Native, error) {

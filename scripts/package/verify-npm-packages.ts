@@ -75,12 +75,14 @@ for (const manager of ["npm", "pnpm"]) {
       const cjs = createRequire(import.meta.url)('@tnldotdev/tnl');
       assert.equal(cjs.tnl, tnl);
       assert.equal(typeof TnlError, 'function');
-       for (const value of [tnl.prepare, tnl.open, createClient, defineConfig, withTnl, vite, configureWorkload]) assert.equal(typeof value, 'function');
+        for (const value of [tnl.prepare, createClient, defineConfig, withTnl, vite, configureWorkload]) assert.equal(typeof value, 'function');
+        assert.equal('open' in tnl, false);
        assert.equal('connect' in tnl || 'client' in tnl, false);
        assert.equal(typeof createHttpClient, 'function');
        for (const value of [deployments.create, deployments.list, deployments.get, deployments.update, deployments.delete, publishers.createEnrollment, publishers.list, publishers.get, publishers.revoke]) assert.equal(typeof value, 'function');
        for (const root of [{tnl, TnlError, createClient}, cjs]) {
-         const deployment = root.createClient({project:'team/project', services:{database:{protocol:'postgres'}}}).deployment('local');
+          const deployment = root.createClient({project:'team/project', services:{database:{protocol:'postgres'}}}).deployment('local');
+          assert.equal(typeof deployment.publish, 'function');
          const getClient = deployment.client('database', {
           create() { throw new Error('factory creation must remain lazy'); },
           close() { throw new Error('unstarted factory has no driver to close'); },
@@ -94,6 +96,18 @@ for (const manager of ["npm", "pnpm"]) {
       ],
       { cwd: consumer, stdio: "inherit" },
     );
+    const publicationSmoke = path.join(consumer, "publication-smoke.ts");
+    await writeFile(
+      publicationSmoke,
+      await readFile(
+        new URL("../../packages/ts/test/fixtures/package-publication.ts", import.meta.url),
+      ),
+    );
+    execFileSync(process.execPath, [publicationSmoke], {
+      cwd: consumer,
+      stdio: "inherit",
+      timeout: 30_000,
+    });
     execFileSync(
       process.execPath,
       [

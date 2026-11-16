@@ -189,7 +189,7 @@ func localOperation(path string) operationName {
 		return "native.app.register"
 	case "/v1/leases":
 		return "native.app.acquire"
-	case "/v1/ad-hoc/register":
+	case "/v1/publications/register":
 		return "native.app.open"
 	case "/v1/renew":
 		return "native.app.renew"

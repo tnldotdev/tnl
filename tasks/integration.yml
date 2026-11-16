@@ -13,7 +13,7 @@ tasks:
     vars:
       RUN: '{{default "^TestIntegration" .RUN}}'
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/client/control ./internal/control/api/authority ./internal/control/api/public ./internal/control/state/controlstatedb ./internal/control/certificates ./internal/control/dns ./internal/relay ./internal/publisher/deployment -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/client/control ./internal/control/api/authority ./internal/control/api/public ./internal/control/state/controlstatedb ./internal/control/certificates ./internal/control/dns ./internal/relay ./internal/publisher/deployment ./internal/publisher/local -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
 
   state:shard:
     desc: Check control state with disposable PostgreSQL (optional SHARD=1/4)
@@ -28,6 +28,8 @@ tasks:
     vars:
       RUN: '{{default "^TestIntegration" .RUN}}'
     cmds:
+      - task: :js:build
+      - task: :py:sync
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=integration
 
   runtime:shard:
@@ -35,7 +37,9 @@ tasks:
     requires:
       vars: [SHARD]
     cmds:
-      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/daemon -run='^TestIntegration' -skip='^TestIntegration(ConnectorDirect|WorkloadTransport(Lifecycle|Closure)$|PrivateDefaultLeaseCycles$|ConnectorRebindingRetainsApplicationAndTarget$|ConnectorSourceRebindingRetainsApplicationAndTarget$|ConnectorRebindingRetainsPostgresTransaction$)' -count=1 -timeout=8m -args -tnl-test-tier=integration
+      - task: :js:build
+      - task: :py:sync
+      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/daemon -run='^TestIntegration' -skip='^TestIntegration(ConnectorDirect|WorkloadTransport(Lifecycle|Closure)$|PrivateDefaultLeaseCycles$|ConnectorRebindingRetainsApplicationAndTarget$|ConnectorSourceRebindingRetainsApplicationAndTarget$|ConnectorRebindingRetainsPostgresTransaction$)' -count=1 -timeout=12m -args -tnl-test-tier=integration
 
   runtime:leases:
     desc: Cross production private visitor lease cycles and outage deadlines on real sockets

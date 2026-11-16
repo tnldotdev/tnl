@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -42,7 +43,10 @@ func gate(ctx context.Context, root, name string) error {
 	}
 }
 
-func serveInvocations() error {
+func serveInvocations(cleanupReplyLoss string) error {
+	if cleanupReplyLoss != "" && cleanupReplyLoss != "terminal" && cleanupReplyLoss != "transient" && cleanupReplyLoss != "success" {
+		return errors.New("select a known cleanup reply-loss fixture")
+	}
 	if flag.NArg() != 1 {
 		return errors.New("pass the private fixture directory")
 	}
@@ -76,6 +80,20 @@ func serveInvocations() error {
 		return err
 	}
 	defer manager.Close()
+	cleanupAttempts := 0
+	manager.Cleanup = func(publisherapp.Service) error {
+		cleanupAttempts++
+		if err := os.WriteFile(filepath.Join(root, "cleanup-attempts"), []byte(fmt.Sprint(cleanupAttempts)), 0600); err != nil {
+			return err
+		}
+		if cleanupReplyLoss == "terminal" {
+			return errors.Join(publisherapp.ErrCleanupPermanent, errors.New("remote deletion authority was revoked"))
+		}
+		if cleanupReplyLoss == "transient" && cleanupAttempts == 1 {
+			return errors.New("remote deletion temporarily unavailable")
+		}
+		return nil
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -100,7 +118,7 @@ func serveInvocations() error {
 				return publisherprotocol.Registration{Version: 1, RegistrationID: service.RegistrationID, Owner: request.Owner, Target: request.Target}, err
 			}
 		}
-		if err := manager.AddService(publisherapp.Service{Name: request.InvocationId, Directory: root, ServiceProtocol: "http"}); err != nil {
+		if err := manager.AddService(publisherapp.Service{Name: request.InvocationId, Directory: root, ServiceProtocol: "http", Readiness: publisherapp.Readiness{Path: "/"}}); err != nil {
 			return publisherprotocol.Registration{}, err
 		}
 		id, err := manager.Reserve(request.InvocationId, request.Owner, request.Pid, "https://ephemeral.member.example.test")
@@ -113,7 +131,11 @@ func serveInvocations() error {
 	}}).Handler()
 	var first sync.Once
 	server := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/ad-hoc/register" {
+		operation := "/v1/publications/register"
+		if cleanupReplyLoss != "" {
+			operation = "/v1/unregister"
+		}
+		if r.URL.Path != operation {
 			boundary.ServeHTTP(w, r)
 			return
 		}
@@ -123,9 +145,17 @@ func serveInvocations() error {
 		boundary.ServeHTTP(reply, r)
 		drop := false
 		first.Do(func() { drop = true })
-		if drop && reply.Code == 200 {
-			_ = os.WriteFile(filepath.Join(root, "committed.json"), reply.Body.Bytes(), 0600)
-			_ = gate(ctx, root, "release-register")
+		if drop {
+			if cleanupReplyLoss == "" {
+				if reply.Code != 200 {
+					http.Error(w, "fixture expected registration acknowledgment", 500)
+					return
+				}
+				_ = os.WriteFile(filepath.Join(root, "committed.json"), reply.Body.Bytes(), 0600)
+				_ = gate(ctx, root, "release-register")
+			} else {
+				_ = os.WriteFile(filepath.Join(root, "cleanup-reply.json"), reply.Body.Bytes(), 0600)
+			}
 			conn, _, err := w.(http.Hijacker).Hijack()
 			if err == nil {
 				_ = conn.Close()

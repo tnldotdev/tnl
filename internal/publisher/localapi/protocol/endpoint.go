@@ -29,7 +29,11 @@ import (
 type Endpoint = api.Endpoint
 type CapabilityRequest = api.CapabilityRequest
 type Lease = api.Lease
-type Invocation = api.Invocation
+type Invocation api.Invocation
+
+func (Invocation) String() string   { return "private application publication" }
+func (Invocation) GoString() string { return "private application publication" }
+
 type Check = api.Check
 
 var ErrUnauthorized = errors.New("local publisher capability is invalid")

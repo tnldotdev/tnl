@@ -1,7 +1,7 @@
 """publish Python ASGI apps and connect services through the native tnl runtime."""
 
 from ._app import PreparedService, Server, prepare, run
-from ._asgi import AccessPolicy, Limits, RateLimit, Tunnel, open
+from ._asgi import AccessPolicy, Limits, Publication, RateLimit
 from ._client import ClientFactory
 from ._connections import (
     Connection,
@@ -59,11 +59,10 @@ __all__ = [
     "RateLimit",
     "RegistrationLost",
     "TnlError",
-    "Tunnel",
+    "Publication",
     "Server",
     "handler",
     "configure_workload",
-    "open",
     "prepare",
     "run",
 ]

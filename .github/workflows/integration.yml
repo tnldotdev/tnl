@@ -16,7 +16,7 @@ jobs:
   postgres:
     name: PostgreSQL (${{ matrix.suite }}, ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ matrix.suite == 'runtime:workload' && 14 || 12 }}
+    timeout-minutes: ${{ matrix.suite == 'runtime:shard' && 16 || matrix.suite == 'runtime:workload' && 14 || 12 }}
     strategy:
       fail-fast: false
       matrix:
@@ -44,8 +44,9 @@ jobs:
       - name: Set up tools
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          tools: go task go:github.com/letsencrypt/pebble/v2/cmd/pebble
+          tools: go task go:github.com/letsencrypt/pebble/v2/cmd/pebble ${{ matrix.suite == 'runtime:shard' && 'node pnpm bun python uv' || '' }}
           go-cache: race
+          pnpm: ${{ matrix.suite == 'runtime:shard' }}
 
       - name: Check test harness and shard selection
         if: matrix.suite == 'api'

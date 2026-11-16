@@ -120,7 +120,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		publisherprotocol.Write(w, 200, registration)
 	})
-	mux.HandleFunc("POST /v1/ad-hoc/register", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/publications/register", func(w http.ResponseWriter, r *http.Request) {
 		grant := publisherprotocol.Grant(r)
 		if grant.Scope != "invocation" || s.Invocation == nil {
 			Problem(w, publisherprotocol.ErrForbidden)
@@ -162,6 +162,9 @@ func (s *Server) Handler() http.Handler {
 				return
 			}
 			service, found := s.Manager.ServiceForRegistration(request.RegistrationID)
+			if operation == "unregister" && !found {
+				service, found = s.Manager.ServiceForUnregister(request.RegistrationID, request.Owner, request.Target)
+			}
 			grant := publisherprotocol.Grant(r)
 			if !found || grant.Scope == "app" && service.Name != *grant.Service || grant.Scope == "invocation" && service.Name != *grant.InvocationId {
 				Problem(w, publisherapp.ErrRegistrationStale)
@@ -262,6 +265,8 @@ func Problem(w http.ResponseWriter, err error) {
 	status, code, message := 400, "runtime.request_invalid", "local publisher request is invalid"
 	reason, _ := failure.ReasonOf(err)
 	switch {
+	case errors.Is(err, publisherapp.ErrRegistrationStopped):
+		status, code, message = 409, "runtime.publication_cleanup_failed", "the publication stopped, but cleanup failed; the temporary public URL may remain until control expires it"
 	case reason == failure.AppConfigurationConflict:
 		definition, _ := failure.DefinitionFor(failure.AppConfigurationConflict)
 		status, code, message = 409, string(failure.AppConfigurationConflict), definition.Message

@@ -22,7 +22,7 @@ func PythonFacade(configuration config.Project, configPath string) (map[string][
 		return nil, errors.New("project configuration is required for declarations")
 	}
 	var source strings.Builder
-	source.WriteString(pythonGenerated + "from __future__ import annotations\n\nfrom collections.abc import Awaitable, Callable, Mapping\nfrom typing import Literal, Never, Protocol, cast, overload\n\nimport tnl as _tnl\n\n")
+	source.WriteString(pythonGenerated + "from __future__ import annotations\n\nfrom collections.abc import Awaitable, Callable, Mapping\nfrom typing import Literal, Never, Protocol, cast, overload\n\nfrom starlette.types import ASGIApp\n\nimport tnl as _tnl\n\n")
 	static := !strings.EqualFold(filepath.Ext(configPath), ".ts")
 	names := make([]string, 0, len(configuration.Services))
 	if static {
@@ -58,6 +58,17 @@ func PythonFacade(configuration config.Project, configPath string) (map[string][
 		"mysql": "_tnl.MySQLConnection | _tnl.LocalMySQLConnection", "tcp": "_tnl.TCPConnection | _tnl.LocalTCPConnection", "kubernetes": "_tnl.KubernetesConnection | _tnl.LocalKubernetesConnection",
 	}
 	source.WriteString("class Deployment(Protocol):\n")
+	httpNames := "str"
+	if static {
+		httpNames = "Never"
+		if len(groups["http"]) > 0 {
+			httpNames = "Literal[" + strings.Join(groups["http"], ", ") + "]"
+		}
+	}
+	source.WriteString("    @overload\n")
+	fmt.Fprintf(&source, "    async def publish(self, first: %s, app: ASGIApp, *, telemetry: bool = True) -> _tnl.Publication: ...\n", httpNames)
+	source.WriteString("    @overload\n")
+	source.WriteString("    async def publish(self, first: ASGIApp, *, access: Literal[\"restricted\", \"anonymous\"] | _tnl.AccessPolicy | None = None, limits: _tnl.Limits | None = None, require_post_quantum: bool | None = None, telemetry: bool = True) -> _tnl.Publication: ...\n")
 	if len(ordered) == 0 {
 		nameType := "str"
 		if static {

@@ -5,16 +5,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -132,7 +135,7 @@ func TestInvocationWorkerPublicationAndLimits(t *testing.T) {
 		return readyInvocation(ctx, cfg)
 	}
 	var registration publisherprotocol.Registration
-	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &registration); err != nil {
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", body, &registration); err != nil {
 		t.Fatal(err)
 	}
 	waitInvocation(t, a, func(s publisherapp.Snapshot) bool {
@@ -166,13 +169,13 @@ func TestInvocationWorkerPublicationAndLimits(t *testing.T) {
 		t.Fatalf("scoped invocation journal=%+v", snapshot)
 	}
 	var repeated publisherprotocol.Registration
-	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &repeated); err != nil || repeated != registration || f.Allocations.Load() != 1 {
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", body, &repeated); err != nil || repeated != registration || f.Allocations.Load() != 1 {
 		t.Fatalf("repeat allocated again: registration=%+v allocations=%d err=%v", repeated, f.Allocations.Load(), err)
 	}
 	body["limits"] = map[string]any{"requests": 7, "concurrency": 2, "rate": map[string]any{"requests": 3, "per": "4s"}}
 	body["require_post_quantum"] = true
 	var conflict *publisherprotocol.ResponseError
-	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, nil); !errors.As(err, &conflict) || conflict.Code != "runtime.owner_conflict" {
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", body, nil); !errors.As(err, &conflict) || conflict.Code != "runtime.owner_conflict" {
 		t.Fatalf("changed invocation did not conflict: %v", err)
 	}
 	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/unregister", registration, nil); err != nil {
@@ -184,7 +187,7 @@ func TestInvocationWorkerPublicationAndLimits(t *testing.T) {
 	invocation, _ := opaqueid.New(opaqueid.InvocationPrefix)
 	endpoint, _ = a.capabilities.Issue(publisherprotocol.CapabilityRequest{Scope: "invocation", InvocationId: &invocation})
 	body["invocation_id"] = invocation
-	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &registration); err != nil {
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", body, &registration); err != nil {
 		t.Fatalf("supported limits rejected: %v", err)
 	}
 	select {
@@ -205,7 +208,7 @@ func TestInvocationWorkerPublicationAndLimits(t *testing.T) {
 	if allocation.Limits == nil || allocation.Limits.Requests == nil || *allocation.Limits.Requests != 7 || allocation.Limits.Concurrency == nil || *allocation.Limits.Concurrency != 2 || allocation.Limits.Rate == nil || allocation.Limits.Rate.Requests != 3 || allocation.Limits.Rate.Per != "4s" {
 		t.Fatalf("allocation lost supported limits: %+v", allocation.Limits)
 	}
-	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &repeated); err != nil || repeated != registration || f.Allocations.Load() != 2 {
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", body, &repeated); err != nil || repeated != registration || f.Allocations.Load() != 2 {
 		t.Fatalf("limited repeat allocated again: registration=%+v allocations=%d err=%v", repeated, f.Allocations.Load(), err)
 	}
 }
@@ -225,12 +228,12 @@ func TestInvocationLimitsValidation(t *testing.T) {
 		map[string]any{"rate": map[string]any{"requests": 1}},
 	} {
 		body["limits"] = invalid
-		if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, nil); err == nil || f.Allocations.Load() != 0 {
+		if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", body, nil); err == nil || f.Allocations.Load() != 0 {
 			t.Fatalf("invalid limits allocated: limits=%v allocations=%d err=%v", invalid, f.Allocations.Load(), err)
 		}
 	}
 	body["limits"] = map[string]any{}
-	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, nil); err != nil {
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", body, nil); err != nil {
 		t.Fatalf("empty default limits rejected: %v", err)
 	}
 }
@@ -249,7 +252,7 @@ func TestInvocationRealPublisherAppliesRequestRate(t *testing.T) {
 	body["target"] = target.URL
 	body["limits"] = map[string]any{"rate": map[string]any{"requests": 1, "per": "1h"}, "concurrency": 2}
 	var registration publisherprotocol.Registration
-	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &registration); err != nil {
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", body, &registration); err != nil {
 		t.Fatal(err)
 	}
 	snapshot := waitInvocation(t, a, func(s publisherapp.Snapshot) bool {
@@ -295,7 +298,7 @@ func TestInvocationEarlyWorkerFailureCleansAllocation(t *testing.T) {
 		return nil
 	}
 	var registration publisherprotocol.Registration
-	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &registration); err != nil {
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", body, &registration); err != nil {
 		t.Fatal(err)
 	}
 	waitInvocation(t, a, func(s publisherapp.Snapshot) bool {
@@ -312,6 +315,142 @@ func TestInvocationEarlyWorkerFailureCleansAllocation(t *testing.T) {
 	_ = a.manager.Unregister(registration.RegistrationID, registration.Owner)
 	if f.Deletions.Load() != 1 {
 		t.Fatal("cleanup was not exactly once")
+	}
+}
+
+func TestInvocationFailedDeletionRetainsExactCleanupForRetry(t *testing.T) {
+	if !testutil.IsolatedPublishingTest(t) {
+		return
+	}
+	a, endpoint, body, f := invocationRuntime(t)
+	a.workers.RunPublisher = readyInvocation
+	transport := http.DefaultTransport
+	var failing atomic.Bool
+	failing.Store(true)
+	var attempts atomic.Int32
+	var deleted sync.Map
+	http.DefaultTransport = invocationTransport(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodDelete && r.URL.Host == strings.TrimPrefix(f.URL, "https://") {
+			attempts.Add(1)
+			deleted.Store(r.URL.Path, true)
+			if failing.Load() {
+				return &http.Response{StatusCode: 503, Header: http.Header{"Content-Type": {"application/problem+json"}}, Body: io.NopCloser(strings.NewReader(`{"code":"unavailable","message":"retry"}`)), Request: r}, nil
+			}
+		}
+		return transport.RoundTrip(r)
+	})
+	t.Cleanup(func() { http.DefaultTransport = transport })
+	var registration publisherprotocol.Registration
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", body, &registration); err != nil {
+		t.Fatal(err)
+	}
+	waitInvocation(t, a, func(s publisherapp.Snapshot) bool {
+		for _, service := range s.Services {
+			if service.RegistrationID == registration.RegistrationID {
+				return service.Routable
+			}
+		}
+		return false
+	})
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/unregister", registration, nil); err == nil {
+		t.Fatal("failed cleanup was reported as success")
+	}
+	if _, found := a.manager.ServiceForRegistration(registration.RegistrationID); !found {
+		t.Fatal("failed cleanup lost registration ownership")
+	}
+	failing.Store(false)
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/unregister", registration, nil); err != nil {
+		t.Fatal(err)
+	}
+	if f.Allocations.Load() != 1 || f.Deletions.Load() != 1 || attempts.Load() < 2 {
+		t.Fatal("cleanup was not retried", attempts.Load())
+	}
+	count := 0
+	deleted.Range(func(_, _ any) bool { count++; return true })
+	if count != 1 {
+		t.Fatal("cleanup changed allocation identity")
+	}
+}
+
+func TestInvocationExpiredOrRevokedCleanupRetiresWithoutRetryingItsCapturedKey(t *testing.T) {
+	if !testutil.IsolatedPublishingTest(t) {
+		return
+	}
+	a, _, body, f := invocationRuntime(t)
+	a.workers.RunPublisher = readyInvocation
+	transport := f.HTTP.Transport
+	var denied atomic.Int32
+	var attempts atomic.Int32
+	f.HTTP.Transport = invocationTransport(func(r *http.Request) (*http.Response, error) {
+		if status := denied.Load(); status != 0 && r.URL.Path == "/v1/publisher-token" {
+			attempts.Add(1)
+			code := "unauthenticated"
+			if status == http.StatusForbidden {
+				code = "forbidden"
+			}
+			return &http.Response{
+				StatusCode: int(status), Header: http.Header{"Content-Type": {"application/problem+json"}},
+				Body: io.NopCloser(strings.NewReader(fmt.Sprintf(`{"type":"about:blank","title":"publisher authority rejected","code":%q,"status":%d}`, code, status))), Request: r,
+			}, nil
+		}
+		return transport.RoundTrip(r)
+	})
+	defer func() { f.HTTP.Transport = transport }()
+	for _, status := range []int32{http.StatusUnauthorized, http.StatusForbidden} {
+		denied.Store(0)
+		invocation, err := opaqueid.New(opaqueid.InvocationPrefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		endpoint, err := a.capabilities.Issue(publisherprotocol.CapabilityRequest{Scope: "invocation", InvocationId: &invocation})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body["invocation_id"] = invocation
+		var registration publisherprotocol.Registration
+		if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", body, &registration); err != nil {
+			t.Fatal(err)
+		}
+		waitInvocation(t, a, func(s publisherapp.Snapshot) bool {
+			for _, service := range s.Services {
+				if service.RegistrationID == registration.RegistrationID {
+					return service.Routable
+				}
+			}
+			return false
+		})
+		before := attempts.Load()
+		denied.Store(status)
+		var response *publisherprotocol.ResponseError
+		err = publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/unregister", registration, nil)
+		if !errors.As(err, &response) || response.Code != "runtime.publication_cleanup_failed" {
+			t.Fatal("remote authorization loss was not reported with completed local shutdown", err)
+		}
+		if _, found := a.manager.ServiceForRegistration(registration.RegistrationID); found {
+			t.Fatal("terminal cleanup retained a registration")
+		}
+		if !errors.Is(a.manager.RetirementError(), publisherapp.ErrCleanupPermanent) {
+			t.Fatal("owner retirement lost the remote cleanup failure")
+		}
+		a.manager.Sweep(func(int) bool { return false })
+		if attempts.Load() != before+1 || f.Deletions.Load() != 0 {
+			t.Fatal("retirement retried captured authority or bypassed deletion authorization", attempts.Load(), f.Deletions.Load())
+		}
+	}
+}
+
+func TestInvocationCleanupUsesCapturedExpiryWithoutReachingControl(t *testing.T) {
+	expired := time.Now().Add(-time.Second)
+	cleanup := invocationCleanup(nil, controlv1.PublicURL{Id: "original", Ephemeral: true}, expired)
+	first := cleanup()
+	if !errors.Is(first, publisherapp.ErrCleanupPermanent) || !errors.Is(first, auth.ErrDeploymentCredential) {
+		t.Fatal("expired authority did not retain a terminal deletion failure", first)
+	}
+	if again := cleanup(); again != first {
+		t.Fatal("expired cleanup did not retain its exact terminal outcome", again)
+	}
+	if err := invocationCleanup(nil, controlv1.PublicURL{Ephemeral: false}, expired)(); err != nil {
+		t.Fatal("saved publication acquired temporary deletion work", err)
 	}
 }
 
@@ -387,7 +526,7 @@ func TestAppWorkflowSlowPreparationDoesNotBlockAnotherInvocation(t *testing.T) {
 	}
 	firstDone := make(chan error, 1)
 	go func() {
-		firstDone <- publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, nil)
+		firstDone <- publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", body, nil)
 	}()
 	select {
 	case <-entered:
@@ -407,7 +546,7 @@ func TestAppWorkflowSlowPreparationDoesNotBlockAnotherInvocation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	var registration publisherprotocol.Registration
-	secondErr := publisherprotocol.Call(ctx, secondEndpoint, "POST", "/v1/ad-hoc/register", second, &registration)
+	secondErr := publisherprotocol.Call(ctx, secondEndpoint, "POST", "/v1/publications/register", second, &registration)
 	unblock()
 	if err := <-firstDone; err != nil {
 		t.Fatal(err)
@@ -423,8 +562,8 @@ func invocationRequest(t *testing.T, ctx context.Context, endpoint publisherprot
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := httptest.NewRequest("POST", endpoint.Url+"/v1/ad-hoc/register", bytes.NewReader(encoded)).WithContext(ctx)
-	r.RequestURI = "/v1/ad-hoc/register"
+	r := httptest.NewRequest("POST", endpoint.Url+"/v1/publications/register", bytes.NewReader(encoded)).WithContext(ctx)
+	r.RequestURI = "/v1/publications/register"
 	r.RemoteAddr = "127.0.0.1:12345"
 	r.URL.Scheme, r.URL.Host = "", ""
 	r.Header.Set("Authorization", "Bearer "+endpoint.Capability)
@@ -465,7 +604,7 @@ func TestInvocationExplicitServerSelection(t *testing.T) {
 	a.project = project
 	a.workers.RunPublisher = readyInvocation
 	var registration publisherprotocol.Registration
-	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &registration); err != nil {
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", body, &registration); err != nil {
 		t.Fatalf("explicit server rejected against implicit hosted fallback: %v (project server=%v)", err, a.project.Config.Server)
 	}
 	if err := a.manager.Unregister(registration.RegistrationID, registration.Owner); err != nil {
@@ -486,7 +625,7 @@ func TestInvocationExplicitServerSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &registration); err != nil {
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", body, &registration); err != nil {
 		t.Fatalf("explicit server rejected against saved fallback: %v", err)
 	}
 	if err := a.manager.Unregister(registration.RegistrationID, registration.Owner); err != nil {
