@@ -32,12 +32,13 @@ import (
 )
 
 type outageTrafficGate struct {
-	mu       sync.Mutex
-	blocked  bool
-	grants   map[string]controloutage.Confirmation
-	runID    string
-	runToken credentials.ServiceRunToken
-	refusals map[string]int
+	mu            sync.Mutex
+	blocked       bool
+	grants        map[string]controloutage.Confirmation
+	runID         string
+	runToken      credentials.ServiceRunToken
+	refusals      map[string]int
+	roleDeadlines func() map[string]time.Time
 }
 
 func (g *outageTrafficGate) record(key string, started, observed, until time.Time) {
@@ -56,6 +57,13 @@ func (g *outageTrafficGate) transition(blocked bool) (time.Time, time.Time) {
 	for _, grant := range g.grants {
 		if earliest.IsZero() || grant.Deadline.Before(earliest) {
 			earliest = grant.Deadline
+		}
+	}
+	if g.roleDeadlines != nil {
+		for _, deadline := range g.roleDeadlines() {
+			if earliest.IsZero() || deadline.Before(earliest) {
+				earliest = deadline
+			}
 		}
 	}
 	return now, earliest
@@ -144,7 +152,9 @@ type outageConnectorControl struct {
 }
 
 func (c outageConnectorControl) PrepareConnectorPeerPair(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
-	started := time.Now()
+	// exact retries carry this original signed request time. recording the last
+	// retry's call entry would hide time already spent by the connector owner.
+	started := body.RequestedAt
 	c.gate.mu.Lock()
 	defer c.gate.mu.Unlock()
 	if c.gate.blocked {
@@ -158,7 +168,7 @@ func (c outageConnectorControl) PrepareConnectorPeerPair(ctx context.Context, se
 }
 
 func (c outageConnectorControl) RenewConnectorPeerPair(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
-	started := time.Now()
+	started := body.RequestedAt
 	c.gate.mu.Lock()
 	defer c.gate.mu.Unlock()
 	if c.gate.blocked {
@@ -328,10 +338,23 @@ func TestIntegrationControlOutageTraffic(t *testing.T) {
 		stopProxy = newOutagePrivateProxy(t, cfg, ca, gate)
 	})
 	f.owner.cleanupResource(t, stopProxy)
+	if f.controlConfig.IngressLeaseDuration != 5*time.Second || f.controlConfig.RelayLeaseDuration != 5*time.Second {
+		t.Fatal("outage proof requires the original five-second role liveness")
+	}
+	// restore control before the topology's joined shutdown, including after a
+	// failed assertion. outage traffic is checked before this cleanup can run.
+	t.Cleanup(func() { gate.transition(false) })
 	if err := f.database.ConfigureControlOutageTolerance(tolerance); err != nil {
 		t.Fatal(err)
 	}
 	process := startSeparatedPrivateIngress(t, f, 0, "quic", nil)
+	gate.roleDeadlines = func() map[string]time.Time {
+		deadlines := map[string]time.Time{"ingress": process.ingresses[0].controller.Lease().ServingUntil}
+		for id, relay := range f.relayProcesses {
+			deadlines[id] = relay.process.relays[0].controller.Lease().ServingUntil
+		}
+		return deadlines
+	}
 	progress := map[string]chan string{"/public": make(chan string), "/connector": make(chan string)}
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, streaming := progress[r.URL.Path]; !streaming {
@@ -434,6 +457,7 @@ func TestIntegrationControlOutageTraffic(t *testing.T) {
 				t.Fatal("target did not receive the original stream", path)
 			}
 			receive(path, label+"\n")
+			t.Logf("%s original request progressed phase=%s at=%s", path, label, time.Now().Format(time.RFC3339Nano))
 		}
 	}
 	exchange("before")
@@ -473,6 +497,9 @@ func TestIntegrationControlOutageTraffic(t *testing.T) {
 	trafficUntil := minTime(gate.grants["publisher"].Deadline, gate.grants["policy"].Deadline)
 	runAuthorityUntil := gate.grants["publisher"].ValidUntil
 	gate.mu.Unlock()
+	for role, deadline := range gate.roleDeadlines() {
+		t.Logf("%s accepted local serving deadline=%s", role, deadline.Format(time.RFC3339Nano))
+	}
 	t.Logf("outage started=%s earliest captured serving deadline=%s allowance=%s", outageAt.Format(time.RFC3339Nano), earliest.Format(time.RFC3339Nano), tolerance)
 	if earliest.Sub(outageAt) <= time.Second {
 		t.Fatal("second outage started without current authority")
@@ -491,6 +518,16 @@ func TestIntegrationControlOutageTraffic(t *testing.T) {
 		t.Fatal(context.Cause(t.Context()))
 	}
 	exchange("past-liveness")
+	ingressLease := process.ingresses[0].controller.Lease()
+	if ingressLease.LeaseExpiresAt.IsZero() || ingressLease.LeaseExpiresAt.After(time.Now()) {
+		t.Fatal("public traffic did not cross the actual issued ingress liveness deadline")
+	}
+	for id, relay := range f.relayProcesses {
+		lease := relay.process.relays[0].controller.Lease()
+		if lease.LeaseExpiresAt.IsZero() || lease.LeaseExpiresAt.After(time.Now()) {
+			t.Fatal("traffic did not cross the actual issued relay liveness deadline", id)
+		}
+	}
 	for path, stream := range streams {
 		timer := time.NewTimer(time.Until(trafficUntil.Add(time.Second)))
 		select {
@@ -524,7 +561,8 @@ func TestIntegrationControlOutageTraffic(t *testing.T) {
 	_, err = f.identity.routes.HeartbeatServiceRun(t.Context(), service.Id, runID, runToken,
 		controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 64})
 	var problem *clientcontrol.ProblemError
-	if err == nil || !errors.As(err, &problem) || problem.Status != http.StatusForbidden {
+	if !errors.Is(err, clientcontrol.ErrNotFound) || !errors.As(err, &problem) ||
+		problem.Status != http.StatusNotFound || problem.Problem.Code != controlv1.NotFound {
 		t.Fatal("recovery did not require fresh run authority", err)
 	}
 	for path, stream := range streams {
