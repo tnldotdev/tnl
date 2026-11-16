@@ -48,6 +48,11 @@ func TestIntegrationCertificateLifecycle(t *testing.T) {
 					if err != nil {
 						t.Fatalf("distinct-issuance acknowledgement/retry %d in same live run: %v", retry, err)
 					}
+					var installedAt time.Time
+					if err := database.pool.QueryRow(t.Context(), `SELECT installed_at FROM control.acme_orders WHERE id=$1`,
+						second.IssuanceID).Scan(&installedAt); err != nil || !installedAt.Equal(now.Add(time.Second)) {
+						t.Fatal("acknowledgment retry changed the first installation time", err)
+					}
 				}
 				if err := cache.Promote(t.Context(), hostname, second.IssuanceID); err != nil {
 					t.Fatal(err)
