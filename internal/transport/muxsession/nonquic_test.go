@@ -83,12 +83,13 @@ func TestNonQUICChildCloseAndDeadlinesLeaveSharedQUICAlive(t *testing.T) {
 			defer clientPackets.Close()
 			dialStarted := time.Now()
 			entryCause := context.Cause(ctx)
-			client, err := (QUICConnector{TLSConfig: clientTLS, Dialer: transport}).Connect(ctx, Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
+			dialer := &nonQUICSetupDialEvidence{dialer: transport}
+			client, err := (QUICConnector{TLSConfig: clientTLS, Dialer: dialer}).Connect(ctx, Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
 			if err != nil {
-				t.Logf("QUIC setup deadline evidence: tls=%s listener=%s packet_views=%s budget_at_dial=%s dial=%s total=%s entry_cause=%v final_cause=%v listener=%s client=%s sources=%v",
+				t.Logf("QUIC setup deadline evidence: tls=%s listener=%s packet_views=%s budget_at_dial=%s dial=%s total=%s entry_cause=%v final_cause=%v listener=%s client=%s native=%s sources=%v",
 					tlsReady.Sub(started), listenerReady.Sub(tlsReady), dialStarted.Sub(listenerReady),
 					until.Sub(dialStarted), time.Since(dialStarted), time.Since(started), entryCause, context.Cause(ctx),
-					listener.Addr(), transport.LocalAddr(), nonQUICSetupSourceFacts(listener))
+					listener.Addr(), transport.LocalAddr(), dialer.facts(), nonQUICSetupSourceFacts(listener))
 				t.Fatal(err)
 			}
 			defer client.Close()
@@ -158,7 +159,8 @@ func nonQUICSetupSourceFacts(listener *QUICListener) []string {
 		return []string{"source_owner_busy=true"}
 	}
 	defer s.mu.Unlock()
-	facts := []string{fmt.Sprintf("owner_cause=%v pending=%d queued_bytes=%d", context.Cause(s.ctx), s.pending, s.queuedBytes)}
+	facts := []string{fmt.Sprintf("owner_cause=%v owner_error=%v stopped=%t pending=%d queued_bytes=%d",
+		context.Cause(s.ctx), s.err, s.stopped, s.pending, s.queuedBytes)}
 	for ip, source := range s.sources {
 		facts = append(facts, fmt.Sprintf("source=%s pending=%t active=%d queued_packets=%d age=%s cause=%v",
 			ip, source.pending, source.active, len(source.packets), time.Since(source.created), context.Cause(source.ctx)))
