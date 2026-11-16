@@ -116,6 +116,7 @@ func TestRelayForwardingDiagnosticRetainsQUICHalfCloseOrigin(t *testing.T) {
 			roots := x509.NewCertPool()
 			roots.AddCert(material.Certificate())
 			clientTLS := &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13}
+			leaseExpiresAt := time.Now().UTC().Add(30 * time.Second)
 			header := privateLifecycleHeader()
 			var err error
 			header.VisitorConnectionID, err = opaqueid.New(opaqueid.VisitorConnectionPrefix)
@@ -156,7 +157,7 @@ func TestRelayForwardingDiagnosticRetainsQUICHalfCloseOrigin(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				lease := privateDiagnosticLease(header)
+				lease := privateDiagnosticLease(header, leaseExpiresAt)
 				if err := registry.insert(&serviceConnection{ref: ref, lease: lease, paths: newStreamLifetime(session)}); err != nil {
 					return err
 				}
@@ -192,7 +193,7 @@ func TestRelayForwardingDiagnosticRetainsQUICHalfCloseOrigin(t *testing.T) {
 				t.Fatal(err)
 			}
 			reports, transfers := make(chan error, 1), make(chan forwardingDiagnosticTransfer, 1)
-			lease := privateDiagnosticLease(header)
+			lease := privateDiagnosticLease(header, leaseExpiresAt)
 			acceptor, err := NewForwardingAcceptor(ForwardingAcceptorConfig{
 				ServiceRegistry: registry, CurrentLease: func() relayv1.RelayLease { return lease }, ClusterSecrets: secrets,
 				StreamCapacity: 1, Report: func(err error) { reports <- err }, Observer: &forwardingDiagnosticObserver{transfers: transfers},
@@ -220,7 +221,7 @@ func TestRelayForwardingDiagnosticRetainsQUICHalfCloseOrigin(t *testing.T) {
 			}()
 			relay := ingressv1.ServiceRelay{PublisherConnectionId: ref.PublisherConnectionID, ConnectionAssignmentRevision: int64(ref.ConnectionAssignmentRevision),
 				RelayServiceId: header.RelayServiceID, RelayId: header.RelayID, RelayRunId: header.RelayRunID, RelayLeaseRevision: int64(header.RelayLeaseRevision),
-				LeaseExpiresAt: header.LeaseExpiresAt, InternalRelayAddress: address, TlsServerName: "127.0.0.1", ConnectionSlot: int(header.ConnectionSlot)}
+				LeaseExpiresAt: leaseExpiresAt, ServingUntil: header.ServingUntil, InternalRelayAddress: address, TlsServerName: "127.0.0.1", ConnectionSlot: int(header.ConnectionSlot)}
 			visitorDone := make(chan error, 1)
 			peer := make(chan *tunnel.IncomingServiceForwardingStream, 1)
 			go func() {
@@ -324,9 +325,9 @@ func TestRelayForwardingDiagnosticRetainsQUICHalfCloseOrigin(t *testing.T) {
 	}
 }
 
-func privateDiagnosticLease(header tunnelv1.ServiceForwardingHeader) relayv1.RelayLease {
+func privateDiagnosticLease(header tunnelv1.ServiceForwardingHeader, leaseExpiresAt time.Time) relayv1.RelayLease {
 	return relayv1.RelayLease{RelayServiceId: header.RelayServiceID, RelayId: header.RelayID, RelayRunId: header.RelayRunID,
-		RelayLeaseRevision: int64(header.RelayLeaseRevision), LeaseExpiresAt: header.LeaseExpiresAt}
+		RelayLeaseRevision: int64(header.RelayLeaseRevision), LeaseExpiresAt: leaseExpiresAt, ServingUntil: header.ServingUntil}
 }
 
 func tunnelv1DiagnosticHello(ref tunnelv1.ServicePublisherConnectionRef) tunnelv1.Message {
