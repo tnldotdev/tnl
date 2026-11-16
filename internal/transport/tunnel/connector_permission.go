@@ -100,20 +100,31 @@ func (w *ConnectorPermissionWriter) fail(origin ConnectorControlFailureOrigin, e
 	w.mu.Unlock()
 }
 
+func (w *ConnectorPermissionWriter) resetControl() {
+	if err := w.stream.Reset(0); err != nil && !connectorControlInterrupted(err) {
+		w.fail(ConnectorControlOwnerStop, err)
+	}
+}
+
+func (w *ConnectorPermissionWriter) finishReceive(reset func(), stop func() bool, joined <-chan struct{}) {
+	// stopping an AfterFunc can cancel a queued callback without running it.
+	// stop selects exactly one reset owner; join that owner's return before done.
+	if stop() {
+		reset()
+	} else {
+		<-joined
+	}
+	close(w.done)
+}
+
 func (w *ConnectorPermissionWriter) receive() {
 	joined := make(chan struct{})
+	reset := w.resetControl
 	stop := context.AfterFunc(w.ctx, func() {
 		defer close(joined)
-		if err := w.stream.Reset(0); err != nil && !connectorControlInterrupted(err) {
-			w.fail(ConnectorControlOwnerStop, err)
-		}
+		reset()
 	})
-	defer func() {
-		if !stop() {
-			<-joined
-		}
-		close(w.done)
-	}()
+	defer w.finishReceive(reset, stop, joined)
 	for {
 		reply, err := tunnelv1.ReadConnectorControlReply(w.stream)
 		if err != nil {
