@@ -1,6 +1,8 @@
 """deployment handles capture selection and join only their own native work."""
 
 import asyncio
+import ssl
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -128,3 +130,130 @@ def test_invalid_deployment_selection_is_rejected_before_native_startup(
     )
     with pytest.raises(tnl.TnlError):
         client.deployment(name)
+
+
+@pytest.fixture(params=["local", "production"])
+def deployment(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> tnl.Deployment:
+    def local(
+        _self: _deployments.Deployment, name: str
+    ) -> tuple[object, _deployments.LocalPostgresConnection]:
+        assert name == "db"
+        return "binding", _deployments.LocalPostgresConnection("127.0.0.1", 15432, False)
+
+    def remote(
+        scope: _connections._Scope, name: str, selection: object
+    ) -> tuple[_connections.Connection, _connections._Session]:
+        assert name == "db" and selection is None
+        return _connections.PostgresConnection(
+            "127.0.0.1",
+            15432,
+            datetime.now(UTC) + timedelta(minutes=1),
+            ssl.create_default_context(),
+            "db.example.test",
+            None,
+            _transport_id="ctg_" + "a" * 22,
+        ), _connections._Session(scope, "/fixture/handle.json")
+
+    monkeypatch.setattr(_deployments.Deployment, "_local_connection", local)
+    monkeypatch.setattr(_connections._Scope, "prepare", remote)
+    monkeypatch.setattr(_connections._Scope, "stop", lambda _scope: None)
+    return tnl.create_client(
+        project="acme/shop", services={"db": {"protocol": "postgres"}}, token="private"
+    ).deployment(request.param)
+
+
+@pytest.mark.parametrize("close_factory", [False, True])
+def test_failed_driver_cleanup_stays_owned_until_retry_succeeds(
+    deployment: tnl.Deployment, close_factory: bool
+) -> None:
+    async def run() -> None:
+        created: list[object] = []
+        attempts: list[object] = []
+        failure = RuntimeError("driver cleanup failed")
+
+        def create(_connection: _deployments.DeploymentConnection) -> object:
+            value = object()
+            created.append(value)
+            return value
+
+        def close(value: object) -> None:
+            attempts.append(value)
+            if len(attempts) == 1:
+                raise failure
+
+        factory = deployment.client("db", create=create, close=close)
+        value = await factory()
+        if close_factory:
+            with pytest.raises(RuntimeError) as rejected:
+                await factory.aclose()
+            assert rejected.value is failure
+        else:
+            with pytest.raises(BaseExceptionGroup) as rejected_group:
+                await deployment.aclose()
+            assert rejected_group.value.exceptions == (failure,)
+        await deployment.aclose()
+        assert created == [value] and attempts == [value, value]
+        await deployment.aclose()
+        assert attempts == [value, value]
+
+    asyncio.run(run())
+
+
+def test_manually_closed_factories_release_deployment_capacity(deployment: tnl.Deployment) -> None:
+    async def run() -> None:
+        for _ in range(65):
+            factory = deployment.client("db", create=lambda _: object(), close=lambda _: None)
+            await factory.aclose()
+        await deployment.aclose()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_canceled_connection_observes_background_work_and_retains_its_failure(
+    deployment: tnl.Deployment, monkeypatch: pytest.MonkeyPatch, fails: bool
+) -> None:
+    async def run() -> None:
+        loop = asyncio.get_running_loop()
+        started, finished = asyncio.Event(), asyncio.Event()
+        release = threading.Event()
+        failure = RuntimeError("native selection failed")
+        local, remote = deployment._local_connection, deployment._scope.prepare
+
+        def blocked(name: str) -> object:
+            loop.call_soon_threadsafe(started.set)
+            assert release.wait(5)
+            if fails:
+                raise failure
+            return local(name) if deployment._local else remote(name, None)
+
+        if deployment._local:
+            monkeypatch.setattr(deployment, "_local_connection", blocked)
+        else:
+            monkeypatch.setattr(
+                deployment._scope, "prepare", lambda name, _selection: blocked(name)
+            )
+        getter = asyncio.create_task(deployment.connect("db"))
+        await asyncio.wait_for(started.wait(), 5)
+        work = next(iter(deployment._pending))
+        work.add_done_callback(lambda _: loop.call_soon(finished.set))
+        try:
+            getter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await getter
+            release.set()
+            await asyncio.wait_for(finished.wait(), 5)
+            if fails:
+                with pytest.raises(BaseExceptionGroup) as rejected:
+                    await deployment.aclose()
+                assert rejected.value.exceptions == (failure,)
+            else:
+                await deployment.aclose()
+            assert not deployment._pending
+            await deployment.aclose()
+        finally:
+            release.set()
+            await asyncio.gather(work, return_exceptions=True)
+            await deployment.aclose()
+
+    asyncio.run(run())

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
@@ -361,6 +362,47 @@ func TestDeploymentOwnerRetriesInitiallyOfflineApprovedService(t *testing.T) {
 			f.denied.Store(true)
 			if _, err := b.Connect(t.Context(), name); err == nil {
 				t.Fatal("retry bypassed current revocation")
+			}
+		})
+	}
+}
+
+func TestDeploymentOwnerRecoversMetadataAfterOfflineStartup(t *testing.T) {
+	for _, name := range []string{"web", "db", "cache", "mysql", "cluster"} {
+		t.Run(name, func(t *testing.T) {
+			var online atomic.Bool
+			f := newDeploymentOwnerFixture(t, time.Hour, func(w http.ResponseWriter, selected string, c auth.DeploymentCredential) {
+				if !online.Load() {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = w.Write([]byte(`{"title":"offline","status":503,"code":"unavailable"}`))
+					return
+				}
+				_ = json.NewEncoder(w).Encode(deploymentOwnerSelection(c, selected))
+			})
+			b := f.backend
+			b.scope.Services = []string{name}
+			if _, _, err := b.Start(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			previous := b.ProjectRuntime()
+			if previous.Namespace != "" || len(previous.Services) != 0 {
+				t.Fatal("offline startup advertised an unavailable service")
+			}
+			online.Store(true)
+			// no peer is ready; explicit preparation must still recover coherent
+			// metadata before the existing stream engine attempts to connect.
+			if _, err := b.Connect(t.Context(), name); !errors.Is(err, connectorstream.ErrServiceConnection) {
+				t.Fatal("recovered selection did not reach peer preparation", err)
+			}
+			current := b.ProjectRuntime()
+			if current.Namespace != current.Services[name].Namespace {
+				t.Fatal("first recovered service did not initialize the project namespace")
+			}
+			if err := (meta.Metadata{Version: meta.Version, Namespace: current.Namespace, Services: current.Services}).Validate(); err != nil {
+				t.Fatal("recovered metadata cannot cross the native SDK boundary", err)
+			}
+			if previous.Namespace != "" || len(previous.Services) != 0 {
+				t.Fatal("recovery changed a retained startup snapshot")
 			}
 		})
 	}

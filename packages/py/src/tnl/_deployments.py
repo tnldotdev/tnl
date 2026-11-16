@@ -98,9 +98,25 @@ class Deployment:
 
         work = asyncio.create_task(prepare())
         self._pending.add(work)
-        work.add_done_callback(self._pending.discard)
+
+        def finished(task: asyncio.Task[tuple[object, DeploymentConnection]]) -> None:
+            # observe every exception, retaining an abandoned failure for aclose.
+            # successful detached work has no result that cleanup needs to report.
+            if not task.cancelled() and task.exception() is None:
+                self._pending.discard(task)
+
+        work.add_done_callback(finished)
         # cancellation releases this waiter, not the thread or its cleanup owner.
-        return await asyncio.shield(work)
+        try:
+            result = await asyncio.shield(work)
+        except asyncio.CancelledError:
+            raise
+        except BaseException:
+            self._pending.discard(work)
+            raise
+        else:
+            self._pending.discard(work)
+            return result
 
     def _local_connection(self, name: str) -> tuple[object, LocalPostgresConnection]:
         if self._services[name] != "postgres":
@@ -161,12 +177,11 @@ class Deployment:
         if len(self._factories) >= 64:
             raise TnlError("sdk.client_capacity", "close an unused client factory")
 
-        async def retired() -> list[BaseException]:
+        def retired() -> None:
             self._factories.discard(factory)
-            return []
 
         factory = _Factory(
-            lambda: self._acquire(name), create=create, close=close, finalize=retired
+            lambda: self._acquire(name), create=create, close=close, on_closed=retired
         )
         self._factories.add(factory)
         return factory
@@ -178,7 +193,9 @@ class Deployment:
 
         async def cleanup() -> None:
             failures: list[BaseException] = []
-            pending = await asyncio.gather(*tuple(self._pending), return_exceptions=True)
+            operations = tuple(self._pending)
+            pending = await asyncio.gather(*operations, return_exceptions=True)
+            self._pending.difference_update(operations)
             failures.extend(
                 value
                 for value in pending

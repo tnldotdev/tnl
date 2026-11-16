@@ -467,7 +467,7 @@ func (b *connectorConnectionBackend) refreshService(ctx context.Context, name st
 		metadata.Services[key] = s
 	}
 	metadata.Services[name] = value
-	if approved.Endpoint != nil && metadata.Namespace == approved.Endpoint.Hostname {
+	if metadata.Namespace == "" || approved.Endpoint != nil && metadata.Namespace == approved.Endpoint.Hostname {
 		metadata.Namespace = value.Namespace
 	}
 	b.metadata = metadata

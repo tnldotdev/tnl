@@ -46,6 +46,7 @@ class _Factory[C, T]:
         create: Callable[[C], T | Awaitable[T]],
         close: Callable[[T], None | Awaitable[None]],
         finalize: Callable[[], Awaitable[list[BaseException]]] | None = None,
+        on_closed: Callable[[], None] | None = None,
     ) -> None:
         if not callable(create) or not callable(close):
             raise TnlError("sdk.configuration_invalid", "supply create and close client callbacks")
@@ -54,6 +55,7 @@ class _Factory[C, T]:
         self._close = close
         self._finalize = finalize
         self._finalized = finalize is None
+        self._on_closed = on_closed
         self._pid = os.getpid()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._closed = False
@@ -153,6 +155,7 @@ class _Factory[C, T]:
             and not self._pending
             and self._closing is None
             and self._finalized
+            and self._on_closed is None
         ):
             return
         self._context()
@@ -202,6 +205,15 @@ class _Factory[C, T]:
                 final = [error]
             self._finalized = not final
             failures.extend(final)
+        # finalization may release independent resources after a driver failure.
+        # retire the factory only once every owned cleanup has succeeded.
+        if not failures and self._on_closed is not None:
+            try:
+                self._on_closed()
+            except BaseException as error:
+                failures.append(error)
+            else:
+                self._on_closed = None
         return failures
 
 
