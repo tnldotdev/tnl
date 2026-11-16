@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -555,6 +557,337 @@ func TestConnectorPendingCanceledRecoveryRetainsIndependentCleanup(t *testing.T)
 		if !errors.Is(context.Cause(p.ctx), canceled) || !errors.Is(cleanup, physical) ||
 			!errors.Is(cleanup, io.ErrUnexpectedEOF) || session.closes.Load() != 1 || op.legs != [2]*connectorRelayLeg{} {
 			t.Error("owner cancellation discarded an independent pending operation or physical cleanup", cleanup)
+		}
+	})
+}
+
+// these are existing local entry guards, not a replacement coordinator. no
+// entered dial, remote claim, packet binding, or pending cleanup is bypassed.
+func recoveryCancellationGuard(t *testing.T, p *connectorConnection, phase *connectorRebindPhase, boundary string) error {
+	t.Helper()
+	switch boundary {
+	case "ready recovery", "inspection recovery":
+		result := p.recoverBinding()
+		if result.retry {
+			t.Error("a stopped or unavailable local guard acquired retry permission")
+		}
+		return result.err
+	case "new inspect phase":
+		next, err := p.newRebindPhase(controlv1.ConnectorPeerPairInspect, "", p.highWater, nil, "", nil)
+		if next != nil {
+			t.Error("an unavailable owner created a new signed phase")
+		}
+		return err
+	case "existing phase call":
+		state, until, err := p.callRebind(phase)
+		if state.Active != nil || state.Pending != nil || !until.IsZero() {
+			t.Error("an unavailable owner received or installed a binding")
+		}
+		return err
+	default:
+		t.Fatal("unknown local recovery guard", boundary)
+		return nil
+	}
+}
+
+func TestConnectorRecoveryCancellationOrigin(t *testing.T) {
+	boundaries := []string{"ready recovery", "inspection recovery", "new inspect phase", "existing phase call"}
+	t.Run("stopped local guard", func(t *testing.T) {
+		for _, boundary := range boundaries {
+			for _, stop := range []struct {
+				name  string
+				cause error
+			}{
+				{"canceled", context.Canceled},
+				{"deadline", context.DeadlineExceeded},
+				{"owned cause", errors.New("owner stopped before the recovery guard")},
+			} {
+				t.Run(boundary+"/"+stop.name, func(t *testing.T) {
+					budget, finish := context.WithTimeout(t.Context(), 5*time.Second)
+					defer finish()
+					p, op := pendingRetryOwner(t, budget)
+					p.rebind = nil
+					p.recoveryState = connectorInspecting
+					if boundary == "ready recovery" {
+						p.recoveryState = connectorBindingReady
+					}
+					var calls, dials, signs atomic.Int32
+					p.config.Control = recoveryPhaseControl{call: func(controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
+						calls.Add(1)
+						return controlv1.ConnectorPeerPairRebindState{}, errors.New("stopped local guard called control")
+					}}
+					dial := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+						dials.Add(1)
+						return nil, errors.New("stopped local guard dialed a relay")
+					})
+					p.config.RelayQUIC, p.config.RelayTCP = dial, dial
+					sign := p.signer.Sign
+					p.signer.Sign = func(message []byte) []byte { signs.Add(1); return sign(message) }
+					ownerUntil, runUntil, permissionUntil, pendingUntil := p.until, p.run.ValidUntil, p.permission.ExpiresAt, op.until
+					recovery, highWater, phase := p.recoveryState, p.highWater, op.prepare
+					preparedUntil, phaseStarted := p.preparedUntil, phase.started
+					before, err := json.Marshal([]any{p.pair, op.pair, phase.request, op.initial})
+					if err != nil {
+						t.Fatal(err)
+					}
+					p.cancel(stop.cause)
+					if context.Cause(p.ctx) != stop.cause {
+						t.Fatal("the local guard did not enter with the exact owner stop cause")
+					}
+					err = recoveryCancellationGuard(t, p, phase, boundary)
+					if err != stop.cause {
+						t.Errorf("stopped local recovery guard replaced its observed cause with a synthetic failure: got=%v want=%v", err, stop.cause)
+					}
+					if calls.Load() != 0 || dials.Load() != 0 || signs.Load() != 0 {
+						t.Error("a stopped local guard entered control, dial, or signing work", calls.Load(), dials.Load(), signs.Load())
+					}
+					after, snapshotErr := json.Marshal([]any{p.pair, op.pair, phase.request, op.initial})
+					if snapshotErr != nil || !bytes.Equal(before, after) ||
+						p.rebind != nil || p.inspection != nil || p.recoveryState != recovery || p.highWater != highWater ||
+						op.prepare != phase || !p.until.Equal(ownerUntil) || !p.run.ValidUntil.Equal(runUntil) ||
+						!p.permission.ExpiresAt.Equal(permissionUntil) || !op.until.Equal(pendingUntil) ||
+						!p.preparedUntil.Equal(preparedUntil) || !phase.started.Equal(phaseStarted) {
+						t.Error("local cancellation changed recovery state, the retained phase, or an original authority interval")
+					}
+					// exercise the real caller's strict recording boundary. an exact
+					// local stop is routine; a newly manufactured sentinel is not.
+					p.recordLegRecoveryFailure(err, context.Cause(p.ctx))
+					p.mu.Lock()
+					retained := p.useErr
+					p.mu.Unlock()
+					if retained != nil {
+						t.Errorf("pure local stop was charged to owner cleanup: %v", retained)
+					}
+				})
+			}
+		}
+	})
+
+	t.Run("live authority guard", func(t *testing.T) {
+		for _, boundary := range boundaries {
+			for _, fence := range []string{"pair expiry", "run expiry", "permission expiry", "closing"} {
+				t.Run(boundary+"/"+fence, func(t *testing.T) {
+					budget, finish := context.WithTimeout(t.Context(), 5*time.Second)
+					defer finish()
+					p, op := pendingRetryOwner(t, budget)
+					p.rebind, p.recoveryState = nil, connectorInspecting
+					if boundary == "ready recovery" {
+						p.recoveryState = connectorBindingReady
+					}
+					calls := 0
+					p.config.Control = recoveryPhaseControl{call: func(controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
+						calls++
+						return controlv1.ConnectorPeerPairRebindState{}, errors.New("live failed guard called control")
+					}}
+					past := time.Now().Add(-time.Second)
+					switch fence {
+					case "pair expiry":
+						p.until = past
+					case "run expiry":
+						p.run.ValidUntil = past
+					case "permission expiry":
+						p.permission.ExpiresAt = past
+					case "closing":
+						p.closing = true
+					}
+					if context.Cause(p.ctx) != nil {
+						t.Fatal("live authority failure was replaced by an owner stop")
+					}
+					err := recoveryCancellationGuard(t, p, op.prepare, boundary)
+					if err != ErrServiceConnection || calls != 0 {
+						t.Error("live authority failure lost its exact unavailable result or entered control", err, calls)
+					}
+					// cancellation after the returned local failure cannot make that
+					// earlier observation routine or whitelist its sentinel.
+					p.cancel(context.Canceled)
+					p.recordLegRecoveryFailure(err, context.Cause(p.ctx))
+					p.mu.Lock()
+					retained := p.useErr
+					p.mu.Unlock()
+					if !errors.Is(retained, ErrServiceConnection) {
+						t.Error("a later owner stop erased the already-returned live authority failure", retained)
+					}
+				})
+			}
+		}
+	})
+
+	t.Run("received control failure", func(t *testing.T) {
+		for _, boundary := range []string{"phase call", "inspection recovery"} {
+			for _, kind := range []string{"sentinel", "protocol denial", "authority denial", "canceled with independent failure", "connector cleanup", "session cleanup", "physical cleanup"} {
+				t.Run(boundary+"/"+kind, func(t *testing.T) {
+					budget, finish := context.WithTimeout(t.Context(), 5*time.Second)
+					defer finish()
+					p, _ := pendingRetryOwner(t, budget)
+					p.rebind, p.recoveryState = nil, connectorInspecting
+					phase, err := p.newRebindPhase(controlv1.ConnectorPeerPairInspect, "", p.highWater, nil, "", nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					p.inspection = phase
+					requestBefore, err := json.Marshal(phase.request)
+					if err != nil {
+						t.Fatal(err)
+					}
+					independent := errors.New("received control failure independent of the owner stop")
+					var received error
+					switch kind {
+					case "sentinel":
+						received = ErrServiceConnection
+					case "protocol denial":
+						received = &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+					case "authority denial":
+						received = &clientcontrol.ProblemError{Status: http.StatusForbidden, Problem: controlv1.Problem{Code: controlv1.Forbidden}}
+					case "canceled with independent failure":
+						received = errors.Join(context.Canceled, independent)
+					case "connector cleanup":
+						received = &CleanupError{Err: context.Canceled}
+					case "session cleanup":
+						received = &tunnel.SessionCleanupError{Err: context.Canceled}
+					case "physical cleanup":
+						received = &muxsession.QUICTransportCloseError{Err: context.Canceled}
+					}
+					calls, dials := 0, 0
+					p.config.Control = recoveryPhaseControl{call: func(request controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
+						calls++
+						requestAtCall, marshalErr := json.Marshal(request)
+						if marshalErr != nil || !bytes.Equal(requestAtCall, requestBefore) {
+							t.Error("received-error call changed the retained request")
+						}
+						if context.Cause(p.ctx) != nil {
+							t.Error("control call did not enter with a live owner")
+						}
+						p.cancel(context.Canceled)
+						return controlv1.ConnectorPeerPairRebindState{}, received
+					}}
+					dial := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+						dials++
+						return nil, errors.New("received control failure started a relay dial")
+					})
+					p.config.RelayQUIC, p.config.RelayTCP = dial, dial
+					ownerUntil, runUntil, permissionUntil, highWater := p.until, p.run.ValidUntil, p.permission.ExpiresAt, p.highWater
+					var got error
+					if boundary == "phase call" {
+						_, until, callErr := p.callRebind(phase)
+						if !until.IsZero() {
+							t.Error("a received failure installed an authority interval")
+						}
+						got = callErr
+					} else {
+						result := p.recoverBinding()
+						if result.retry {
+							t.Error("received denial, independent operation, or typed cleanup acquired retry permission")
+						}
+						got = result.err
+					}
+					if got != received || calls != 1 || dials != 0 || context.Cause(p.ctx) != context.Canceled {
+						t.Error("later owner cancellation replaced a received control failure or changed its work", got, calls, dials)
+					}
+					p.recordLegRecoveryFailure(got, context.Cause(p.ctx))
+					p.mu.Lock()
+					retained := p.useErr
+					p.mu.Unlock()
+					if !errors.Is(retained, received) || kind == "canceled with independent failure" && !errors.Is(retained, independent) {
+						t.Error("owner shutdown lost a received failure or independent joined leaf", retained)
+					}
+					requestAfter, marshalErr := json.Marshal(phase.request)
+					if marshalErr != nil || !bytes.Equal(requestAfter, requestBefore) ||
+						p.rebind != nil || p.inspection != phase || p.highWater != highWater ||
+						!p.until.Equal(ownerUntil) || !p.run.ValidUntil.Equal(runUntil) || !p.permission.ExpiresAt.Equal(permissionUntil) {
+						t.Error("a failed received reply changed its retained phase or authority")
+					}
+				})
+			}
+		}
+	})
+
+	t.Run("validated denial before owner stop", func(t *testing.T) {
+		for _, boundary := range []string{"phase call", "inspection recovery"} {
+			t.Run(boundary, func(t *testing.T) {
+				budget, finish := context.WithTimeout(t.Context(), 5*time.Second)
+				defer finish()
+				p, _ := pendingRetryOwner(t, budget)
+				p.rebind, p.recoveryState = nil, connectorInspecting
+				phase, err := p.newRebindPhase(controlv1.ConnectorPeerPairInspect, "", p.highWater, nil, "", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				p.inspection = phase
+				calls := 0
+				p.config.Control = recoveryPhaseControl{call: func(controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
+					calls++
+					// return an invalid snapshot, not an accepted binding. the
+					// real validator must deny it before owner cancellation.
+					return controlv1.ConnectorPeerPairRebindState{}, nil
+				}}
+				var got error
+				if boundary == "phase call" {
+					_, until, callErr := p.callRebind(phase)
+					if !until.IsZero() {
+						t.Error("an invalid snapshot installed an authority interval")
+					}
+					got = callErr
+				} else {
+					result := p.recoverBinding()
+					if result.retry {
+						t.Error("a validated denial acquired retry permission")
+					}
+					got = result.err
+				}
+				if got != ErrServiceConnection || calls != 1 || context.Cause(p.ctx) != nil {
+					t.Fatal("invalid live reply did not reach the real validation denial", got, calls)
+				}
+				p.cancel(context.Canceled)
+				p.recordLegRecoveryFailure(got, context.Cause(p.ctx))
+				p.mu.Lock()
+				retained := p.useErr
+				p.mu.Unlock()
+				if !errors.Is(retained, got) || p.inspection != phase || p.rebind != nil {
+					t.Error("later cancellation erased a validation denial or changed its retained phase", retained)
+				}
+			})
+		}
+	})
+
+	t.Run("stopped pending retry retains incoming cause", func(t *testing.T) {
+		for _, kind := range []string{"sentinel", "denial", "independent operation", "connector cleanup", "session cleanup", "physical cleanup"} {
+			t.Run(kind, func(t *testing.T) {
+				budget, finish := context.WithTimeout(t.Context(), 5*time.Second)
+				defer finish()
+				p, op := pendingRetryOwner(t, budget)
+				independent := errors.New("pending retry already has an independent operation failure")
+				var incoming error
+				switch kind {
+				case "sentinel":
+					incoming = ErrServiceConnection
+				case "denial":
+					incoming = &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+				case "independent operation":
+					incoming = errors.Join(context.Canceled, independent)
+				case "connector cleanup":
+					incoming = &CleanupError{Err: context.Canceled}
+				case "session cleanup":
+					incoming = &tunnel.SessionCleanupError{Err: context.Canceled}
+				case "physical cleanup":
+					incoming = &muxsession.QUICTransportCloseError{Err: context.Canceled}
+				}
+				ownerUntil, pendingUntil, handoffs := p.until, op.until, op.initial
+				p.cancel(context.Canceled)
+				result := p.pendingRetry(op, incoming)
+				if result.retry || !errors.Is(result.err, incoming) || !errors.Is(result.err, context.Canceled) {
+					t.Error("owner stop overwrote the incoming pending failure or allowed retry", result.err)
+				}
+				p.recordLegRecoveryFailure(result.err, context.Cause(p.ctx))
+				p.mu.Lock()
+				retained := p.useErr
+				p.mu.Unlock()
+				if !errors.Is(retained, incoming) || kind == "independent operation" && !errors.Is(retained, independent) {
+					t.Error("strict owner accounting lost the incoming pending operation or cleanup", retained)
+				}
+				if p.rebind != op || op.retired || op.initial != handoffs || !p.until.Equal(ownerUntil) || !op.until.Equal(pendingUntil) {
+					t.Error("stopped pending retry changed its operation, handoffs, or original interval")
+				}
+			})
 		}
 	})
 }
