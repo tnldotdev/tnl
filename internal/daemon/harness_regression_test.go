@@ -261,6 +261,32 @@ func TestPublisherObserverNeverWaitsForReaders(t *testing.T) {
 	}
 }
 
+func TestPublisherReadinessFailureDetailsIdentifyRunAndBoundHistory(t *testing.T) {
+	handle := &integrationPublisher{run: integrationPublisherRun{
+		serviceID: "svc_selected", runID: "srun_selected", number: 7, hostname: "selected.example.test",
+	}}
+	for index := range 20 {
+		_ = handle.observe(publisherservice.RunStatus{
+			LastCheck: time.Unix(int64(index), 0).UTC(), TargetHealthy: true, ConfigurationCurrent: true,
+			Connected: [2]bool{true, index > 15},
+		})
+	}
+	details := handle.readinessFailureDetails()
+	for _, fact := range []string{"service_id=svc_selected", "service_run_id=srun_selected", "run_number=7", "hostname=selected.example.test", "omitted=4"} {
+		if !strings.Contains(details, fact) {
+			t.Fatal("readiness diagnostics lost the selected run or history bound", fact, details)
+		}
+	}
+	if strings.Count(details, "ConfigurationCurrent:") != 16 ||
+		strings.Contains(details, time.Unix(0, 0).UTC().String()) ||
+		!strings.Contains(details, time.Unix(19, 0).UTC().String()) {
+		t.Fatal("readiness diagnostics did not retain only the latest observations", details)
+	}
+	if len(handle.observedEvents()) != 20 {
+		t.Fatal("bounded diagnostics discarded the observer's original evidence")
+	}
+}
+
 func TestEventRecorderCanceledWaitLeavesHistoryAvailable(t *testing.T) {
 	var recorder eventRecorder[int]
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)

@@ -254,7 +254,13 @@ type integrationPublisher struct {
 	cursor      int
 	mu          sync.Mutex
 	err         error
+	run         integrationPublisherRun
 	diagnostics func() string
+}
+
+type integrationPublisherRun struct {
+	serviceID, runID, hostname string
+	number                     int64
 }
 
 func startOwnedIntegrationPublisher(t *testing.T, owner *runtimeTopology, config publisherservice.RunConfig, diagnostics func() string) *integrationPublisher {
@@ -264,11 +270,15 @@ func startOwnedIntegrationPublisher(t *testing.T, owner *runtimeTopology, config
 func startOwnedIntegrationPublisherContext(t *testing.T, parent context.Context, owner *runtimeTopology, config publisherservice.RunConfig, diagnostics func() string) *integrationPublisher {
 	t.Helper()
 	ctx, cancel := context.WithCancel(parent)
-	handle := &integrationPublisher{cancel: cancel, done: make(chan struct{}), diagnostics: diagnostics}
+	handle := &integrationPublisher{cancel: cancel, done: make(chan struct{}), diagnostics: diagnostics,
+		run: integrationPublisherRun{serviceID: config.ServiceID}}
 	owner.publishers = append(owner.publishers, runtimeProcess{name: "publisher", cancel: cancel, wait: handle.wait})
 	var binding controlv1.ServiceRunPreparation
 	prepared, ready, status := config.Prepared, config.Ready, config.ObserveReadiness
 	config.Prepared = func(run controlv1.ServiceRunPreparation) error {
+		handle.mu.Lock()
+		handle.run = integrationPublisherRun{serviceID: run.ServiceId, runID: run.ServiceRunId, hostname: run.Hostname, number: run.RunNumber}
+		handle.mu.Unlock()
 		if prepared != nil {
 			if err := prepared(run); err != nil {
 				return err
@@ -320,6 +330,16 @@ func (p *integrationPublisher) result() error {
 	return p.err
 }
 
+func (p *integrationPublisher) readinessFailureDetails() string {
+	p.mu.Lock()
+	run := p.run
+	p.mu.Unlock()
+	events := p.observedEvents()
+	omitted := max(0, len(events)-16)
+	return fmt.Sprintf("; publisher service_id=%s service_run_id=%s run_number=%d hostname=%s; readiness observations omitted=%d latest=%+v",
+		run.serviceID, run.runID, run.number, run.hostname, omitted, events[omitted:])
+}
+
 func (p *integrationPublisher) stop() error {
 	p.cancel()
 	return p.wait()
@@ -345,7 +365,7 @@ func waitForPublisherReady(t *testing.T, handle *integrationPublisher) controlv1
 		if handle.diagnostics != nil {
 			diagnostics = handle.diagnostics()
 		}
-		t.Fatalf("publisher did not become ready: %v; result %v%s", err, handle.result(), diagnostics)
+		t.Fatalf("publisher did not become ready: %v; result %v%s%s", err, handle.result(), handle.readinessFailureDetails(), diagnostics)
 	}
 	return run
 }

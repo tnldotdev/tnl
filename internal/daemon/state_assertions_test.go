@@ -123,6 +123,7 @@ func integrationPublisherDiagnostics(database *sql.DB, pebbleLogPath string) str
 	queryErr := database.QueryRowContext(ctx, `
 		SELECT jsonb_build_object(
 			'id', orders.id, 'state', orders.state, 'order_revision', orders.order_revision,
+			'service_id', orders.service_id, 'service_run_id', orders.service_run_id, 'run_number', orders.service_run_number,
 			'work_owner', orders.work_owner, 'work_epoch', orders.work_epoch,
 			'work_expires_at', orders.work_expires_at, 'available_at', orders.available_at,
 			'last_error', orders.last_error,
