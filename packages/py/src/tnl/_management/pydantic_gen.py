@@ -26,6 +26,8 @@ class CreateDeploymentPublisherEnrollmentRequest(BaseModel):
 
 
 class DeploymentTarget(BaseModel):
+    """An explicit address and optional publisher-to-target TLS. Declared Kubernetes services require tls; an empty tls object uses verified system roots and the address hostname."""
+
     model_config = ConfigDict(extra="forbid")
     address: Annotated[str, Field(min_length=1, max_length=8192)] = Field(
         ...,
