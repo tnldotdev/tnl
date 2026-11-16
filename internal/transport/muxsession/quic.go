@@ -492,7 +492,24 @@ func (s *quicStream) Close() error {
 	return err
 }
 
-func (s *quicStream) CloseWrite() error { return s.Stream.Close() }
+func (s *quicStream) CloseWrite() error {
+	// native send close returns an untyped canceled-send failure. only an
+	// already-observed reset of this exact send direction can refine it;
+	// later context state cannot replace a successful or unrelated result.
+	cause := context.Cause(s.Stream.Context())
+	err := s.Stream.Close()
+	if err == nil {
+		return nil
+	}
+	reset, ok := cause.(*quic.StreamError)
+	if !ok || reset.StreamID != s.Stream.StreamID() {
+		return err
+	}
+	if reset.Remote && reset.ErrorCode == 0 {
+		return nil
+	}
+	return reset
+}
 
 func (s *quicStream) Reset(code uint32) error {
 	errorCode := quic.StreamErrorCode(code)

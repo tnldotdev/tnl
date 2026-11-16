@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ import (
 )
 
 type forwardingDiagnosticHalfClose struct {
-	err, sendCause error
+	nativeErr, err, sendCause error
 }
 
 type forwardingDiagnosticSession struct {
@@ -33,6 +34,7 @@ type forwardingDiagnosticSession struct {
 	opened  chan<- context.Context
 	half    chan<- forwardingDiagnosticHalfClose
 	cleanup error
+	copyErr error
 }
 
 func (s *forwardingDiagnosticSession) OpenStream(ctx context.Context) (muxsession.Stream, error) {
@@ -45,7 +47,7 @@ func (s *forwardingDiagnosticSession) OpenStream(ctx context.Context) (muxsessio
 		return nil, errors.Join(errors.New("diagnostic requires a real QUIC send context"), stream.Close())
 	}
 	s.opened <- sender.Context()
-	return &forwardingDiagnosticStream{Stream: stream, send: sender.Context(), half: s.half, cleanup: s.cleanup}, nil
+	return &forwardingDiagnosticStream{Stream: stream, send: sender.Context(), half: s.half, cleanup: s.cleanup, copyErr: s.copyErr}, nil
 }
 
 type forwardingDiagnosticStream struct {
@@ -53,11 +55,13 @@ type forwardingDiagnosticStream struct {
 	send    context.Context
 	half    chan<- forwardingDiagnosticHalfClose
 	cleanup error
+	copyErr error
 }
 
 func (s *forwardingDiagnosticStream) CloseWrite() error {
-	err := s.Stream.CloseWrite()
-	s.half <- forwardingDiagnosticHalfClose{err: err, sendCause: context.Cause(s.send)}
+	nativeErr := s.Stream.CloseWrite()
+	err := errors.Join(nativeErr, s.copyErr)
+	s.half <- forwardingDiagnosticHalfClose{nativeErr: nativeErr, err: err, sendCause: context.Cause(s.send)}
 	return err
 }
 
@@ -65,13 +69,20 @@ func (s *forwardingDiagnosticStream) Close() error {
 	return errors.Join(s.Stream.Close(), s.cleanup)
 }
 
-type forwardingDiagnosticObserver struct{ transfers chan error }
+type forwardingDiagnosticTransfer struct {
+	upload, download int64
+	err              error
+}
+
+type forwardingDiagnosticObserver struct {
+	transfers chan forwardingDiagnosticTransfer
+}
 
 func (*forwardingDiagnosticObserver) ObserveOperationContext(context.Context, observability.ServerOperation, error, time.Duration) {
 }
 
-func (o *forwardingDiagnosticObserver) ObserveRelayTransfer(_, _ int64, err error) {
-	o.transfers <- err
+func (o *forwardingDiagnosticObserver) ObserveRelayTransfer(upload, download int64, err error) {
+	o.transfers <- forwardingDiagnosticTransfer{upload: upload, download: download, err: err}
 }
 
 type forwardingDiagnosticPublisher struct {
@@ -94,7 +105,9 @@ func TestRelayForwardingDiagnosticRetainsQUICHalfCloseOrigin(t *testing.T) {
 		name        string
 		code        quic.StreamErrorCode
 		independent bool
-	}{{"normal-stop", 0, false}, {"abnormal-stop", 17, false}, {"normal-stop-and-independent-close", 0, true}} {
+		copyFailure bool
+	}{{"normal-stop", 0, false, false}, {"abnormal-stop", 17, false, false},
+		{"normal-stop-and-independent-close", 0, true, false}, {"normal-stop-and-independent-copy-half-close", 0, false, true}} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
@@ -122,13 +135,18 @@ func TestRelayForwardingDiagnosticRetainsQUICHalfCloseOrigin(t *testing.T) {
 			if test.independent {
 				injected = cleanup
 			}
+			copyFailure := errors.New("independent forwarding half-close failure")
+			var injectedCopy error
+			if test.copyFailure {
+				injectedCopy = copyFailure
+			}
 			opened := make(chan context.Context, 1)
 			half := make(chan forwardingDiagnosticHalfClose, 1)
 			registered := make(chan struct{}, 1)
 			publisherOwner := make(chan error, 1)
 			publisherAddress := traceMuxServer(t, ctx, tunnel.TransportQUIC, material.TLS, func(owner context.Context, mux muxsession.Session) (result error) {
 				defer func() { publisherOwner <- result }()
-				wire := &forwardingDiagnosticSession{Session: mux, opened: opened, half: half, cleanup: injected}
+				wire := &forwardingDiagnosticSession{Session: mux, opened: opened, half: half, cleanup: injected, copyErr: injectedCopy}
 				session, _, err := tunnel.Accept(owner, wire, func(_ context.Context, hello tunnelv1.Message) error {
 					if hello.Role != tunnelv1.Publisher || hello.ServiceConnection == nil || *hello.ServiceConnection != ref {
 						return errors.New("diagnostic publisher changed its exact service assignment")
@@ -173,7 +191,7 @@ func TestRelayForwardingDiagnosticRetainsQUICHalfCloseOrigin(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			reports, transfers := make(chan error, 1), make(chan error, 1)
+			reports, transfers := make(chan error, 1), make(chan forwardingDiagnosticTransfer, 1)
 			lease := privateDiagnosticLease(header)
 			acceptor, err := NewForwardingAcceptor(ForwardingAcceptorConfig{
 				ServiceRegistry: registry, CurrentLease: func() relayv1.RelayLease { return lease }, ClusterSecrets: secrets,
@@ -192,12 +210,12 @@ func TestRelayForwardingDiagnosticRetainsQUICHalfCloseOrigin(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			joinAcceptor := sync.OnceValue(func() error {
+				return errors.Join(forwarder.Close(), relayAwait(t, acceptResult))
+			})
 			defer func() {
-				if err := forwarder.Close(); err != nil {
-					t.Error("close diagnostic ingress forwarder", err)
-				}
-				if err := relayAwait(t, acceptResult); err != nil {
-					t.Error("join diagnostic relay acceptor", err)
+				if err := joinAcceptor(); err != nil {
+					t.Error("close diagnostic forwarder and join relay acceptor", err)
 				}
 			}()
 			relay := ingressv1.ServiceRelay{PublisherConnectionId: ref.PublisherConnectionID, ConnectionAssignmentRevision: int64(ref.ConnectionAssignmentRevision),
@@ -229,6 +247,13 @@ func TestRelayForwardingDiagnosticRetainsQUICHalfCloseOrigin(t *testing.T) {
 			if incoming.Header.VisitorConnectionID != header.VisitorConnectionID {
 				t.Fatal("diagnostic visitor identity changed")
 			}
+			if _, err := stream.Write([]byte("request")); err != nil {
+				t.Fatal("write diagnostic request", err)
+			}
+			var request [7]byte
+			if _, err := io.ReadFull(incoming.Stream(), request[:]); err != nil || string(request[:]) != "request" {
+				t.Fatal("diagnostic request did not reach publisher unchanged", err)
+			}
 			// deliver a complete framed response, then stop only the peer's read
 			// half. hold the ingress half-close until QUIC observes that stop.
 			if _, err := incoming.Stream().Write([]byte("complete")); err != nil {
@@ -249,23 +274,52 @@ func TestRelayForwardingDiagnosticRetainsQUICHalfCloseOrigin(t *testing.T) {
 				t.Fatal("finish ingress upload", err)
 			}
 			origin := relayAwait(t, half)
-			reported, transfer := relayAwait(t, reports), relayAwait(t, transfers)
+			transfer := relayAwait(t, transfers)
+			wantReport := test.code != 0 || test.independent || test.copyFailure
+			var reported error
+			if wantReport {
+				// observe real failures while the accept owner is still live,
+				// before its joined shutdown could fence further reports.
+				reported = relayAwait(t, reports)
+			}
 			var stopped *quic.StreamError
 			if !errors.As(origin.sendCause, &stopped) || !stopped.Remote || stopped.ErrorCode != test.code {
 				t.Fatal("half-close did not follow the exact observed peer stop")
 			}
-			if origin.err == nil || !errors.Is(transfer, origin.err) || !errors.Is(reported, origin.err) ||
-				test.independent != errors.Is(reported, cleanup) || ctx.Err() != nil {
-				t.Fatal("final relay report lost its live copy/half-close or independent cleanup origin")
+			if test.code == 0 {
+				if origin.nativeErr != nil {
+					t.Fatal("normal peer stop invented a native half-close failure", origin.nativeErr)
+				}
+			} else {
+				var reset *quic.StreamError
+				if !errors.As(origin.nativeErr, &reset) || !reset.Remote || reset.ErrorCode != test.code ||
+					reset.StreamID != stopped.StreamID || !errors.Is(reported, origin.nativeErr) {
+					t.Fatal("abnormal peer half-close lost its typed cause")
+				}
+			}
+			if !errors.Is(transfer.err, origin.err) || test.copyFailure != errors.Is(transfer.err, copyFailure) ||
+				test.independent != errors.Is(reported, cleanup) || test.copyFailure != errors.Is(reported, copyFailure) ||
+				wantReport != (reported != nil) || ctx.Err() != nil {
+				t.Fatal("copy or final relay report lost its native or independent failure")
+			}
+			if transfer.upload != 7 || transfer.download != 8 {
+				t.Fatal("half-close changed complete request or response bytes", transfer.upload, transfer.download)
 			}
 			select {
 			case <-publisher.Done():
 				t.Fatal("diagnostic came from a lost publisher carrier rather than one stream")
 			default:
 			}
-			var typed *quic.StreamError
-			t.Logf("report boundary=relay.Report service_id=%s run_id=%s visitor_connection_id=%s origin=publisher.CloseWrite error_type=%T send_cause_type=%T remote=%t code=%d half_close_typed=%t independent_close=%t",
-				header.ServiceID, header.ServiceRunID, header.VisitorConnectionID, origin.err, origin.sendCause, stopped.Remote, stopped.ErrorCode, errors.As(origin.err, &typed), test.independent)
+			if err := joinAcceptor(); err != nil {
+				t.Fatal("forwarding owner did not join", err)
+			}
+			select {
+			case <-reports:
+				t.Fatal("completed forwarding emitted an unexpected or duplicate diagnostic")
+			default:
+			}
+			t.Logf("report boundary=relay.Report service_id=%s run_id=%s visitor_connection_id=%s native_half_close_type=%T remote=%t code=%d reported=%t independent_close=%t independent_copy_half_close=%t upload=%d download=%d",
+				header.ServiceID, header.ServiceRunID, header.VisitorConnectionID, origin.nativeErr, stopped.Remote, stopped.ErrorCode, reported != nil, test.independent, test.copyFailure, transfer.upload, transfer.download)
 		})
 	}
 }
