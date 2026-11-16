@@ -1,13 +1,38 @@
 package tunnel
 
 import (
-	"os"
+	"context"
 	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 )
+
+type connectorStopPhase uint8
+
+const (
+	connectorStopHello connectorStopPhase = iota
+	connectorStopActivation
+)
+
+type connectorControlInterruption struct {
+	err, cause error
+	phase      connectorStopPhase
+}
+
+func (e *connectorControlInterruption) Error() string { return e.err.Error() }
+func (e *connectorControlInterruption) Unwrap() error { return e.err }
+
+func connectorControlStopped(err, cause error, phase connectorStopPhase) bool {
+	stopped, ok := err.(*connectorControlInterruption)
+	return ok && stopped.phase == phase && cause != nil && failure.Only(stopped.cause, cause)
+}
+
+func controlBudgetUnspent(ctx context.Context) bool {
+	deadline, ok := ctx.Deadline()
+	return !ok || deadline.After(time.Now())
+}
 
 // a control exchange records interruption before advancing its owned deadline.
 // a later stop cannot supply provenance to an already-observed operation error.
@@ -34,7 +59,7 @@ func (s *controlDeadlineStop) interrupt(cause error, deadline time.Time) {
 }
 
 func (s *controlDeadlineStop) operationCause(err error) error {
-	if !controlSocketDeadlineOnly(err) {
+	if s == nil || !controlSocketDeadlineOnly(err) {
 		return nil
 	}
 	s.mu.Lock()
@@ -49,9 +74,6 @@ func (s *controlDeadlineStop) operationCause(err error) error {
 }
 
 func controlSocketDeadlineOnly(err error) bool {
-	if err == os.ErrDeadlineExceeded {
-		return true
-	}
 	switch wrapped := err.(type) {
 	case *ProtocolError, *SessionCleanupError, *muxsession.QUICTransportCloseError,
 		*failure.Error, interface{ FailureReason() failure.Reason }:
@@ -70,6 +92,6 @@ func controlSocketDeadlineOnly(err error) bool {
 	case interface{ Unwrap() error }:
 		return controlSocketDeadlineOnly(wrapped.Unwrap())
 	default:
-		return false
+		return muxsession.StreamDeadlineOnly(err)
 	}
 }

@@ -2,6 +2,12 @@ package tunnel
 
 import "github.com/tnldotdev/tnl/internal/transport/muxsession"
 
+// ConnectorHelloStopped reports this exact hello's locally interrupted i/o. a
+// received rejection, independent failure, or failed owned close has no such fact.
+func ConnectorHelloStopped(err, cause error) bool {
+	return connectorControlStopped(err, cause, connectorStopHello)
+}
+
 // ConnectorReplyEndedNormally reports a failed connector reply read whose session
 // had already ended normally before owned cleanup. it describes this exact result,
 // not a nested cause, and grants neither authority nor a retry by itself.

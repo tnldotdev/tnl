@@ -34,6 +34,7 @@ type legRetryScript struct {
 	closeRelease   <-chan struct{}
 	clearEntered   chan struct{}
 	clearRelease   <-chan struct{}
+	helloGate      *fixtureTLSGate
 	activation     bool
 	activationGate *fixtureTLSGate
 }
@@ -78,6 +79,14 @@ func newLegRetrySession(t *testing.T, ctx context.Context, pair controlv1.Connec
 			return
 		}
 		s.hello <- *proof
+		if gate := script.helloGate; gate != nil {
+			close(gate.entered)
+			select {
+			case <-gate.release:
+			case <-ctx.Done():
+				return
+			}
+		}
 		if script.response == "" {
 			_, s.serveErr = remote.Write([]byte{0})
 			return

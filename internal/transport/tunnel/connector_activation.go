@@ -14,14 +14,8 @@ import (
 // interrupted i/o or pre-entry stop. independent operation and cleanup failures
 // never gain this fact through a later context cancellation.
 func ConnectorActivationStopped(err, cause error) bool {
-	stopped, ok := err.(*connectorActivationInterruption)
-	return ok && cause != nil && failure.Only(stopped.cause, cause)
+	return connectorControlStopped(err, cause, connectorStopActivation)
 }
-
-type connectorActivationInterruption struct{ err, cause error }
-
-func (e *connectorActivationInterruption) Error() string { return e.err.Error() }
-func (e *connectorActivationInterruption) Unwrap() error { return e.err }
 
 // ActivateConnectorLeg selects only this authenticated hello's carrier. racing
 // candidates remain passive until their owner joins the losers and chooses one.
@@ -86,7 +80,7 @@ func (s *Session) activateConnectorLeg(ctx context.Context, requestID string, ac
 	if err != nil {
 		err = errors.Join(err, &ProtocolError{Code: tunnelv1.Unavailable})
 		if interrupted.entry != nil {
-			return &connectorActivationInterruption{err: err, cause: interrupted.entry}
+			return &connectorControlInterruption{err: err, cause: interrupted.entry, phase: connectorStopActivation}
 		}
 		return err
 	}
@@ -114,7 +108,7 @@ func (s *Session) activateConnectorLeg(ctx context.Context, requestID string, ac
 		}
 		err = connectorReplyResult(err, replyEndedNormally)
 		if stopped {
-			err = &connectorActivationInterruption{err: err, cause: stoppedBy}
+			err = &connectorControlInterruption{err: err, cause: stoppedBy, phase: connectorStopActivation}
 		}
 	}()
 	// an ambiguous response cannot be retried on this control stream. the role

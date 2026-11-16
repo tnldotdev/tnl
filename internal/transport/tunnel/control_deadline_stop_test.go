@@ -9,6 +9,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	yamux "github.com/libp2p/go-yamux/v5"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 )
@@ -34,8 +35,9 @@ func TestControlDeadlineStopRequiresObservedInterruptionAndUnspentBudget(t *test
 		}
 		independent := errors.New("independent operation")
 		for _, err := range []error{
-			errors.Join(os.ErrDeadlineExceeded, independent), deadlineMatchingError{},
+			errors.Join(os.ErrDeadlineExceeded, independent), errors.Join(yamux.ErrTimeout, independent), deadlineMatchingError{},
 			&ProtocolError{Code: "unavailable"}, &SessionCleanupError{Err: os.ErrDeadlineExceeded},
+			&SessionCleanupError{Err: yamux.ErrTimeout},
 			&muxsession.QUICTransportCloseError{Err: os.ErrDeadlineExceeded},
 			failure.Wrap("control", failure.ConnectionUnavailable, os.ErrDeadlineExceeded),
 		} {
@@ -45,6 +47,9 @@ func TestControlDeadlineStopRequiresObservedInterruptionAndUnspentBudget(t *test
 		}
 		if stopped.operationCause(fmt.Errorf("read: %w", os.ErrDeadlineExceeded)) != cause {
 			t.Fatal("a wrapped raw socket deadline lost its interruption origin")
+		}
+		if stopped.operationCause(yamux.ErrTimeout) != cause {
+			t.Fatal("the native yamux stream deadline lost its observed interruption origin")
 		}
 		<-budget.Done()
 		if stopped.operationCause(os.ErrDeadlineExceeded) != nil {

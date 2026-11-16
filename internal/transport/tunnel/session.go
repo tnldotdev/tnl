@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -102,6 +103,12 @@ func DialConnector(ctx context.Context, transport muxsession.Session, hello tunn
 	if err != nil {
 		err = controlContextError(ctx, err)
 	}
+	if result.stoppedBy != nil && result.cleanupErr == nil && controlBudgetUnspent(ctx) &&
+		failure.Only(context.Cause(ctx), result.stoppedBy) {
+		return result.session, result.receipt, &connectorControlInterruption{
+			err: err, cause: result.stoppedBy, phase: connectorStopHello,
+		}
+	}
 	return result.session, result.receipt, connectorReplyResult(err,
 		result.replyEndedNormally && result.cleanupErr == nil && muxsession.NormalSessionCloseOnly(err))
 }
@@ -114,6 +121,7 @@ type dialResult struct {
 	err                error
 	cleanupErr         error
 	replyEndedNormally bool
+	stoppedBy          error
 }
 
 func dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Message, expectedDeliveryID string, native bool) (result dialResult) {
@@ -142,24 +150,33 @@ func dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Mess
 	if err != nil {
 		return dialResult{err: fmt.Errorf("tunnel: open control stream: %w", err)}
 	}
-	finish, err := setupDeadline(ctx, control)
+	var interrupted *controlDeadlineStop
+	if native {
+		interrupted = new(controlDeadlineStop)
+	}
+	finish, err := setupDeadlineObserved(ctx, control, interrupted)
 	if err != nil {
 		return dialResult{err: err}
 	}
 	defer func() {
-		result.err = errors.Join(result.err, finish(result.err == nil))
+		finishErr := finish(result.err == nil)
+		result.err = errors.Join(result.err, finishErr)
+		if result.stoppedBy != nil && !failure.Only(finishErr, result.stoppedBy) {
+			result.stoppedBy = nil
+		}
 		if result.err != nil {
 			result.session = nil
 			result.receipt = tunnelv1.ConnectorPairLegAccepted{}
 		}
 	}()
 	if err := tunnelv1.WriteControl(control, hello); err != nil {
-		return dialResult{err: fmt.Errorf("tunnel: write hello: %w", err)}
+		return dialResult{err: fmt.Errorf("tunnel: write hello: %w", err), stoppedBy: interrupted.operationCause(err)}
 	}
 	response, err := tunnelv1.ReadControl(control)
 	if err != nil {
 		return dialResult{err: fmt.Errorf("tunnel: read hello response: %w", err),
-			replyEndedNormally: native && connectorReplySessionEnded(transport, err)}
+			replyEndedNormally: native && connectorReplySessionEnded(transport, err),
+			stoppedBy:          interrupted.operationCause(err)}
 	}
 	if response.Type == tunnelv1.Error {
 		if native {

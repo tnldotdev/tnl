@@ -257,16 +257,23 @@ func connectorOwnedCancellationOnly(err, cause error) bool {
 		if attempt.count == 0 || attempt.cleanup != nil || !connectorOwnedCancellationOnly(attempt.context, cause) {
 			return false
 		}
+		stopped := false
 		for _, candidate := range attempt.candidates[:attempt.count] {
 			if candidate.stage != connectorAttemptConnect && candidate.stage != connectorAttemptHello && candidate.stage != connectorAttemptActivation ||
-				candidate.cleanup != nil || !connectorOwnedCancellationOnly(candidate.cause, cause) {
+				candidate.cleanup != nil {
 				return false
 			}
+			if candidate.stage == connectorAttemptConnect && candidate.cause == muxsession.ErrConnectorDisabled {
+				continue
+			}
+			observed := candidate.stage == connectorAttemptHello && tunnel.ConnectorHelloStopped(candidate.cause, cause) ||
+				candidate.stage == connectorAttemptActivation && tunnel.ConnectorActivationStopped(candidate.cause, cause)
+			if !observed && !connectorOwnedCancellationOnly(candidate.cause, cause) {
+				return false
+			}
+			stopped = true
 		}
-		return true
-	}
-	if tunnel.ConnectorActivationStopped(err, cause) {
-		return true
+		return stopped
 	}
 	if failure.Only(err, cause) || failure.Only(err, context.Canceled) {
 		return true

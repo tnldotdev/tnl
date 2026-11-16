@@ -11,6 +11,9 @@ const ALPN = "tnl-tunnel/1"
 
 var ErrClosed = errors.New("muxsession: closed")
 
+// ErrConnectorDisabled identifies an intentionally omitted dial candidate.
+var ErrConnectorDisabled = errors.New("muxsession: connector disabled")
+
 // Stream is one full-duplex byte stream in a multiplexed session.
 type Stream interface {
 	net.Conn
@@ -57,6 +60,17 @@ type Endpoint struct {
 // Connector establishes a multiplexed session to an endpoint.
 type Connector interface {
 	Connect(context.Context, Endpoint) (Session, error)
+}
+
+// DisabledConnector explicitly excludes a transport without starting a dial or
+// returning an independently failed network operation.
+type DisabledConnector struct{}
+
+func (DisabledConnector) Connect(ctx context.Context, _ Endpoint) (Session, error) {
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
+	return nil, ErrConnectorDisabled
 }
 
 // ConnectorFunc adapts a function to Connector.
