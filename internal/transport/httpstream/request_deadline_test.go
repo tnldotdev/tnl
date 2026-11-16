@@ -28,15 +28,24 @@ import (
 // and a single application slot. only the upload budget is shortened; the
 // in-memory HTTP network keeps the original workloads deterministic under synctest.
 func deadlineFrontend(t *testing.T, timeout time.Duration, handler http.Handler) (*httptest.Server, <-chan struct{}) {
+	return deadlineFrontendConcurrency(t, timeout, handler, 1)
+}
+
+func deadlineFrontendConcurrency(t *testing.T, timeout time.Duration, handler http.Handler, limit int) (*httptest.Server, <-chan struct{}) {
 	t.Helper()
 	target := httptest.NewTestServer(t, handler)
 	targetDial := target.Client().Transport.(*http.Transport).DialContext
+	return deadlineFrontendDial(t, timeout, limit, func(ctx context.Context) (net.Conn, error) {
+		return targetDial(ctx, "tcp", "target.example.test:80")
+	})
+}
+
+func deadlineFrontendDial(t *testing.T, timeout time.Duration, limit int, dial func(context.Context) (net.Conn, error)) (*httptest.Server, <-chan struct{}) {
+	t.Helper()
 	forwarder, err := publisherproxy.New(publisherproxy.Config{
-		Target: "http://target.example.test", Hostname: "service.example.test", MaxConnsPerHost: 1,
+		Target: "http://target.example.test", Hostname: "service.example.test", MaxConnsPerHost: limit,
 		Transport: func(*url.URL, publisherproxy.TargetOptions, bool) (publisherproxy.Transport, error) {
-			return httpstream.NewTargetTransport(t.Context(), func(ctx context.Context) (net.Conn, error) {
-				return targetDial(ctx, "tcp", "target.example.test:80")
-			}, 1)
+			return httpstream.NewTargetTransport(t.Context(), dial, limit)
 		},
 	})
 	if err != nil {
@@ -47,7 +56,6 @@ func deadlineFrontend(t *testing.T, timeout time.Duration, handler http.Handler)
 			t.Error(err)
 		}
 	})
-	limit := 1
 	budget, err := requestlimit.NewHTTP(&controlv1.ProjectHTTPApplicationLimits{Concurrency: &limit})
 	if err != nil {
 		t.Fatal(err)
@@ -156,7 +164,8 @@ func TestRequestBodyDeadlineInterruptsHTTP1AndHTTP2Uploads(t *testing.T) {
 							defer close(trickled)
 							ticker := time.NewTicker(25 * time.Millisecond)
 							defer ticker.Stop()
-							for {
+							until := time.Now().Add(time.Second)
+							for time.Now().Before(until) {
 								select {
 								case <-ctx.Done():
 									return
@@ -168,6 +177,12 @@ func TestRequestBodyDeadlineInterruptsHTTP1AndHTTP2Uploads(t *testing.T) {
 							}
 						}()
 						defer func() { cancel(); _ = writer.Close(); <-trickled }()
+						boundaryAwait(t, trickled)
+						select {
+						case got := <-done:
+							t.Fatal("progressing upload used a total duration deadline", got)
+						default:
+						}
 					}
 					got := boundaryAwait(t, done)
 					if got.err == nil && got.status < http.StatusBadRequest {
@@ -314,7 +329,7 @@ func TestHTTPStreamResponseOutlivesProductionUploadBudget(t *testing.T) {
 				}
 				// this uses the unmodified production server and body timeout.
 				// an active response is not a new upload or an idle connection.
-				time.Sleep(2 * httpstream.RequestBodyTimeout)
+				time.Sleep(time.Minute)
 				unblock()
 				if rest, err := io.ReadAll(response.Body); err != nil || string(rest) != "second\n" {
 					t.Fatal("production upload budget limited the response lifetime", string(rest), err)

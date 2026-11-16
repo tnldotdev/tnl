@@ -7,6 +7,7 @@
   "pipeline_source": "pipelineSource",
   "publisher_pool": "publisherPool",
   "rate_per": "ratePer",
+  "request_body_idle_timeout": "requestBodyIdleTimeout",
   "require_post_quantum": "requirePostQuantum",
   "reusable_workflow": "reusableWorkflow",
   "service_account": "serviceAccount",

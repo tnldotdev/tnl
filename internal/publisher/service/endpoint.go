@@ -19,6 +19,7 @@ import (
 	serviceconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
@@ -112,6 +113,12 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 	}
 	if prepared.managedProtocol == serviceconfig.ProtocolHTTP || prepared.managedProtocol == serviceconfig.ProtocolKubernetes {
 		prepared.serviceHTTPRequests, err = requestlimit.NewHTTP(approved.HttpLimits)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
+		prepared.requestBodyIdleTimeout, err = applicationlimits.RequestBodyIdleTimeout(approved.HttpRequestBodyIdleTimeout)
 		if err != nil {
 			return nil, err
 		}

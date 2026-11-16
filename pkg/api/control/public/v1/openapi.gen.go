@@ -3220,6 +3220,9 @@ type ProjectServiceHTTP struct {
 	Readiness *struct {
 		Path string `json:"path"`
 	} `json:"readiness,omitempty"`
+
+	// RequestBodyIdleTimeout Positive Go duration while awaiting incoming request body bytes. Defaults to 30s; explicit zero, negative, and overflowing durations are invalid. Body progress resets the timer. Target backpressure does not spend it; completion removes it without limiting responses or WebSockets.
+	RequestBodyIdleTimeout *string `json:"request_body_idle_timeout,omitempty"`
 }
 
 // ProjectSourceIdentity Server-derived source identity. Use project_key to read or apply configuration; callers do not need to compute the fingerprint.
@@ -3688,7 +3691,10 @@ type Service struct {
 
 	// HttpLimits Approved run-local HTTP request limits returned to the scoped publisher. Applies after visitor authorization on public and connector admissions.
 	HttpLimits *ProjectHTTPApplicationLimits `json:"http_limits,omitempty"`
-	Id         ServiceID                     `json:"id"`
+
+	// HttpRequestBodyIdleTimeout Approved request-body idle timeout returned only to the scoped HTTP publisher. Omission uses 30s; a configured value is a positive Go duration. Counts active incoming body reads, not target backpressure, responses, or upgrades.
+	HttpRequestBodyIdleTimeout *string   `json:"http_request_body_idle_timeout,omitempty"`
+	Id                         ServiceID `json:"id"`
 
 	// KubernetesAuth Approved nonsecret native client authentication hint. Contains no publisher target address, CA, or credentials.
 	KubernetesAuth     *KubernetesAuth   `json:"kubernetes_auth,omitempty"`

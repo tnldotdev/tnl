@@ -131,6 +131,10 @@ export interface TnlConfig {
                           }
                         | undefined;
                     };
+                    /**
+                     * Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.
+                     */
+                    requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
@@ -234,6 +238,10 @@ export interface TnlConfig {
                           }
                         | undefined;
                     };
+                    /**
+                     * Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.
+                     */
+                    requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
@@ -337,6 +345,10 @@ export interface TnlConfig {
                           }
                         | undefined;
                     };
+                    /**
+                     * Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.
+                     */
+                    requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
@@ -440,6 +452,10 @@ export interface TnlConfig {
                           }
                         | undefined;
                     };
+                    /**
+                     * Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.
+                     */
+                    requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
@@ -531,6 +547,10 @@ export interface TnlConfig {
                           }
                         | undefined;
                     };
+                    /**
+                     * Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.
+                     */
+                    requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
@@ -622,6 +642,10 @@ export interface TnlConfig {
                           }
                         | undefined;
                     };
+                    /**
+                     * Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.
+                     */
+                    requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
@@ -713,6 +737,10 @@ export interface TnlConfig {
                           }
                         | undefined;
                     };
+                    /**
+                     * Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.
+                     */
+                    requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
                    * Require hybrid post-quantum key agreement for visitor TLS.

@@ -46,30 +46,31 @@ var ErrPrivateStream = errors.New("private publisher: stream is not bound to the
 type Prepared struct {
 	Preparation controlv1.ServiceRunPreparation
 	*preparedCertificate
-	traffic             trafficlimits.Limits
-	clock               func() time.Time
-	target              string
-	handler             http.Handler
-	mounts              []proxy.Mount
-	resolveHTTPTarget   func(*http.Request) (address, identity string, err error)
-	inspectionMode      inspection.Mode
-	observeSummary      inspection.Observer
-	admitRequest        func(*http.Request) error
-	targetResolver      TargetResolver
-	managedHostname     string
-	managedProtocol     config.ProtocolName
-	managedTargetTLS    *tls.Config
-	visitorTLS          *tls.Config
-	managedVisitor      func(tunnelv1.ServiceForwardingHeader, netip.AddrPort, func(context.Context) error) servicestream.Authentication
-	sourceKey           [32]byte
-	servicePort         uint16
-	managedPublic       bool
-	serviceHTTPRequests *requestlimit.HTTP
-	httpProxy           *proxy.Proxy
-	httpResponseHooks   httpstream.ResponseHooks
-	connectorHTTP       servicestream.ConnectorHTTPFrontend
-	policy              *visitorlease.Lease
-	metadataRevision    int64
+	traffic                trafficlimits.Limits
+	clock                  func() time.Time
+	target                 string
+	handler                http.Handler
+	mounts                 []proxy.Mount
+	resolveHTTPTarget      func(*http.Request) (address, identity string, err error)
+	inspectionMode         inspection.Mode
+	observeSummary         inspection.Observer
+	admitRequest           func(*http.Request) error
+	targetResolver         TargetResolver
+	managedHostname        string
+	managedProtocol        config.ProtocolName
+	managedTargetTLS       *tls.Config
+	visitorTLS             *tls.Config
+	managedVisitor         func(tunnelv1.ServiceForwardingHeader, netip.AddrPort, func(context.Context) error) servicestream.Authentication
+	sourceKey              [32]byte
+	servicePort            uint16
+	managedPublic          bool
+	serviceHTTPRequests    *requestlimit.HTTP
+	requestBodyIdleTimeout time.Duration
+	httpProxy              *proxy.Proxy
+	httpResponseHooks      httpstream.ResponseHooks
+	connectorHTTP          servicestream.ConnectorHTTPFrontend
+	policy                 *visitorlease.Lease
+	metadataRevision       int64
 
 	certificateInstalled <-chan struct{}
 }
@@ -840,7 +841,8 @@ func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor ser
 		return err
 	}
 	managed := servicestream.Stream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, Handler: b.prepared.handler, HTTPRequests: b.prepared.serviceHTTPRequests,
-		Mounts: b.prepared.mounts, ResolveHTTPTarget: b.prepared.resolveHTTPTarget,
+		RequestBodyIdleTimeout: b.prepared.requestBodyIdleTimeout,
+		Mounts:                 b.prepared.mounts, ResolveHTTPTarget: b.prepared.resolveHTTPTarget,
 		InspectionMode: b.prepared.inspectionMode, ObserveSummary: b.prepared.observeSummary,
 		AdmitRequest: b.prepared.admitRequest, HTTPResponseHooks: b.prepared.httpResponseHooks, HTTPDrain: drain,
 		ConnectorHTTP: b.prepared.connectorHTTP, FinishVisitor: finishDelivery,

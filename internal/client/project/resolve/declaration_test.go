@@ -44,7 +44,7 @@ func TestServiceHTTPRequestPolicyDeclarationMatchesLocalAndRemote(t *testing.T) 
 	project := clientproject.Project{Config: config.TNL{
 		Services: config.Services{"web": {
 			Public: new(true), Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://app.internal:3000"))},
-			HTTP: &config.HTTPService{Access: &config.Access{IP: []string{"192.0.2.1"}}, Limits: &config.WorkLimits{Total: new(100), Concurrency: new(2), Rate: &config.Rate{Count: new(5), Per: &period, Burst: new(2)}}},
+			HTTP: &config.HTTPService{RequestBodyIdleTimeout: new(config.Duration(45 * time.Second)), Access: &config.Access{IP: []string{"192.0.2.1"}}, Limits: &config.WorkLimits{Total: new(100), Concurrency: new(2), Rate: &config.Rate{Count: new(5), Per: &period, Burst: new(2)}}},
 		}},
 	}}
 	local, err := Declaration(t.Context(), project, appliedTestContext(), nil)
@@ -69,6 +69,9 @@ func TestServiceHTTPRequestPolicyDeclarationMatchesLocalAndRemote(t *testing.T) 
 	}
 	if rate := local.Services["web"].Http.Limits.Rate; rate == nil || rate.Count != 5 || rate.Per != "1s" || rate.Burst == nil || *rate.Burst != 2 {
 		t.Fatal("explicit rate fields did not round-trip", rate)
+	}
+	if timeout := local.Services["web"].Http.RequestBodyIdleTimeout; timeout == nil || *timeout != "45s" {
+		t.Fatal("declaration lost the HTTP body idle timeout", timeout)
 	}
 }
 

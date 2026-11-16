@@ -211,10 +211,10 @@ func (d *Database) openServiceConfiguration(service, name, key string, sealed []
 }
 
 func serviceHTTPRequestPolicy(value *config.HTTPService) *config.HTTPService {
-	if value == nil || value.Access == nil && value.Limits == nil {
+	if value == nil || value.Access == nil && value.Limits == nil && value.RequestBodyIdleTimeout == nil {
 		return nil
 	}
-	return &config.HTTPService{Access: value.Access, Limits: value.Limits}
+	return &config.HTTPService{Access: value.Access, Limits: value.Limits, RequestBodyIdleTimeout: value.RequestBodyIdleTimeout}
 }
 
 func (d *Database) serviceConfiguration(ctx context.Context, q *controlstatedb.Queries, service string) (*ProjectServiceConfiguration, error) {

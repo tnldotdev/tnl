@@ -1,9 +1,30 @@
 package config
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
+
+func TestRequestBodyIdleTimeoutValidation(t *testing.T) {
+	for _, value := range []string{"30s", "1ms", "2m30s", "25h", "2562047h47m16.854775807s"} {
+		var http HTTPService
+		if err := json.Unmarshal([]byte(`{"request_body_idle_timeout":"`+value+`"}`), &http); err != nil {
+			t.Fatal(value, err)
+		}
+		for _, validate := range []func(*HTTPService) error{ValidateServiceHTTP, ValidateRemoteHTTP} {
+			if err := validate(&http); err != nil {
+				t.Fatal("positive representable timeout was rejected", value, err)
+			}
+		}
+	}
+	for _, value := range []string{`"0s"`, `"-1s"`, `"invalid"`, `"2562048h"`, `30`} {
+		var http HTTPService
+		if err := json.Unmarshal([]byte(`{"request_body_idle_timeout":`+value+`}`), &http); err == nil && ValidateServiceHTTP(&http) == nil {
+			t.Fatal("invalid timeout was accepted", value)
+		}
+	}
+}
 
 func TestServiceHTTPRequestPolicyIsIndependentOfPlacementAndExposure(t *testing.T) {
 	period := Duration(time.Second)

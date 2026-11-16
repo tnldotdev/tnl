@@ -501,7 +501,7 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 	if wrap != nil {
 		handler = wrap(handler)
 	}
-	result = ServeHandler(ctx, client, handler, drain)
+	result = ServeHandler(ctx, client, handler, drain, 0)
 	cleanupMu.Lock()
 	result = errors.Join(result, cleanupErr)
 	cleanupMu.Unlock()
@@ -511,8 +511,8 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 // ServeHandler serves an in-process HTTP application on the admitted visitor
 // connection. TLS negotiation is preserved; no target socket or local listener
 // is created. completion joins HTTP/1 upgrades and concurrent HTTP/2 handlers.
-func ServeHandler(ctx context.Context, client net.Conn, handler http.Handler, drain Drain) (result error) {
-	if client == nil || handler == nil || (drain.Started == nil) != (drain.Deadline == nil) || drain.Finish != nil && drain.Started == nil {
+func ServeHandler(ctx context.Context, client net.Conn, handler http.Handler, drain Drain, requestBodyIdleTimeout time.Duration) (result error) {
+	if client == nil || handler == nil || requestBodyIdleTimeout < 0 || (drain.Started == nil) != (drain.Deadline == nil) || drain.Finish != nil && drain.Started == nil {
 		return ErrClosed
 	}
 	life, cancel := context.WithCancel(ctx)
@@ -533,7 +533,7 @@ func ServeHandler(ctx context.Context, client net.Conn, handler http.Handler, dr
 		}
 	}()
 	listener := &singleListener{connection: client, done: make(chan struct{})}
-	handler = Requests(observability.PublisherHTTP(handler), RequestBodyTimeout)
+	handler = Requests(observability.PublisherHTTP(handler), requestBodyIdleTimeout)
 	// HTTP/2 closes its connection before all handlers necessarily return.
 	// close admission before joining so a late stream cannot add another worker.
 	var handlerMu sync.Mutex

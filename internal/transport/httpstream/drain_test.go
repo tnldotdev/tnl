@@ -48,7 +48,7 @@ func TestHTTPStreamDrainRejectsMismatchedFacts(t *testing.T) {
 				handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { handlers.Add(1) })
 				var err error
 				if mode == "handler" {
-					err = httpstream.ServeHandler(ctx, raw, handler, drain)
+					err = httpstream.ServeHandler(ctx, raw, handler, drain, 0)
 				} else {
 					err = httpstream.Serve(ctx, raw, &url.URL{Scheme: "http", Host: "target.test"}, func(context.Context) (net.Conn, error) {
 						targets.Add(1)
@@ -89,7 +89,7 @@ func TestHTTPStreamDrainPublishedDeadlineFailsClosed(t *testing.T) {
 					served := make(chan error, 1)
 					go func() {
 						if mode == "handler" {
-							served <- httpstream.ServeHandler(t.Context(), raw, handler, drain)
+							served <- httpstream.ServeHandler(t.Context(), raw, handler, drain, 0)
 						} else {
 							served <- httpstream.Serve(t.Context(), raw, &url.URL{Scheme: "http", Host: "target.test"}, func(context.Context) (net.Conn, error) {
 								t.Error("inline drain fixture opened a target")
@@ -190,7 +190,7 @@ func TestHTTPStreamDrainJoinsFinalFraming(t *testing.T) {
 					}), httpstream.Drain{Started: started, Deadline: func() time.Time { return until }, Finish: func() error {
 						deliveries.Add(1)
 						return nil
-					}})
+					}}, 0)
 				}()
 				transport := &http.Transport{ForceAttemptHTTP2: h2,
 					TLSClientConfig: &tls.Config{RootCAs: visitorfixture.Roots(t, certificate)},
@@ -279,7 +279,7 @@ func TestHTTPStreamDrainDeadlineAndCancellationJoinHandlers(t *testing.T) {
 						}), httpstream.Drain{Started: started, Deadline: func() time.Time { return until }, Finish: func() error {
 							deliveries.Add(1)
 							return cleanup
-						}})
+						}}, 0)
 					}()
 					transport := &http.Transport{ForceAttemptHTTP2: h2,
 						TLSClientConfig: &tls.Config{RootCAs: visitorfixture.Roots(t, certificate)},
@@ -358,7 +358,7 @@ func TestHTTPStreamGracefulDrainKeepsHijackUntilDeadlineAndJoins(t *testing.T) {
 				<-r.Context().Done()
 				close(canceled)
 				<-finish
-			}), httpstream.Drain{Started: started, Deadline: func() time.Time { return until }})
+			}), httpstream.Drain{Started: started, Deadline: func() time.Time { return until }}, 0)
 		}()
 		go func() {
 			_, _ = io.WriteString(visitor, "GET / HTTP/1.1\r\nHost: service.example.test\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n")

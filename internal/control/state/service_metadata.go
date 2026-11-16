@@ -373,6 +373,9 @@ func (d *Database) publisherServiceRecord(ctx context.Context, tx pgx.Tx, row co
 			result.HTTPLimits.Rate = &ProjectApplicationRate{Count: *limits.Rate.Count, Per: limits.Rate.Per.Value().String(), Burst: limits.Rate.Burst}
 		}
 	}
+	if settings != nil && settings.RequestBodyIdleTimeout != nil {
+		result.HTTPRequestBodyIdleTimeout = new(settings.RequestBodyIdleTimeout.Value().String())
+	}
 	if err = serviceSource(ctx, controlstatedb.New(tx), &result); err != nil {
 		return result, err
 	}

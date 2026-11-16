@@ -34,26 +34,27 @@ type Decision struct {
 // selected service owns its certificate name; SNI cannot select another target.
 // target trust is independent of the public WebPKI identity presented to clients.
 type Stream struct {
-	Protocol          config.ProtocolName
-	Public            bool
-	Hostname          string
-	HTTPRequests      RequestLimits
-	HTTPProxy         *proxy.Proxy
-	HTTPDrain         httpstream.Drain
-	Kubernetes        KubernetesLimits
-	Authority         string
-	Target            string
-	Handler           http.Handler
-	Mounts            []proxy.Mount
-	ResolveHTTPTarget func(*http.Request) (address, identity string, err error)
-	InspectionMode    inspection.Mode
-	ObserveSummary    inspection.Observer
-	AdmitRequest      func(*http.Request) error
-	HTTPResponseHooks httpstream.ResponseHooks
-	ConnectorHTTP     ConnectorHTTPFrontend
-	TLS               *tls.Config
-	TargetTLS         *tls.Config
-	Visitor           Authentication
+	Protocol               config.ProtocolName
+	Public                 bool
+	Hostname               string
+	HTTPRequests           RequestLimits
+	HTTPProxy              *proxy.Proxy
+	HTTPDrain              httpstream.Drain
+	RequestBodyIdleTimeout time.Duration
+	Kubernetes             KubernetesLimits
+	Authority              string
+	Target                 string
+	Handler                http.Handler
+	Mounts                 []proxy.Mount
+	ResolveHTTPTarget      func(*http.Request) (address, identity string, err error)
+	InspectionMode         inspection.Mode
+	ObserveSummary         inspection.Observer
+	AdmitRequest           func(*http.Request) error
+	HTTPResponseHooks      httpstream.ResponseHooks
+	ConnectorHTTP          ConnectorHTTPFrontend
+	TLS                    *tls.Config
+	TargetTLS              *tls.Config
+	Visitor                Authentication
 	// FinishVisitor joins delivery after entered work, socket cleanup, and
 	// callbacks have joined, before connector admission is stopped.
 	FinishVisitor func(error) error
@@ -329,7 +330,8 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		admissionDone(nil)
 		// capture the input stop before owned cleanup cancels the lifetime.
 		return errors.Join(httpVisitor.Frontend.Forward(ctx, secured, HTTPTarget{Address: s.Target, Handler: s.Handler, Transport: transport, Drain: s.HTTPDrain,
-			Mounts: s.Mounts, ResolveTarget: s.ResolveHTTPTarget,
+			RequestBodyIdleTimeout: s.RequestBodyIdleTimeout,
+			Mounts:                 s.Mounts, ResolveTarget: s.ResolveHTTPTarget,
 			Connections: targetConnections(s.HTTPRequests), proxy: s.HTTPProxy,
 			lifetime: ctx, track: trackTarget, enter: enterTargetWork}), context.Cause(ctx))
 	}
@@ -367,7 +369,8 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		go func() { defer close(done); s.guardVisitor(live, client, nil, secured.ConnectionState(), decision) }()
 		defer func() { cancel(); <-done }()
 		target := HTTPTarget{Address: s.Target, Mounts: s.Mounts, ResolveTarget: s.ResolveHTTPTarget, Transport: transport,
-			Connections: targetConnections(s.HTTPRequests), connector: connector, lifetime: ctx, track: trackTarget, enter: enterTargetWork}
+			RequestBodyIdleTimeout: s.RequestBodyIdleTimeout,
+			Connections:            targetConnections(s.HTTPRequests), connector: connector, lifetime: ctx, track: trackTarget, enter: enterTargetWork}
 		wrap := func(next http.Handler) http.Handler {
 			return wrapHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var authorization ConnectorHTTPAuthorization

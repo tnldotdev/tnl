@@ -205,6 +205,12 @@
                         },
                         "http": {
                           "properties": {
+                            "request_body_idle_timeout": {
+                              "type": "string",
+                              "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
+                              "description": "Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.",
+                              "default": "30s"
+                            },
                             "access": {
                               "oneOf": [
                                 {
@@ -460,6 +466,12 @@
                         },
                         "http": {
                           "properties": {
+                            "request_body_idle_timeout": {
+                              "type": "string",
+                              "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
+                              "description": "Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.",
+                              "default": "30s"
+                            },
                             "access": {
                               "oneOf": [
                                 {
@@ -718,6 +730,12 @@
                         },
                         "http": {
                           "properties": {
+                            "request_body_idle_timeout": {
+                              "type": "string",
+                              "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
+                              "description": "Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.",
+                              "default": "30s"
+                            },
                             "access": {
                               "oneOf": [
                                 {
@@ -969,6 +987,12 @@
                         },
                         "http": {
                           "properties": {
+                            "request_body_idle_timeout": {
+                              "type": "string",
+                              "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
+                              "description": "Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.",
+                              "default": "30s"
+                            },
                             "access": {
                               "oneOf": [
                                 {
@@ -1202,6 +1226,12 @@
                         },
                         "http": {
                           "properties": {
+                            "request_body_idle_timeout": {
+                              "type": "string",
+                              "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
+                              "description": "Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.",
+                              "default": "30s"
+                            },
                             "access": {
                               "oneOf": [
                                 {
@@ -1441,6 +1471,12 @@
                         },
                         "http": {
                           "properties": {
+                            "request_body_idle_timeout": {
+                              "type": "string",
+                              "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
+                              "description": "Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.",
+                              "default": "30s"
+                            },
                             "access": {
                               "oneOf": [
                                 {
@@ -1681,6 +1717,12 @@
                         },
                         "http": {
                           "properties": {
+                            "request_body_idle_timeout": {
+                              "type": "string",
+                              "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
+                              "description": "Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout.",
+                              "default": "30s"
+                            },
                             "access": {
                               "oneOf": [
                                 {

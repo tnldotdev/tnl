@@ -71,6 +71,9 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	if _, found := binding.Properties.Get("ephemeral"); !found {
 		t.Fatal("service ephemeral property is missing")
 	}
+	if idle, found := http.Properties.Get("request_body_idle_timeout"); !found || idle.Pattern != config.DurationPattern || idle.Default != "30s" {
+		t.Fatal("HTTP body idle timeout lost its syntax or default", idle)
+	}
 	if limits, found := http.Properties.Get("limits"); !found || limits.Properties == nil {
 		t.Fatal("HTTP limits are missing")
 	} else if concurrency, found := limits.Properties.Get("concurrency"); !found || concurrency.Minimum != "1" || concurrency.Maximum != "9007199254740991" {
@@ -91,7 +94,7 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	}
 	keys := map[string]string{}
 	collectTypeScriptKeys(reflect.TypeOf(config.Project{}), keys)
-	if keys["allow_ip"] != "" || keys["source_ips"] != "sourceIPs" || keys["startup_timeout"] != "" || keys["request_limit"] != "" || keys["strip_prefix"] != "stripPrefix" || keys["require_post_quantum"] != "requirePostQuantum" {
+	if keys["allow_ip"] != "" || keys["source_ips"] != "sourceIPs" || keys["startup_timeout"] != "" || keys["request_limit"] != "" || keys["strip_prefix"] != "stripPrefix" || keys["require_post_quantum"] != "requirePostQuantum" || keys["request_body_idle_timeout"] != "requestBodyIdleTimeout" {
 		t.Fatalf("TypeScript key mappings = %#v", keys)
 	}
 	duration := schemaForType(reflect.TypeOf(config.Duration(0)))

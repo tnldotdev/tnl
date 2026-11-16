@@ -27,20 +27,20 @@ func (target HTTPTarget) Serve(ctx context.Context, client net.Conn, hostname st
 		if target.Address != "" || target.Transport.TLS != nil || len(target.Mounts) != 0 || target.ResolveTarget != nil || target.proxy != nil {
 			return ErrEndpoint
 		}
-		return httpstream.ServeHandler(ctx, client, wrap(target.Handler), target.Drain)
+		return httpstream.ServeHandler(ctx, client, wrap(target.Handler), target.Drain, target.RequestBodyIdleTimeout)
 	}
 	if target.proxy != nil {
 		if target.connector != nil {
 			return ErrEndpoint
 		}
-		return httpstream.ServeHandler(ctx, client, wrap(http.HandlerFunc(target.proxy.ServeAdmittedHTTP)), target.Drain)
+		return httpstream.ServeHandler(ctx, client, wrap(http.HandlerFunc(target.proxy.ServeAdmittedHTTP)), target.Drain, target.RequestBodyIdleTimeout)
 	}
 	forwarder, err := target.NewHTTPProxy(ctx, hostname, hooks)
 	if err != nil {
 		return err
 	}
 	defer func() { result = errors.Join(result, forwarder.Close()) }()
-	return httpstream.ServeHandler(ctx, client, wrap(http.HandlerFunc(forwarder.ServeAdmittedHTTP)), target.Drain)
+	return httpstream.ServeHandler(ctx, client, wrap(http.HandlerFunc(forwarder.ServeAdmittedHTTP)), target.Drain, target.RequestBodyIdleTimeout)
 }
 
 // NewHTTPProxy captures target routing and trust without dialing. its owner must

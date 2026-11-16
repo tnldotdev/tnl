@@ -442,7 +442,7 @@ func New(config Config) (_ *Proxy, result error) {
 			return
 		}
 		baseHandler.ServeHTTP(response, request)
-	}), httpstream.RequestBodyTimeout)
+	}), 0)
 	return owner, nil
 }
 

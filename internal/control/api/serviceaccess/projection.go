@@ -10,7 +10,8 @@ import (
 
 func Service(record controlstate.ServiceRecord) controlv1.Service {
 	result := controlv1.Service{Id: record.ID, TeamId: record.TeamID, GuestId: record.GuestID, Name: record.Name,
-		Enabled: record.Enabled, CreatedAt: record.CreatedAt, Protocol: controlv1.ServiceProtocol(record.Protocol),
+		HttpRequestBodyIdleTimeout: record.HTTPRequestBodyIdleTimeout,
+		Enabled:                    record.Enabled, CreatedAt: record.CreatedAt, Protocol: controlv1.ServiceProtocol(record.Protocol),
 		PublisherPool: record.PublisherPool, TrustRevision: record.TrustRevision, EndpointRevision: record.EndpointRevision,
 		Ephemeral: record.Ephemeral, ExpiresAt: record.ExpiresAt, RequirePostQuantum: record.RequirePostQuantum}
 	if t := record.Endpoint; t != nil {

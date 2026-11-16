@@ -22,7 +22,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
   inspection: {mode: "none"},
   services: {api: {}, site: {}},
   deployments: {local: {targets: {
-    api: {domain: "routes.example.test", address: 3000, inspection: {mode: "summary"}, name: worktree.label.fullLabel, http: {readiness: {path: "/status"}, limits: {total: 20, rate: {count: 5, per: "1m"}, concurrency: 750}}},
+    api: {domain: "routes.example.test", address: 3000, inspection: {mode: "summary"}, name: worktree.label.fullLabel, http: {requestBodyIdleTimeout: "45s", readiness: {path: "/status"}, limits: {total: 20, rate: {count: 5, per: "1m"}, concurrency: 750}}},
     site: {hostname: "site.example.test", http: {open: true, paths: {"/api": "api", "/v1": {service: "api", stripPrefix: true}}}},
   }}},
 });`
@@ -51,6 +51,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 		value.Services["api"].HTTP.Limits.Total == nil || *value.Services["api"].HTTP.Limits.Total != 20 ||
 		value.Services["api"].HTTP.Limits.Rate == nil || value.Services["api"].HTTP.Limits.Rate.Count == nil || *value.Services["api"].HTTP.Limits.Rate.Count != 5 ||
 		value.Services["api"].HTTP.Limits.Rate.Per == nil || value.Services["api"].HTTP.Limits.Rate.Per.Value() != time.Minute ||
+		value.Services["api"].HTTP.RequestBodyIdleTimeout == nil || value.Services["api"].HTTP.RequestBodyIdleTimeout.Value() != 45*time.Second ||
 		value.Services["api"].Target == nil || string(*value.Services["api"].Target.Address) != "3000" ||
 		value.Services["api"].HTTP.Readiness == nil || value.Services["api"].HTTP.Readiness.Path != "/status" {
 		t.Fatalf("config = %#v", value)

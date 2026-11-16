@@ -30,6 +30,7 @@ type ServiceRecord struct {
 	Placement                           *ServicePlacement   `json:"placement,omitempty"`
 	Source                              *LocalServiceSource `json:"source,omitempty"`
 	HTTPLimits                          *ProjectHTTPApplicationLimits
+	HTTPRequestBodyIdleTimeout          *string
 	Enabled                             bool
 	Ephemeral, RequirePostQuantum       bool
 	ExpiresAt                           *time.Time

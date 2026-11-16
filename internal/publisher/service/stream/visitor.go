@@ -29,18 +29,19 @@ type HTTPFrontend interface {
 }
 
 type HTTPTarget struct {
-	Drain         httpstream.Drain
-	Address       string
-	Handler       http.Handler
-	Mounts        []proxy.Mount
-	ResolveTarget func(*http.Request) (address, identity string, err error)
-	Transport     targettransport.Transport
-	Connections   int
-	proxy         *proxy.Proxy
-	connector     ConnectorAdmission
-	lifetime      context.Context
-	track         func(net.Conn) net.Conn
-	enter         func() (func(), bool)
+	RequestBodyIdleTimeout time.Duration
+	Drain                  httpstream.Drain
+	Address                string
+	Handler                http.Handler
+	Mounts                 []proxy.Mount
+	ResolveTarget          func(*http.Request) (address, identity string, err error)
+	Transport              targettransport.Transport
+	Connections            int
+	proxy                  *proxy.Proxy
+	connector              ConnectorAdmission
+	lifetime               context.Context
+	track                  func(net.Conn) net.Conn
+	enter                  func() (func(), bool)
 }
 
 type HTTPVisitor struct{ Frontend HTTPFrontend }

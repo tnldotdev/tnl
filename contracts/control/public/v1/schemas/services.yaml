@@ -225,6 +225,11 @@ schemas:
       http_limits:
         $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits"
         description: Approved run-local HTTP request limits returned to the scoped publisher. Applies after visitor authorization on public and connector admissions.
+      http_request_body_idle_timeout:
+        type: string
+        minLength: 1
+        maxLength: 64
+        description: Approved request-body idle timeout returned only to the scoped HTTP publisher. Omission uses 30s; a configured value is a positive Go duration. Counts active incoming body reads, not target backpressure, responses, or upgrades.
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       kubernetes_auth: { $ref: "../openapi.yaml#/components/schemas/KubernetesAuth" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }

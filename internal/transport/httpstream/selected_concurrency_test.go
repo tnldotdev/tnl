@@ -31,7 +31,7 @@ func selectedConcurrentTarget(t *testing.T, capacity int, handler http.Handler) 
 		upstream, backend := net.Pipe()
 		servers.Go(func() {
 			defer backend.Close()
-			if err := httpstream.ServeHandler(owner, backend, handler, httpstream.Drain{}); err != nil {
+			if err := httpstream.ServeHandler(owner, backend, handler, httpstream.Drain{}, 0); err != nil {
 				t.Error("target serving failed", err)
 			}
 		})
@@ -83,7 +83,7 @@ func TestTargetTransportConcurrentHTTP2SSEAndShortRequest(t *testing.T) {
 		served := make(chan error, 1)
 		go func() {
 			secured := tls.Server(raw, &tls.Config{Certificates: []tls.Certificate{certificate}, NextProtos: []string{"h2", "http/1.1"}})
-			served <- httpstream.ServeHandler(ctx, secured, forward, httpstream.Drain{})
+			served <- httpstream.ServeHandler(ctx, secured, forward, httpstream.Drain{}, 0)
 		}()
 		var visitors atomic.Int32
 		transport := &http.Transport{ForceAttemptHTTP2: true,

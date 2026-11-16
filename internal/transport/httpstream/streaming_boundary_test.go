@@ -238,7 +238,8 @@ func TestHTTPStreamIncompleteUploadDeadline(t *testing.T) {
 					defer close(joined)
 					ticker := time.NewTicker(20 * time.Millisecond)
 					defer ticker.Stop()
-					for {
+					until := time.Now().Add(2 * uploadTestTimeout)
+					for time.Now().Before(until) {
 						select {
 						case <-ctx.Done():
 							return
@@ -250,6 +251,12 @@ func TestHTTPStreamIncompleteUploadDeadline(t *testing.T) {
 					}
 				}()
 				t.Cleanup(func() { cancel(); _ = writer.Close(); boundaryAwait(t, joined) })
+				boundaryAwait(t, joined)
+				select {
+				case got := <-done:
+					t.Fatal("progressing upload used a total duration deadline", got)
+				default:
+				}
 			}
 			got := boundaryAwait(t, done)
 			if got.err == nil && got.status < 400 {

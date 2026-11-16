@@ -106,6 +106,7 @@ const config = defineConfig({
           },
           type: "app",
           http: {
+            requestBodyIdleTimeout: "45s",
             access: { ip: ["192.0.2.0/24"] },
             limits: { total: 100, concurrency: 5, rate: { count: 10, per: "1m", burst: 3 } },
             open: true,
@@ -329,6 +330,14 @@ test("configuration enforces service ownership and references for literals and f
   defineConfig(
     // @ts-expect-error HTTP limits use duration-literal periods.
     local({ web: {} }, { web: { http: { limits: { rate: { count: 1, per: "minute" } } } } }),
+  );
+  defineConfig(
+    // @ts-expect-error body idle timeouts require duration-literal units.
+    local({ web: {} }, { web: { http: { requestBodyIdleTimeout: "minute" } } }),
+  );
+  defineConfig(
+    // @ts-expect-error numeric body idle timeouts are not durations.
+    local({ web: {} }, { web: { http: { requestBodyIdleTimeout: 30 } } }),
   );
   // @ts-expect-error combined byte totals are removed.
   defineConfig(local({ web: {} }, { web: { traffic: { totalBytes: 1024 } } }));

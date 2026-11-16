@@ -66,3 +66,18 @@ func TestServiceProjectionsPreserveSavedPostQuantumPolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestServiceProjectionKeepsBodyTimeoutPublisherOnly(t *testing.T) {
+	record := controlstate.ServiceRecord{HTTPRequestBodyIdleTimeout: new("45s")}
+	if service := Service(record); service.HttpRequestBodyIdleTimeout == nil || *service.HttpRequestBodyIdleTimeout != "45s" {
+		t.Fatal("publisher projection lost the configured HTTP body timeout")
+	}
+	encoded, err := json.Marshal(Summary(record))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil || fields["http_request_body_idle_timeout"] != nil {
+		t.Fatal("inventory exposed publisher-only HTTP settings", string(encoded), err)
+	}
+}

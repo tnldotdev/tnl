@@ -213,8 +213,9 @@ func TestIntegrationServiceConfigurationOmissionResetsDefaults(t *testing.T) {
 			original := ProjectServiceConfiguration{
 				Target: "localhost:3000", RequirePostQuantum: new(true),
 				HTTP: &config.HTTPService{
-					Access: &config.Access{Mode: "anonymous", IP: []string{"192.0.2.10"}},
-					Limits: &config.WorkLimits{Total: new(100), Concurrency: new(2)},
+					RequestBodyIdleTimeout: new(config.Duration(45 * time.Second)),
+					Access:                 &config.Access{Mode: "anonymous", IP: []string{"192.0.2.10"}},
+					Limits:                 &config.WorkLimits{Total: new(100), Concurrency: new(2)},
 				},
 			}
 			service, err := d.CreateServiceAt(ctx, actor.TeamID, actor.ActingIdentityID, test.name, test.name,
@@ -242,7 +243,7 @@ func TestIntegrationServiceConfigurationOmissionResetsDefaults(t *testing.T) {
 			}
 			q := controlstatedb.New(d.pool)
 			settings, err := d.serviceHTTPSettings(ctx, q, service.ID)
-			if err != nil || settings != nil && settings.Limits != nil {
+			if err != nil || settings != nil && (settings.Limits != nil || settings.RequestBodyIdleTimeout != nil) {
 				t.Fatal("omitted request limits retained the old override", err)
 			}
 			for _, source := range []string{"192.0.2.10", "203.0.113.10"} {

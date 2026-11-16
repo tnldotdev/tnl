@@ -299,6 +299,9 @@ func ValidateServiceHTTP(value *HTTPService) error {
 	if value == nil {
 		return nil
 	}
+	if value.RequestBodyIdleTimeout != nil && value.RequestBodyIdleTimeout.Value() <= 0 {
+		return errors.New("http.request_body_idle_timeout must be positive")
+	}
 	if value.Access != nil {
 		if err := value.Access.Validate(); err != nil {
 			return err

@@ -316,6 +316,12 @@ schemas:
     additionalProperties: false
     description: HTTP visitor access and request limits for local and remote services, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Only local bindings support readiness, path mounts, and browser opening.
     properties:
+      request_body_idle_timeout:
+        type: string
+        minLength: 1
+        maxLength: 64
+        default: 30s
+        description: Positive Go duration while awaiting incoming request body bytes. Defaults to 30s; explicit zero, negative, and overflowing durations are invalid. Body progress resets the timer. Target backpressure does not spend it; completion removes it without limiting responses or WebSockets.
       access: { $ref: "../openapi.yaml#/components/schemas/ProjectHTTPAccess" }
       limits: { $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits" }
       readiness:

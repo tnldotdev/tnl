@@ -25,7 +25,8 @@ func TestIntegrationLocalServiceHTTPPolicySurvivesRealizationAndApply(t *testing
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": {
 		Target: "app", Traffic: &trafficlimits.Selection{Connections: new(7), Rate: new(2), RatePer: new("2s")}, HTTP: &config.HTTPService{
-			Access: &config.Access{IP: []string{"192.0.2.10"}}, Limits: &config.WorkLimits{Total: new(100)},
+			RequestBodyIdleTimeout: new(config.Duration(45 * time.Second)),
+			Access:                 &config.Access{IP: []string{"192.0.2.10"}}, Limits: &config.WorkLimits{Total: new(100)},
 			Readiness: &config.Readiness{Path: "/health"},
 		},
 	}}}
@@ -61,7 +62,8 @@ func TestIntegrationLocalServiceHTTPPolicySurvivesRealizationAndApply(t *testing
 	}
 	check(first.ServiceID, "192.0.2.10", "203.0.113.10", 100)
 	approved, err := d.GetServiceForPublisher(ctx, first.ServiceID, access, now)
-	if err != nil || approved.HTTPLimits == nil || *approved.HTTPLimits.Total != 100 {
+	if err != nil || approved.HTTPLimits == nil || *approved.HTTPLimits.Total != 100 ||
+		approved.HTTPRequestBodyIdleTimeout == nil || *approved.HTTPRequestBodyIdleTimeout != "45s" {
 		t.Fatal("local publisher did not receive approved request limits", approved, err)
 	}
 	for _, selection := range []*trafficlimits.Selection{

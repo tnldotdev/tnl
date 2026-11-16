@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 )
 
 func main() {
@@ -242,6 +243,9 @@ func deploymentBindingSchema() *jsonschema.Schema {
 	properties.Set("require_post_quantum", &jsonschema.Schema{Type: "boolean", Description: "Require hybrid post-quantum key agreement for visitor TLS."})
 	properties.Set("traffic", trafficLimitsSchema())
 	httpProperties := jsonschema.NewProperties()
+	httpProperties.Set("request_body_idle_timeout", &jsonschema.Schema{Type: "string", Pattern: config.DurationPattern,
+		Default:     applicationlimits.DefaultRequestBodyIdleTimeout.String(),
+		Description: "Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout."})
 	httpProperties.Set("access", accessSchema("restricted", "anonymous"))
 	httpProperties.Set("limits", workLimitsSchema())
 	readiness := jsonschema.NewProperties()
