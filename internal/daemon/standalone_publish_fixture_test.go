@@ -15,6 +15,7 @@ import (
 	quic "github.com/quic-go/quic-go"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"golang.org/x/net/websocket"
@@ -114,7 +115,8 @@ func standalonePublishConfig(t *testing.T, databaseURL string, publicListener ne
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 5 * time.Second,
 		RelayLeaseDuration:   5 * time.Second, LeaseRenewalInterval: time.Second,
-		ControlRetryInterval: 10 * time.Millisecond, DrainTimeout: 3 * time.Second,
+		ControlOutageTolerance: controloutage.DefaultTolerance,
+		ControlRetryInterval:   10 * time.Millisecond, DrainTimeout: 3 * time.Second,
 	}, listeners
 }
 

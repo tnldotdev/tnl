@@ -13,6 +13,7 @@ import (
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -53,7 +54,8 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 3 * time.Second,
 		RelayLeaseDuration:   3 * time.Second, LeaseRenewalInterval: time.Second,
-		ControlRetryInterval: 10 * time.Millisecond, DrainTimeout: 2 * time.Second,
+		ControlOutageTolerance: controloutage.DefaultTolerance,
+		ControlRetryInterval:   10 * time.Millisecond, DrainTimeout: 2 * time.Second,
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)

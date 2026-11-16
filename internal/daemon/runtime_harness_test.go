@@ -17,6 +17,7 @@ import (
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 )
 
@@ -363,7 +364,8 @@ func splitTestConfig(role daemonconfig.Role, metricsAddress string) daemonconfig
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 2 * time.Second,
 		RelayLeaseDuration:   2 * time.Second, LeaseRenewalInterval: 500 * time.Millisecond,
-		ControlRetryInterval: 50 * time.Millisecond, DrainTimeout: time.Second,
+		ControlOutageTolerance: controloutage.DefaultTolerance,
+		ControlRetryInterval:   50 * time.Millisecond, DrainTimeout: time.Second,
 	}
 }
 
