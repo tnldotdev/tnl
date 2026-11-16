@@ -21,7 +21,7 @@ func TestIntegrationConfigureServiceEndpointKeepsConnectorAuthority(t *testing.T
 	before := connectorPairSavedAuthority(t, f.d, pair.ID)
 	declaration := ProjectServiceConfiguration{Protocol: "tcp", Target: "localhost:3000",
 		Hostname: "moved." + service.Endpoint.Hostname, Public: new(true)}
-	moved, err := f.d.ConfigureService(f.visitor, service.ID, f.request.Subject.IdentityID, service.ServiceMetadata, &declaration, ServiceUpdateConditions{}, f.now)
+	moved, err := f.d.ConfigureService(f.visitor, service.ID, f.request.Subject.IdentityID, service.ServiceMetadata, &declaration, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now)
 	if err != nil || moved.ID != service.ID || moved.Endpoint.Hostname != declaration.Hostname || moved.Endpoint.Port == 0 ||
 		!moved.Endpoint.Public || moved.TrustRevision != service.TrustRevision || moved.EndpointRevision != service.EndpointRevision+1 {
 		t.Fatal("endpoint move replaced service identity or target trust", err)
@@ -31,7 +31,7 @@ func TestIntegrationConfigureServiceEndpointKeepsConnectorAuthority(t *testing.T
 	}
 	private := declaration
 	private.Public = new(false)
-	disabled, err := f.d.ConfigureService(f.visitor, service.ID, f.request.Subject.IdentityID, moved.ServiceMetadata, &private, ServiceUpdateConditions{}, f.now)
+	disabled, err := f.d.ConfigureService(f.visitor, service.ID, f.request.Subject.IdentityID, moved.ServiceMetadata, &private, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now)
 	if err != nil || disabled.Endpoint.Public || disabled.Endpoint.Port != moved.Endpoint.Port ||
 		disabled.TrustRevision != moved.TrustRevision || disabled.EndpointRevision != moved.EndpointRevision+1 {
 		t.Fatal("reachability edit changed trust or lost the retained reservation", err)
@@ -39,7 +39,7 @@ func TestIntegrationConfigureServiceEndpointKeepsConnectorAuthority(t *testing.T
 	if !bytes.Equal(before, connectorPairSavedAuthority(t, f.d, pair.ID)) {
 		t.Fatal("endpoint disablement retired authorized connector authority")
 	}
-	retry, err := f.d.ConfigureService(f.visitor, service.ID, f.request.Subject.IdentityID, disabled.ServiceMetadata, &private, ServiceUpdateConditions{}, f.now)
+	retry, err := f.d.ConfigureService(f.visitor, service.ID, f.request.Subject.IdentityID, disabled.ServiceMetadata, &private, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now)
 	if err != nil || retry.EndpointRevision != disabled.EndpointRevision {
 		t.Fatal("lost-response endpoint retry advanced the binding again", err)
 	}
@@ -55,7 +55,7 @@ func TestIntegrationConfigureServiceEndpointKeepsConnectorAuthority(t *testing.T
 		t.Fatal("domain move lost its saved member owner", err)
 	}
 	private.DomainID, private.Hostname = domain.ID, "moved."+slug+"."+domain.CanonicalDomain
-	relocated, err := f.d.ConfigureService(f.visitor, service.ID, f.request.Subject.IdentityID, disabled.ServiceMetadata, &private, ServiceUpdateConditions{}, f.now)
+	relocated, err := f.d.ConfigureService(f.visitor, service.ID, f.request.Subject.IdentityID, disabled.ServiceMetadata, &private, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now)
 	if err != nil || relocated.DomainID != domain.ID || relocated.Endpoint.Hostname != private.Hostname ||
 		relocated.TrustRevision != disabled.TrustRevision || relocated.EndpointRevision != disabled.EndpointRevision+1 {
 		t.Fatal("domain edit replaced service identity or target trust", err)

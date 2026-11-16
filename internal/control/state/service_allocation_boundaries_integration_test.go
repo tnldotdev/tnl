@@ -40,7 +40,7 @@ func TestIntegrationServiceAllocationKeepsDefinitionAndCurrentSigningKey(t *test
 		t.Fatal("management rewrote immutable allocation target intent", err)
 	}
 	if _, err := d.ConfigureService(ctx, service.ID, actor.ActingIdentityID, service.ServiceMetadata,
-		&ProjectServiceConfiguration{Target: "localhost:4000"}, ServiceUpdateConditions{}, now); !errors.Is(err, ErrServiceConflict) {
+		&ProjectServiceConfiguration{Target: "localhost:4000"}, ServiceUpdateConditions{UnconditionalConfiguration: true}, now); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("explicit declaration bypassed immutable allocation intent", err)
 	}
 	unchanged, err := d.GetServiceForPublisher(ctx, service.ID, publisher, now)

@@ -113,12 +113,11 @@ func reserveConfiguredService(ctx context.Context, services publisherServices, d
 	}
 	for attempt := 0; attempt < 3; attempt++ {
 		desired, desiredTrust := declaration, trust
-		var configurationDigest *string
+		configured, digest, readErr := services.routes.GetServiceConfiguration(ctx, current.Id)
+		if readErr != nil {
+			return controlv1.Service{}, readErr
+		}
 		if len(selectIntent) != 0 {
-			configured, digest, readErr := services.routes.GetServiceConfiguration(ctx, current.Id)
-			if readErr != nil {
-				return controlv1.Service{}, readErr
-			}
 			selected, selectErr := selectIntent[0](current, configured)
 			if selectErr != nil {
 				return controlv1.Service{}, selectErr
@@ -133,10 +132,9 @@ func reserveConfiguredService(ctx context.Context, services publisherServices, d
 			if configured != nil && reflect.DeepEqual(*configured, desired) {
 				return approved(current, desired, desiredTrust)
 			}
-			configurationDigest = &digest
 		}
 		saved, updateErr := services.routes.ConfigureService(ctx, current.Id, controlv1.UpdateServiceRequest{
-			ExpectedTrustRevision: current.TrustRevision, ExpectedConfigurationDigest: configurationDigest,
+			ExpectedTrustRevision: current.TrustRevision, ExpectedConfigurationDigest: &digest,
 			ExpectedPublisherPool: new(current.PublisherPool),
 			Protocol:              controlv1.ServiceProtocolHTTP, TargetTls: publisheridentity.ServiceTargetTLS(desiredTrust),
 			PublisherPool: current.PublisherPool, Configuration: &desired})

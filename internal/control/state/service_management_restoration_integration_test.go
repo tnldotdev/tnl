@@ -48,7 +48,7 @@ func TestIntegrationServiceRestoredAdminCleanupDoesNotRewriteAnotherMemberDeclar
 	admin := addAuthorityMember(t, f.d, f.now, f.owner, f.team, "restored-cleanup-admin", TeamRoleAdmin)
 	var err error
 	f.local, err = f.d.ConfigureService(t.Context(), f.local.ID, f.member.IdentityID, f.local.ServiceMetadata,
-		&ProjectServiceConfiguration{Target: "localhost:3000"}, ServiceUpdateConditions{}, f.now)
+		&ProjectServiceConfiguration{Target: "localhost:3000"}, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now)
 	if err != nil {
 		t.Fatal("member owner could not save its declaration", err)
 	}
@@ -117,7 +117,7 @@ func TestIntegrationServiceRestoredReleasingDomainDeniesNewWorkButAllowsCleanup(
 	fresh = *declaration
 	fresh.DomainID, fresh.Hostname, fresh.Target = domain.ID, f.service.Endpoint.Hostname, "localhost:4999"
 	if _, err := f.database.ConfigureService(ctx, f.service.ID, member.IdentityID, f.service.ServiceMetadata,
-		&fresh, ServiceUpdateConditions{}, f.now); !errors.Is(err, ErrServiceAccess) {
+		&fresh, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now); !errors.Is(err, ErrServiceAccess) {
 		t.Error("releasing domain permitted declaration replacement", err)
 	}
 	if _, err := f.database.StartServiceRun(ctx, f.service.ID, f.prepared.RunID, f.prepared.RunNumber,

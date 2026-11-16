@@ -16,7 +16,15 @@ schemas:
     required: [protocol, publisher_pool, expected_trust_revision]
     dependentRequired:
       expected_configuration_digest: [configuration]
-    description: "Replacement service settings. Copy trust_revision into expected_trust_revision; a stale revision is rejected independently of the declaration digest and pool condition. Omit target_tls to remove it. Optional configuration replaces a standalone service's full declaration on the same service ID; protocol and target_tls must agree with it. For read/modify/write, send the observed publisher_pool as expected_publisher_pool and the unquoted ETag token from getServiceConfiguration as expected_configuration_digest; either mismatch conflicts before any service write. Conditions describe observed state, not desired settings. Full desired-intent replacements may omit these optional conditions. Omit configuration to retain the saved declaration, which must still agree with the metadata. Allocated and project-managed declarations cannot be changed here."
+      unconditional_configuration: [configuration]
+    dependentSchemas:
+      configuration:
+        oneOf:
+          - required: [expected_configuration_digest]
+            not: { required: [unconditional_configuration] }
+          - required: [unconditional_configuration]
+            not: { required: [expected_configuration_digest] }
+    description: "Replacement service settings. Copy trust_revision into expected_trust_revision; a stale revision is rejected independently of the full configuration fingerprint and pool condition. Supplied configuration replaces a standalone service's entire declaration on the same service ID; omitted settings return to defaults, including restricted HTTP access and no IP filter or request-limit overrides. Protocol and target_tls must agree with it. Every configuration replacement requires the unquoted ETag token from getServiceConfiguration as expected_configuration_digest, or an explicit unconditional_configuration: true instead. A stale digest conflicts before any service write, even when trust_revision has not changed. To protect a read publisher_pool value, send it as expected_publisher_pool. Conditions describe observed state, not desired settings. Omitting configuration is a distinct metadata-only update that retains the saved declaration, which must still agree with the metadata. Allocated and project-managed declarations cannot be changed here."
     properties:
       expected_trust_revision:
         {
@@ -37,7 +45,12 @@ schemas:
         minLength: 71
         maxLength: 71
         pattern: "^sha256:[0-9a-f]{64}$"
-        description: Opaque canonical declaration digest, without ETag quotes. Requires configuration; also covers the absence of a saved declaration.
+        description: Observed full configuration fingerprint, without ETag quotes. Required for configuration replacement unless unconditional_configuration is true; the two are mutually exclusive. Also covers the absence of a saved declaration.
+      unconditional_configuration:
+        type: boolean
+        const: true
+        x-go-type: bool
+        description: Explicitly replace configuration without checking its current fingerprint. Requires configuration and excludes expected_configuration_digest. Does not bypass trust revision, publisher-pool conditions, authorization, or validation.
   ServiceInvitationCredential:
     type: object
     additionalProperties: false

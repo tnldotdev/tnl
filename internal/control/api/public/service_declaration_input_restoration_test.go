@@ -38,7 +38,8 @@ func (s *serviceDeclarationInputRestorationStore) CreateServiceAt(_ context.Cont
 
 func (s *serviceDeclarationInputRestorationStore) ConfigureService(_ context.Context, service, actor string, metadata controlstate.ServiceMetadata, configuration *controlstate.ProjectServiceConfiguration, conditions controlstate.ServiceUpdateConditions, _ time.Time) (controlstate.ServiceRecord, error) {
 	if service != "svc_aaaaaaaaaaaaaaaaaaaaaa" || actor != testControlReadPrincipal().identityID || metadata.TrustRevision != 7 ||
-		metadata.PublisherPool || conditions.ConfigurationDigest != "" || conditions.PublisherPool != nil {
+		metadata.PublisherPool || conditions.ConfigurationDigest != "" || conditions.PublisherPool != nil ||
+		conditions.UnconditionalConfiguration != (configuration != nil) {
 		panic("declaration replacement changed the authenticated scope or conditions")
 	}
 	return s.record(metadata, configuration)
@@ -58,6 +59,9 @@ func callServiceDeclarationInputRestoration(t *testing.T, operation, protocol, c
 	}
 	if configuration != "" {
 		body += `,"configuration":` + configuration
+		if operation != "create" {
+			body += `,"unconditional_configuration":true`
+		}
 	}
 	request := httptest.NewRequest(method, path, strings.NewReader(body+"}"+suffix))
 	request.Header.Set("Authorization", "Bearer access-token")

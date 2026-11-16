@@ -199,7 +199,7 @@ func TestIntegrationServiceEndpointEditRetainsCapturedConnectorIdentity(t *testi
 		t.Fatal(err)
 	}
 	declaration.Hostname = "renamed." + member.ManagedLabel + ".example.test"
-	changed, err := d.ConfigureService(ctx, service.ID, actor, service.ServiceMetadata, &declaration, controlstate.ServiceUpdateConditions{}, now.Add(time.Second))
+	changed, err := d.ConfigureService(ctx, service.ID, actor, service.ServiceMetadata, &declaration, controlstate.ServiceUpdateConditions{UnconditionalConfiguration: true}, now.Add(time.Second))
 	if err != nil || changed.TrustRevision != service.TrustRevision || changed.Endpoint.Hostname == prepared.Hostname {
 		t.Fatal("endpoint edit changed target trust or failed to change hostname", changed, err)
 	}

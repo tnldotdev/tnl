@@ -84,8 +84,9 @@ func serviceMetadataMatches(saved ServiceMetadata, declared ServiceMetadata) boo
 
 // update conditions describe observed state, independently of desired settings.
 type ServiceUpdateConditions struct {
-	ConfigurationDigest string
-	PublisherPool       *bool
+	ConfigurationDigest        string
+	UnconditionalConfiguration bool
+	PublisherPool              *bool
 }
 
 // metadata approval serializes with admission and publication. changing trust
@@ -95,8 +96,8 @@ func (d *Database) ConfigureService(ctx context.Context, serviceID, actorID stri
 		conditions.PublisherPool = new(*conditions.PublisherPool)
 	}
 	clock := newAuthorizationClock(now)
-	if conditions.ConfigurationDigest != "" && (configuration == nil || !ValidServiceConfigurationDigest(conditions.ConfigurationDigest)) {
-		return result, ErrProjectConfigurationInvalid
+	if err := conditions.ValidateConfiguration(configuration != nil); err != nil {
+		return result, err
 	}
 	if err := metadata.Validate(); err != nil {
 		return result, err

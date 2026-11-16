@@ -61,7 +61,7 @@ func TestIntegrationNativeRunCannotSubmitPairlessHTTPAuditAfterHTTPDefinition(t 
 	nativeMetadata.Protocol = "postgres"
 	native, err := f.database.ConfigureService(ctx, f.service.ID, actor, nativeMetadata,
 		&ProjectServiceConfiguration{Protocol: "postgres", Target: "database.internal:5432"},
-		ServiceUpdateConditions{}, f.now.Add(time.Second))
+		ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now.Add(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestIntegrationNativeRunCannotSubmitPairlessHTTPAuditAfterHTTPDefinition(t 
 	restoredMetadata := native.ServiceMetadata
 	restoredMetadata.Protocol = "http"
 	if _, err := f.database.ConfigureService(ctx, native.ID, actor, restoredMetadata,
-		&ProjectServiceConfiguration{Target: "http://127.0.0.1:3000"}, ServiceUpdateConditions{}, f.now.Add(2*time.Second)); err != nil {
+		&ProjectServiceConfiguration{Target: "http://127.0.0.1:3000"}, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	captured, err := controlstatedb.New(f.database.pool).LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: nativePublication.run.RunID, ServiceID: native.ID})

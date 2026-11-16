@@ -57,7 +57,7 @@ func TestIntegrationServicePolicyInvalidation(t *testing.T) {
 		}
 		before := revision(service.ID)
 		declaration.HTTP = &config.HTTPService{Access: &config.Access{Mode: "anonymous"}}
-		if _, err := d.ConfigureService(ctx, service.ID, actor, service.ServiceMetadata, &declaration, controlstate.ServiceUpdateConditions{}, now); err != nil {
+		if _, err := d.ConfigureService(ctx, service.ID, actor, service.ServiceMetadata, &declaration, controlstate.ServiceUpdateConditions{UnconditionalConfiguration: true}, now); err != nil {
 			t.Fatal(err)
 		}
 		if revision(service.ID) <= before {
@@ -125,7 +125,7 @@ func TestIntegrationServicePolicyInvalidation(t *testing.T) {
 			t.Fatal(err)
 		}
 		declaration.Public = new(false)
-		private, err := d.ConfigureService(ctx, service.ID, actor, service.ServiceMetadata, &declaration, controlstate.ServiceUpdateConditions{}, now)
+		private, err := d.ConfigureService(ctx, service.ID, actor, service.ServiceMetadata, &declaration, controlstate.ServiceUpdateConditions{UnconditionalConfiguration: true}, now)
 		if err != nil {
 			t.Fatal(err)
 		}

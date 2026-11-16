@@ -39,7 +39,7 @@ func TestIntegrationTransactionLocalAuthorityLockOrder(t *testing.T) {
 				case "prepare":
 					_, err = f.database.PrepareServiceRun(ctx, f.service.ID, f.publisher, "next", f.now, ServiceRunRequest{Metadata: f.service.ServiceMetadata})
 				case "update":
-					_, err = f.database.ConfigureService(ctx, f.service.ID, f.actor(t), f.service.ServiceMetadata, &ProjectServiceConfiguration{Target: "http://127.0.0.1:3001"}, ServiceUpdateConditions{}, f.now)
+					_, err = f.database.ConfigureService(ctx, f.service.ID, f.actor(t), f.service.ServiceMetadata, &ProjectServiceConfiguration{Target: "http://127.0.0.1:3001"}, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now)
 				case "delete":
 					err = f.database.DeleteService(ctx, f.service.ID, f.actor(t), f.now)
 				}

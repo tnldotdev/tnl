@@ -31,7 +31,7 @@ func endpointReadinessFixture(t *testing.T, exact bool) servicePublicationFixtur
 		var err error
 		f.service, err = f.database.ConfigureService(t.Context(), f.service.ID, actor, f.service.ServiceMetadata,
 			&ProjectServiceConfiguration{Target: "localhost:3000", DomainID: domain.ID, Hostname: hostname, Public: new(true)},
-			ServiceUpdateConditions{}, f.now)
+			ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -190,7 +190,7 @@ func TestIntegrationServiceRunEndpointReadinessFencesEndpointAndRunReplacement(t
 	var err error
 	f.service, err = f.database.ConfigureService(t.Context(), f.service.ID, f.actor(t), f.service.ServiceMetadata,
 		&ProjectServiceConfiguration{Target: "localhost:3000", Public: new(true), Hostname: "moved." + f.service.Endpoint.Hostname},
-		ServiceUpdateConditions{}, f.now)
+		ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now)
 	if err != nil || f.service.EndpointRevision != revision+1 {
 		t.Fatal("endpoint move did not advance only its endpoint revision", err)
 	}
@@ -221,7 +221,7 @@ func TestIntegrationServiceRunEndpointReadinessPreservesConnectorAuthorityDuring
 		t.Fatal(err)
 	}
 	service, err = f.d.ConfigureService(f.visitor, service.ID, f.request.Subject.IdentityID, service.ServiceMetadata,
-		&ProjectServiceConfiguration{Protocol: "tcp", Target: "localhost:3000", Public: new(true)}, ServiceUpdateConditions{}, f.now)
+		&ProjectServiceConfiguration{Protocol: "tcp", Target: "localhost:3000", Public: new(true)}, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,7 @@ func TestIntegrationServiceRunEndpointReadinessPreservesConnectorAuthorityDuring
 		assertConnector(dns == ServiceEndpointDNSPublished)
 	}
 	service, err = f.d.ConfigureService(f.visitor, service.ID, f.request.Subject.IdentityID, service.ServiceMetadata,
-		&ProjectServiceConfiguration{Protocol: "tcp", Target: "localhost:3000", Public: new(false)}, ServiceUpdateConditions{}, f.now)
+		&ProjectServiceConfiguration{Protocol: "tcp", Target: "localhost:3000", Public: new(false)}, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}

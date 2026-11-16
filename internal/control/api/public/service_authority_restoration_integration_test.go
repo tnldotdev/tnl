@@ -21,7 +21,7 @@ func TestIntegrationServiceRestoredForeignTeamReadMutationAndListBoundaries(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	update := fmt.Sprintf(`{"protocol":"http","publisher_pool":false,"expected_trust_revision":%q,"configuration":{"target":"foreign-mutation.internal:4000"}}`,
+	update := fmt.Sprintf(`{"protocol":"http","publisher_pool":false,"expected_trust_revision":%q,"unconditional_configuration":true,"configuration":{"target":"foreign-mutation.internal:4000"}}`,
 		fmt.Sprint(f.service.TrustRevision))
 	for _, test := range []struct{ method, suffix, body string }{
 		{http.MethodGet, "", ""},

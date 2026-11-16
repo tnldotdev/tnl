@@ -73,10 +73,10 @@ func TestIntegrationServiceManagementMemberOwnership(t *testing.T) {
 	f := newServiceManagementFixture(t)
 	ctx := t.Context()
 	declaration := &ProjectServiceConfiguration{Target: "localhost:4000"}
-	if _, err := f.d.ConfigureService(ctx, f.local.ID, f.unrelated.IdentityID, f.local.ServiceMetadata, declaration, ServiceUpdateConditions{}, f.now); !errors.Is(err, ErrServiceAccess) {
+	if _, err := f.d.ConfigureService(ctx, f.local.ID, f.unrelated.IdentityID, f.local.ServiceMetadata, declaration, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("explicit declaration bypassed stored management authority", err)
 	}
-	if _, err := f.d.ConfigureService(ctx, f.local.ID, f.member.IdentityID, f.local.ServiceMetadata, declaration, ServiceUpdateConditions{}, f.now); err != nil {
+	if _, err := f.d.ConfigureService(ctx, f.local.ID, f.member.IdentityID, f.local.ServiceMetadata, declaration, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now); err != nil {
 		t.Fatal("stored member owner could not update its standalone declaration", err)
 	}
 	for _, service := range []ServiceRecord{f.local, f.allocation} {

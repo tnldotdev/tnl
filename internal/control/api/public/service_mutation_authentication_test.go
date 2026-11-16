@@ -45,7 +45,7 @@ func TestServiceMutationsAuthenticateBeforeServiceStore(t *testing.T) {
 		status             int
 		gets, deletes      int
 	}{
-		{"configure", http.MethodPut, `{"protocol":"http","publisher_pool":false,"expected_trust_revision":"7","configuration":{"target":"localhost:4000"}}`, http.StatusOK, 0, 0},
+		{"configure", http.MethodPut, `{"protocol":"http","publisher_pool":false,"expected_trust_revision":"7","unconditional_configuration":true,"configuration":{"target":"localhost:4000"}}`, http.StatusOK, 0, 0},
 		{"get", http.MethodGet, "", http.StatusOK, 1, 0},
 		{"delete", http.MethodDelete, "", http.StatusNoContent, 0, 1},
 	} {

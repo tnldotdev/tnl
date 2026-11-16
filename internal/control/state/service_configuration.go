@@ -40,6 +40,27 @@ func ValidServiceConfigurationDigest(digest string) bool {
 	return true
 }
 
+// configuration replacements require exactly one observed digest or an explicit
+// unconditional choice. metadata-only updates do not replace configuration.
+func (c ServiceUpdateConditions) ValidateConfiguration(replacement bool) error {
+	if !replacement {
+		if c.ConfigurationDigest != "" || c.UnconditionalConfiguration {
+			return ErrProjectConfigurationInvalid
+		}
+		return nil
+	}
+	if c.UnconditionalConfiguration {
+		if c.ConfigurationDigest != "" {
+			return ErrProjectConfigurationInvalid
+		}
+		return nil
+	}
+	if !ValidServiceConfigurationDigest(c.ConfigurationDigest) {
+		return ErrProjectConfigurationInvalid
+	}
+	return nil
+}
+
 func (d *Database) GetServiceConfiguration(ctx context.Context, serviceID, actorID string) (_ *ProjectServiceConfiguration, _ string, retErr error) {
 	if !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) {
 		return nil, "", ErrServiceAccess

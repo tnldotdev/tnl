@@ -387,7 +387,7 @@ func TestIntegrationServiceConfigurationWithoutProject(t *testing.T) {
 	if declaration, digest, err := d.GetServiceConfiguration(ctx, service.ID, r.ActingIdentityID); !errors.Is(err, ErrServiceAccess) || declaration != nil || digest != "" {
 		t.Fatal("protected read returned corrupt declaration data or a usable digest", err)
 	}
-	if _, err := d.ConfigureService(ctx, service.ID, r.ActingIdentityID, service.ServiceMetadata, &equivalent, ServiceUpdateConditions{}, now); !errors.Is(err, ErrServiceAccess) {
+	if _, err := d.ConfigureService(ctx, service.ID, r.ActingIdentityID, service.ServiceMetadata, &equivalent, ServiceUpdateConditions{UnconditionalConfiguration: true}, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("configure silently replaced corrupt declaration storage", err)
 	}
 }
@@ -434,14 +434,14 @@ func TestIntegrationConfigureServiceDeclarationIsAtomic(t *testing.T) {
 	before := snapshot()
 	denied := changed
 	denied.Hostname = "outside.invalid"
-	if _, err := d.ConfigureService(ctx, f.service.ID, f.project.ActorID, f.service.ServiceMetadata, &denied, ServiceUpdateConditions{}, now); !errors.Is(err, ErrServiceAccess) {
+	if _, err := d.ConfigureService(ctx, f.service.ID, f.project.ActorID, f.service.ServiceMetadata, &denied, ServiceUpdateConditions{UnconditionalConfiguration: true}, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("configure accepted a hostname outside domain authority", err)
 	}
 	if snapshot() != before {
 		t.Fatal("failed endpoint authorization committed declaration, policy, metadata, or audit changes")
 	}
 	input, _ := json.Marshal(changed)
-	updated, err := d.ConfigureService(ctx, f.service.ID, f.project.ActorID, f.service.ServiceMetadata, &changed, ServiceUpdateConditions{}, now)
+	updated, err := d.ConfigureService(ctx, f.service.ID, f.project.ActorID, f.service.ServiceMetadata, &changed, ServiceUpdateConditions{UnconditionalConfiguration: true}, now)
 	afterInput, _ := json.Marshal(changed)
 	if err != nil || updated.ID != f.service.ID || updated.TrustRevision != f.service.TrustRevision ||
 		updated.EndpointRevision != f.service.EndpointRevision || !bytes.Equal(input, afterInput) {
@@ -473,7 +473,7 @@ func TestIntegrationConfigureServiceDeclarationIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.ConfigureService(ctx, updated.ID, f.project.ActorID, updated.ServiceMetadata, &changed, ServiceUpdateConditions{}, now); err != nil {
+	if _, err := d.ConfigureService(ctx, updated.ID, f.project.ActorID, updated.ServiceMetadata, &changed, ServiceUpdateConditions{UnconditionalConfiguration: true}, now); err != nil {
 		t.Fatal("lost-response retry failed", err)
 	}
 	retried, err := q.GetServiceConfiguration(ctx, updated.ID)
@@ -488,19 +488,19 @@ func TestIntegrationConfigureServiceDeclarationIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.ConfigureService(ctx, updated.ID, f.project.ActorID, updated.ServiceMetadata, &changed, ServiceUpdateConditions{}, now); !errors.Is(err, ErrServiceConflict) {
+	if _, err := d.ConfigureService(ctx, updated.ID, f.project.ActorID, updated.ServiceMetadata, &changed, ServiceUpdateConditions{UnconditionalConfiguration: true}, now); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("explicit declaration silently replaced contradictory target trust", err)
 	}
 	metadata := updated.ServiceMetadata
 	metadata.TLS = trust
-	trusted, err := d.ConfigureService(ctx, updated.ID, f.project.ActorID, metadata, &changed, ServiceUpdateConditions{}, now)
+	trusted, err := d.ConfigureService(ctx, updated.ID, f.project.ActorID, metadata, &changed, ServiceUpdateConditions{UnconditionalConfiguration: true}, now)
 	if err != nil || trusted.TrustRevision != updated.TrustRevision+1 || trusted.EndpointRevision != updated.EndpointRevision {
 		t.Fatal("target trust did not advance independently of endpoint placement", err)
 	}
 	if _, err := d.ReadPublisherVisitorPolicy(ctx, auth.Subject, auth.RunID, auth.Number, auth.Token.String(), 0, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("old run retained visitor permission after target-trust replacement", err)
 	}
-	if _, err := d.ConfigureService(ctx, updated.ID, f.project.ActorID, metadata, &changed, ServiceUpdateConditions{}, now); !errors.Is(err, ErrServiceConflict) {
+	if _, err := d.ConfigureService(ctx, updated.ID, f.project.ActorID, metadata, &changed, ServiceUpdateConditions{UnconditionalConfiguration: true}, now); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("stale expected trust revision was accepted", err)
 	}
 }
@@ -517,7 +517,7 @@ func TestIntegrationServiceConfigurationRejectsConflictingSources(t *testing.T) 
 	if err != nil || stored.LocalOwned || !stored.DeploymentOwned || stored.ConfigurationCiphertext != nil || stored.StorageKeyID.Valid {
 		t.Fatal("remote deployment declaration was copied onto the service", stored, err)
 	}
-	if _, err := d.ConfigureService(ctx, service.ID, project.ActorID, service.ServiceMetadata, configuration, ServiceUpdateConditions{}, now); !errors.Is(err, ErrProjectManaged) {
+	if _, err := d.ConfigureService(ctx, service.ID, project.ActorID, service.ServiceMetadata, configuration, ServiceUpdateConditions{UnconditionalConfiguration: true}, now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("explicit configuration replaced the remote deployment's declaration source", err)
 	}
 	remote, err := q.GetDeploymentServiceConfiguration(ctx, text(service.ID))

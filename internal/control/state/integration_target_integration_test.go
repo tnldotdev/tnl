@@ -26,7 +26,7 @@ func TestIntegrationHandlerBackedPublicURLTargets(t *testing.T) {
 	for _, prefixes := range [][]string{{"192.0.2.10/32"}, {}} {
 		declaration.HTTP = &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: prefixes}}
 		if _, err := d.ConfigureService(t.Context(), service.ID, actor.ActingIdentityID, service.ServiceMetadata,
-			&declaration, ServiceUpdateConditions{}, now.Add(time.Second)); err != nil {
+			&declaration, ServiceUpdateConditions{UnconditionalConfiguration: true}, now.Add(time.Second)); err != nil {
 			t.Fatal(err)
 		}
 		loaded, _, err := d.GetServiceConfiguration(t.Context(), service.ID, actor.ActingIdentityID)

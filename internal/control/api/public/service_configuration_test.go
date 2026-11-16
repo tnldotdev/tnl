@@ -83,10 +83,16 @@ func TestConfigureServiceDeclarationWire(t *testing.T) {
 		declared   bool
 	}{
 		{"retain", `{` + settings + `}`, nil, 200, 1, false},
-		{"replace", `{` + settings + `,"configuration":{"target":"localhost:4000","http":{"access":{"mode":"anonymous"},"limits":{"total":11}}}}`, nil, 200, 1, true},
+		{"replace", `{` + settings + `,"configuration":{"target":"localhost:4000","http":{"access":{"mode":"anonymous"},"limits":{"total":11}}},"unconditional_configuration":true}`, nil, 200, 1, true},
 		{"conditional", `{` + settings + `,"configuration":{"target":"localhost:4000"},"expected_configuration_digest":"` + digest + `"}`, nil, 200, 1, true},
 		{"conditional pool", `{` + settings + `,"configuration":{"target":"localhost:4000"},"expected_configuration_digest":"` + digest + `","expected_publisher_pool":true}`, nil, 200, 1, true},
-		{"conflict", `{` + settings + `,"configuration":{"target":"localhost:4000"}}`, controlstate.ErrServiceConflict, 409, 1, true},
+		{"conflict", `{` + settings + `,"configuration":{"target":"localhost:4000"},"expected_configuration_digest":"` + digest + `"}`, controlstate.ErrServiceConflict, 409, 1, true},
+		{"missing condition", `{` + settings + `,"configuration":{"target":"localhost:4000"}}`, nil, 400, 0, false},
+		{"both conditions", `{` + settings + `,"configuration":{"target":"localhost:4000"},"expected_configuration_digest":"` + digest + `","unconditional_configuration":true}`, nil, 400, 0, false},
+		{"unconditional without replacement", `{` + settings + `,"unconditional_configuration":true}`, nil, 400, 0, false},
+		{"false unconditional", `{` + settings + `,"configuration":{"target":"localhost:4000"},"unconditional_configuration":false}`, nil, 400, 0, false},
+		{"null unconditional", `{` + settings + `,"configuration":{"target":"localhost:4000"},"unconditional_configuration":null}`, nil, 400, 0, false},
+		{"string unconditional", `{` + settings + `,"configuration":{"target":"localhost:4000"},"unconditional_configuration":"true"}`, nil, 400, 0, false},
 		{"missing replacement", `{` + settings + `,"expected_configuration_digest":"` + digest + `"}`, nil, 400, 0, false},
 		{"empty digest", `{` + settings + `,"configuration":{"target":"localhost:4000"},"expected_configuration_digest":""}`, nil, 400, 0, false},
 		{"null digest", `{` + settings + `,"configuration":{"target":"localhost:4000"},"expected_configuration_digest":null}`, nil, 400, 0, false},
@@ -115,7 +121,8 @@ func TestConfigureServiceDeclarationWire(t *testing.T) {
 				t.Fatal("configure discarded an independent configuration or pool condition")
 			}
 			if test.name == "replace" && (store.configuration.HTTP == nil || store.configuration.HTTP.Access.Mode != "anonymous" ||
-				store.configuration.HTTP.Limits == nil || *store.configuration.HTTP.Limits.Total != 11) {
+				store.configuration.HTTP.Limits == nil || *store.configuration.HTTP.Limits.Total != 11 ||
+				!store.conditions.UnconditionalConfiguration || store.digest != "") {
 				t.Fatal("configure discarded policy or request limits")
 			}
 			if strings.Contains(response.Body.String(), "localhost") || strings.Contains(response.Body.String(), "secret") {

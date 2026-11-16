@@ -69,7 +69,7 @@ func TestIntegrationServiceEndpointDNSExposure(t *testing.T) {
 				}
 			}
 			config.Public = new(false)
-			private, err := d.ConfigureService(ctx, service.ID, actor, service.ServiceMetadata, &config, controlstate.ServiceUpdateConditions{}, now)
+			private, err := d.ConfigureService(ctx, service.ID, actor, service.ServiceMetadata, &config, controlstate.ServiceUpdateConditions{UnconditionalConfiguration: true}, now)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -87,7 +87,7 @@ func TestIntegrationServiceEndpointDNSExposure(t *testing.T) {
 				}
 			}
 			config.Public = new(true)
-			again, err := d.ConfigureService(ctx, service.ID, actor, private.ServiceMetadata, &config, controlstate.ServiceUpdateConditions{}, now)
+			again, err := d.ConfigureService(ctx, service.ID, actor, private.ServiceMetadata, &config, controlstate.ServiceUpdateConditions{UnconditionalConfiguration: true}, now)
 			if err != nil {
 				t.Fatal(err)
 			}

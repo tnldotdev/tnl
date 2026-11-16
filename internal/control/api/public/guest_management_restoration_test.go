@@ -16,7 +16,7 @@ func TestGuestRestoredTrialCannotUpdateServicesOrManageFeedback(t *testing.T) {
 			h := &handler{guests: guestAPIStore(t), authorizer: human,
 				dependencies: Stores{Services: &guestDeletionStore{}}}
 			r := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(
-				`{"protocol":"http","publisher_pool":false,"expected_trust_revision":"1","configuration":{"target":"localhost:3000"}}`))
+				`{"protocol":"http","publisher_pool":false,"expected_trust_revision":"1","unconditional_configuration":true,"configuration":{"target":"localhost:3000"}}`))
 			r.Header.Set("Authorization", "Bearer guest-token")
 			w := httptest.NewRecorder()
 			if operation == "configure" {

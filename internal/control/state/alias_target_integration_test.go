@@ -19,7 +19,7 @@ func TestIntegrationSavedAliasTargetStaysLocalThroughPolicyUpdates(t *testing.T)
 	}
 	declaration.HTTP = &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.10/32"}}}
 	updated, err := d.ConfigureService(t.Context(), service.ID, actor.ActingIdentityID, service.ServiceMetadata,
-		&declaration, ServiceUpdateConditions{}, now.Add(time.Second))
+		&declaration, ServiceUpdateConditions{UnconditionalConfiguration: true}, now.Add(time.Second))
 	if err != nil || updated.TrustRevision != service.TrustRevision || updated.Endpoint.Hostname != service.Endpoint.Hostname {
 		t.Fatal("policy update changed target trust or endpoint", err)
 	}

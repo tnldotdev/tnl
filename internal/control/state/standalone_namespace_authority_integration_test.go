@@ -200,7 +200,7 @@ func TestIntegrationStandaloneSharedCustomHostnameRemainsTeamOwned(t *testing.T)
 	if saved, err := d.GetService(ctx, service.ID, owner); err != nil || saved.ID != service.ID {
 		t.Fatal("removing the creator removed team management", saved, err)
 	}
-	if _, err := d.ConfigureService(ctx, service.ID, owner, service.ServiceMetadata, configuration, ServiceUpdateConditions{}, now.Add(2*time.Second)); err != nil {
+	if _, err := d.ConfigureService(ctx, service.ID, owner, service.ServiceMetadata, configuration, ServiceUpdateConditions{UnconditionalConfiguration: true}, now.Add(2*time.Second)); err != nil {
 		t.Fatal("team owner could not retain a shared standalone declaration", err)
 	}
 	if current, err := d.AuthenticatePublisherAccess(ctx, access.Token, "", now.Add(2*time.Second)); err != nil ||

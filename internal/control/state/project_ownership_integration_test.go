@@ -77,7 +77,7 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 		t.Fatal("direct managed definition changed", err)
 	}
 	if _, err = d.ConfigureService(ctx, first.ServiceID, r.ActorID, *first.Metadata,
-		&ProjectServiceConfiguration{Target: "localhost:4000"}, ServiceUpdateConditions{}, now); !errors.Is(err, ErrProjectManaged) {
+		&ProjectServiceConfiguration{Target: "localhost:4000"}, ServiceUpdateConditions{UnconditionalConfiguration: true}, now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("explicit declaration bypassed project management", err)
 	}
 	if err = d.DeleteService(ctx, first.ServiceID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {

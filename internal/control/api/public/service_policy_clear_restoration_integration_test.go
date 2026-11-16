@@ -53,8 +53,9 @@ func TestIntegrationServicePolicyClearRestorationUsesCompleteDeclaration(t *test
 
 	seeded, err := client.ConfigureService(ctx, f.service.ID, controlv1.UpdateServiceRequest{
 		Protocol: controlv1.ServiceProtocolHTTP, PublisherPool: f.service.PublisherPool,
-		ExpectedTrustRevision: f.service.TrustRevision,
-		Configuration:         declaration(new([]string{"192.0.2.9/24"})),
+		ExpectedTrustRevision:      f.service.TrustRevision,
+		Configuration:              declaration(new([]string{"192.0.2.9/24"})),
+		UnconditionalConfiguration: new(true),
 	})
 	if err != nil || seeded.Id != f.service.ID {
 		t.Fatal("could not save the original nonempty IP policy", err)

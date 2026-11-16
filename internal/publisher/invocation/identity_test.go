@@ -207,7 +207,9 @@ func (f *serviceSetupFixture) serve(r *http.Request) (*http.Response, error) {
 			return nil, err
 		}
 		if body.Configuration == nil || body.ExpectedTrustRevision != f.saved.TrustRevision || body.Protocol != controlv1.ServiceProtocolHTTP ||
-			body.ExpectedPublisherPool == nil || *body.ExpectedPublisherPool != f.saved.PublisherPool {
+			body.ExpectedPublisherPool == nil || *body.ExpectedPublisherPool != f.saved.PublisherPool ||
+			body.ExpectedConfigurationDigest == nil || *body.ExpectedConfigurationDigest != foregroundDigest(f.declaration) ||
+			body.UnconditionalConfiguration != nil {
 			f.t.Error("service update omitted its declaration or current trust revision", body)
 		}
 		f.updates++

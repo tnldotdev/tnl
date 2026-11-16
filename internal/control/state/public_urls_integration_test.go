@@ -138,7 +138,7 @@ func TestIntegrationLargePublicURLIPPolicy(t *testing.T) {
 		t.Fatal("saved service retained plaintext policy or target", err)
 	}
 	loaded.HTTP.Access.IP = slices.Clone(prefixes[1:])
-	if _, err := d.ConfigureService(t.Context(), service.ID, actor.ActingIdentityID, service.ServiceMetadata, loaded, ServiceUpdateConditions{}, now.Add(time.Second)); err != nil {
+	if _, err := d.ConfigureService(t.Context(), service.ID, actor.ActingIdentityID, service.ServiceMetadata, loaded, ServiceUpdateConditions{UnconditionalConfiguration: true}, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	updated, _, err := d.GetServiceConfiguration(t.Context(), service.ID, actor.ActingIdentityID)
@@ -231,7 +231,7 @@ func TestIntegrationRouteMutationAndExpiredSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	declaration := ProjectServiceConfiguration{Target: "localhost:5000", HTTP: &config.HTTPService{Access: &config.Access{IP: []string{"192.0.2.0/24"}}}}
-	updated, err := f.database.ConfigureService(t.Context(), f.service.ID, creator, actor.ServiceMetadata, &declaration, ServiceUpdateConditions{}, f.now.Add(2*time.Second))
+	updated, err := f.database.ConfigureService(t.Context(), f.service.ID, creator, actor.ServiceMetadata, &declaration, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now.Add(2*time.Second))
 	if err != nil || updated.ID != f.service.ID || updated.TeamID != f.service.TeamID || updated.DomainID != f.service.DomainID || updated.Endpoint.Hostname != f.service.Endpoint.Hostname {
 		t.Fatal("configuration update changed saved ownership", err)
 	}

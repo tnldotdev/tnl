@@ -21,7 +21,7 @@ func TestIntegrationPolicyMutationRestoredAccessRollbackAndContiguousHistory(t *
 		Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.0/24"}},
 	}}
 	if _, err := d.ConfigureService(ctx, f.service.ID, f.publisher.CreatorID, f.service.ServiceMetadata,
-		&configuration, ServiceUpdateConditions{}, f.now); err != nil {
+		&configuration, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now); err != nil {
 		t.Fatal(err)
 	}
 	before, err := q.ReadVisitorPolicyRevision(ctx, f.service.ID)

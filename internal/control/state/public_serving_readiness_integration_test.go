@@ -22,7 +22,7 @@ func publicServingFixture(t *testing.T, f servicePublicationFixture) servicePubl
 	}
 	declaration.Public = new(true)
 	f.service, err = f.database.ConfigureService(t.Context(), f.service.ID, actor, f.service.ServiceMetadata,
-		declaration, ServiceUpdateConditions{}, f.now)
+		declaration, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}

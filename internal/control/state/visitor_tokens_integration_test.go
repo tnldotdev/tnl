@@ -52,7 +52,7 @@ func TestIntegrationVisitorTokenIssuanceUsesCurrentScopeAndParentDeadlines(t *te
 	if err != nil || !short.Permission.ExpiresAt.Equal(parentDeadline.Truncate(time.Second)) {
 		t.Fatal("permission outlived its parent session", err)
 	}
-	if _, err := d.ConfigureService(ctx, service.ID, principal.IdentityID, ServiceMetadata{Protocol: "http", TrustRevision: service.TrustRevision}, &ProjectServiceConfiguration{Target: "localhost:3000", HTTP: &config.HTTPService{Access: &config.Access{Mode: "anonymous"}}}, ServiceUpdateConditions{}, now); err != nil {
+	if _, err := d.ConfigureService(ctx, service.ID, principal.IdentityID, ServiceMetadata{Protocol: "http", TrustRevision: service.TrustRevision}, &ProjectServiceConfiguration{Target: "localhost:3000", HTTP: &config.HTTPService{Access: &config.Access{Mode: "anonymous"}}}, ServiceUpdateConditions{UnconditionalConfiguration: true}, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.RevokeControlSession(ctx, principal, now); err != nil {

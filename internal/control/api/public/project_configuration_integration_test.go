@@ -304,7 +304,8 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	_, managedErr := owner.ConfigureService(ctx, web.ServiceId, controlv1.UpdateServiceRequest{Protocol: controlv1.ServiceProtocolHTTP, PublisherPool: true, ExpectedTrustRevision: web.TrustRevision})
 	assertManaged(managedErr)
 	_, managedErr = owner.ConfigureService(ctx, web.ServiceId, controlv1.UpdateServiceRequest{
-		Protocol: controlv1.ServiceProtocolHTTP, PublisherPool: true, ExpectedTrustRevision: web.TrustRevision,
+		UnconditionalConfiguration: new(true),
+		Protocol:                   controlv1.ServiceProtocolHTTP, PublisherPool: true, ExpectedTrustRevision: web.TrustRevision,
 		Configuration: &controlv1.ProjectServiceConfiguration{Target: "localhost:4000"},
 	})
 	assertManaged(managedErr)

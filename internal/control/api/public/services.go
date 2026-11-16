@@ -127,6 +127,7 @@ func (h *handler) ConfigureService(w http.ResponseWriter, r *http.Request, id co
 		TargetTLS                   json.RawMessage           `json:"target_tls"`
 		Configuration               json.RawMessage           `json:"configuration"`
 		ExpectedConfigurationDigest json.RawMessage           `json:"expected_configuration_digest"`
+		UnconditionalConfiguration  json.RawMessage           `json:"unconditional_configuration"`
 		ExpectedPublisherPool       json.RawMessage           `json:"expected_publisher_pool"`
 	}
 	if decodeJSONLimited(w, r, &body, 2<<20) != nil ||
@@ -168,6 +169,19 @@ func (h *handler) ConfigureService(w http.ResponseWriter, r *http.Request, id co
 			writeProblem(w, 400, controlv1.InvalidRequest, "send a valid expected_configuration_digest only with configuration")
 			return
 		}
+	}
+	if len(body.UnconditionalConfiguration) > 0 {
+		var unconditional *bool
+		if err := httpjson.Decode(json.NewDecoder(bytes.NewReader(body.UnconditionalConfiguration)), &unconditional); err != nil ||
+			unconditional == nil || !*unconditional {
+			writeProblem(w, 400, controlv1.InvalidRequest, "send unconditional_configuration: true or omit it")
+			return
+		}
+		conditions.UnconditionalConfiguration = true
+	}
+	if conditions.ValidateConfiguration(configuration != nil) != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "configuration requires exactly one of expected_configuration_digest or unconditional_configuration: true")
+		return
 	}
 	if len(body.ExpectedPublisherPool) > 0 {
 		if err := httpjson.Decode(json.NewDecoder(bytes.NewReader(body.ExpectedPublisherPool)), &conditions.PublisherPool); err != nil ||

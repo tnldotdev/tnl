@@ -147,7 +147,7 @@ func TestIntegrationServiceRestoredInvalidCreateAndConfigureMatrices(t *testing.
 			}
 		})
 	}
-	settings := fmt.Sprintf(`"protocol":"http","publisher_pool":false,"expected_trust_revision":%q`, fmt.Sprint(f.service.TrustRevision))
+	settings := fmt.Sprintf(`"protocol":"http","publisher_pool":false,"expected_trust_revision":%q,"unconditional_configuration":true`, fmt.Sprint(f.service.TrustRevision))
 	for _, test := range []struct{ name, body string }{
 		{"missing trust revision", `{"protocol":"http","publisher_pool":false,"configuration":{"target":"localhost:4000"}}`},
 		{"unsafe numeric revision", `{"protocol":"http","publisher_pool":false,"expected_trust_revision":9007199254740992,"configuration":{"target":"localhost:4000"}}`},

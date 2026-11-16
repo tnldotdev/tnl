@@ -21,7 +21,7 @@ func TestIntegrationDomainReleaseRestoredIssuedCertificateAndCleanupFences(t *te
 			}
 			configuration.Public = new(true)
 			f.service, err = d.ConfigureService(ctx, f.service.ID, member.IdentityID, f.service.ServiceMetadata,
-				configuration, ServiceUpdateConditions{}, now)
+				configuration, ServiceUpdateConditions{UnconditionalConfiguration: true}, now)
 			if err != nil {
 				t.Fatal(err)
 			}

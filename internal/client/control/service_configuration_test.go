@@ -76,3 +76,28 @@ func TestServiceConfigurationClientSendsExactCondition(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestServiceConfigurationClientSendsExplicitUnconditionalChoice(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body controlv1.UpdateServiceRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Configuration == nil ||
+			body.Configuration.Target != "private-listener.internal:3000" || body.ExpectedConfigurationDigest != nil ||
+			body.UnconditionalConfiguration == nil || !*body.UnconditionalConfiguration || body.ExpectedTrustRevision != 7 {
+			t.Error("unconditional replacement changed its explicit choice or bypassed trust revision", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(controlv1.Service{Id: "svc_selected"})
+	}))
+	defer server.Close()
+	client, err := New(server.URL, server.Client(), "person-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.ConfigureService(t.Context(), "svc_selected", controlv1.UpdateServiceRequest{
+		Protocol: controlv1.ServiceProtocolHTTP, ExpectedTrustRevision: 7, UnconditionalConfiguration: new(true),
+		Configuration: &controlv1.ProjectServiceConfiguration{Target: "private-listener.internal:3000"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
