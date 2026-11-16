@@ -178,11 +178,11 @@ func TestIntegrationDeploymentRejectsKubernetesTargetWithoutTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal("rejected creation reserved its name or request key", err)
 	}
-	enrollment, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "customer", r.ActorID, 1, time.Hour, now)
+	enrollment, err := testDeploymentPublisherEnrollment(d, ctx, r.TeamID, r.ProjectKey, "customer", r.ActorID, 1, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replica := enrollAppliedGroup(t, d, r, enrollment, now)
+	replica := enrollAppliedDeployment(t, d, r, enrollment, now)
 	update := UpdateDeploymentRequest{DeploymentScope: scope, Selector: created.ID, ExpectedRevision: created.Revision, Now: now,
 		Targets: map[string]DeploymentTarget{"kube": {Address: "replacement.example:6443"}}}
 	if _, err := d.UpdateDeployment(ctx, update); !errors.Is(err, ErrProjectConfigurationInvalid) {
@@ -192,7 +192,7 @@ func TestIntegrationDeploymentRejectsKubernetesTargetWithoutTLS(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(current, created) {
 		t.Fatal("rejected update changed the saved deployment", current, err)
 	}
-	assignments, err := d.GetPublisherGroupAssignments(ctx, replica.lease.AccessToken, now)
+	assignments, err := d.GetDeploymentPublisherAssignments(ctx, replica.lease.AccessToken, now)
 	if err != nil || !reflect.DeepEqual(assignments, replica.assignments) {
 		t.Fatal("rejected update changed publisher assignments or grants", err)
 	}
