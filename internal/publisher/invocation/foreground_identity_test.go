@@ -3,7 +3,6 @@ package invocation
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -334,9 +333,7 @@ func TestForegroundTemporarySelectionUsesTheRealMemberNamespace(t *testing.T) {
 			body.ServiceId != nil || r.Header.Get("Authorization") != "Bearer session" {
 			t.Fatal("temporary publisher selected a synthetic team, domain, or service", body)
 		}
-		f.enrollments++
-		return serviceTestResponse(r, 201, controlv1.PublisherEnrollment{
-			Id: f.enrollment, EnrollmentKey: f.enrollment + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+		return f.issueEnrollment(r, controlv1.PublisherEnrollment{
 			ExpiresAt: time.Now().Add(time.Minute), TeamId: f.services.teamID,
 			Kind: controlv1.PublisherEnrollmentKindNamespace, DomainId: &f.services.domainID, Namespace: &f.services.namespace,
 		}), true

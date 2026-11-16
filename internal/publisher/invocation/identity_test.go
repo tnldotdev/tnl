@@ -102,6 +102,13 @@ func newServiceSetupFixture(t *testing.T, hostname string) *serviceSetupFixture 
 	return f
 }
 
+func (f *serviceSetupFixture) issueEnrollment(r *http.Request, enrollment controlv1.PublisherEnrollment) *http.Response {
+	f.enrollments++
+	f.enrollmentKey = f.enrollment + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	enrollment.Id, enrollment.EnrollmentKey = f.enrollment, f.enrollmentKey
+	return serviceTestResponse(r, http.StatusCreated, enrollment)
+}
+
 func (f *serviceSetupFixture) serve(r *http.Request) (*http.Response, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -225,19 +232,21 @@ func (f *serviceSetupFixture) serve(r *http.Request) (*http.Response, error) {
 		if body.ServiceId == nil || *body.ServiceId != f.saved.Id || body.DomainId != nil || body.TeamId != f.saved.TeamId {
 			f.t.Error("service enrollment widened the actual grant", body)
 		}
-		f.enrollments++
-		f.enrollmentKey = f.enrollment + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 32))
-		return serviceTestResponse(r, 201, controlv1.PublisherEnrollment{Id: f.enrollment,
-			EnrollmentKey: f.enrollmentKey,
-			ExpiresAt:     time.Now().Add(time.Minute), TeamId: f.saved.TeamId, Kind: "service", ServiceId: &f.saved.Id,
+		return f.issueEnrollment(r, controlv1.PublisherEnrollment{
+			ExpiresAt: time.Now().Add(time.Minute), TeamId: f.saved.TeamId, Kind: "service", ServiceId: &f.saved.Id,
 			Protocols: new(controlv1.PublisherServiceProtocols{controlv1.ServiceProtocolHTTP})}), nil
 	case "POST /v1/publisher-enrollments/redeem":
 		var body authorityv1.RedeemPublisherEnrollmentRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			return nil, err
 		}
-		if token != "" || f.enrollmentKey == "" || body.EnrollmentKey != f.enrollmentKey {
-			f.t.Error("redemption changed its issued key or used management authority")
+		if token != "" {
+			f.t.Error("redemption used management authority")
+		}
+		if f.enrollmentKey == "" {
+			f.t.Error("redemption has no issued enrollment key")
+		} else if body.EnrollmentKey != f.enrollmentKey {
+			f.t.Error("redemption changed its issued enrollment key")
 		}
 		var err error
 		f.public, err = base64.RawURLEncoding.DecodeString(body.PublicKey)

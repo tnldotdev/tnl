@@ -3,7 +3,6 @@ package invocation
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -300,9 +299,7 @@ func TestForegroundEphemeralSelectionAllocatesFreshLifetimes(t *testing.T) {
 				body.ServiceId != nil || r.Header.Get("Authorization") != "Bearer session" {
 				t.Fatal("temporary selection changed namespace enrollment authority")
 			}
-			f.enrollments++
-			return serviceTestResponse(r, 201, controlv1.PublisherEnrollment{
-				Id: f.enrollment, EnrollmentKey: f.enrollment + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+			return f.issueEnrollment(r, controlv1.PublisherEnrollment{
 				ExpiresAt: time.Now().Add(time.Minute), TeamId: f.services.teamID,
 				Kind: controlv1.PublisherEnrollmentKindNamespace, DomainId: &f.services.domainID, Namespace: &f.services.namespace}), true
 		}
