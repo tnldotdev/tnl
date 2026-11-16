@@ -123,7 +123,7 @@ type ControlAppliedProjectService struct {
 	TeamID          string
 	ProjectKey      string
 	Service         string
-	GroupID         pgtype.Text
+	DeploymentID    pgtype.Text
 	ServiceID       pgtype.Text
 	PublicURLID     pgtype.Text
 	VisitorGrantID  pgtype.Text
@@ -362,6 +362,26 @@ type ControlControlSession struct {
 	RevokedBy               pgtype.Text
 }
 
+type ControlDeployment struct {
+	Ownership               string
+	ID                      string
+	TeamID                  string
+	ProjectKey              string
+	Name                    string
+	Description             string
+	DomainID                pgtype.Text
+	Namespace               string
+	Public                  bool
+	Revision                int64
+	ConfigurationHash       string
+	ConfigurationCiphertext []byte
+	StorageKeyID            pgtype.Text
+	CreatePrincipalID       pgtype.Text
+	CreateIdempotencyKey    pgtype.Text
+	CreateRequestDigest     []byte
+	DeletedAt               pgtype.Timestamptz
+}
+
 type ControlDeploymentManagementDeployment struct {
 	GrantID      string
 	TeamID       string
@@ -388,6 +408,74 @@ type ControlDeploymentManagementService struct {
 	Service    string
 	Protocol   string
 	RevokedAt  pgtype.Timestamptz
+}
+
+type ControlDeploymentName struct {
+	TeamID       string
+	ProjectKey   string
+	Name         string
+	DeploymentID string
+}
+
+type ControlDeploymentNamespaceRename struct {
+	TeamID             string
+	ProjectKey         string
+	IdempotencyKey     string
+	RequestDigest      []byte
+	ResponseCiphertext []byte
+	StorageKeyID       string
+}
+
+type ControlDeploymentPublisherEnrollment struct {
+	ID                  string
+	DeploymentID        string
+	SecretDigest        []byte
+	MaxMembers          int32
+	CreatedByIdentityID string
+	ExpiresAt           pgtype.Timestamptz
+	RevokedAt           pgtype.Timestamptz
+	CreatePrincipalID   string
+	IdempotencyKey      string
+	RequestDigest       []byte
+	SecretCiphertext    []byte
+	StorageKeyID        string
+}
+
+type ControlDeploymentPublisherEnrollmentService struct {
+	EnrollmentID string
+	Service      string
+	Protocol     string
+	ServiceID    pgtype.Text
+	PublicURLID  pgtype.Text
+	RevokedAt    pgtype.Timestamptz
+}
+
+type ControlDeploymentPublisherLease struct {
+	TokenDigest         []byte
+	PublisherIdentityID string
+	KeyID               string
+	ExpiresAt           pgtype.Timestamptz
+}
+
+type ControlDeploymentPublisherMember struct {
+	PublisherIdentityID string
+	DeploymentID        string
+	EnrollmentID        string
+	PublicKey           []byte
+	KeyID               string
+	ObservedRevision    int64
+	AcknowledgedAt      pgtype.Timestamptz
+	Healthy             bool
+	LeaseExpiresAt      pgtype.Timestamptz
+}
+
+type ControlDeploymentPublisherServiceGrant struct {
+	PublisherIdentityID string
+	DeploymentID        string
+	TeamID              string
+	ProjectKey          string
+	Service             string
+	GrantID             string
 }
 
 type ControlDeviceLogin struct {
@@ -714,26 +802,6 @@ type ControlPreviewPublicUrl struct {
 	AddedAt     pgtype.Timestamptz
 }
 
-type ControlProjectPublisherGroup struct {
-	Ownership               string
-	ID                      string
-	TeamID                  string
-	ProjectKey              string
-	Name                    string
-	Description             string
-	DomainID                pgtype.Text
-	Namespace               string
-	Public                  bool
-	Revision                int64
-	ConfigurationHash       string
-	ConfigurationCiphertext []byte
-	StorageKeyID            pgtype.Text
-	CreatePrincipalID       pgtype.Text
-	CreateIdempotencyKey    pgtype.Text
-	CreateRequestDigest     []byte
-	DeletedAt               pgtype.Timestamptz
-}
-
 type ControlProjectService struct {
 	TeamID     string
 	ProjectKey string
@@ -961,66 +1029,6 @@ type ControlPublisherGrant struct {
 	RevokedAt           pgtype.Timestamptz
 }
 
-type ControlPublisherGroupEnrollment struct {
-	ID                  string
-	GroupID             string
-	SecretDigest        []byte
-	MaxMembers          int32
-	CreatedByIdentityID string
-	ExpiresAt           pgtype.Timestamptz
-	RevokedAt           pgtype.Timestamptz
-	Scoped              bool
-	CreatePrincipalID   pgtype.Text
-	IdempotencyKey      pgtype.Text
-	RequestDigest       []byte
-	SecretCiphertext    []byte
-	StorageKeyID        pgtype.Text
-}
-
-type ControlPublisherGroupEnrollmentService struct {
-	EnrollmentID string
-	Service      string
-	Protocol     string
-	ServiceID    pgtype.Text
-	PublicURLID  pgtype.Text
-	RevokedAt    pgtype.Timestamptz
-}
-
-type ControlPublisherGroupLease struct {
-	TokenDigest         []byte
-	PublisherIdentityID string
-	KeyID               string
-	ExpiresAt           pgtype.Timestamptz
-}
-
-type ControlPublisherGroupMember struct {
-	PublisherIdentityID string
-	GroupID             string
-	EnrollmentID        string
-	PublicKey           []byte
-	KeyID               string
-	ObservedRevision    int64
-	AcknowledgedAt      pgtype.Timestamptz
-	Healthy             bool
-	LeaseExpiresAt      pgtype.Timestamptz
-}
-
-type ControlPublisherGroupName struct {
-	TeamID     string
-	ProjectKey string
-	Name       string
-	GroupID    string
-}
-
-type ControlPublisherGroupServiceGrant struct {
-	PublisherIdentityID string
-	GroupID             string
-	TeamID              string
-	ProjectKey          string
-	Service             string
-	GrantID             string
-}
-
 type ControlPublisherIdentity struct {
 	ID                  string
 	TeamID              string
@@ -1050,15 +1058,6 @@ type ControlPublisherNamespaceAllocation struct {
 	InvocationID        string
 }
 
-type ControlPublisherNamespaceRename struct {
-	TeamID             string
-	ProjectKey         string
-	IdempotencyKey     string
-	RequestDigest      []byte
-	ResponseCiphertext []byte
-	StorageKeyID       string
-}
-
 type ControlPublisherRuntime struct {
 	PublisherIdentityID       string
 	TeamID                    string
@@ -1075,7 +1074,7 @@ type ControlPublisherRuntime struct {
 	LeaseExpiresAt            pgtype.Timestamptz
 	StoppedAt                 pgtype.Timestamptz
 	DeploymentReport          []byte
-	DeploymentGroupID         pgtype.Text
+	DeploymentID              pgtype.Text
 	DeploymentFirstObservedAt pgtype.Timestamptz
 }
 
@@ -1314,7 +1313,7 @@ type ControlServiceConnectionSlot struct {
 type ControlServiceEndpoint struct {
 	Hostname              string
 	ServiceID             string
-	GroupID               pgtype.Text
+	DeploymentID          pgtype.Text
 	LocalSourceKey        string
 	DomainID              string
 	Namespace             string
@@ -1390,7 +1389,7 @@ type ControlServiceInvitation struct {
 
 type ControlServiceNamespaceClaim struct {
 	Namespace      string
-	GroupID        pgtype.Text
+	DeploymentID   pgtype.Text
 	LocalSourceKey string
 	MembershipID   pgtype.Text
 	DomainID       string

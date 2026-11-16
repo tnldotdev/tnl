@@ -10,7 +10,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 )
 
-func TestIntegrationServiceGroupMove(t *testing.T) {
+func TestIntegrationServiceDeploymentMove(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "managed_group_move")
 	r := appliedProjectRequest(t, d, now)
 	r.Deployment = "production"

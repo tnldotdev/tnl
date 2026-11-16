@@ -10,17 +10,17 @@ import (
 func TestPublisherProvisionJournalProtectsTransitions(t *testing.T) {
 	store := testStore(t, filepath.Join(t.TempDir(), "state"), "https://control.example")
 	first := []byte(`{"key":"private-signing-key","token":"private-token","stage":"creating"}`)
-	if err := store.AppendPublisherProvision(t.Context(), "group", "deployment", 0, first); err != nil {
+	if err := store.AppendPublisherProvision(t.Context(), "deployment", "deployment", 0, first); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AppendPublisherProvision(t.Context(), "group", "deployment", 0, []byte(`{"key":"replacement"}`)); !errors.Is(err, ErrPublisherStateConflict) {
+	if err := store.AppendPublisherProvision(t.Context(), "deployment", "deployment", 0, []byte(`{"key":"replacement"}`)); !errors.Is(err, ErrPublisherStateConflict) {
 		t.Fatal("stale writer replaced key", err)
 	}
 	second := []byte(`{"key":"private-signing-key","token":"private-token","stage":"durable"}`)
-	if err := store.AppendPublisherProvision(t.Context(), "group", "deployment", 1, second); err != nil {
+	if err := store.AppendPublisherProvision(t.Context(), "deployment", "deployment", 1, second); err != nil {
 		t.Fatal(err)
 	}
-	data, revision, err := store.PublisherProvision(t.Context(), "group", "deployment")
+	data, revision, err := store.PublisherProvision(t.Context(), "deployment", "deployment")
 	if err != nil || revision != 2 || !bytes.Equal(data, second) {
 		t.Fatal("latest transition lost", err)
 	}
@@ -38,7 +38,7 @@ func TestPublisherProvisionJournalProtectsTransitions(t *testing.T) {
 	if _, err := store.database.db.Exec(`UPDATE publisher_provision_journal SET document_ciphertext=? WHERE revision=2`, sealed); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.PublisherProvision(t.Context(), "group", "deployment"); err == nil {
+	if _, _, err := store.PublisherProvision(t.Context(), "deployment", "deployment"); err == nil {
 		t.Fatal("ciphertext replay crossed transition context")
 	}
 }

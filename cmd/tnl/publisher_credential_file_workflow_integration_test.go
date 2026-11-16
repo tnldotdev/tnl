@@ -91,7 +91,7 @@ func TestIntegrationCLINamedPublisherCredentialFileWithoutPersonSession(t *testi
 		t.Fatal(err)
 	}
 	credential := filepath.Join(root, "publisher.json")
-	cliCall(t, t.Context(), []string{"--no-config", "publisher", "provision", "--service", saved.Id, "--output-file", credential, "--server", f.url, "--team", team, "--state-dir", person})
+	cliCall(t, t.Context(), []string{"--no-config", "publisher", "provision", "--service-id", saved.Id, "--output-file", credential, "--server", f.url, "--team", team, "--state-dir", person})
 	identity, err := credentialfile.Read(credential)
 	if err != nil {
 		t.Fatal(err)

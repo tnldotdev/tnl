@@ -101,7 +101,7 @@ mutation counters; public URL counters are publish run numbers.
 ## services
 
 Use **service** for a saved application service and **service run** for one active
-publication of it. A **publisher group** assigns services to enrolled publisher
+publication of it. A **deployment** assigns services to enrolled publisher
 identities. Keep the group name, group ID, service name, service ID, and publisher
 identity ID distinct. A **service endpoint** contains its visitor hostname, port,
 and reachability; **service target TLS** describes publisher-to-target trust.
@@ -386,7 +386,7 @@ tree and the shared `publisher/httpaccess` and `publisher/requestlimit` packages
 Service-specific HTTP frontend composition lives in `publisher/service/http.go`.
 Installed job reconciliation and publisher-specific composition stay in the one
 `internal/installed` lifecycle owner, using the existing job model and authority.
-Publisher group assignment publication belongs to `publisher/group`; foreground
+Deployment assignment publication belongs to `publisher/deployment`; foreground
 commands and installed job runners compose that same operation. Shared HTTP limit
 values use `policy/applicationlimits.Limits` directly, without publisher aliases.
 

@@ -11,21 +11,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const acknowledgePublisherGroupConfiguration = `-- name: AcknowledgePublisherGroupConfiguration :exec
-UPDATE control.publisher_group_members
+const acknowledgeDeploymentPublisherConfiguration = `-- name: AcknowledgeDeploymentPublisherConfiguration :exec
+UPDATE control.deployment_publisher_members
 SET observed_revision=$1, healthy=$2, acknowledged_at=$3
 WHERE publisher_identity_id=$4
 `
 
-type AcknowledgePublisherGroupConfigurationParams struct {
+type AcknowledgeDeploymentPublisherConfigurationParams struct {
 	Revision            int64
 	Healthy             bool
 	AcknowledgedAt      pgtype.Timestamptz
 	PublisherIdentityID string
 }
 
-func (q *Queries) AcknowledgePublisherGroupConfiguration(ctx context.Context, arg AcknowledgePublisherGroupConfigurationParams) error {
-	_, err := q.db.Exec(ctx, acknowledgePublisherGroupConfiguration,
+func (q *Queries) AcknowledgeDeploymentPublisherConfiguration(ctx context.Context, arg AcknowledgeDeploymentPublisherConfigurationParams) error {
+	_, err := q.db.Exec(ctx, acknowledgeDeploymentPublisherConfiguration,
 		arg.Revision,
 		arg.Healthy,
 		arg.AcknowledgedAt,
@@ -36,36 +36,36 @@ func (q *Queries) AcknowledgePublisherGroupConfiguration(ctx context.Context, ar
 
 const getDeploymentServiceConfiguration = `-- name: GetDeploymentServiceConfiguration :one
 SELECT deployment.ownership, deployment.id, deployment.team_id, deployment.project_key, deployment.name, deployment.description, deployment.domain_id, deployment.namespace, deployment.public, deployment.revision, deployment.configuration_hash, deployment.configuration_ciphertext, deployment.storage_key_id, deployment.create_principal_id, deployment.create_idempotency_key, deployment.create_request_digest, deployment.deleted_at,binding.service FROM control.applied_project_services binding
-JOIN control.project_publisher_groups deployment ON deployment.id=binding.group_id AND deployment.deleted_at IS NULL
+JOIN control.deployments deployment ON deployment.id=binding.deployment_id AND deployment.deleted_at IS NULL
 WHERE binding.service_id=$1
 `
 
 type GetDeploymentServiceConfigurationRow struct {
-	ControlProjectPublisherGroup ControlProjectPublisherGroup
-	Service                      string
+	ControlDeployment ControlDeployment
+	Service           string
 }
 
 func (q *Queries) GetDeploymentServiceConfiguration(ctx context.Context, serviceID pgtype.Text) (GetDeploymentServiceConfigurationRow, error) {
 	row := q.db.QueryRow(ctx, getDeploymentServiceConfiguration, serviceID)
 	var i GetDeploymentServiceConfigurationRow
 	err := row.Scan(
-		&i.ControlProjectPublisherGroup.Ownership,
-		&i.ControlProjectPublisherGroup.ID,
-		&i.ControlProjectPublisherGroup.TeamID,
-		&i.ControlProjectPublisherGroup.ProjectKey,
-		&i.ControlProjectPublisherGroup.Name,
-		&i.ControlProjectPublisherGroup.Description,
-		&i.ControlProjectPublisherGroup.DomainID,
-		&i.ControlProjectPublisherGroup.Namespace,
-		&i.ControlProjectPublisherGroup.Public,
-		&i.ControlProjectPublisherGroup.Revision,
-		&i.ControlProjectPublisherGroup.ConfigurationHash,
-		&i.ControlProjectPublisherGroup.ConfigurationCiphertext,
-		&i.ControlProjectPublisherGroup.StorageKeyID,
-		&i.ControlProjectPublisherGroup.CreatePrincipalID,
-		&i.ControlProjectPublisherGroup.CreateIdempotencyKey,
-		&i.ControlProjectPublisherGroup.CreateRequestDigest,
-		&i.ControlProjectPublisherGroup.DeletedAt,
+		&i.ControlDeployment.Ownership,
+		&i.ControlDeployment.ID,
+		&i.ControlDeployment.TeamID,
+		&i.ControlDeployment.ProjectKey,
+		&i.ControlDeployment.Name,
+		&i.ControlDeployment.Description,
+		&i.ControlDeployment.DomainID,
+		&i.ControlDeployment.Namespace,
+		&i.ControlDeployment.Public,
+		&i.ControlDeployment.Revision,
+		&i.ControlDeployment.ConfigurationHash,
+		&i.ControlDeployment.ConfigurationCiphertext,
+		&i.ControlDeployment.StorageKeyID,
+		&i.ControlDeployment.CreatePrincipalID,
+		&i.ControlDeployment.CreateIdempotencyKey,
+		&i.ControlDeployment.CreateRequestDigest,
+		&i.ControlDeployment.DeletedAt,
 		&i.Service,
 	)
 	return i, err
@@ -130,19 +130,19 @@ func (q *Queries) GetLocalProjectService(ctx context.Context, arg GetLocalProjec
 	return i, err
 }
 
-const invalidatePublisherGroupRuntimeHealth = `-- name: InvalidatePublisherGroupRuntimeHealth :exec
-UPDATE control.publisher_group_members
+const invalidateDeploymentPublisherRuntimeHealth = `-- name: InvalidateDeploymentPublisherRuntimeHealth :exec
+UPDATE control.deployment_publisher_members
 SET healthy=false, acknowledged_at=NULL
 WHERE publisher_identity_id=$1
 `
 
-func (q *Queries) InvalidatePublisherGroupRuntimeHealth(ctx context.Context, publisherIdentityID string) error {
-	_, err := q.db.Exec(ctx, invalidatePublisherGroupRuntimeHealth, publisherIdentityID)
+func (q *Queries) InvalidateDeploymentPublisherRuntimeHealth(ctx context.Context, publisherIdentityID string) error {
+	_, err := q.db.Exec(ctx, invalidateDeploymentPublisherRuntimeHealth, publisherIdentityID)
 	return err
 }
 
 const listAppliedProjectServices = `-- name: ListAppliedProjectServices :many
-SELECT team_id, project_key, service, group_id, service_id, public_url_id, visitor_grant_id, desired_revision FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 ORDER BY group_id,service
+SELECT team_id, project_key, service, deployment_id, service_id, public_url_id, visitor_grant_id, desired_revision FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 ORDER BY deployment_id,service
 `
 
 type ListAppliedProjectServicesParams struct {
@@ -163,7 +163,7 @@ func (q *Queries) ListAppliedProjectServices(ctx context.Context, arg ListApplie
 			&i.TeamID,
 			&i.ProjectKey,
 			&i.Service,
-			&i.GroupID,
+			&i.DeploymentID,
 			&i.ServiceID,
 			&i.PublicURLID,
 			&i.VisitorGrantID,
@@ -180,13 +180,13 @@ func (q *Queries) ListAppliedProjectServices(ctx context.Context, arg ListApplie
 }
 
 const listAuthorizedDeployments = `-- name: ListAuthorizedDeployments :many
-SELECT deployment.ownership, deployment.id, deployment.team_id, deployment.project_key, deployment.name, deployment.description, deployment.domain_id, deployment.namespace, deployment.public, deployment.revision, deployment.configuration_hash, deployment.configuration_ciphertext, deployment.storage_key_id, deployment.create_principal_id, deployment.create_idempotency_key, deployment.create_request_digest, deployment.deleted_at FROM control.project_publisher_groups deployment
+SELECT deployment.ownership, deployment.id, deployment.team_id, deployment.project_key, deployment.name, deployment.description, deployment.domain_id, deployment.namespace, deployment.public, deployment.revision, deployment.configuration_hash, deployment.configuration_ciphertext, deployment.storage_key_id, deployment.create_principal_id, deployment.create_idempotency_key, deployment.create_request_digest, deployment.deleted_at FROM control.deployments deployment
 JOIN control.deployment_management_grants approval ON approval.grant_id=$1
 AND approval.team_id=deployment.team_id AND approval.project_key=deployment.project_key
 WHERE deployment.deleted_at IS NULL
 AND (approval.all_deployments OR EXISTS(SELECT 1 FROM control.deployment_management_deployments scope WHERE scope.grant_id=approval.grant_id AND scope.deployment_id=deployment.id))
 AND EXISTS(SELECT 1 FROM control.applied_project_services binding JOIN control.deployment_management_services scope
-    ON scope.grant_id=approval.grant_id AND scope.capability='manage' AND scope.service=binding.service AND scope.revoked_at IS NULL WHERE binding.group_id=deployment.id)
+    ON scope.grant_id=approval.grant_id AND scope.capability='manage' AND scope.service=binding.service AND scope.revoked_at IS NULL WHERE binding.deployment_id=deployment.id)
 AND deployment.id COLLATE "C">$2::text COLLATE "C" ORDER BY deployment.id COLLATE "C" LIMIT $3
 `
 
@@ -196,15 +196,15 @@ type ListAuthorizedDeploymentsParams struct {
 	PageLimit int32
 }
 
-func (q *Queries) ListAuthorizedDeployments(ctx context.Context, arg ListAuthorizedDeploymentsParams) ([]ControlProjectPublisherGroup, error) {
+func (q *Queries) ListAuthorizedDeployments(ctx context.Context, arg ListAuthorizedDeploymentsParams) ([]ControlDeployment, error) {
 	rows, err := q.db.Query(ctx, listAuthorizedDeployments, arg.GrantID, arg.AfterID, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ControlProjectPublisherGroup
+	var items []ControlDeployment
 	for rows.Next() {
-		var i ControlProjectPublisherGroup
+		var i ControlDeployment
 		if err := rows.Scan(
 			&i.Ownership,
 			&i.ID,
@@ -234,8 +234,102 @@ func (q *Queries) ListAuthorizedDeployments(ctx context.Context, arg ListAuthori
 	return items, nil
 }
 
+const listDeploymentPublisherServices = `-- name: ListDeploymentPublisherServices :many
+SELECT team_id, project_key, service, deployment_id, service_id, public_url_id, visitor_grant_id, desired_revision FROM control.applied_project_services WHERE deployment_id=$1::text ORDER BY service
+`
+
+func (q *Queries) ListDeploymentPublisherServices(ctx context.Context, deploymentID string) ([]ControlAppliedProjectService, error) {
+	rows, err := q.db.Query(ctx, listDeploymentPublisherServices, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlAppliedProjectService
+	for rows.Next() {
+		var i ControlAppliedProjectService
+		if err := rows.Scan(
+			&i.TeamID,
+			&i.ProjectKey,
+			&i.Service,
+			&i.DeploymentID,
+			&i.ServiceID,
+			&i.PublicURLID,
+			&i.VisitorGrantID,
+			&i.DesiredRevision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDeploymentPublisherStatus = `-- name: ListDeploymentPublisherStatus :many
+SELECT g.id AS deployment_id, g.name AS deployment_name, m.publisher_identity_id, m.key_id,
+    m.observed_revision, g.revision AS current_revision, m.acknowledged_at,
+    (m.healthy AND m.lease_expires_at>$1 AND m.observed_revision=g.revision)::boolean AS healthy,
+    m.lease_expires_at
+FROM control.deployments g
+JOIN control.deployment_publisher_members m ON m.deployment_id=g.id
+JOIN control.publisher_identities i ON i.id=m.publisher_identity_id
+WHERE g.team_id=$2 AND g.project_key=$3
+    AND g.deleted_at IS NULL AND i.revoked_at IS NULL
+ORDER BY g.name,m.publisher_identity_id
+`
+
+type ListDeploymentPublisherStatusParams struct {
+	Now        pgtype.Timestamptz
+	TeamID     string
+	ProjectKey string
+}
+
+type ListDeploymentPublisherStatusRow struct {
+	DeploymentID        string
+	DeploymentName      string
+	PublisherIdentityID string
+	KeyID               string
+	ObservedRevision    int64
+	CurrentRevision     int64
+	AcknowledgedAt      pgtype.Timestamptz
+	Healthy             bool
+	LeaseExpiresAt      pgtype.Timestamptz
+}
+
+func (q *Queries) ListDeploymentPublisherStatus(ctx context.Context, arg ListDeploymentPublisherStatusParams) ([]ListDeploymentPublisherStatusRow, error) {
+	rows, err := q.db.Query(ctx, listDeploymentPublisherStatus, arg.Now, arg.TeamID, arg.ProjectKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDeploymentPublisherStatusRow
+	for rows.Next() {
+		var i ListDeploymentPublisherStatusRow
+		if err := rows.Scan(
+			&i.DeploymentID,
+			&i.DeploymentName,
+			&i.PublisherIdentityID,
+			&i.KeyID,
+			&i.ObservedRevision,
+			&i.CurrentRevision,
+			&i.AcknowledgedAt,
+			&i.Healthy,
+			&i.LeaseExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDeployments = `-- name: ListDeployments :many
-SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, public, revision, configuration_hash, configuration_ciphertext, storage_key_id, create_principal_id, create_idempotency_key, create_request_digest, deleted_at FROM control.project_publisher_groups
+SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, public, revision, configuration_hash, configuration_ciphertext, storage_key_id, create_principal_id, create_idempotency_key, create_request_digest, deleted_at FROM control.deployments
 WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL
 AND id COLLATE "C">$3::text COLLATE "C" ORDER BY id COLLATE "C" LIMIT $4
 `
@@ -247,7 +341,7 @@ type ListDeploymentsParams struct {
 	PageLimit  int32
 }
 
-func (q *Queries) ListDeployments(ctx context.Context, arg ListDeploymentsParams) ([]ControlProjectPublisherGroup, error) {
+func (q *Queries) ListDeployments(ctx context.Context, arg ListDeploymentsParams) ([]ControlDeployment, error) {
 	rows, err := q.db.Query(ctx, listDeployments,
 		arg.TeamID,
 		arg.ProjectKey,
@@ -258,9 +352,9 @@ func (q *Queries) ListDeployments(ctx context.Context, arg ListDeploymentsParams
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ControlProjectPublisherGroup
+	var items []ControlDeployment
 	for rows.Next() {
-		var i ControlProjectPublisherGroup
+		var i ControlDeployment
 		if err := rows.Scan(
 			&i.Ownership,
 			&i.ID,
@@ -371,24 +465,24 @@ func (q *Queries) ListDiscoverableProjects(ctx context.Context, arg ListDiscover
 	return items, nil
 }
 
-const listProjectPublisherGroups = `-- name: ListProjectPublisherGroups :many
-SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, public, revision, configuration_hash, configuration_ciphertext, storage_key_id, create_principal_id, create_idempotency_key, create_request_digest, deleted_at FROM control.project_publisher_groups WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL ORDER BY name
+const listProjectDeployments = `-- name: ListProjectDeployments :many
+SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, public, revision, configuration_hash, configuration_ciphertext, storage_key_id, create_principal_id, create_idempotency_key, create_request_digest, deleted_at FROM control.deployments WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL ORDER BY name
 `
 
-type ListProjectPublisherGroupsParams struct {
+type ListProjectDeploymentsParams struct {
 	TeamID     string
 	ProjectKey string
 }
 
-func (q *Queries) ListProjectPublisherGroups(ctx context.Context, arg ListProjectPublisherGroupsParams) ([]ControlProjectPublisherGroup, error) {
-	rows, err := q.db.Query(ctx, listProjectPublisherGroups, arg.TeamID, arg.ProjectKey)
+func (q *Queries) ListProjectDeployments(ctx context.Context, arg ListProjectDeploymentsParams) ([]ControlDeployment, error) {
+	rows, err := q.db.Query(ctx, listProjectDeployments, arg.TeamID, arg.ProjectKey)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ControlProjectPublisherGroup
+	var items []ControlDeployment
 	for rows.Next() {
-		var i ControlProjectPublisherGroup
+		var i ControlDeployment
 		if err := rows.Scan(
 			&i.Ownership,
 			&i.ID,
@@ -452,100 +546,6 @@ func (q *Queries) ListProjectServiceDeclarations(ctx context.Context, arg ListPr
 	return items, nil
 }
 
-const listPublisherGroupMemberStatus = `-- name: ListPublisherGroupMemberStatus :many
-SELECT g.id AS group_id, g.name AS group_name, m.publisher_identity_id, m.key_id,
-    m.observed_revision, g.revision AS current_revision, m.acknowledged_at,
-    (m.healthy AND m.lease_expires_at>$1 AND m.observed_revision=g.revision)::boolean AS healthy,
-    m.lease_expires_at
-FROM control.project_publisher_groups g
-JOIN control.publisher_group_members m ON m.group_id=g.id
-JOIN control.publisher_identities i ON i.id=m.publisher_identity_id
-WHERE g.team_id=$2 AND g.project_key=$3
-    AND g.deleted_at IS NULL AND i.revoked_at IS NULL
-ORDER BY g.name,m.publisher_identity_id
-`
-
-type ListPublisherGroupMemberStatusParams struct {
-	Now        pgtype.Timestamptz
-	TeamID     string
-	ProjectKey string
-}
-
-type ListPublisherGroupMemberStatusRow struct {
-	GroupID             string
-	GroupName           string
-	PublisherIdentityID string
-	KeyID               string
-	ObservedRevision    int64
-	CurrentRevision     int64
-	AcknowledgedAt      pgtype.Timestamptz
-	Healthy             bool
-	LeaseExpiresAt      pgtype.Timestamptz
-}
-
-func (q *Queries) ListPublisherGroupMemberStatus(ctx context.Context, arg ListPublisherGroupMemberStatusParams) ([]ListPublisherGroupMemberStatusRow, error) {
-	rows, err := q.db.Query(ctx, listPublisherGroupMemberStatus, arg.Now, arg.TeamID, arg.ProjectKey)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListPublisherGroupMemberStatusRow
-	for rows.Next() {
-		var i ListPublisherGroupMemberStatusRow
-		if err := rows.Scan(
-			&i.GroupID,
-			&i.GroupName,
-			&i.PublisherIdentityID,
-			&i.KeyID,
-			&i.ObservedRevision,
-			&i.CurrentRevision,
-			&i.AcknowledgedAt,
-			&i.Healthy,
-			&i.LeaseExpiresAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listPublisherGroupServices = `-- name: ListPublisherGroupServices :many
-SELECT team_id, project_key, service, group_id, service_id, public_url_id, visitor_grant_id, desired_revision FROM control.applied_project_services WHERE group_id=$1::text ORDER BY service
-`
-
-func (q *Queries) ListPublisherGroupServices(ctx context.Context, groupID string) ([]ControlAppliedProjectService, error) {
-	rows, err := q.db.Query(ctx, listPublisherGroupServices, groupID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ControlAppliedProjectService
-	for rows.Next() {
-		var i ControlAppliedProjectService
-		if err := rows.Scan(
-			&i.TeamID,
-			&i.ProjectKey,
-			&i.Service,
-			&i.GroupID,
-			&i.ServiceID,
-			&i.PublicURLID,
-			&i.VisitorGrantID,
-			&i.DesiredRevision,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const lockAppliedProject = `-- name: LockAppliedProject :one
 SELECT team_id, project_key, source_fingerprint, project_label, revision, configuration_hash, configuration_ciphertext, storage_key_id, created_by_identity_id, updated_at, retired_at FROM control.applied_projects WHERE team_id=$1 AND project_key=$2 FOR UPDATE
 `
@@ -575,9 +575,9 @@ func (q *Queries) LockAppliedProject(ctx context.Context, arg LockAppliedProject
 }
 
 const lockDeployment = `-- name: LockDeployment :one
-SELECT g.ownership, g.id, g.team_id, g.project_key, g.name, g.description, g.domain_id, g.namespace, g.public, g.revision, g.configuration_hash, g.configuration_ciphertext, g.storage_key_id, g.create_principal_id, g.create_idempotency_key, g.create_request_digest, g.deleted_at FROM control.project_publisher_groups g
+SELECT g.ownership, g.id, g.team_id, g.project_key, g.name, g.description, g.domain_id, g.namespace, g.public, g.revision, g.configuration_hash, g.configuration_ciphertext, g.storage_key_id, g.create_principal_id, g.create_idempotency_key, g.create_request_digest, g.deleted_at FROM control.deployments g
 WHERE g.team_id=$1 AND g.project_key=$2 AND g.deleted_at IS NULL
-AND (g.id=$3 OR EXISTS(SELECT 1 FROM control.publisher_group_names alias WHERE alias.group_id=g.id AND alias.name=$3)) FOR UPDATE
+AND (g.id=$3 OR EXISTS(SELECT 1 FROM control.deployment_names alias WHERE alias.deployment_id=g.id AND alias.name=$3)) FOR UPDATE
 `
 
 type LockDeploymentParams struct {
@@ -586,9 +586,9 @@ type LockDeploymentParams struct {
 	Selector   string
 }
 
-func (q *Queries) LockDeployment(ctx context.Context, arg LockDeploymentParams) (ControlProjectPublisherGroup, error) {
+func (q *Queries) LockDeployment(ctx context.Context, arg LockDeploymentParams) (ControlDeployment, error) {
 	row := q.db.QueryRow(ctx, lockDeployment, arg.TeamID, arg.ProjectKey, arg.Selector)
-	var i ControlProjectPublisherGroup
+	var i ControlDeployment
 	err := row.Scan(
 		&i.Ownership,
 		&i.ID,
@@ -611,13 +611,13 @@ func (q *Queries) LockDeployment(ctx context.Context, arg LockDeploymentParams) 
 	return i, err
 }
 
-const lockProjectPublisherGroup = `-- name: LockProjectPublisherGroup :one
-SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, public, revision, configuration_hash, configuration_ciphertext, storage_key_id, create_principal_id, create_idempotency_key, create_request_digest, deleted_at FROM control.project_publisher_groups WHERE id=$1 AND deleted_at IS NULL FOR UPDATE
+const lockDeploymentByID = `-- name: LockDeploymentByID :one
+SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, public, revision, configuration_hash, configuration_ciphertext, storage_key_id, create_principal_id, create_idempotency_key, create_request_digest, deleted_at FROM control.deployments WHERE id=$1 AND deleted_at IS NULL FOR UPDATE
 `
 
-func (q *Queries) LockProjectPublisherGroup(ctx context.Context, id string) (ControlProjectPublisherGroup, error) {
-	row := q.db.QueryRow(ctx, lockProjectPublisherGroup, id)
-	var i ControlProjectPublisherGroup
+func (q *Queries) LockDeploymentByID(ctx context.Context, id string) (ControlDeployment, error) {
+	row := q.db.QueryRow(ctx, lockDeploymentByID, id)
+	var i ControlDeployment
 	err := row.Scan(
 		&i.Ownership,
 		&i.ID,

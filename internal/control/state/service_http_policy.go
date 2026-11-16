@@ -40,7 +40,7 @@ func (d *Database) serviceHTTPSettings(ctx context.Context, q *controlstatedb.Qu
 	if err != nil {
 		return nil, err
 	}
-	c, err := d.openDeploymentConfiguration(row.ControlProjectPublisherGroup)
+	c, err := d.openDeploymentConfiguration(row.ControlDeployment)
 	if err != nil {
 		return nil, err
 	}

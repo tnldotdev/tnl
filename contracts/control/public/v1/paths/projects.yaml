@@ -5,7 +5,7 @@ paths:
       summary: Retire an applied project and its configuration-owned resources
       tags: [projects]
       security: [{ bearerAuth: [] }]
-      description: "Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs."
+      description: "Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire deployments, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs."
       parameters:
         - { name: project_key, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -35,7 +35,7 @@ paths:
   /v1/projects/{project_key}/status:
     get:
       operationId: getProjectStatus
-      summary: Inspect project publications across worktrees and publisher groups
+      summary: Inspect project publications across worktrees and deployments
       tags: [projects]
       security: [{ bearerAuth: [] }]
       description: "Read a manager-only snapshot of declared services, realized worktree resources, and open publications. Each publication appears separately; an idle resource or unrealized declaration appears once. Follow next_cursor with the same project, team, and identity. Readiness describes control's current lease, certificate, and relay observations, not a fresh visitor probe. Targets, credentials, and checkout paths are omitted."
@@ -75,7 +75,7 @@ paths:
       summary: List applied projects
       tags: [projects]
       security: [{ bearerAuth: [] }]
-      description: "List active applied projects the current team manager may manage, ordered by project_key. Retired projects are omitted but remain readable by key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access."
+      description: "List active applied projects the current team manager may manage, ordered by project_key. Retired projects are omitted but remain readable by key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its deployments, members, and editable declarations. Follow next_cursor unchanged; each page checks current access."
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
         - { name: cursor, in: query, schema: { type: string, maxLength: 2048 } }
@@ -148,7 +148,7 @@ paths:
       tags: [projects]
       summary: Realize one declared local service for a worktree
       security: [{ bearerAuth: [] }]
-      description: "Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote publisher groups are unchanged."
+      description: "Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote deployments are unchanged."
       parameters:
         - { name: project_key, in: path, required: true, schema: { type: string } }
         - { name: service, in: path, required: true, schema: { type: string } }
@@ -176,7 +176,7 @@ paths:
     put:
       operationId: applyProjectConfiguration
       tags: [projects]
-      summary: Apply a project's desired services and publisher groups
+      summary: Apply a project's desired services and deployments
       security: [{ bearerAuth: [] }]
       description: "Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers."
       requestBody:

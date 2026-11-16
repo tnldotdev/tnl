@@ -214,61 +214,29 @@ func TestIntegrationMigrationRejectsPreReleaseBaselineWithoutChanges(t *testing.
 	}
 }
 
-func TestIntegrationMigrationRejectsSiblingWorkloadBaselines(t *testing.T) {
+func TestIntegrationMigrationRejectsUnknownBaseline(t *testing.T) {
 	d, _ := newControlStateIntegrationDatabase(t, "platform_access_baseline")
 	ctx := t.Context()
 	if _, err := d.pool.Exec(ctx, `ALTER TABLE control.schema_identity DROP CONSTRAINT schema_identity_baseline_id_check`); err != nil {
 		t.Fatal(err)
 	}
-	for _, previous := range []string{
-		"deployments-v1",
-		"tnl-control-fresh-v1-selected-deployments",
-		"tnl-control-fresh-v1-deployment-connect",
-		"tnl-control-fresh-v1-deployment-management",
-		"tnl-control-fresh-v1-deployment-publishers",
-		"tnl-control-fresh-v1-deployment-configuration",
-		"tnl-control-fresh-v1-deployments",
-		"tnl-control-fresh-v1-provider-regions",
-		"tnl-control-fresh-v1-workload-gitlab",
-		"tnl-control-fresh-v1-workload-kubernetes",
-		"tnl-control-fresh-v1-workload-google",
-		"tnl-control-fresh-v1-workload-optional-duration",
-		"tnl-control-fresh-v1-workload-identity-expiry",
-		"tnl-control-fresh-v1-workload-renewal-proof",
-		"tnl-control-fresh-v1-connector-rebinding",
-		"tnl-control-fresh-v1-post-quantum",
-		"tnl-control-fresh-v1-guest-ready-without-usage-accounting",
-		"tnl-control-fresh-v1-without-usage-accounting",
-		"tnl-control-fresh-v1-guest-ready-deadlines",
-		"tnl-control-fresh-v1-handler-backed-integrations",
-		"tnl-control-fresh-v1-relay-connector-peers",
-		"tnl-control-fresh-v1-permissions-browser-refresh-serving-readiness",
-		"tnl-control-fresh-v1-permissions",
-		"tnl-control-fresh-v1-services",
-		"tnl-control-fresh-v1-visitors",
-		"tnl-control-fresh-v1-services-oidc-company-service-http-dns-egress-deployment-workload-visitors",
-		"tnl-control-fresh-v1-services-oidc-company-service-http-dns-egress-deployment-provider-workloads",
-		"tnl-control-fresh-v1-services-platform-access",
-		"tnl-control-fresh-v1-permissions-browser-refresh",
-		"tnl-control-fresh-v1-permissions-serving-readiness",
-		"tnl-control-fresh-v1-serving-readiness",
-	} {
-		t.Run(previous, func(t *testing.T) {
-			if _, err := d.pool.Exec(ctx, `UPDATE control.schema_identity SET baseline_id=$1 WHERE id=1`, previous); err != nil {
+	for _, invalid := range []string{"", "unknown", "v2"} {
+		t.Run(invalid, func(t *testing.T) {
+			if _, err := d.pool.Exec(ctx, `UPDATE control.schema_identity SET baseline_id=$1 WHERE id=1`, invalid); err != nil {
 				t.Fatal(err)
 			}
 			if err := Migrate(ctx, d.pool.Config().ConnString()); err == nil {
-				t.Fatal("migration accepted a sibling workload baseline")
+				t.Fatal("migration accepted an unknown baseline")
 			}
 			if err := d.Readiness(ctx); err == nil {
-				t.Fatal("readiness accepted a sibling workload baseline")
+				t.Fatal("readiness accepted an unknown baseline")
 			}
 			if opened, err := Open(ctx, d.pool.Config().ConnString(), testStorageKey, "", naming.ManagedURLModeGenerated); err == nil {
 				opened.Close()
-				t.Fatal("serving accepted a sibling workload baseline")
+				t.Fatal("serving accepted an unknown baseline")
 			}
 			var preserved string
-			if err := d.pool.QueryRow(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&preserved); err != nil || preserved != previous {
+			if err := d.pool.QueryRow(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&preserved); err != nil || preserved != invalid {
 				t.Fatal("rejected baseline was relabeled", preserved, err)
 			}
 		})

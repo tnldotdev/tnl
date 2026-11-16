@@ -21,7 +21,7 @@ type ProjectStatus struct {
 
 type ProjectPublicationStatus struct {
 	Service                   string     `json:"service"`
-	PublisherGroup            string     `json:"publisher_group"`
+	Deployment                string     `json:"deployment"`
 	Kind                      string     `json:"service_kind"`
 	WorktreeKey               string     `json:"worktree_key,omitempty"`
 	ServiceID                 string     `json:"service_id,omitempty"`
@@ -69,7 +69,7 @@ func (d *Database) GetProjectStatus(ctx context.Context, team, project, actor, c
 			result.NextCursor = encodeDiscoveryCursor(discoveryCursor{Kind: kind, Team: team, Actor: actor, After: rows[i-1].CursorKey})
 			break
 		}
-		publication := ProjectPublicationStatus{Service: row.Service, PublisherGroup: row.Deployment, Kind: "local", WorktreeKey: row.WorktreeKey, ServiceID: row.ServiceID.String, PublicURLID: row.PublicURLID.String, Hostname: row.Hostname, Port: int(row.Port), RunNumber: row.RunNumber, PublicationState: row.PublicationState, PublisherExpiresAt: optionalTime(row.PublisherExpiresAt), CertificateExpiresAt: optionalTime(row.CertificateExpiresAt)}
+		publication := ProjectPublicationStatus{Service: row.Service, Deployment: row.Deployment, Kind: "local", WorktreeKey: row.WorktreeKey, ServiceID: row.ServiceID.String, PublicURLID: row.PublicURLID.String, Hostname: row.Hostname, Port: int(row.Port), RunNumber: row.RunNumber, PublicationState: row.PublicationState, PublisherExpiresAt: optionalTime(row.PublisherExpiresAt), CertificateExpiresAt: optionalTime(row.CertificateExpiresAt)}
 		if row.ServiceID.Valid {
 			publication.Kind, publication.ServiceRunID = "service", row.RunID
 			if row.RunID != "" {

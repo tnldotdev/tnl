@@ -174,13 +174,13 @@ func TestIntegrationDeploymentManagementPublisherIsolation(t *testing.T) {
 		t.Fatal("another machine recovered the first machine's setup secret", err)
 	}
 	runtime.AccessToken = access.Token
-	dbPublisher := enrollAppliedGroup(t, d, r, enrollment.PublisherGroupEnrollment, now)
+	dbPublisher := enrollAppliedDeployment(t, d, r, enrollment, now)
 	setup.IdempotencyKey, setup.Services = "broader", []string{"db", "web"}
 	wideEnrollment, err := d.CreateDeploymentPublisherEnrollment(t.Context(), setup)
 	if err != nil {
 		t.Fatal(err)
 	}
-	widePublisher := enrollAppliedGroup(t, d, r, wideEnrollment.PublisherGroupEnrollment, now)
+	widePublisher := enrollAppliedDeployment(t, d, r, wideEnrollment, now)
 	listed, err := d.ListDeploymentPublishers(t.Context(), runtime.DeploymentScope, "production", "", 1)
 	if err != nil || len(listed) != 1 || listed[0].PublisherIdentityID != dbPublisher.member.PublisherIdentityID {
 		t.Fatal("publisher page included broader approval", listed, err)
@@ -194,7 +194,7 @@ func TestIntegrationDeploymentManagementPublisherIsolation(t *testing.T) {
 	if err = d.RevokeDeploymentPublisher(t.Context(), runtime.DeploymentScope, "production", dbPublisher.member.PublisherIdentityID, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.GetPublisherGroupAssignments(t.Context(), widePublisher.lease.AccessToken, now); err != nil {
+	if _, err = d.GetDeploymentPublisherAssignments(t.Context(), widePublisher.lease.AccessToken, now); err != nil {
 		t.Fatal("narrow revocation disturbed sibling", err)
 	}
 	// revoking the backend leaves separately enrolled publisher identities alone.
@@ -204,7 +204,7 @@ func TestIntegrationDeploymentManagementPublisherIsolation(t *testing.T) {
 	if _, err = d.GetDeployment(t.Context(), runtime.DeploymentScope, "production"); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatal("revoked backend retained management access", err)
 	}
-	if _, err = d.GetPublisherGroupAssignments(t.Context(), widePublisher.lease.AccessToken, now); err != nil {
+	if _, err = d.GetDeploymentPublisherAssignments(t.Context(), widePublisher.lease.AccessToken, now); err != nil {
 		t.Fatal("backend revocation retired an installed publisher", err)
 	}
 	if _, err = d.RegisterDeploymentCredential(t.Context(), request); err != nil {
@@ -308,7 +308,7 @@ func TestIntegrationDeploymentManagementRevocationDuringLockWait(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			replica := enrollAppliedGroup(t, d, r, enrollment.PublisherGroupEnrollment, now)
+			replica := enrollAppliedDeployment(t, d, r, enrollment, now)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			workers := newIntegrationWorkers(t, cancel)
 			defer workers.stop()
@@ -366,10 +366,10 @@ func TestIntegrationDeploymentManagementRevocationDuringLockWait(t *testing.T) {
 				t.Fatal("denied mutation changed deployment", current, err)
 			}
 			var count int
-			if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.publisher_group_enrollments WHERE group_id=$1`, deployment.ID).Scan(&count); err != nil || count != 1 {
+			if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.deployment_publisher_enrollments WHERE deployment_id=$1`, deployment.ID).Scan(&count); err != nil || count != 1 {
 				t.Fatal("denied setup committed authority", count, err)
 			}
-			if _, err = d.GetPublisherGroupAssignments(ctx, replica.lease.AccessToken, now); err != nil {
+			if _, err = d.GetDeploymentPublisherAssignments(ctx, replica.lease.AccessToken, now); err != nil {
 				t.Fatal("denied revocation changed installed publisher", err)
 			}
 		})

@@ -62,15 +62,15 @@ func (c *Client) ListPreviews(ctx context.Context, params controlv1.ListPreviews
 	})
 }
 
-func (c *Client) RenamePublisherNamespace(ctx context.Context, project, group string, body controlv1.RenamePublisherNamespaceRequest) (controlv1.AppliedProjectConfiguration, error) {
+func (c *Client) RenameDeploymentNamespace(ctx context.Context, project, deployment string, body controlv1.RenameDeploymentNamespaceRequest) (controlv1.AppliedProjectConfiguration, error) {
 	return requestWithAccess[controlv1.AppliedProjectConfiguration](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RenamePublisherNamespace(ctx, project, group, body, editors...)
+		return c.api.RenameDeploymentNamespace(ctx, project, deployment, body, editors...)
 	})
 }
 
-func (c *Client) RenamePublisherGroup(ctx context.Context, project, group string, body controlv1.RenamePublisherGroupRequest) (controlv1.AppliedProjectConfiguration, error) {
+func (c *Client) RenameDeployment(ctx context.Context, project, deployment string, body controlv1.RenameDeploymentRequest) (controlv1.AppliedProjectConfiguration, error) {
 	return requestWithAccess[controlv1.AppliedProjectConfiguration](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RenamePublisherGroup(ctx, project, group, body, editors...)
+		return c.api.RenameDeployment(ctx, project, deployment, body, editors...)
 	})
 }
 
@@ -98,46 +98,33 @@ func (c *Client) GetProjectPublicMetadata(ctx context.Context, team, project str
 	})
 }
 
-func (c *Client) CreatePublisherGroupEnrollment(ctx context.Context, project, group string, body controlv1.CreatePublisherGroupEnrollmentRequest) (controlv1.PublisherGroupEnrollment, error) {
-	return requestWithAccess[controlv1.PublisherGroupEnrollment](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreatePublisherGroupEnrollment(ctx, project, group, body, editors...)
+func (c *Client) RedeemDeploymentPublisherEnrollment(ctx context.Context, key string, public ed25519.PublicKey) (controlv1.DeploymentPublisherIdentity, error) {
+	return request[controlv1.DeploymentPublisherIdentity](ctx, c, "", func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RedeemDeploymentPublisherEnrollment(ctx, controlv1.RedeemDeploymentPublisherEnrollmentRequest{EnrollmentKey: key, PublicKey: base64.RawURLEncoding.EncodeToString(public)}, editors...)
 	})
 }
 
-func (c *Client) RedeemPublisherGroupEnrollment(ctx context.Context, key string, public ed25519.PublicKey) (controlv1.PublisherGroupMember, error) {
-	return request[controlv1.PublisherGroupMember](ctx, c, "", func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RedeemPublisherGroupEnrollment(ctx, controlv1.RedeemPublisherGroupEnrollmentRequest{EnrollmentKey: key, PublicKey: base64.RawURLEncoding.EncodeToString(public)}, editors...)
+func (c *Client) AcquireDeploymentPublisherLease(ctx context.Context, body controlv1.DeploymentPublisherLeaseRequest) (controlv1.DeploymentPublisherLease, error) {
+	return request[controlv1.DeploymentPublisherLease](ctx, c, "", func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.AcquireDeploymentPublisherLease(ctx, body, editors...)
 	})
 }
 
-func (c *Client) AcquirePublisherGroupLease(ctx context.Context, body controlv1.PublisherGroupLeaseRequest) (controlv1.PublisherGroupLease, error) {
-	return request[controlv1.PublisherGroupLease](ctx, c, "", func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.AcquirePublisherGroupLease(ctx, body, editors...)
+func (c *Client) VerifyDeploymentIdentity(ctx context.Context, body controlv1.DeploymentPublisherLeaseRequest) (controlv1.DeploymentPublisherVerification, error) {
+	return request[controlv1.DeploymentPublisherVerification](ctx, c, "", func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.VerifyDeploymentIdentity(ctx, body, editors...)
 	})
 }
 
-func (c *Client) VerifyPublisherGroupIdentity(ctx context.Context, body controlv1.PublisherGroupLeaseRequest) (controlv1.PublisherGroupVerification, error) {
-	return request[controlv1.PublisherGroupVerification](ctx, c, "", func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.VerifyPublisherGroupIdentity(ctx, body, editors...)
+func (c *Client) GetDeploymentPublisherAssignments(ctx context.Context, token string) (controlv1.DeploymentPublisherAssignments, error) {
+	return request[controlv1.DeploymentPublisherAssignments](ctx, c, token, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetDeploymentPublisherAssignments(ctx, editors...)
 	})
 }
 
-func (c *Client) GetPublisherGroupAssignments(ctx context.Context, token string) (controlv1.PublisherGroupAssignments, error) {
-	return request[controlv1.PublisherGroupAssignments](ctx, c, token, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.GetPublisherGroupAssignments(ctx, editors...)
-	})
-}
-
-func (c *Client) AcknowledgePublisherGroupConfiguration(ctx context.Context, token string, body controlv1.PublisherGroupAcknowledgement) error {
+func (c *Client) AcknowledgeDeploymentPublisherConfiguration(ctx context.Context, token string, body controlv1.DeploymentPublisherAcknowledgement) error {
 	_, err := request[struct{}](ctx, c, token, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.AcknowledgePublisherGroupConfiguration(ctx, body, editors...)
-	})
-	return err
-}
-
-func (c *Client) RevokePublisherGroupMember(ctx context.Context, team, project, group, publisher string) error {
-	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RevokePublisherGroupMember(ctx, project, group, publisher, &controlv1.RevokePublisherGroupMemberParams{TeamId: team}, editors...)
+		return c.api.AcknowledgeDeploymentPublisherConfiguration(ctx, body, editors...)
 	})
 	return err
 }

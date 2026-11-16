@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-func TestIntegrationGroupNamespaceAndRename(t *testing.T) {
-	d, now := newControlStateIntegrationDatabase(t, "managed_group_names")
+func TestIntegrationDeploymentNamespaceAndRename(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "managed_deployment_names")
 	r := appliedProjectRequest(t, d, now)
 	r.ProjectLabel = "storefront"
 	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{
@@ -23,17 +23,17 @@ func TestIntegrationGroupNamespaceAndRename(t *testing.T) {
 	r = projectServiceSelection(r, "production", "orders")
 	r.ExpectedRevision = stage.Revision
 	first, err := d.ApplyProjectConfiguration(t.Context(), r)
-	if err != nil || len(first.Groups) != 1 || len(first.Services) != 1 {
+	if err != nil || len(first.Deployments) != 1 || len(first.Services) != 1 {
 		t.Fatalf("apply: %+v %v", first, err)
 	}
-	var group AppliedPublisherGroup
-	for _, candidate := range first.Groups {
+	var deployment AppliedDeployment
+	for _, candidate := range first.Deployments {
 		if candidate.Name == "production" {
-			group = candidate
+			deployment = candidate
 		}
 	}
-	if group.ID == "" || !strings.HasPrefix(group.Namespace, "production.storefront.") {
-		t.Fatal("group did not use the readable project and existing owner namespace", group)
+	if deployment.ID == "" || !strings.HasPrefix(deployment.Namespace, "production.storefront.") {
+		t.Fatal("deployment did not use the readable project and existing owner namespace", deployment)
 	}
 	var endpoint AppliedProjectService
 	for _, candidate := range first.Services {
@@ -41,7 +41,7 @@ func TestIntegrationGroupNamespaceAndRename(t *testing.T) {
 			endpoint = candidate
 		}
 	}
-	if endpoint.Hostname != "orders."+group.Namespace || endpoint.Port < 20000 || endpoint.Port > 60000 || endpoint.Public {
+	if endpoint.Hostname != "orders."+deployment.Namespace || endpoint.Port < 20000 || endpoint.Port > 60000 || endpoint.Public {
 		t.Fatal("managed endpoint missing", endpoint)
 	}
 	var urls int
@@ -49,21 +49,21 @@ func TestIntegrationGroupNamespaceAndRename(t *testing.T) {
 		t.Fatal("service became a public URL", urls, err)
 	}
 	scope := DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID}
-	beforeRename, err := d.GetDeployment(t.Context(), scope, group.ID)
+	beforeRename, err := d.GetDeployment(t.Context(), scope, deployment.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	renamed, err := d.RenamePublisherGroup(t.Context(), r.TeamID, r.ProjectKey, "production", "live", r.ActorID, first.Revision, now.Add(time.Second))
+	renamed, err := d.RenameDeployment(t.Context(), r.TeamID, r.ProjectKey, "production", "live", r.ActorID, first.Revision, now.Add(time.Second))
 	if err != nil || renamed.Revision != first.Revision+1 || renamed.Deployment != "live" {
 		t.Fatal("rename failed", renamed, err)
 	}
-	afterRename, err := d.GetDeployment(t.Context(), scope, group.ID)
+	afterRename, err := d.GetDeployment(t.Context(), scope, deployment.ID)
 	if err != nil || afterRename.Revision != beforeRename.Revision {
 		t.Fatal("selector rename changed the serving revision", afterRename, err)
 	}
-	for _, candidate := range renamed.Groups {
-		if candidate.Name == "live" && (candidate.ID != group.ID || candidate.Namespace != group.Namespace) {
-			t.Fatal("rename changed group authority", candidate)
+	for _, candidate := range renamed.Deployments {
+		if candidate.Name == "live" && (candidate.ID != deployment.ID || candidate.Namespace != deployment.Namespace) {
+			t.Fatal("rename changed deployment authority", candidate)
 		}
 	}
 	for _, candidate := range renamed.Services {
@@ -71,7 +71,7 @@ func TestIntegrationGroupNamespaceAndRename(t *testing.T) {
 			t.Fatal("rename changed the client profile", candidate)
 		}
 	}
-	retry, err := d.RenamePublisherGroup(t.Context(), r.TeamID, r.ProjectKey, "production", "live", r.ActorID, first.Revision, now.Add(2*time.Second))
+	retry, err := d.RenameDeployment(t.Context(), r.TeamID, r.ProjectKey, "production", "live", r.ActorID, first.Revision, now.Add(2*time.Second))
 	if err != nil || retry.Revision != renamed.Revision {
 		t.Fatal("rename retry changed state", retry, err)
 	}
@@ -90,15 +90,15 @@ func TestIntegrationGroupNamespaceAndRename(t *testing.T) {
 			t.Fatal("reachability changed endpoint identity", candidate)
 		}
 	}
-	// the old key still belongs to the same live namespace, not a new group.
+	// the old key still belongs to the same live namespace, not a new deployment.
 	r.ExpectedRevision = changed.Revision
 	r.Deployment = "production"
 	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{}}
 	if _, err = d.ApplyProjectConfiguration(t.Context(), r); !errors.Is(err, ErrServiceConflict) {
-		t.Fatal("a renamed group's namespace was silently adopted", err)
+		t.Fatal("a renamed deployment's namespace was silently adopted", err)
 	}
 	current, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID, "live")
-	if err != nil || current.Revision != changed.Revision || len(current.Groups) != 1 {
+	if err != nil || current.Revision != changed.Revision || len(current.Deployments) != 1 {
 		t.Fatal("failed name claim was not atomic", current, err)
 	}
 }

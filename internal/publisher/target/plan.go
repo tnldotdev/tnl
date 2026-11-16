@@ -13,7 +13,7 @@ import (
 )
 
 // TargetPlan contains captured target configuration only. foreground,
-// app and group publishers do not manufacture partially installed jobs.
+// app and deployment publishers do not manufacture partially installed jobs.
 type TargetPlan struct {
 	Protocol       config.ProtocolName
 	Target         string

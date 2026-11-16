@@ -303,19 +303,6 @@ type ServerProfile struct {
 	LastUsedAt     int64
 }
 
-type ServiceClientCertificate struct {
-	ServerOrigin         string
-	IdentityID           string
-	ServiceID            string
-	DeviceID             string
-	PrivateKeyCiphertext []byte
-	CsrDer               []byte
-	IssuedCsrDer         []byte
-	CsrCreatedAt         int64
-	CertificatePem       []byte
-	IssuerPem            []byte
-}
-
 type ServicePort struct {
 	ServerOrigin string
 	IdentityID   string

@@ -357,6 +357,24 @@ func (e CreateVisitorCredentialRequestKind) Valid() bool {
 	}
 }
 
+// Defines values for DeploymentPublisherServiceAssignmentServiceKind.
+const (
+	DeploymentPublisherServiceAssignmentServiceKindPublicUrl DeploymentPublisherServiceAssignmentServiceKind = "public_url"
+	DeploymentPublisherServiceAssignmentServiceKindService   DeploymentPublisherServiceAssignmentServiceKind = "service"
+)
+
+// Valid indicates whether the value is a known member of the DeploymentPublisherServiceAssignmentServiceKind enum.
+func (e DeploymentPublisherServiceAssignmentServiceKind) Valid() bool {
+	switch e {
+	case DeploymentPublisherServiceAssignmentServiceKindPublicUrl:
+		return true
+	case DeploymentPublisherServiceAssignmentServiceKindService:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for FeedbackEventActor.
 const (
 	Implementer FeedbackEventActor = "implementer"
@@ -987,24 +1005,6 @@ func (e PublisherGrantKind) Valid() bool {
 	case PublisherGrantKindSavedPublicUrl:
 		return true
 	case PublisherGrantKindService:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PublisherGroupServiceAssignmentServiceKind.
-const (
-	PublisherGroupServiceAssignmentServiceKindPublicUrl PublisherGroupServiceAssignmentServiceKind = "public_url"
-	PublisherGroupServiceAssignmentServiceKindService   PublisherGroupServiceAssignmentServiceKind = "service"
-)
-
-// Valid indicates whether the value is a known member of the PublisherGroupServiceAssignmentServiceKind enum.
-func (e PublisherGroupServiceAssignmentServiceKind) Valid() bool {
-	switch e {
-	case PublisherGroupServiceAssignmentServiceKindPublicUrl:
-		return true
-	case PublisherGroupServiceAssignmentServiceKindService:
 		return true
 	default:
 		return false
@@ -1963,15 +1963,26 @@ type AppendReviewerFeedbackEventRequest struct {
 	Type        ReviewerFeedbackEventInputType `json:"type"`
 }
 
+// AppliedDeployment defines model for AppliedDeployment.
+type AppliedDeployment struct {
+	// DeploymentNames Authoritative current and historical selectors permanently bound to this deployment ID.
+	DeploymentNames []string `json:"deployment_names"`
+	DomainId        string   `json:"domain_id"`
+	Id              string   `json:"id"`
+	Name            string   `json:"name"`
+	Namespace       string   `json:"namespace"`
+	Public          bool     `json:"public"`
+}
+
 // AppliedProjectConfiguration defines model for AppliedProjectConfiguration.
 type AppliedProjectConfiguration struct {
 	// Configuration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings; local selection omits settings and workloads. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
-	Configuration     ProjectConfiguration         `json:"configuration"`
-	ConfigurationHash string                       `json:"configuration_hash"`
-	Deployment        string                       `json:"deployment"`
-	Groups            *[]AppliedPublisherGroup     `json:"groups,omitempty"`
-	Members           []PublisherGroupMemberStatus `json:"members"`
-	ProjectKey        string                       `json:"project_key"`
+	Configuration     ProjectConfiguration        `json:"configuration"`
+	ConfigurationHash string                      `json:"configuration_hash"`
+	Deployment        string                      `json:"deployment"`
+	Deployments       *[]AppliedDeployment        `json:"deployments,omitempty"`
+	Members           []DeploymentPublisherStatus `json:"members"`
+	ProjectKey        string                      `json:"project_key"`
 
 	// RetiredAt Present after retirement. The saved source and revision remain; an apply with this exact current revision reactivates the project.
 	RetiredAt           *time.Time                 `json:"retired_at,omitempty"`
@@ -1984,11 +1995,11 @@ type AppliedProjectConfiguration struct {
 
 // AppliedProjectService defines model for AppliedProjectService.
 type AppliedProjectService struct {
+	Deployment      string                           `json:"deployment"`
 	DesiredRevision int64                            `json:"desired_revision,string"`
 	Hostname        *string                          `json:"hostname,omitempty"`
 	Port            *int                             `json:"port,omitempty"`
 	Public          *bool                            `json:"public,omitempty"`
-	PublisherGroup  string                           `json:"publisher_group"`
 	Service         string                           `json:"service"`
 	ServiceId       *string                          `json:"service_id,omitempty"`
 	ServiceKind     AppliedProjectServiceServiceKind `json:"service_kind"`
@@ -1997,18 +2008,6 @@ type AppliedProjectService struct {
 
 // AppliedProjectServiceServiceKind defines model for AppliedProjectService.ServiceKind.
 type AppliedProjectServiceServiceKind string
-
-// AppliedPublisherGroup defines model for AppliedPublisherGroup.
-type AppliedPublisherGroup struct {
-	DomainId string `json:"domain_id"`
-
-	// GroupNames Authoritative current and historical selectors permanently bound to this group ID.
-	GroupNames []string `json:"group_names"`
-	Id         string   `json:"id"`
-	Name       string   `json:"name"`
-	Namespace  string   `json:"namespace"`
-	Public     bool     `json:"public"`
-}
 
 // ApplyProjectConfigurationRequest defines model for ApplyProjectConfigurationRequest.
 type ApplyProjectConfigurationRequest struct {
@@ -2530,13 +2529,6 @@ type CreatePublisherGrantRequest struct {
 	TeamId      TeamID       `json:"team_id"`
 }
 
-// CreatePublisherGroupEnrollmentRequest defines model for CreatePublisherGroupEnrollmentRequest.
-type CreatePublisherGroupEnrollmentRequest struct {
-	ExpiresIn  int    `json:"expires_in"`
-	MaxMembers int    `json:"max_members"`
-	TeamId     string `json:"team_id"`
-}
-
 // CreateServiceCertificateIssuanceRequest defines model for CreateServiceCertificateIssuanceRequest.
 type CreateServiceCertificateIssuanceRequest struct {
 	Csr       []byte `json:"csr"`
@@ -2638,12 +2630,12 @@ type DeploymentPage struct {
 	NextCursor  *string      `json:"next_cursor,omitempty"`
 }
 
-// DeploymentPublisher One publisher in the selected deployment (group_id), including its retained last observation after revocation. No enrollment secret, signing key, access token, or target is returned. Healthy reports configuration acknowledgement and a current lease, not database login or SQL readiness.
+// DeploymentPublisher One publisher in the selected deployment (deployment_id), including its retained last observation after revocation. No enrollment secret, signing key, access token, or target is returned. Healthy reports configuration acknowledgement and a current lease, not database login or SQL readiness.
 type DeploymentPublisher struct {
 	AcknowledgedAt      *time.Time `json:"acknowledged_at,omitempty"`
 	CurrentRevision     int64      `json:"current_revision,string"`
-	GroupId             string     `json:"group_id"`
-	GroupName           string     `json:"group_name"`
+	DeploymentId        string     `json:"deployment_id"`
+	DeploymentName      string     `json:"deployment_name"`
 	Healthy             bool       `json:"healthy"`
 	KeyId               string     `json:"key_id"`
 	LeaseExpiresAt      *time.Time `json:"lease_expires_at,omitempty"`
@@ -2655,26 +2647,105 @@ type DeploymentPublisher struct {
 	// Runtime Last explicitly started runtime for this publisher identity, retained after stop or lease expiry. Active means its lease is live, not that the target is reachable or its egress IP is fixed. The source address seen by control can differ from the address used to reach targets and grants no access.
 	Runtime *PublisherRuntimeStatus `json:"runtime,omitempty"`
 
-	// Services Captured service/protocol approval for scoped setup, not a claim of current reachability. Legacy whole-group publishers report their current group bindings.
+	// Services Captured service/protocol approval, not a claim of current reachability. Services added later are not approved.
 	Services   map[string]ServiceProtocol `json:"services"`
 	SnapshotAt time.Time                  `json:"snapshot_at"`
 	TeamId     string                     `json:"team_id"`
 }
 
-// DeploymentPublisherEnrollment Privately deliver the bounded enrollment key to the publisher. group_id is the selected deployment ID. Recovery preserves this secret, captured scope, capacity, and expiration; it never renews or replaces exhausted setup authority.
+// DeploymentPublisherAcknowledgement defines model for DeploymentPublisherAcknowledgement.
+type DeploymentPublisherAcknowledgement struct {
+	ConfigurationHash string `json:"configuration_hash"`
+	Healthy           bool   `json:"healthy"`
+	Revision          int64  `json:"revision,string"`
+}
+
+// DeploymentPublisherAssignments defines model for DeploymentPublisherAssignments.
+type DeploymentPublisherAssignments struct {
+	// CertificateStatePlans Every certificate plan submitted by this publisher identity. Restore each plan's private material; unrelated or older plans cannot satisfy this list.
+	CertificateStatePlans []CertificatePlan                      `json:"certificate_state_plans"`
+	ConfigurationHash     string                                 `json:"configuration_hash"`
+	Member                DeploymentPublisherIdentity            `json:"member"`
+	Revision              int64                                  `json:"revision,string"`
+	Services              []DeploymentPublisherServiceAssignment `json:"services"`
+}
+
+// DeploymentPublisherEnrollment Privately deliver the bounded enrollment key to the publisher. deployment_id is the selected deployment ID. Recovery preserves this secret, captured scope, capacity, and expiration; it never renews or replaces exhausted setup authority.
 type DeploymentPublisherEnrollment struct {
+	DeploymentId  string                     `json:"deployment_id"`
 	EnrollmentId  string                     `json:"enrollment_id"`
 	EnrollmentKey string                     `json:"enrollment_key"`
 	ExpiresAt     time.Time                  `json:"expires_at"`
-	GroupId       string                     `json:"group_id"`
 	MaxMembers    int                        `json:"max_members"`
 	Services      map[string]ServiceProtocol `json:"services"`
+}
+
+// DeploymentPublisherIdentity defines model for DeploymentPublisherIdentity.
+type DeploymentPublisherIdentity struct {
+	DeploymentId        string `json:"deployment_id"`
+	DeploymentName      string `json:"deployment_name"`
+	KeyId               string `json:"key_id"`
+	ProjectKey          string `json:"project_key"`
+	PublisherIdentityId string `json:"publisher_identity_id"`
+	TeamId              string `json:"team_id"`
+}
+
+// DeploymentPublisherLease defines model for DeploymentPublisherLease.
+type DeploymentPublisherLease struct {
+	AccessToken string    `json:"access_token"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+// DeploymentPublisherLeaseRequest defines model for DeploymentPublisherLeaseRequest.
+type DeploymentPublisherLeaseRequest struct {
+	Assertion           string `json:"assertion"`
+	DeploymentId        string `json:"deployment_id"`
+	PublisherIdentityId string `json:"publisher_identity_id"`
 }
 
 // DeploymentPublisherPage defines model for DeploymentPublisherPage.
 type DeploymentPublisherPage struct {
 	NextCursor *string               `json:"next_cursor,omitempty"`
 	Publishers []DeploymentPublisher `json:"publishers"`
+}
+
+// DeploymentPublisherServiceAssignment defines model for DeploymentPublisherServiceAssignment.
+type DeploymentPublisherServiceAssignment struct {
+	Configuration ProjectServiceConfiguration                     `json:"configuration"`
+	GrantId       string                                          `json:"grant_id"`
+	Hostname      *string                                         `json:"hostname,omitempty"`
+	Service       string                                          `json:"service"`
+	ServiceId     string                                          `json:"service_id"`
+	ServiceKind   DeploymentPublisherServiceAssignmentServiceKind `json:"service_kind"`
+	TrustRevision int64                                           `json:"trust_revision,omitempty,string"`
+}
+
+// DeploymentPublisherServiceAssignmentServiceKind defines model for DeploymentPublisherServiceAssignment.ServiceKind.
+type DeploymentPublisherServiceAssignmentServiceKind string
+
+// DeploymentPublisherStatus defines model for DeploymentPublisherStatus.
+type DeploymentPublisherStatus struct {
+	AcknowledgedAt      *time.Time `json:"acknowledged_at,omitempty"`
+	CurrentRevision     int64      `json:"current_revision,string"`
+	DeploymentId        string     `json:"deployment_id"`
+	DeploymentName      string     `json:"deployment_name"`
+	Healthy             bool       `json:"healthy"`
+	KeyId               string     `json:"key_id"`
+	LeaseExpiresAt      *time.Time `json:"lease_expires_at,omitempty"`
+	ObservedRevision    int64      `json:"observed_revision,string"`
+	ProjectKey          string     `json:"project_key"`
+	PublisherIdentityId string     `json:"publisher_identity_id"`
+
+	// Runtime Last explicitly started runtime for this publisher identity, retained after stop or lease expiry. Active means its lease is live, not that the target is reachable or its egress IP is fixed. The source address seen by control can differ from the address used to reach targets and grants no access.
+	Runtime    *PublisherRuntimeStatus `json:"runtime,omitempty"`
+	SnapshotAt time.Time               `json:"snapshot_at"`
+	TeamId     string                  `json:"team_id"`
+}
+
+// DeploymentPublisherVerification defines model for DeploymentPublisherVerification.
+type DeploymentPublisherVerification struct {
+	DeploymentNames []string                    `json:"deployment_names"`
+	Member          DeploymentPublisherIdentity `json:"member"`
 }
 
 // DeploymentService defines model for DeploymentService.
@@ -3148,13 +3219,13 @@ type ProjectPublicMetadata struct {
 // ProjectPublicationStatus defines model for ProjectPublicationStatus.
 type ProjectPublicationStatus struct {
 	CertificateExpiresAt      *time.Time                                `json:"certificate_expires_at,omitempty"`
+	Deployment                string                                    `json:"deployment"`
 	Hostname                  string                                    `json:"hostname"`
 	Port                      *int                                      `json:"port,omitempty"`
 	PublicUrlId               *string                                   `json:"public_url_id,omitempty"`
 	PublicationState          *ProjectPublicationStatusPublicationState `json:"publication_state,omitempty"`
 	PublishRunId              *string                                   `json:"publish_run_id,omitempty"`
 	PublisherExpiresAt        *time.Time                                `json:"publisher_expires_at,omitempty"`
-	PublisherGroup            string                                    `json:"publisher_group"`
 	Ready                     bool                                      `json:"ready"`
 	ReadyPublisherConnections int                                       `json:"ready_publisher_connections"`
 	Reason                    ProjectPublicationStatusReason            `json:"reason"`
@@ -3474,21 +3545,21 @@ type PublisherConnectionID = ResourceID
 // PublisherConnectionState defines model for PublisherConnectionState.
 type PublisherConnectionState string
 
-// PublisherDeploymentObservation An accepted publisher deployment report, with control receipt times and a control-derived group_id. It does not prove cloud state, image identity, or target health. The group/deployment/replica combination belongs to this publisher identity.
+// PublisherDeploymentObservation An accepted publisher deployment report, with control receipt times and a control-derived deployment_id. It does not prove cloud state, image identity, or target health. The deployment/deployment/replica combination belongs to this publisher identity.
 type PublisherDeploymentObservation struct {
+	DeploymentId    string                                 `json:"deployment_id"`
 	Evidence        PublisherDeploymentObservationEvidence `json:"evidence"`
 	FirstObservedAt time.Time                              `json:"first_observed_at"`
-	GroupId         string                                 `json:"group_id"`
 	ObservedAt      time.Time                              `json:"observed_at"`
 
-	// Report Deployment metadata reported by a group publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts.
+	// Report Deployment metadata reported by a deployment publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts.
 	Report PublisherDeploymentReport `json:"report"`
 }
 
 // PublisherDeploymentObservationEvidence defines model for PublisherDeploymentObservation.Evidence.
 type PublisherDeploymentObservationEvidence string
 
-// PublisherDeploymentReport Deployment metadata reported by a group publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts.
+// PublisherDeploymentReport Deployment metadata reported by a deployment publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts.
 type PublisherDeploymentReport struct {
 	DeploymentId string `json:"deployment_id"`
 
@@ -3538,93 +3609,6 @@ type PublisherGrant struct {
 // PublisherGrantKind defines model for PublisherGrant.Kind.
 type PublisherGrantKind string
 
-// PublisherGroupAcknowledgement defines model for PublisherGroupAcknowledgement.
-type PublisherGroupAcknowledgement struct {
-	ConfigurationHash string `json:"configuration_hash"`
-	Healthy           bool   `json:"healthy"`
-	Revision          int64  `json:"revision,string"`
-}
-
-// PublisherGroupAssignments defines model for PublisherGroupAssignments.
-type PublisherGroupAssignments struct {
-	// CertificateStatePlans Every certificate plan submitted by this publisher identity. Restore each plan's private material; unrelated or older plans cannot satisfy this list.
-	CertificateStatePlans []CertificatePlan                 `json:"certificate_state_plans"`
-	ConfigurationHash     string                            `json:"configuration_hash"`
-	Member                PublisherGroupMember              `json:"member"`
-	Revision              int64                             `json:"revision,string"`
-	Services              []PublisherGroupServiceAssignment `json:"services"`
-}
-
-// PublisherGroupEnrollment defines model for PublisherGroupEnrollment.
-type PublisherGroupEnrollment struct {
-	EnrollmentKey string    `json:"enrollment_key"`
-	ExpiresAt     time.Time `json:"expires_at"`
-	GroupId       string    `json:"group_id"`
-	MaxMembers    int       `json:"max_members"`
-}
-
-// PublisherGroupLease defines model for PublisherGroupLease.
-type PublisherGroupLease struct {
-	AccessToken string    `json:"access_token"`
-	ExpiresAt   time.Time `json:"expires_at"`
-}
-
-// PublisherGroupLeaseRequest defines model for PublisherGroupLeaseRequest.
-type PublisherGroupLeaseRequest struct {
-	Assertion           string `json:"assertion"`
-	GroupId             string `json:"group_id"`
-	PublisherIdentityId string `json:"publisher_identity_id"`
-}
-
-// PublisherGroupMember defines model for PublisherGroupMember.
-type PublisherGroupMember struct {
-	GroupId             string `json:"group_id"`
-	GroupName           string `json:"group_name"`
-	KeyId               string `json:"key_id"`
-	ProjectKey          string `json:"project_key"`
-	PublisherIdentityId string `json:"publisher_identity_id"`
-	TeamId              string `json:"team_id"`
-}
-
-// PublisherGroupMemberStatus defines model for PublisherGroupMemberStatus.
-type PublisherGroupMemberStatus struct {
-	AcknowledgedAt      *time.Time `json:"acknowledged_at,omitempty"`
-	CurrentRevision     int64      `json:"current_revision,string"`
-	GroupId             string     `json:"group_id"`
-	GroupName           string     `json:"group_name"`
-	Healthy             bool       `json:"healthy"`
-	KeyId               string     `json:"key_id"`
-	LeaseExpiresAt      *time.Time `json:"lease_expires_at,omitempty"`
-	ObservedRevision    int64      `json:"observed_revision,string"`
-	ProjectKey          string     `json:"project_key"`
-	PublisherIdentityId string     `json:"publisher_identity_id"`
-
-	// Runtime Last explicitly started runtime for this publisher identity, retained after stop or lease expiry. Active means its lease is live, not that the target is reachable or its egress IP is fixed. The source address seen by control can differ from the address used to reach targets and grants no access.
-	Runtime    *PublisherRuntimeStatus `json:"runtime,omitempty"`
-	SnapshotAt time.Time               `json:"snapshot_at"`
-	TeamId     string                  `json:"team_id"`
-}
-
-// PublisherGroupServiceAssignment defines model for PublisherGroupServiceAssignment.
-type PublisherGroupServiceAssignment struct {
-	Configuration ProjectServiceConfiguration                `json:"configuration"`
-	GrantId       string                                     `json:"grant_id"`
-	Hostname      *string                                    `json:"hostname,omitempty"`
-	Service       string                                     `json:"service"`
-	ServiceId     string                                     `json:"service_id"`
-	ServiceKind   PublisherGroupServiceAssignmentServiceKind `json:"service_kind"`
-	TrustRevision int64                                      `json:"trust_revision,omitempty,string"`
-}
-
-// PublisherGroupServiceAssignmentServiceKind defines model for PublisherGroupServiceAssignment.ServiceKind.
-type PublisherGroupServiceAssignmentServiceKind string
-
-// PublisherGroupVerification defines model for PublisherGroupVerification.
-type PublisherGroupVerification struct {
-	GroupNames []string             `json:"group_names"`
-	Member     PublisherGroupMember `json:"member"`
-}
-
 // PublisherIdentity defines model for PublisherIdentity.
 type PublisherIdentity struct {
 	CreatedAt         time.Time                  `json:"created_at"`
@@ -3657,13 +3641,13 @@ type PublisherRuntimeRequest struct {
 	Action    PublisherRuntimeRequestAction `json:"action"`
 	Assertion string                        `json:"assertion"`
 
-	// Deployment Deployment metadata reported by a group publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts.
+	// Deployment Deployment metadata reported by a deployment publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts.
 	Deployment          *PublisherDeploymentReport `json:"deployment,omitempty"`
 	ExpectedEpoch       int64                      `json:"expected_epoch,string"`
 	ProcessRunId        string                     `json:"process_run_id"`
 	PublisherIdentityId string                     `json:"publisher_identity_id"`
 
-	// ScopeId Immutable group ID for a group replica, or an exact live grant ID for an installed publisher.
+	// ScopeId Immutable deployment ID for a deployment replica, or an exact live grant ID for an installed publisher.
 	ScopeId string `json:"scope_id"`
 }
 
@@ -3672,9 +3656,9 @@ type PublisherRuntimeRequestAction string
 
 // PublisherRuntimeResponse defines model for PublisherRuntimeResponse.
 type PublisherRuntimeResponse struct {
-	Epoch          int64                `json:"epoch,string"`
-	GroupLease     *PublisherGroupLease `json:"group_lease,omitempty"`
-	LeaseExpiresAt *time.Time           `json:"lease_expires_at,omitempty"`
+	DeploymentLease *DeploymentPublisherLease `json:"deployment_lease,omitempty"`
+	Epoch           int64                     `json:"epoch,string"`
+	LeaseExpiresAt  *time.Time                `json:"lease_expires_at,omitempty"`
 }
 
 // PublisherRuntimeStatus Last explicitly started runtime for this publisher identity, retained after stop or lease expiry. Active means its lease is live, not that the target is reachable or its egress IP is fixed. The source address seen by control can differ from the address used to reach targets and grants no access.
@@ -3685,7 +3669,7 @@ type PublisherRuntimeStatus struct {
 	Address       *string                             `json:"address,omitempty"`
 	AddressFamily PublisherRuntimeStatusAddressFamily `json:"address_family"`
 
-	// Deployment An accepted publisher deployment report, with control receipt times and a control-derived group_id. It does not prove cloud state, image identity, or target health. The group/deployment/replica combination belongs to this publisher identity.
+	// Deployment An accepted publisher deployment report, with control receipt times and a control-derived deployment_id. It does not prove cloud state, image identity, or target health. The deployment/deployment/replica combination belongs to this publisher identity.
 	Deployment          *PublisherDeploymentObservation `json:"deployment,omitempty"`
 	Epoch               int64                           `json:"epoch,string"`
 	Evidence            PublisherRuntimeStatusEvidence  `json:"evidence"`
@@ -3763,8 +3747,8 @@ type RealizeLocalProjectServiceRequest struct {
 	WorktreeLabel     *string                     `json:"worktree_label,omitempty"`
 }
 
-// RedeemPublisherGroupEnrollmentRequest defines model for RedeemPublisherGroupEnrollmentRequest.
-type RedeemPublisherGroupEnrollmentRequest struct {
+// RedeemDeploymentPublisherEnrollmentRequest defines model for RedeemDeploymentPublisherEnrollmentRequest.
+type RedeemDeploymentPublisherEnrollmentRequest struct {
 	EnrollmentKey string `json:"enrollment_key"`
 	PublicKey     string `json:"public_key"`
 }
@@ -3815,18 +3799,18 @@ type RelayID = ResourceID
 // RelayServiceID defines model for RelayServiceID.
 type RelayServiceID = ResourceID
 
-// RenamePublisherGroupRequest defines model for RenamePublisherGroupRequest.
-type RenamePublisherGroupRequest struct {
-	ExpectedRevision int64  `json:"expected_revision,string"`
-	Name             string `json:"name"`
-	TeamId           string `json:"team_id"`
-}
-
-// RenamePublisherNamespaceRequest defines model for RenamePublisherNamespaceRequest.
-type RenamePublisherNamespaceRequest struct {
+// RenameDeploymentNamespaceRequest defines model for RenameDeploymentNamespaceRequest.
+type RenameDeploymentNamespaceRequest struct {
 	ExpectedRevision int64  `json:"expected_revision,string"`
 	IdempotencyKey   string `json:"idempotency_key"`
 	NamespaceLabel   string `json:"namespace_label"`
+	TeamId           string `json:"team_id"`
+}
+
+// RenameDeploymentRequest defines model for RenameDeploymentRequest.
+type RenameDeploymentRequest struct {
+	ExpectedRevision int64  `json:"expected_revision,string"`
+	Name             string `json:"name"`
 	TeamId           string `json:"team_id"`
 }
 
@@ -4881,11 +4865,6 @@ type GetProjectPublicMetadataParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
 }
 
-// RevokePublisherGroupMemberParams defines parameters for RevokePublisherGroupMember.
-type RevokePublisherGroupMemberParams struct {
-	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
-}
-
 // RetireProjectJSONBody defines parameters for RetireProject.
 type RetireProjectJSONBody struct {
 	ExpectedRevision int64  `json:"expected_revision,string"`
@@ -5119,23 +5098,20 @@ type CreateDeploymentJSONRequestBody = CreateDeploymentRequest
 // UpdateDeploymentJSONRequestBody defines body for UpdateDeployment for application/json ContentType.
 type UpdateDeploymentJSONRequestBody = UpdateDeploymentRequest
 
+// RenameDeploymentNamespaceJSONRequestBody defines body for RenameDeploymentNamespace for application/json ContentType.
+type RenameDeploymentNamespaceJSONRequestBody = RenameDeploymentNamespaceRequest
+
 // CreateDeploymentPublisherEnrollmentJSONRequestBody defines body for CreateDeploymentPublisherEnrollment for application/json ContentType.
 type CreateDeploymentPublisherEnrollmentJSONRequestBody = CreateDeploymentPublisherEnrollmentRequest
+
+// RenameDeploymentJSONRequestBody defines body for RenameDeployment for application/json ContentType.
+type RenameDeploymentJSONRequestBody = RenameDeploymentRequest
 
 // SelectDeploymentServiceRunJSONRequestBody defines body for SelectDeploymentServiceRun for application/json ContentType.
 type SelectDeploymentServiceRunJSONRequestBody SelectDeploymentServiceRunJSONBody
 
 // RealizeLocalProjectServiceJSONRequestBody defines body for RealizeLocalProjectService for application/json ContentType.
 type RealizeLocalProjectServiceJSONRequestBody = RealizeLocalProjectServiceRequest
-
-// CreatePublisherGroupEnrollmentJSONRequestBody defines body for CreatePublisherGroupEnrollment for application/json ContentType.
-type CreatePublisherGroupEnrollmentJSONRequestBody = CreatePublisherGroupEnrollmentRequest
-
-// RenamePublisherNamespaceJSONRequestBody defines body for RenamePublisherNamespace for application/json ContentType.
-type RenamePublisherNamespaceJSONRequestBody = RenamePublisherNamespaceRequest
-
-// RenamePublisherGroupJSONRequestBody defines body for RenamePublisherGroup for application/json ContentType.
-type RenamePublisherGroupJSONRequestBody = RenamePublisherGroupRequest
 
 // RetireProjectJSONRequestBody defines body for RetireProject for application/json ContentType.
 type RetireProjectJSONRequestBody RetireProjectJSONBody
@@ -5215,17 +5191,17 @@ type CreatePublisherEnrollmentJSONRequestBody = CreatePublisherEnrollmentRequest
 // CreatePublisherGrantJSONRequestBody defines body for CreatePublisherGrant for application/json ContentType.
 type CreatePublisherGrantJSONRequestBody = CreatePublisherGrantRequest
 
-// AcknowledgePublisherGroupConfigurationJSONRequestBody defines body for AcknowledgePublisherGroupConfiguration for application/json ContentType.
-type AcknowledgePublisherGroupConfigurationJSONRequestBody = PublisherGroupAcknowledgement
+// AcknowledgeDeploymentPublisherConfigurationJSONRequestBody defines body for AcknowledgeDeploymentPublisherConfiguration for application/json ContentType.
+type AcknowledgeDeploymentPublisherConfigurationJSONRequestBody = DeploymentPublisherAcknowledgement
 
-// RedeemPublisherGroupEnrollmentJSONRequestBody defines body for RedeemPublisherGroupEnrollment for application/json ContentType.
-type RedeemPublisherGroupEnrollmentJSONRequestBody = RedeemPublisherGroupEnrollmentRequest
+// RedeemDeploymentPublisherEnrollmentJSONRequestBody defines body for RedeemDeploymentPublisherEnrollment for application/json ContentType.
+type RedeemDeploymentPublisherEnrollmentJSONRequestBody = RedeemDeploymentPublisherEnrollmentRequest
 
-// AcquirePublisherGroupLeaseJSONRequestBody defines body for AcquirePublisherGroupLease for application/json ContentType.
-type AcquirePublisherGroupLeaseJSONRequestBody = PublisherGroupLeaseRequest
+// AcquireDeploymentPublisherLeaseJSONRequestBody defines body for AcquireDeploymentPublisherLease for application/json ContentType.
+type AcquireDeploymentPublisherLeaseJSONRequestBody = DeploymentPublisherLeaseRequest
 
-// VerifyPublisherGroupIdentityJSONRequestBody defines body for VerifyPublisherGroupIdentity for application/json ContentType.
-type VerifyPublisherGroupIdentityJSONRequestBody = PublisherGroupLeaseRequest
+// VerifyDeploymentIdentityJSONRequestBody defines body for VerifyDeploymentIdentity for application/json ContentType.
+type VerifyDeploymentIdentityJSONRequestBody = DeploymentPublisherLeaseRequest
 
 // AllocatePublisherPublicURLJSONRequestBody defines body for AllocatePublisherPublicURL for application/json ContentType.
 type AllocatePublisherPublicURLJSONRequestBody = AllocateEphemeralPublicURLRequest
@@ -5903,7 +5879,7 @@ type ClientInterface interface {
 
 	// ListProjects List applied projects
 	//
-	// List active applied projects the current team manager may manage, ordered by project_key. Retired projects are omitted but remain readable by key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
+	// List active applied projects the current team manager may manage, ordered by project_key. Retired projects are omitted but remain readable by key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its deployments, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
 	//
 	// Corresponds with GET /v1/projects (the `ListProjects` operationId).
 	ListProjects(ctx context.Context, params *ListProjectsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5933,7 +5909,7 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId).
 	GetProjectConfiguration(ctx context.Context, projectKey string, params *GetProjectConfigurationParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ApplyProjectConfigurationWithBody Apply a project's desired services and publisher groups
+	// ApplyProjectConfigurationWithBody Apply a project's desired services and deployments
 	//
 	// Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 	//
@@ -5942,7 +5918,7 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId).
 	ApplyProjectConfigurationWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ApplyProjectConfiguration Apply a project's desired services and publisher groups
+	// ApplyProjectConfiguration Apply a project's desired services and deployments
 	//
 	// Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 	//
@@ -6026,9 +6002,27 @@ type ClientInterface interface {
 	// Corresponds with PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId).
 	UpdateDeployment(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, body UpdateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RenameDeploymentNamespaceWithBody Replace a deployment's DNS namespace label
+	//
+	// Change the deployment's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/namespace/rename (the `RenameDeploymentNamespace` operationId).
+	RenameDeploymentNamespaceWithBody(ctx context.Context, projectKey string, deployment string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenameDeploymentNamespace Replace a deployment's DNS namespace label
+	//
+	// Change the deployment's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/namespace/rename (the `RenameDeploymentNamespace` operationId).
+	RenameDeploymentNamespace(ctx context.Context, projectKey string, deployment string, body RenameDeploymentNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateDeploymentPublisherEnrollmentWithBody Approve scoped publisher enrollment
 	//
-	// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+	// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing deployment-publisher enrollment exchange.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6037,7 +6031,7 @@ type ClientInterface interface {
 
 	// CreateDeploymentPublisherEnrollment Approve scoped publisher enrollment
 	//
-	// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+	// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing deployment-publisher enrollment exchange.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6046,24 +6040,42 @@ type ClientInterface interface {
 
 	// ListDeploymentPublishers List a deployment's publishers
 	//
-	// List authorized publishers in this deployment, including revoked identities and retained observations. A management credential sees only scoped publishers whose entire captured service/protocol approval it covers; filtering precedes pagination. Legacy whole-group publishers require a current manager. No enrollment secrets or targets are returned.
+	// List authorized publishers in this deployment, including revoked identities and retained observations. A management credential sees only scoped publishers whose entire captured service/protocol approval it covers; filtering precedes pagination. Legacy whole-deployment publishers require a current manager. No enrollment secrets or targets are returned.
 	//
 	// Corresponds with GET /v1/projects/{project_key}/deployments/{deployment}/publishers (the `ListDeploymentPublishers` operationId).
 	ListDeploymentPublishers(ctx context.Context, projectKey string, deployment string, params *ListDeploymentPublishersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokeDeploymentPublisher Revoke one deployment publisher
 	//
-	// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager. Repetition is safe; the last observation is retained. Siblings and shared enrollment capacity are unchanged. Apply and enrollment replay cannot restore the revoked identity.
+	// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-deployment publishers require a manager. Repetition is safe; the last observation is retained. Siblings and shared enrollment capacity are unchanged. Apply and enrollment replay cannot restore the revoked identity.
 	//
 	// Corresponds with DELETE /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `RevokeDeploymentPublisher` operationId).
 	RevokeDeploymentPublisher(ctx context.Context, projectKey string, deployment string, publisher string, params *RevokeDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetDeploymentPublisher Read one deployment publisher
 	//
-	// Read one publisher's captured scope and observation with exact deployment ownership. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager.
+	// Read one publisher's captured scope and observation with exact deployment ownership. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-deployment publishers require a manager.
 	//
 	// Corresponds with GET /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `GetDeploymentPublisher` operationId).
 	GetDeploymentPublisher(ctx context.Context, projectKey string, deployment string, publisher string, params *GetDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenameDeploymentWithBody Rename a deployment's configuration selector without changing endpoints
+	//
+	// Rename the configuration key without changing the deployment's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this deployment. Update project configuration before the next apply; retrying a completed rename is safe.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/rename (the `RenameDeployment` operationId).
+	RenameDeploymentWithBody(ctx context.Context, projectKey string, deployment string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenameDeployment Rename a deployment's configuration selector without changing endpoints
+	//
+	// Rename the configuration key without changing the deployment's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this deployment. Update project configuration before the next apply; retrying a completed rename is safe.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/rename (the `RenameDeployment` operationId).
+	RenameDeployment(ctx context.Context, projectKey string, deployment string, body RenameDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SelectDeploymentServiceRunWithBody Select an authorized deployment service run
 	//
@@ -6092,7 +6104,7 @@ type ClientInterface interface {
 
 	// RealizeLocalProjectServiceWithBody Realize one declared local service for a worktree
 	//
-	// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote publisher groups are unchanged.
+	// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote deployments are unchanged.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6101,7 +6113,7 @@ type ClientInterface interface {
 
 	// RealizeLocalProjectService Realize one declared local service for a worktree
 	//
-	// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote publisher groups are unchanged.
+	// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote deployments are unchanged.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6115,70 +6127,9 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/projects/{project_key}/public-metadata (the `GetProjectPublicMetadata` operationId).
 	GetProjectPublicMetadata(ctx context.Context, projectKey string, params *GetProjectPublicMetadataParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreatePublisherGroupEnrollmentWithBody Issue a bounded enrollment key for a project's publisher group
-	//
-	// Create an expiring bootstrap credential using current project management permission. Each enrolled replica supplies its own key; the enrollment's member limit bounds how many identities it can create.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId).
-	CreatePublisherGroupEnrollmentWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreatePublisherGroupEnrollment Issue a bounded enrollment key for a project's publisher group
-	//
-	// Create an expiring bootstrap credential using current project management permission. Each enrolled replica supplies its own key; the enrollment's member limit bounds how many identities it can create.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId).
-	CreatePublisherGroupEnrollment(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RevokePublisherGroupMember Revoke one enrolled publisher replica from a group
-	//
-	// Revoke the exact enrolled publisher identity using current project management permission. Control closes that member's public URL and service runs without revoking other group members.
-	//
-	// Corresponds with DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId).
-	RevokePublisherGroupMember(ctx context.Context, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RenamePublisherNamespaceWithBody Replace a publisher group's DNS namespace label
-	//
-	// Change the group's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId).
-	RenamePublisherNamespaceWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RenamePublisherNamespace Replace a publisher group's DNS namespace label
-	//
-	// Change the group's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId).
-	RenamePublisherNamespace(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RenamePublisherGroupWithBody Rename a group's configuration selector without changing endpoints
-	//
-	// Rename the configuration key without changing the group's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this group. Update project configuration before the next apply; retrying a completed rename is safe.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
-	RenamePublisherGroupWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RenamePublisherGroup Rename a group's configuration selector without changing endpoints
-	//
-	// Rename the configuration key without changing the group's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this group. Update project configuration before the next apply; retrying a completed rename is safe.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
-	RenamePublisherGroup(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// RetireProjectWithBody Retire an applied project and its configuration-owned resources
 	//
-	// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
+	// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire deployments, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6187,7 +6138,7 @@ type ClientInterface interface {
 
 	// RetireProject Retire an applied project and its configuration-owned resources
 	//
-	// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
+	// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire deployments, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6201,7 +6152,7 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId).
 	GetProjectService(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetProjectStatus Inspect project publications across worktrees and publisher groups
+	// GetProjectStatus Inspect project publications across worktrees and deployments
 	//
 	// Read a manager-only snapshot of declared services, realized worktree resources, and open publications. Each publication appears separately; an idle resource or unrealized declaration appears once. Follow next_cursor with the same project, team, and identity. Readiness describes control's current lease, certificate, and relay observations, not a fresh visitor probe. Targets, credentials, and checkout paths are omitted.
 	//
@@ -6735,84 +6686,84 @@ type ClientInterface interface {
 	// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId).
 	RevokePublisherGrant(ctx context.Context, publisherIdentityId PublisherIdentityID, grantId ResourceID, params *RevokePublisherGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetPublisherGroupAssignments Read services and grants assigned to one leased group replica
+	// GetDeploymentPublisherAssignments Read services and grants assigned to one leased deployment replica
 	//
-	// Read the replica's assigned services and publisher grants using its current pgl_ lease. Assignments can include targets. A pta_ publisher token cannot read them.
+	// Read the replica's assigned services and publisher grants using its current dpl_lease_ lease. Assignments can include targets. A pta_ publisher token cannot read them.
 	//
-	// Corresponds with GET /v1/publisher/groups/assignments (the `GetPublisherGroupAssignments` operationId).
-	GetPublisherGroupAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with GET /v1/publisher/deployments/assignments (the `GetDeploymentPublisherAssignments` operationId).
+	GetDeploymentPublisherAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcknowledgePublisherGroupConfigurationWithBody Acknowledge the exact configuration installed by a group replica
+	// AcknowledgeDeploymentPublisherConfigurationWithBody Acknowledge the exact configuration installed by a deployment replica
 	//
-	// Report the installed configuration revision, hash, and health using the replica's current pgl_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
+	// Report the installed configuration revision, hash, and health using the replica's current dpl_lease_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
 	//
 	// Takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/publisher/groups/configuration-acknowledgements (the `AcknowledgePublisherGroupConfiguration` operationId).
-	AcknowledgePublisherGroupConfigurationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/publisher/deployments/configuration-acknowledgements (the `AcknowledgeDeploymentPublisherConfiguration` operationId).
+	AcknowledgeDeploymentPublisherConfigurationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcknowledgePublisherGroupConfiguration Acknowledge the exact configuration installed by a group replica
+	// AcknowledgeDeploymentPublisherConfiguration Acknowledge the exact configuration installed by a deployment replica
 	//
-	// Report the installed configuration revision, hash, and health using the replica's current pgl_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
+	// Report the installed configuration revision, hash, and health using the replica's current dpl_lease_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
 	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/publisher/groups/configuration-acknowledgements (the `AcknowledgePublisherGroupConfiguration` operationId).
-	AcknowledgePublisherGroupConfiguration(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/publisher/deployments/configuration-acknowledgements (the `AcknowledgeDeploymentPublisherConfiguration` operationId).
+	AcknowledgeDeploymentPublisherConfiguration(ctx context.Context, body AcknowledgeDeploymentPublisherConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RedeemPublisherGroupEnrollmentWithBody Enroll a replica's signing key with a group enrollment secret
+	// RedeemDeploymentPublisherEnrollmentWithBody Enroll a replica's signing key with a deployment enrollment secret
 	//
 	// Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity.
 	//
 	// Takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/publisher/groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
-	RedeemPublisherGroupEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/publisher/deployments/enroll (the `RedeemDeploymentPublisherEnrollment` operationId).
+	RedeemDeploymentPublisherEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RedeemPublisherGroupEnrollment Enroll a replica's signing key with a group enrollment secret
+	// RedeemDeploymentPublisherEnrollment Enroll a replica's signing key with a deployment enrollment secret
 	//
 	// Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity.
 	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/publisher/groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
-	RedeemPublisherGroupEnrollment(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/publisher/deployments/enroll (the `RedeemDeploymentPublisherEnrollment` operationId).
+	RedeemDeploymentPublisherEnrollment(ctx context.Context, body RedeemDeploymentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcquirePublisherGroupLeaseWithBody Exchange a signed replica assertion for a group lease
+	// AcquireDeploymentPublisherLeaseWithBody Exchange a signed replica assertion for a deployment lease
 	//
-	// Exchange a one-use signed assertion in the body for a pgl_ group lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the group ID.
+	// Exchange a one-use signed assertion in the body for a dpl_lease_ deployment lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the deployment ID.
 	//
 	// Takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/publisher/groups/lease (the `AcquirePublisherGroupLease` operationId).
-	AcquirePublisherGroupLeaseWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/publisher/deployments/lease (the `AcquireDeploymentPublisherLease` operationId).
+	AcquireDeploymentPublisherLeaseWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcquirePublisherGroupLease Exchange a signed replica assertion for a group lease
+	// AcquireDeploymentPublisherLease Exchange a signed replica assertion for a deployment lease
 	//
-	// Exchange a one-use signed assertion in the body for a pgl_ group lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the group ID.
+	// Exchange a one-use signed assertion in the body for a dpl_lease_ deployment lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the deployment ID.
 	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/publisher/groups/lease (the `AcquirePublisherGroupLease` operationId).
-	AcquirePublisherGroupLease(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/publisher/deployments/lease (the `AcquireDeploymentPublisherLease` operationId).
+	AcquireDeploymentPublisherLease(ctx context.Context, body AcquireDeploymentPublisherLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// VerifyPublisherGroupIdentityWithBody Verify a replica's group membership without acquiring a lease
+	// VerifyDeploymentIdentityWithBody Verify a replica's deployment membership without acquiring a lease
 	//
-	// Verify group membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's group lease.
+	// Verify deployment membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's deployment lease.
 	//
 	// Takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/publisher/groups/verify (the `VerifyPublisherGroupIdentity` operationId).
-	VerifyPublisherGroupIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/publisher/deployments/verify (the `VerifyDeploymentIdentity` operationId).
+	VerifyDeploymentIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// VerifyPublisherGroupIdentity Verify a replica's group membership without acquiring a lease
+	// VerifyDeploymentIdentity Verify a replica's deployment membership without acquiring a lease
 	//
-	// Verify group membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's group lease.
+	// Verify deployment membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's deployment lease.
 	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/publisher/groups/verify (the `VerifyPublisherGroupIdentity` operationId).
-	VerifyPublisherGroupIdentity(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/publisher/deployments/verify (the `VerifyDeploymentIdentity` operationId).
+	VerifyDeploymentIdentity(ctx context.Context, body VerifyDeploymentIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetPublisherPublicURL Read the saved URL selected by the current grant
 	//
@@ -6866,7 +6817,7 @@ type ClientInterface interface {
 
 	// RenewPublisherRuntimeWithBody Renew a publisher runtime
 	//
-	// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease.
+	// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Deployment runtimes also receive a deployment lease.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6875,7 +6826,7 @@ type ClientInterface interface {
 
 	// RenewPublisherRuntime Renew a publisher runtime
 	//
-	// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease.
+	// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Deployment runtimes also receive a deployment lease.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6884,7 +6835,7 @@ type ClientInterface interface {
 
 	// StartPublisherRuntimeWithBody Start a publisher runtime
 	//
-	// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease.
+	// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Deployment runtimes also receive a deployment lease.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6893,7 +6844,7 @@ type ClientInterface interface {
 
 	// StartPublisherRuntime Start a publisher runtime
 	//
-	// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease.
+	// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Deployment runtimes also receive a deployment lease.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -8255,7 +8206,7 @@ func (c *Client) SetPreviewTeamAccess(ctx context.Context, previewId PreviewID, 
 
 // ListProjects List applied projects
 //
-// List active applied projects the current team manager may manage, ordered by project_key. Retired projects are omitted but remain readable by key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
+// List active applied projects the current team manager may manage, ordered by project_key. Retired projects are omitted but remain readable by key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its deployments, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
 //
 // Corresponds with GET /v1/projects (the `ListProjects` operationId).
 func (c *Client) ListProjects(ctx context.Context, params *ListProjectsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8325,7 +8276,7 @@ func (c *Client) GetProjectConfiguration(ctx context.Context, projectKey string,
 	return c.Client.Do(req)
 }
 
-// ApplyProjectConfigurationWithBody Apply a project's desired services and publisher groups
+// ApplyProjectConfigurationWithBody Apply a project's desired services and deployments
 //
 // Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 //
@@ -8344,7 +8295,7 @@ func (c *Client) ApplyProjectConfigurationWithBody(ctx context.Context, projectK
 	return c.Client.Do(req)
 }
 
-// ApplyProjectConfiguration Apply a project's desired services and publisher groups
+// ApplyProjectConfiguration Apply a project's desired services and deployments
 //
 // Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 //
@@ -8528,9 +8479,47 @@ func (c *Client) UpdateDeployment(ctx context.Context, projectKey string, deploy
 	return c.Client.Do(req)
 }
 
+// RenameDeploymentNamespaceWithBody Replace a deployment's DNS namespace label
+//
+// Change the deployment's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/namespace/rename (the `RenameDeploymentNamespace` operationId).
+func (c *Client) RenameDeploymentNamespaceWithBody(ctx context.Context, projectKey string, deployment string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenameDeploymentNamespaceRequestWithBody(c.Server, projectKey, deployment, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenameDeploymentNamespace Replace a deployment's DNS namespace label
+//
+// Change the deployment's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/namespace/rename (the `RenameDeploymentNamespace` operationId).
+func (c *Client) RenameDeploymentNamespace(ctx context.Context, projectKey string, deployment string, body RenameDeploymentNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenameDeploymentNamespaceRequest(c.Server, projectKey, deployment, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // CreateDeploymentPublisherEnrollmentWithBody Approve scoped publisher enrollment
 //
-// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing deployment-publisher enrollment exchange.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8549,7 +8538,7 @@ func (c *Client) CreateDeploymentPublisherEnrollmentWithBody(ctx context.Context
 
 // CreateDeploymentPublisherEnrollment Approve scoped publisher enrollment
 //
-// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing deployment-publisher enrollment exchange.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -8568,7 +8557,7 @@ func (c *Client) CreateDeploymentPublisherEnrollment(ctx context.Context, projec
 
 // ListDeploymentPublishers List a deployment's publishers
 //
-// List authorized publishers in this deployment, including revoked identities and retained observations. A management credential sees only scoped publishers whose entire captured service/protocol approval it covers; filtering precedes pagination. Legacy whole-group publishers require a current manager. No enrollment secrets or targets are returned.
+// List authorized publishers in this deployment, including revoked identities and retained observations. A management credential sees only scoped publishers whose entire captured service/protocol approval it covers; filtering precedes pagination. Legacy whole-deployment publishers require a current manager. No enrollment secrets or targets are returned.
 //
 // Corresponds with GET /v1/projects/{project_key}/deployments/{deployment}/publishers (the `ListDeploymentPublishers` operationId).
 func (c *Client) ListDeploymentPublishers(ctx context.Context, projectKey string, deployment string, params *ListDeploymentPublishersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8585,7 +8574,7 @@ func (c *Client) ListDeploymentPublishers(ctx context.Context, projectKey string
 
 // RevokeDeploymentPublisher Revoke one deployment publisher
 //
-// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager. Repetition is safe; the last observation is retained. Siblings and shared enrollment capacity are unchanged. Apply and enrollment replay cannot restore the revoked identity.
+// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-deployment publishers require a manager. Repetition is safe; the last observation is retained. Siblings and shared enrollment capacity are unchanged. Apply and enrollment replay cannot restore the revoked identity.
 //
 // Corresponds with DELETE /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `RevokeDeploymentPublisher` operationId).
 func (c *Client) RevokeDeploymentPublisher(ctx context.Context, projectKey string, deployment string, publisher string, params *RevokeDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8602,11 +8591,49 @@ func (c *Client) RevokeDeploymentPublisher(ctx context.Context, projectKey strin
 
 // GetDeploymentPublisher Read one deployment publisher
 //
-// Read one publisher's captured scope and observation with exact deployment ownership. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager.
+// Read one publisher's captured scope and observation with exact deployment ownership. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-deployment publishers require a manager.
 //
 // Corresponds with GET /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `GetDeploymentPublisher` operationId).
 func (c *Client) GetDeploymentPublisher(ctx context.Context, projectKey string, deployment string, publisher string, params *GetDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetDeploymentPublisherRequest(c.Server, projectKey, deployment, publisher, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenameDeploymentWithBody Rename a deployment's configuration selector without changing endpoints
+//
+// Rename the configuration key without changing the deployment's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this deployment. Update project configuration before the next apply; retrying a completed rename is safe.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/rename (the `RenameDeployment` operationId).
+func (c *Client) RenameDeploymentWithBody(ctx context.Context, projectKey string, deployment string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenameDeploymentRequestWithBody(c.Server, projectKey, deployment, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenameDeployment Rename a deployment's configuration selector without changing endpoints
+//
+// Rename the configuration key without changing the deployment's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this deployment. Update project configuration before the next apply; retrying a completed rename is safe.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/rename (the `RenameDeployment` operationId).
+func (c *Client) RenameDeployment(ctx context.Context, projectKey string, deployment string, body RenameDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenameDeploymentRequest(c.Server, projectKey, deployment, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8674,7 +8701,7 @@ func (c *Client) GetLocalProjectService(ctx context.Context, projectKey string, 
 
 // RealizeLocalProjectServiceWithBody Realize one declared local service for a worktree
 //
-// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote publisher groups are unchanged.
+// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote deployments are unchanged.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8693,7 +8720,7 @@ func (c *Client) RealizeLocalProjectServiceWithBody(ctx context.Context, project
 
 // RealizeLocalProjectService Realize one declared local service for a worktree
 //
-// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote publisher groups are unchanged.
+// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote deployments are unchanged.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -8727,140 +8754,9 @@ func (c *Client) GetProjectPublicMetadata(ctx context.Context, projectKey string
 	return c.Client.Do(req)
 }
 
-// CreatePublisherGroupEnrollmentWithBody Issue a bounded enrollment key for a project's publisher group
-//
-// Create an expiring bootstrap credential using current project management permission. Each enrolled replica supplies its own key; the enrollment's member limit bounds how many identities it can create.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId).
-func (c *Client) CreatePublisherGroupEnrollmentWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreatePublisherGroupEnrollmentRequestWithBody(c.Server, projectKey, groupName, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreatePublisherGroupEnrollment Issue a bounded enrollment key for a project's publisher group
-//
-// Create an expiring bootstrap credential using current project management permission. Each enrolled replica supplies its own key; the enrollment's member limit bounds how many identities it can create.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId).
-func (c *Client) CreatePublisherGroupEnrollment(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreatePublisherGroupEnrollmentRequest(c.Server, projectKey, groupName, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RevokePublisherGroupMember Revoke one enrolled publisher replica from a group
-//
-// Revoke the exact enrolled publisher identity using current project management permission. Control closes that member's public URL and service runs without revoking other group members.
-//
-// Corresponds with DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId).
-func (c *Client) RevokePublisherGroupMember(ctx context.Context, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRevokePublisherGroupMemberRequest(c.Server, projectKey, groupName, publisherIdentityId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RenamePublisherNamespaceWithBody Replace a publisher group's DNS namespace label
-//
-// Change the group's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId).
-func (c *Client) RenamePublisherNamespaceWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRenamePublisherNamespaceRequestWithBody(c.Server, projectKey, groupName, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RenamePublisherNamespace Replace a publisher group's DNS namespace label
-//
-// Change the group's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId).
-func (c *Client) RenamePublisherNamespace(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRenamePublisherNamespaceRequest(c.Server, projectKey, groupName, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RenamePublisherGroupWithBody Rename a group's configuration selector without changing endpoints
-//
-// Rename the configuration key without changing the group's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this group. Update project configuration before the next apply; retrying a completed rename is safe.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
-func (c *Client) RenamePublisherGroupWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRenamePublisherGroupRequestWithBody(c.Server, projectKey, groupName, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RenamePublisherGroup Rename a group's configuration selector without changing endpoints
-//
-// Rename the configuration key without changing the group's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this group. Update project configuration before the next apply; retrying a completed rename is safe.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
-func (c *Client) RenamePublisherGroup(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRenamePublisherGroupRequest(c.Server, projectKey, groupName, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // RetireProjectWithBody Retire an applied project and its configuration-owned resources
 //
-// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
+// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire deployments, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8879,7 +8775,7 @@ func (c *Client) RetireProjectWithBody(ctx context.Context, projectKey string, c
 
 // RetireProject Retire an applied project and its configuration-owned resources
 //
-// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
+// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire deployments, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -8913,7 +8809,7 @@ func (c *Client) GetProjectService(ctx context.Context, projectKey string, servi
 	return c.Client.Do(req)
 }
 
-// GetProjectStatus Inspect project publications across worktrees and publisher groups
+// GetProjectStatus Inspect project publications across worktrees and deployments
 //
 // Read a manager-only snapshot of declared services, realized worktree resources, and open publications. Each publication appears separately; an idle resource or unrealized declaration appears once. Follow next_cursor with the same project, team, and identity. Readiness describes control's current lease, certificate, and relay observations, not a fresh visitor probe. Targets, credentials, and checkout paths are omitted.
 //
@@ -10067,13 +9963,13 @@ func (c *Client) RevokePublisherGrant(ctx context.Context, publisherIdentityId P
 	return c.Client.Do(req)
 }
 
-// GetPublisherGroupAssignments Read services and grants assigned to one leased group replica
+// GetDeploymentPublisherAssignments Read services and grants assigned to one leased deployment replica
 //
-// Read the replica's assigned services and publisher grants using its current pgl_ lease. Assignments can include targets. A pta_ publisher token cannot read them.
+// Read the replica's assigned services and publisher grants using its current dpl_lease_ lease. Assignments can include targets. A pta_ publisher token cannot read them.
 //
-// Corresponds with GET /v1/publisher/groups/assignments (the `GetPublisherGroupAssignments` operationId).
-func (c *Client) GetPublisherGroupAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetPublisherGroupAssignmentsRequest(c.Server)
+// Corresponds with GET /v1/publisher/deployments/assignments (the `GetDeploymentPublisherAssignments` operationId).
+func (c *Client) GetDeploymentPublisherAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetDeploymentPublisherAssignmentsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -10084,15 +9980,15 @@ func (c *Client) GetPublisherGroupAssignments(ctx context.Context, reqEditors ..
 	return c.Client.Do(req)
 }
 
-// AcknowledgePublisherGroupConfigurationWithBody Acknowledge the exact configuration installed by a group replica
+// AcknowledgeDeploymentPublisherConfigurationWithBody Acknowledge the exact configuration installed by a deployment replica
 //
-// Report the installed configuration revision, hash, and health using the replica's current pgl_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
+// Report the installed configuration revision, hash, and health using the replica's current dpl_lease_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
 //
 // Takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/publisher/groups/configuration-acknowledgements (the `AcknowledgePublisherGroupConfiguration` operationId).
-func (c *Client) AcknowledgePublisherGroupConfigurationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAcknowledgePublisherGroupConfigurationRequestWithBody(c.Server, contentType, body)
+// Corresponds with POST /v1/publisher/deployments/configuration-acknowledgements (the `AcknowledgeDeploymentPublisherConfiguration` operationId).
+func (c *Client) AcknowledgeDeploymentPublisherConfigurationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcknowledgeDeploymentPublisherConfigurationRequestWithBody(c.Server, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10103,15 +9999,15 @@ func (c *Client) AcknowledgePublisherGroupConfigurationWithBody(ctx context.Cont
 	return c.Client.Do(req)
 }
 
-// AcknowledgePublisherGroupConfiguration Acknowledge the exact configuration installed by a group replica
+// AcknowledgeDeploymentPublisherConfiguration Acknowledge the exact configuration installed by a deployment replica
 //
-// Report the installed configuration revision, hash, and health using the replica's current pgl_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
+// Report the installed configuration revision, hash, and health using the replica's current dpl_lease_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
 //
 // Takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/publisher/groups/configuration-acknowledgements (the `AcknowledgePublisherGroupConfiguration` operationId).
-func (c *Client) AcknowledgePublisherGroupConfiguration(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAcknowledgePublisherGroupConfigurationRequest(c.Server, body)
+// Corresponds with POST /v1/publisher/deployments/configuration-acknowledgements (the `AcknowledgeDeploymentPublisherConfiguration` operationId).
+func (c *Client) AcknowledgeDeploymentPublisherConfiguration(ctx context.Context, body AcknowledgeDeploymentPublisherConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcknowledgeDeploymentPublisherConfigurationRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10122,15 +10018,15 @@ func (c *Client) AcknowledgePublisherGroupConfiguration(ctx context.Context, bod
 	return c.Client.Do(req)
 }
 
-// RedeemPublisherGroupEnrollmentWithBody Enroll a replica's signing key with a group enrollment secret
+// RedeemDeploymentPublisherEnrollmentWithBody Enroll a replica's signing key with a deployment enrollment secret
 //
 // Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity.
 //
 // Takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/publisher/groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
-func (c *Client) RedeemPublisherGroupEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRedeemPublisherGroupEnrollmentRequestWithBody(c.Server, contentType, body)
+// Corresponds with POST /v1/publisher/deployments/enroll (the `RedeemDeploymentPublisherEnrollment` operationId).
+func (c *Client) RedeemDeploymentPublisherEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemDeploymentPublisherEnrollmentRequestWithBody(c.Server, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10141,15 +10037,15 @@ func (c *Client) RedeemPublisherGroupEnrollmentWithBody(ctx context.Context, con
 	return c.Client.Do(req)
 }
 
-// RedeemPublisherGroupEnrollment Enroll a replica's signing key with a group enrollment secret
+// RedeemDeploymentPublisherEnrollment Enroll a replica's signing key with a deployment enrollment secret
 //
 // Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity.
 //
 // Takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/publisher/groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
-func (c *Client) RedeemPublisherGroupEnrollment(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRedeemPublisherGroupEnrollmentRequest(c.Server, body)
+// Corresponds with POST /v1/publisher/deployments/enroll (the `RedeemDeploymentPublisherEnrollment` operationId).
+func (c *Client) RedeemDeploymentPublisherEnrollment(ctx context.Context, body RedeemDeploymentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemDeploymentPublisherEnrollmentRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10160,15 +10056,15 @@ func (c *Client) RedeemPublisherGroupEnrollment(ctx context.Context, body Redeem
 	return c.Client.Do(req)
 }
 
-// AcquirePublisherGroupLeaseWithBody Exchange a signed replica assertion for a group lease
+// AcquireDeploymentPublisherLeaseWithBody Exchange a signed replica assertion for a deployment lease
 //
-// Exchange a one-use signed assertion in the body for a pgl_ group lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the group ID.
+// Exchange a one-use signed assertion in the body for a dpl_lease_ deployment lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the deployment ID.
 //
 // Takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/publisher/groups/lease (the `AcquirePublisherGroupLease` operationId).
-func (c *Client) AcquirePublisherGroupLeaseWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAcquirePublisherGroupLeaseRequestWithBody(c.Server, contentType, body)
+// Corresponds with POST /v1/publisher/deployments/lease (the `AcquireDeploymentPublisherLease` operationId).
+func (c *Client) AcquireDeploymentPublisherLeaseWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcquireDeploymentPublisherLeaseRequestWithBody(c.Server, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10179,15 +10075,15 @@ func (c *Client) AcquirePublisherGroupLeaseWithBody(ctx context.Context, content
 	return c.Client.Do(req)
 }
 
-// AcquirePublisherGroupLease Exchange a signed replica assertion for a group lease
+// AcquireDeploymentPublisherLease Exchange a signed replica assertion for a deployment lease
 //
-// Exchange a one-use signed assertion in the body for a pgl_ group lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the group ID.
+// Exchange a one-use signed assertion in the body for a dpl_lease_ deployment lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the deployment ID.
 //
 // Takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/publisher/groups/lease (the `AcquirePublisherGroupLease` operationId).
-func (c *Client) AcquirePublisherGroupLease(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAcquirePublisherGroupLeaseRequest(c.Server, body)
+// Corresponds with POST /v1/publisher/deployments/lease (the `AcquireDeploymentPublisherLease` operationId).
+func (c *Client) AcquireDeploymentPublisherLease(ctx context.Context, body AcquireDeploymentPublisherLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcquireDeploymentPublisherLeaseRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10198,15 +10094,15 @@ func (c *Client) AcquirePublisherGroupLease(ctx context.Context, body AcquirePub
 	return c.Client.Do(req)
 }
 
-// VerifyPublisherGroupIdentityWithBody Verify a replica's group membership without acquiring a lease
+// VerifyDeploymentIdentityWithBody Verify a replica's deployment membership without acquiring a lease
 //
-// Verify group membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's group lease.
+// Verify deployment membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's deployment lease.
 //
 // Takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/publisher/groups/verify (the `VerifyPublisherGroupIdentity` operationId).
-func (c *Client) VerifyPublisherGroupIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewVerifyPublisherGroupIdentityRequestWithBody(c.Server, contentType, body)
+// Corresponds with POST /v1/publisher/deployments/verify (the `VerifyDeploymentIdentity` operationId).
+func (c *Client) VerifyDeploymentIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewVerifyDeploymentIdentityRequestWithBody(c.Server, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10217,15 +10113,15 @@ func (c *Client) VerifyPublisherGroupIdentityWithBody(ctx context.Context, conte
 	return c.Client.Do(req)
 }
 
-// VerifyPublisherGroupIdentity Verify a replica's group membership without acquiring a lease
+// VerifyDeploymentIdentity Verify a replica's deployment membership without acquiring a lease
 //
-// Verify group membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's group lease.
+// Verify deployment membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's deployment lease.
 //
 // Takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/publisher/groups/verify (the `VerifyPublisherGroupIdentity` operationId).
-func (c *Client) VerifyPublisherGroupIdentity(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewVerifyPublisherGroupIdentityRequest(c.Server, body)
+// Corresponds with POST /v1/publisher/deployments/verify (the `VerifyDeploymentIdentity` operationId).
+func (c *Client) VerifyDeploymentIdentity(ctx context.Context, body VerifyDeploymentIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewVerifyDeploymentIdentityRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10348,7 +10244,7 @@ func (c *Client) InspectPublisherRuntime(ctx context.Context, publisherIdentityI
 
 // RenewPublisherRuntimeWithBody Renew a publisher runtime
 //
-// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease.
+// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Deployment runtimes also receive a deployment lease.
 //
 // Takes any type of body and a specified content type.
 //
@@ -10367,7 +10263,7 @@ func (c *Client) RenewPublisherRuntimeWithBody(ctx context.Context, publisherIde
 
 // RenewPublisherRuntime Renew a publisher runtime
 //
-// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease.
+// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Deployment runtimes also receive a deployment lease.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10386,7 +10282,7 @@ func (c *Client) RenewPublisherRuntime(ctx context.Context, publisherIdentityId 
 
 // StartPublisherRuntimeWithBody Start a publisher runtime
 //
-// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease.
+// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Deployment runtimes also receive a deployment lease.
 //
 // Takes any type of body and a specified content type.
 //
@@ -10405,7 +10301,7 @@ func (c *Client) StartPublisherRuntimeWithBody(ctx context.Context, publisherIde
 
 // StartPublisherRuntime Start a publisher runtime
 //
-// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease.
+// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Deployment runtimes also receive a deployment lease.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -13957,6 +13853,60 @@ func NewUpdateDeploymentRequestWithBody(server string, projectKey string, deploy
 	return req, nil
 }
 
+// NewRenameDeploymentNamespaceRequest calls the generic RenameDeploymentNamespace builder with application/json body
+func NewRenameDeploymentNamespaceRequest(server string, projectKey string, deployment string, body RenameDeploymentNamespaceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRenameDeploymentNamespaceRequestWithBody(server, projectKey, deployment, "application/json", bodyReader)
+}
+
+// NewRenameDeploymentNamespaceRequestWithBody constructs an http.Request for the RenameDeploymentNamespace method, with any body, and a specified content type
+func NewRenameDeploymentNamespaceRequestWithBody(server string, projectKey string, deployment string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "deployment", deployment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/deployments/%s/namespace/rename", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewCreateDeploymentPublisherEnrollmentRequest calls the generic CreateDeploymentPublisherEnrollment builder with application/json body
 func NewCreateDeploymentPublisherEnrollmentRequest(server string, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, body CreateDeploymentPublisherEnrollmentJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -14277,6 +14227,60 @@ func NewGetDeploymentPublisherRequest(server string, projectKey string, deployme
 	return req, nil
 }
 
+// NewRenameDeploymentRequest calls the generic RenameDeployment builder with application/json body
+func NewRenameDeploymentRequest(server string, projectKey string, deployment string, body RenameDeploymentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRenameDeploymentRequestWithBody(server, projectKey, deployment, "application/json", bodyReader)
+}
+
+// NewRenameDeploymentRequestWithBody constructs an http.Request for the RenameDeployment method, with any body, and a specified content type
+func NewRenameDeploymentRequestWithBody(server string, projectKey string, deployment string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "deployment", deployment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/deployments/%s/rename", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewSelectDeploymentServiceRunRequest calls the generic SelectDeploymentServiceRun builder with application/json body
 func NewSelectDeploymentServiceRunRequest(server string, projectKey string, deployment string, service string, params *SelectDeploymentServiceRunParams, body SelectDeploymentServiceRunJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -14548,239 +14552,6 @@ func NewGetProjectPublicMetadataRequest(server string, projectKey string, params
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewCreatePublisherGroupEnrollmentRequest calls the generic CreatePublisherGroupEnrollment builder with application/json body
-func NewCreatePublisherGroupEnrollmentRequest(server string, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreatePublisherGroupEnrollmentRequestWithBody(server, projectKey, groupName, "application/json", bodyReader)
-}
-
-// NewCreatePublisherGroupEnrollmentRequestWithBody constructs an http.Request for the CreatePublisherGroupEnrollment method, with any body, and a specified content type
-func NewCreatePublisherGroupEnrollmentRequestWithBody(server string, projectKey string, groupName string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/enrollments", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewRevokePublisherGroupMemberRequest constructs an http.Request for the RevokePublisherGroupMember method
-func NewRevokePublisherGroupMemberRequest(server string, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "publisher_identity_id", publisherIdentityId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/members/%s", pathParam0, pathParam1, pathParam2)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewRenamePublisherNamespaceRequest calls the generic RenamePublisherNamespace builder with application/json body
-func NewRenamePublisherNamespaceRequest(server string, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRenamePublisherNamespaceRequestWithBody(server, projectKey, groupName, "application/json", bodyReader)
-}
-
-// NewRenamePublisherNamespaceRequestWithBody constructs an http.Request for the RenamePublisherNamespace method, with any body, and a specified content type
-func NewRenamePublisherNamespaceRequestWithBody(server string, projectKey string, groupName string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/namespace/rename", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewRenamePublisherGroupRequest calls the generic RenamePublisherGroup builder with application/json body
-func NewRenamePublisherGroupRequest(server string, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRenamePublisherGroupRequestWithBody(server, projectKey, groupName, "application/json", bodyReader)
-}
-
-// NewRenamePublisherGroupRequestWithBody constructs an http.Request for the RenamePublisherGroup method, with any body, and a specified content type
-func NewRenamePublisherGroupRequestWithBody(server string, projectKey string, groupName string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/rename", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -16785,8 +16556,8 @@ func NewRevokePublisherGrantRequest(server string, publisherIdentityId Publisher
 	return req, nil
 }
 
-// NewGetPublisherGroupAssignmentsRequest constructs an http.Request for the GetPublisherGroupAssignments method
-func NewGetPublisherGroupAssignmentsRequest(server string) (*http.Request, error) {
+// NewGetDeploymentPublisherAssignmentsRequest constructs an http.Request for the GetDeploymentPublisherAssignments method
+func NewGetDeploymentPublisherAssignmentsRequest(server string) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -16794,7 +16565,7 @@ func NewGetPublisherGroupAssignmentsRequest(server string) (*http.Request, error
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/publisher/groups/assignments")
+	operationPath := fmt.Sprintf("/v1/publisher/deployments/assignments")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -16812,19 +16583,19 @@ func NewGetPublisherGroupAssignmentsRequest(server string) (*http.Request, error
 	return req, nil
 }
 
-// NewAcknowledgePublisherGroupConfigurationRequest calls the generic AcknowledgePublisherGroupConfiguration builder with application/json body
-func NewAcknowledgePublisherGroupConfigurationRequest(server string, body AcknowledgePublisherGroupConfigurationJSONRequestBody) (*http.Request, error) {
+// NewAcknowledgeDeploymentPublisherConfigurationRequest calls the generic AcknowledgeDeploymentPublisherConfiguration builder with application/json body
+func NewAcknowledgeDeploymentPublisherConfigurationRequest(server string, body AcknowledgeDeploymentPublisherConfigurationJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewAcknowledgePublisherGroupConfigurationRequestWithBody(server, "application/json", bodyReader)
+	return NewAcknowledgeDeploymentPublisherConfigurationRequestWithBody(server, "application/json", bodyReader)
 }
 
-// NewAcknowledgePublisherGroupConfigurationRequestWithBody constructs an http.Request for the AcknowledgePublisherGroupConfiguration method, with any body, and a specified content type
-func NewAcknowledgePublisherGroupConfigurationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+// NewAcknowledgeDeploymentPublisherConfigurationRequestWithBody constructs an http.Request for the AcknowledgeDeploymentPublisherConfiguration method, with any body, and a specified content type
+func NewAcknowledgeDeploymentPublisherConfigurationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -16832,7 +16603,7 @@ func NewAcknowledgePublisherGroupConfigurationRequestWithBody(server string, con
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/publisher/groups/configuration-acknowledgements")
+	operationPath := fmt.Sprintf("/v1/publisher/deployments/configuration-acknowledgements")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -16852,19 +16623,19 @@ func NewAcknowledgePublisherGroupConfigurationRequestWithBody(server string, con
 	return req, nil
 }
 
-// NewRedeemPublisherGroupEnrollmentRequest calls the generic RedeemPublisherGroupEnrollment builder with application/json body
-func NewRedeemPublisherGroupEnrollmentRequest(server string, body RedeemPublisherGroupEnrollmentJSONRequestBody) (*http.Request, error) {
+// NewRedeemDeploymentPublisherEnrollmentRequest calls the generic RedeemDeploymentPublisherEnrollment builder with application/json body
+func NewRedeemDeploymentPublisherEnrollmentRequest(server string, body RedeemDeploymentPublisherEnrollmentJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewRedeemPublisherGroupEnrollmentRequestWithBody(server, "application/json", bodyReader)
+	return NewRedeemDeploymentPublisherEnrollmentRequestWithBody(server, "application/json", bodyReader)
 }
 
-// NewRedeemPublisherGroupEnrollmentRequestWithBody constructs an http.Request for the RedeemPublisherGroupEnrollment method, with any body, and a specified content type
-func NewRedeemPublisherGroupEnrollmentRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+// NewRedeemDeploymentPublisherEnrollmentRequestWithBody constructs an http.Request for the RedeemDeploymentPublisherEnrollment method, with any body, and a specified content type
+func NewRedeemDeploymentPublisherEnrollmentRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -16872,7 +16643,7 @@ func NewRedeemPublisherGroupEnrollmentRequestWithBody(server string, contentType
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/publisher/groups/enroll")
+	operationPath := fmt.Sprintf("/v1/publisher/deployments/enroll")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -16892,19 +16663,19 @@ func NewRedeemPublisherGroupEnrollmentRequestWithBody(server string, contentType
 	return req, nil
 }
 
-// NewAcquirePublisherGroupLeaseRequest calls the generic AcquirePublisherGroupLease builder with application/json body
-func NewAcquirePublisherGroupLeaseRequest(server string, body AcquirePublisherGroupLeaseJSONRequestBody) (*http.Request, error) {
+// NewAcquireDeploymentPublisherLeaseRequest calls the generic AcquireDeploymentPublisherLease builder with application/json body
+func NewAcquireDeploymentPublisherLeaseRequest(server string, body AcquireDeploymentPublisherLeaseJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewAcquirePublisherGroupLeaseRequestWithBody(server, "application/json", bodyReader)
+	return NewAcquireDeploymentPublisherLeaseRequestWithBody(server, "application/json", bodyReader)
 }
 
-// NewAcquirePublisherGroupLeaseRequestWithBody constructs an http.Request for the AcquirePublisherGroupLease method, with any body, and a specified content type
-func NewAcquirePublisherGroupLeaseRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+// NewAcquireDeploymentPublisherLeaseRequestWithBody constructs an http.Request for the AcquireDeploymentPublisherLease method, with any body, and a specified content type
+func NewAcquireDeploymentPublisherLeaseRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -16912,7 +16683,7 @@ func NewAcquirePublisherGroupLeaseRequestWithBody(server string, contentType str
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/publisher/groups/lease")
+	operationPath := fmt.Sprintf("/v1/publisher/deployments/lease")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -16932,19 +16703,19 @@ func NewAcquirePublisherGroupLeaseRequestWithBody(server string, contentType str
 	return req, nil
 }
 
-// NewVerifyPublisherGroupIdentityRequest calls the generic VerifyPublisherGroupIdentity builder with application/json body
-func NewVerifyPublisherGroupIdentityRequest(server string, body VerifyPublisherGroupIdentityJSONRequestBody) (*http.Request, error) {
+// NewVerifyDeploymentIdentityRequest calls the generic VerifyDeploymentIdentity builder with application/json body
+func NewVerifyDeploymentIdentityRequest(server string, body VerifyDeploymentIdentityJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewVerifyPublisherGroupIdentityRequestWithBody(server, "application/json", bodyReader)
+	return NewVerifyDeploymentIdentityRequestWithBody(server, "application/json", bodyReader)
 }
 
-// NewVerifyPublisherGroupIdentityRequestWithBody constructs an http.Request for the VerifyPublisherGroupIdentity method, with any body, and a specified content type
-func NewVerifyPublisherGroupIdentityRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+// NewVerifyDeploymentIdentityRequestWithBody constructs an http.Request for the VerifyDeploymentIdentity method, with any body, and a specified content type
+func NewVerifyDeploymentIdentityRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -16952,7 +16723,7 @@ func NewVerifyPublisherGroupIdentityRequestWithBody(server string, contentType s
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/publisher/groups/verify")
+	operationPath := fmt.Sprintf("/v1/publisher/deployments/verify")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -20261,7 +20032,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListProjectsWithResponse List applied projects
 	//
-	// List active applied projects the current team manager may manage, ordered by project_key. Retired projects are omitted but remain readable by key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
+	// List active applied projects the current team manager may manage, ordered by project_key. Retired projects are omitted but remain readable by key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its deployments, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -20295,7 +20066,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId).
 	GetProjectConfigurationWithResponse(ctx context.Context, projectKey string, params *GetProjectConfigurationParams, reqEditors ...RequestEditorFn) (*GetProjectConfigurationResponse, error)
 
-	// ApplyProjectConfigurationWithBodyWithResponse Apply a project's desired services and publisher groups
+	// ApplyProjectConfigurationWithBodyWithResponse Apply a project's desired services and deployments
 	//
 	// Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 	//
@@ -20304,7 +20075,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId).
 	ApplyProjectConfigurationWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error)
 
-	// ApplyProjectConfigurationWithResponse Apply a project's desired services and publisher groups
+	// ApplyProjectConfigurationWithResponse Apply a project's desired services and deployments
 	//
 	// Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 	//
@@ -20394,9 +20165,27 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId).
 	UpdateDeploymentWithResponse(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, body UpdateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateDeploymentResponse, error)
 
+	// RenameDeploymentNamespaceWithBodyWithResponse Replace a deployment's DNS namespace label
+	//
+	// Change the deployment's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/namespace/rename (the `RenameDeploymentNamespace` operationId).
+	RenameDeploymentNamespaceWithBodyWithResponse(ctx context.Context, projectKey string, deployment string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenameDeploymentNamespaceResponse, error)
+
+	// RenameDeploymentNamespaceWithResponse Replace a deployment's DNS namespace label
+	//
+	// Change the deployment's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/namespace/rename (the `RenameDeploymentNamespace` operationId).
+	RenameDeploymentNamespaceWithResponse(ctx context.Context, projectKey string, deployment string, body RenameDeploymentNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*RenameDeploymentNamespaceResponse, error)
+
 	// CreateDeploymentPublisherEnrollmentWithBodyWithResponse Approve scoped publisher enrollment
 	//
-	// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+	// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing deployment-publisher enrollment exchange.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20405,7 +20194,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateDeploymentPublisherEnrollmentWithResponse Approve scoped publisher enrollment
 	//
-	// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+	// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing deployment-publisher enrollment exchange.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20414,7 +20203,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListDeploymentPublishersWithResponse List a deployment's publishers
 	//
-	// List authorized publishers in this deployment, including revoked identities and retained observations. A management credential sees only scoped publishers whose entire captured service/protocol approval it covers; filtering precedes pagination. Legacy whole-group publishers require a current manager. No enrollment secrets or targets are returned.
+	// List authorized publishers in this deployment, including revoked identities and retained observations. A management credential sees only scoped publishers whose entire captured service/protocol approval it covers; filtering precedes pagination. Legacy whole-deployment publishers require a current manager. No enrollment secrets or targets are returned.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -20423,7 +20212,7 @@ type ClientWithResponsesInterface interface {
 
 	// RevokeDeploymentPublisherWithResponse Revoke one deployment publisher
 	//
-	// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager. Repetition is safe; the last observation is retained. Siblings and shared enrollment capacity are unchanged. Apply and enrollment replay cannot restore the revoked identity.
+	// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-deployment publishers require a manager. Repetition is safe; the last observation is retained. Siblings and shared enrollment capacity are unchanged. Apply and enrollment replay cannot restore the revoked identity.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -20432,12 +20221,30 @@ type ClientWithResponsesInterface interface {
 
 	// GetDeploymentPublisherWithResponse Read one deployment publisher
 	//
-	// Read one publisher's captured scope and observation with exact deployment ownership. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager.
+	// Read one publisher's captured scope and observation with exact deployment ownership. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-deployment publishers require a manager.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `GetDeploymentPublisher` operationId).
 	GetDeploymentPublisherWithResponse(ctx context.Context, projectKey string, deployment string, publisher string, params *GetDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*GetDeploymentPublisherResponse, error)
+
+	// RenameDeploymentWithBodyWithResponse Rename a deployment's configuration selector without changing endpoints
+	//
+	// Rename the configuration key without changing the deployment's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this deployment. Update project configuration before the next apply; retrying a completed rename is safe.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/rename (the `RenameDeployment` operationId).
+	RenameDeploymentWithBodyWithResponse(ctx context.Context, projectKey string, deployment string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenameDeploymentResponse, error)
+
+	// RenameDeploymentWithResponse Rename a deployment's configuration selector without changing endpoints
+	//
+	// Rename the configuration key without changing the deployment's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this deployment. Update project configuration before the next apply; retrying a completed rename is safe.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/rename (the `RenameDeployment` operationId).
+	RenameDeploymentWithResponse(ctx context.Context, projectKey string, deployment string, body RenameDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*RenameDeploymentResponse, error)
 
 	// SelectDeploymentServiceRunWithBodyWithResponse Select an authorized deployment service run
 	//
@@ -20468,7 +20275,7 @@ type ClientWithResponsesInterface interface {
 
 	// RealizeLocalProjectServiceWithBodyWithResponse Realize one declared local service for a worktree
 	//
-	// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote publisher groups are unchanged.
+	// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote deployments are unchanged.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20477,7 +20284,7 @@ type ClientWithResponsesInterface interface {
 
 	// RealizeLocalProjectServiceWithResponse Realize one declared local service for a worktree
 	//
-	// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote publisher groups are unchanged.
+	// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote deployments are unchanged.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20493,72 +20300,9 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/projects/{project_key}/public-metadata (the `GetProjectPublicMetadata` operationId).
 	GetProjectPublicMetadataWithResponse(ctx context.Context, projectKey string, params *GetProjectPublicMetadataParams, reqEditors ...RequestEditorFn) (*GetProjectPublicMetadataResponse, error)
 
-	// CreatePublisherGroupEnrollmentWithBodyWithResponse Issue a bounded enrollment key for a project's publisher group
-	//
-	// Create an expiring bootstrap credential using current project management permission. Each enrolled replica supplies its own key; the enrollment's member limit bounds how many identities it can create.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId).
-	CreatePublisherGroupEnrollmentWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublisherGroupEnrollmentResponse, error)
-
-	// CreatePublisherGroupEnrollmentWithResponse Issue a bounded enrollment key for a project's publisher group
-	//
-	// Create an expiring bootstrap credential using current project management permission. Each enrolled replica supplies its own key; the enrollment's member limit bounds how many identities it can create.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId).
-	CreatePublisherGroupEnrollmentWithResponse(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherGroupEnrollmentResponse, error)
-
-	// RevokePublisherGroupMemberWithResponse Revoke one enrolled publisher replica from a group
-	//
-	// Revoke the exact enrolled publisher identity using current project management permission. Control closes that member's public URL and service runs without revoking other group members.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId).
-	RevokePublisherGroupMemberWithResponse(ctx context.Context, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams, reqEditors ...RequestEditorFn) (*RevokePublisherGroupMemberResponse, error)
-
-	// RenamePublisherNamespaceWithBodyWithResponse Replace a publisher group's DNS namespace label
-	//
-	// Change the group's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId).
-	RenamePublisherNamespaceWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenamePublisherNamespaceResponse, error)
-
-	// RenamePublisherNamespaceWithResponse Replace a publisher group's DNS namespace label
-	//
-	// Change the group's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId).
-	RenamePublisherNamespaceWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherNamespaceResponse, error)
-
-	// RenamePublisherGroupWithBodyWithResponse Rename a group's configuration selector without changing endpoints
-	//
-	// Rename the configuration key without changing the group's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this group. Update project configuration before the next apply; retrying a completed rename is safe.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
-	RenamePublisherGroupWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error)
-
-	// RenamePublisherGroupWithResponse Rename a group's configuration selector without changing endpoints
-	//
-	// Rename the configuration key without changing the group's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this group. Update project configuration before the next apply; retrying a completed rename is safe.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
-	RenamePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error)
-
 	// RetireProjectWithBodyWithResponse Retire an applied project and its configuration-owned resources
 	//
-	// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
+	// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire deployments, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20567,7 +20311,7 @@ type ClientWithResponsesInterface interface {
 
 	// RetireProjectWithResponse Retire an applied project and its configuration-owned resources
 	//
-	// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
+	// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire deployments, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20583,7 +20327,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId).
 	GetProjectServiceWithResponse(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*GetProjectServiceResponse, error)
 
-	// GetProjectStatusWithResponse Inspect project publications across worktrees and publisher groups
+	// GetProjectStatusWithResponse Inspect project publications across worktrees and deployments
 	//
 	// Read a manager-only snapshot of declared services, realized worktree resources, and open publications. Each publication appears separately; an idle resource or unrealized declaration appears once. Follow next_cursor with the same project, team, and identity. Readiness describes control's current lease, certificate, and relay observations, not a fresh visitor probe. Targets, credentials, and checkout paths are omitted.
 	//
@@ -21141,86 +20885,86 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId).
 	RevokePublisherGrantWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, grantId ResourceID, params *RevokePublisherGrantParams, reqEditors ...RequestEditorFn) (*RevokePublisherGrantResponse, error)
 
-	// GetPublisherGroupAssignmentsWithResponse Read services and grants assigned to one leased group replica
+	// GetDeploymentPublisherAssignmentsWithResponse Read services and grants assigned to one leased deployment replica
 	//
-	// Read the replica's assigned services and publisher grants using its current pgl_ lease. Assignments can include targets. A pta_ publisher token cannot read them.
+	// Read the replica's assigned services and publisher grants using its current dpl_lease_ lease. Assignments can include targets. A pta_ publisher token cannot read them.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/publisher/groups/assignments (the `GetPublisherGroupAssignments` operationId).
-	GetPublisherGroupAssignmentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublisherGroupAssignmentsResponse, error)
+	// Corresponds with GET /v1/publisher/deployments/assignments (the `GetDeploymentPublisherAssignments` operationId).
+	GetDeploymentPublisherAssignmentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetDeploymentPublisherAssignmentsResponse, error)
 
-	// AcknowledgePublisherGroupConfigurationWithBodyWithResponse Acknowledge the exact configuration installed by a group replica
+	// AcknowledgeDeploymentPublisherConfigurationWithBodyWithResponse Acknowledge the exact configuration installed by a deployment replica
 	//
-	// Report the installed configuration revision, hash, and health using the replica's current pgl_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
+	// Report the installed configuration revision, hash, and health using the replica's current dpl_lease_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publisher/groups/configuration-acknowledgements (the `AcknowledgePublisherGroupConfiguration` operationId).
-	AcknowledgePublisherGroupConfigurationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error)
+	// Corresponds with POST /v1/publisher/deployments/configuration-acknowledgements (the `AcknowledgeDeploymentPublisherConfiguration` operationId).
+	AcknowledgeDeploymentPublisherConfigurationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgeDeploymentPublisherConfigurationResponse, error)
 
-	// AcknowledgePublisherGroupConfigurationWithResponse Acknowledge the exact configuration installed by a group replica
+	// AcknowledgeDeploymentPublisherConfigurationWithResponse Acknowledge the exact configuration installed by a deployment replica
 	//
-	// Report the installed configuration revision, hash, and health using the replica's current pgl_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
+	// Report the installed configuration revision, hash, and health using the replica's current dpl_lease_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publisher/groups/configuration-acknowledgements (the `AcknowledgePublisherGroupConfiguration` operationId).
-	AcknowledgePublisherGroupConfigurationWithResponse(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error)
+	// Corresponds with POST /v1/publisher/deployments/configuration-acknowledgements (the `AcknowledgeDeploymentPublisherConfiguration` operationId).
+	AcknowledgeDeploymentPublisherConfigurationWithResponse(ctx context.Context, body AcknowledgeDeploymentPublisherConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgeDeploymentPublisherConfigurationResponse, error)
 
-	// RedeemPublisherGroupEnrollmentWithBodyWithResponse Enroll a replica's signing key with a group enrollment secret
+	// RedeemDeploymentPublisherEnrollmentWithBodyWithResponse Enroll a replica's signing key with a deployment enrollment secret
 	//
 	// Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publisher/groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
-	RedeemPublisherGroupEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error)
+	// Corresponds with POST /v1/publisher/deployments/enroll (the `RedeemDeploymentPublisherEnrollment` operationId).
+	RedeemDeploymentPublisherEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemDeploymentPublisherEnrollmentResponse, error)
 
-	// RedeemPublisherGroupEnrollmentWithResponse Enroll a replica's signing key with a group enrollment secret
+	// RedeemDeploymentPublisherEnrollmentWithResponse Enroll a replica's signing key with a deployment enrollment secret
 	//
 	// Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publisher/groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
-	RedeemPublisherGroupEnrollmentWithResponse(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error)
+	// Corresponds with POST /v1/publisher/deployments/enroll (the `RedeemDeploymentPublisherEnrollment` operationId).
+	RedeemDeploymentPublisherEnrollmentWithResponse(ctx context.Context, body RedeemDeploymentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemDeploymentPublisherEnrollmentResponse, error)
 
-	// AcquirePublisherGroupLeaseWithBodyWithResponse Exchange a signed replica assertion for a group lease
+	// AcquireDeploymentPublisherLeaseWithBodyWithResponse Exchange a signed replica assertion for a deployment lease
 	//
-	// Exchange a one-use signed assertion in the body for a pgl_ group lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the group ID.
+	// Exchange a one-use signed assertion in the body for a dpl_lease_ deployment lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the deployment ID.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publisher/groups/lease (the `AcquirePublisherGroupLease` operationId).
-	AcquirePublisherGroupLeaseWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error)
+	// Corresponds with POST /v1/publisher/deployments/lease (the `AcquireDeploymentPublisherLease` operationId).
+	AcquireDeploymentPublisherLeaseWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcquireDeploymentPublisherLeaseResponse, error)
 
-	// AcquirePublisherGroupLeaseWithResponse Exchange a signed replica assertion for a group lease
+	// AcquireDeploymentPublisherLeaseWithResponse Exchange a signed replica assertion for a deployment lease
 	//
-	// Exchange a one-use signed assertion in the body for a pgl_ group lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the group ID.
+	// Exchange a one-use signed assertion in the body for a dpl_lease_ deployment lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the deployment ID.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publisher/groups/lease (the `AcquirePublisherGroupLease` operationId).
-	AcquirePublisherGroupLeaseWithResponse(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error)
+	// Corresponds with POST /v1/publisher/deployments/lease (the `AcquireDeploymentPublisherLease` operationId).
+	AcquireDeploymentPublisherLeaseWithResponse(ctx context.Context, body AcquireDeploymentPublisherLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*AcquireDeploymentPublisherLeaseResponse, error)
 
-	// VerifyPublisherGroupIdentityWithBodyWithResponse Verify a replica's group membership without acquiring a lease
+	// VerifyDeploymentIdentityWithBodyWithResponse Verify a replica's deployment membership without acquiring a lease
 	//
-	// Verify group membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's group lease.
+	// Verify deployment membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's deployment lease.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publisher/groups/verify (the `VerifyPublisherGroupIdentity` operationId).
-	VerifyPublisherGroupIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error)
+	// Corresponds with POST /v1/publisher/deployments/verify (the `VerifyDeploymentIdentity` operationId).
+	VerifyDeploymentIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyDeploymentIdentityResponse, error)
 
-	// VerifyPublisherGroupIdentityWithResponse Verify a replica's group membership without acquiring a lease
+	// VerifyDeploymentIdentityWithResponse Verify a replica's deployment membership without acquiring a lease
 	//
-	// Verify group membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's group lease.
+	// Verify deployment membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's deployment lease.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publisher/groups/verify (the `VerifyPublisherGroupIdentity` operationId).
-	VerifyPublisherGroupIdentityWithResponse(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error)
+	// Corresponds with POST /v1/publisher/deployments/verify (the `VerifyDeploymentIdentity` operationId).
+	VerifyDeploymentIdentityWithResponse(ctx context.Context, body VerifyDeploymentIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyDeploymentIdentityResponse, error)
 
 	// GetPublisherPublicURLWithResponse Read the saved URL selected by the current grant
 	//
@@ -21278,7 +21022,7 @@ type ClientWithResponsesInterface interface {
 
 	// RenewPublisherRuntimeWithBodyWithResponse Renew a publisher runtime
 	//
-	// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease.
+	// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Deployment runtimes also receive a deployment lease.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21287,7 +21031,7 @@ type ClientWithResponsesInterface interface {
 
 	// RenewPublisherRuntimeWithResponse Renew a publisher runtime
 	//
-	// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease.
+	// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Deployment runtimes also receive a deployment lease.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21296,7 +21040,7 @@ type ClientWithResponsesInterface interface {
 
 	// StartPublisherRuntimeWithBodyWithResponse Start a publisher runtime
 	//
-	// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease.
+	// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Deployment runtimes also receive a deployment lease.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21305,7 +21049,7 @@ type ClientWithResponsesInterface interface {
 
 	// StartPublisherRuntimeWithResponse Start a publisher runtime
 	//
-	// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease.
+	// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Deployment runtimes also receive a deployment lease.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -23864,6 +23608,54 @@ func (r UpdateDeploymentResponse) ContentType() string {
 	return ""
 }
 
+type RenameDeploymentNamespaceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AppliedProjectConfiguration
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RenameDeploymentNamespaceResponse) GetJSON200() *AppliedProjectConfiguration {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RenameDeploymentNamespaceResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RenameDeploymentNamespaceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RenameDeploymentNamespaceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RenameDeploymentNamespaceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RenameDeploymentNamespaceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type CreateDeploymentPublisherEnrollmentResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -24043,6 +23835,54 @@ func (r GetDeploymentPublisherResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetDeploymentPublisherResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RenameDeploymentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AppliedProjectConfiguration
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RenameDeploymentResponse) GetJSON200() *AppliedProjectConfiguration {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RenameDeploymentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RenameDeploymentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RenameDeploymentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RenameDeploymentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RenameDeploymentResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -24235,191 +24075,6 @@ func (r GetProjectPublicMetadataResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetProjectPublicMetadataResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreatePublisherGroupEnrollmentResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *PublisherGroupEnrollment
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreatePublisherGroupEnrollmentResponse) GetJSON201() *PublisherGroupEnrollment {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreatePublisherGroupEnrollmentResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreatePublisherGroupEnrollmentResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreatePublisherGroupEnrollmentResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreatePublisherGroupEnrollmentResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreatePublisherGroupEnrollmentResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RevokePublisherGroupMemberResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RevokePublisherGroupMemberResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RevokePublisherGroupMemberResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RevokePublisherGroupMemberResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RevokePublisherGroupMemberResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RevokePublisherGroupMemberResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RenamePublisherNamespaceResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AppliedProjectConfiguration
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RenamePublisherNamespaceResponse) GetJSON200() *AppliedProjectConfiguration {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RenamePublisherNamespaceResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RenamePublisherNamespaceResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RenamePublisherNamespaceResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RenamePublisherNamespaceResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RenamePublisherNamespaceResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RenamePublisherGroupResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AppliedProjectConfiguration
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RenamePublisherGroupResponse) GetJSON200() *AppliedProjectConfiguration {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RenamePublisherGroupResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RenamePublisherGroupResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RenamePublisherGroupResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RenamePublisherGroupResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RenamePublisherGroupResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -26249,32 +25904,32 @@ func (r RevokePublisherGrantResponse) ContentType() string {
 	return ""
 }
 
-type GetPublisherGroupAssignmentsResponse struct {
+type GetDeploymentPublisherAssignmentsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupAssignments
+	JSON200 *DeploymentPublisherAssignments
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetPublisherGroupAssignmentsResponse) GetJSON200() *PublisherGroupAssignments {
+func (r GetDeploymentPublisherAssignmentsResponse) GetJSON200() *DeploymentPublisherAssignments {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetPublisherGroupAssignmentsResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r GetDeploymentPublisherAssignmentsResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r GetPublisherGroupAssignmentsResponse) GetBody() []byte {
+func (r GetDeploymentPublisherAssignmentsResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r GetPublisherGroupAssignmentsResponse) Status() string {
+func (r GetDeploymentPublisherAssignmentsResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -26282,7 +25937,7 @@ func (r GetPublisherGroupAssignmentsResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r GetPublisherGroupAssignmentsResponse) StatusCode() int {
+func (r GetDeploymentPublisherAssignmentsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -26290,14 +25945,14 @@ func (r GetPublisherGroupAssignmentsResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetPublisherGroupAssignmentsResponse) ContentType() string {
+func (r GetDeploymentPublisherAssignmentsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type AcknowledgePublisherGroupConfigurationResponse struct {
+type AcknowledgeDeploymentPublisherConfigurationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
@@ -26305,17 +25960,17 @@ type AcknowledgePublisherGroupConfigurationResponse struct {
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AcknowledgePublisherGroupConfigurationResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r AcknowledgeDeploymentPublisherConfigurationResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r AcknowledgePublisherGroupConfigurationResponse) GetBody() []byte {
+func (r AcknowledgeDeploymentPublisherConfigurationResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r AcknowledgePublisherGroupConfigurationResponse) Status() string {
+func (r AcknowledgeDeploymentPublisherConfigurationResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -26323,7 +25978,7 @@ func (r AcknowledgePublisherGroupConfigurationResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r AcknowledgePublisherGroupConfigurationResponse) StatusCode() int {
+func (r AcknowledgeDeploymentPublisherConfigurationResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -26331,39 +25986,39 @@ func (r AcknowledgePublisherGroupConfigurationResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AcknowledgePublisherGroupConfigurationResponse) ContentType() string {
+func (r AcknowledgeDeploymentPublisherConfigurationResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type RedeemPublisherGroupEnrollmentResponse struct {
+type RedeemDeploymentPublisherEnrollmentResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupMember
+	JSON200 *DeploymentPublisherIdentity
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RedeemPublisherGroupEnrollmentResponse) GetJSON200() *PublisherGroupMember {
+func (r RedeemDeploymentPublisherEnrollmentResponse) GetJSON200() *DeploymentPublisherIdentity {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RedeemPublisherGroupEnrollmentResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r RedeemDeploymentPublisherEnrollmentResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r RedeemPublisherGroupEnrollmentResponse) GetBody() []byte {
+func (r RedeemDeploymentPublisherEnrollmentResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r RedeemPublisherGroupEnrollmentResponse) Status() string {
+func (r RedeemDeploymentPublisherEnrollmentResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -26371,7 +26026,7 @@ func (r RedeemPublisherGroupEnrollmentResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r RedeemPublisherGroupEnrollmentResponse) StatusCode() int {
+func (r RedeemDeploymentPublisherEnrollmentResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -26379,39 +26034,39 @@ func (r RedeemPublisherGroupEnrollmentResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RedeemPublisherGroupEnrollmentResponse) ContentType() string {
+func (r RedeemDeploymentPublisherEnrollmentResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type AcquirePublisherGroupLeaseResponse struct {
+type AcquireDeploymentPublisherLeaseResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupLease
+	JSON200 *DeploymentPublisherLease
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AcquirePublisherGroupLeaseResponse) GetJSON200() *PublisherGroupLease {
+func (r AcquireDeploymentPublisherLeaseResponse) GetJSON200() *DeploymentPublisherLease {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AcquirePublisherGroupLeaseResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r AcquireDeploymentPublisherLeaseResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r AcquirePublisherGroupLeaseResponse) GetBody() []byte {
+func (r AcquireDeploymentPublisherLeaseResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r AcquirePublisherGroupLeaseResponse) Status() string {
+func (r AcquireDeploymentPublisherLeaseResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -26419,7 +26074,7 @@ func (r AcquirePublisherGroupLeaseResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r AcquirePublisherGroupLeaseResponse) StatusCode() int {
+func (r AcquireDeploymentPublisherLeaseResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -26427,39 +26082,39 @@ func (r AcquirePublisherGroupLeaseResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AcquirePublisherGroupLeaseResponse) ContentType() string {
+func (r AcquireDeploymentPublisherLeaseResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type VerifyPublisherGroupIdentityResponse struct {
+type VerifyDeploymentIdentityResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupVerification
+	JSON200 *DeploymentPublisherVerification
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r VerifyPublisherGroupIdentityResponse) GetJSON200() *PublisherGroupVerification {
+func (r VerifyDeploymentIdentityResponse) GetJSON200() *DeploymentPublisherVerification {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r VerifyPublisherGroupIdentityResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r VerifyDeploymentIdentityResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r VerifyPublisherGroupIdentityResponse) GetBody() []byte {
+func (r VerifyDeploymentIdentityResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r VerifyPublisherGroupIdentityResponse) Status() string {
+func (r VerifyDeploymentIdentityResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -26467,7 +26122,7 @@ func (r VerifyPublisherGroupIdentityResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r VerifyPublisherGroupIdentityResponse) StatusCode() int {
+func (r VerifyDeploymentIdentityResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -26475,7 +26130,7 @@ func (r VerifyPublisherGroupIdentityResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r VerifyPublisherGroupIdentityResponse) ContentType() string {
+func (r VerifyDeploymentIdentityResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -29896,7 +29551,7 @@ func (c *ClientWithResponses) SetPreviewTeamAccessWithResponse(ctx context.Conte
 
 // ListProjectsWithResponse List applied projects
 //
-// List active applied projects the current team manager may manage, ordered by project_key. Retired projects are omitted but remain readable by key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
+// List active applied projects the current team manager may manage, ordered by project_key. Retired projects are omitted but remain readable by key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its deployments, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -29954,7 +29609,7 @@ func (c *ClientWithResponses) GetProjectConfigurationWithResponse(ctx context.Co
 	return ParseGetProjectConfigurationResponse(rsp)
 }
 
-// ApplyProjectConfigurationWithBodyWithResponse Apply a project's desired services and publisher groups
+// ApplyProjectConfigurationWithBodyWithResponse Apply a project's desired services and deployments
 //
 // Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 //
@@ -29969,7 +29624,7 @@ func (c *ClientWithResponses) ApplyProjectConfigurationWithBodyWithResponse(ctx 
 	return ParseApplyProjectConfigurationResponse(rsp)
 }
 
-// ApplyProjectConfigurationWithResponse Apply a project's desired services and publisher groups
+// ApplyProjectConfigurationWithResponse Apply a project's desired services and deployments
 //
 // Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 //
@@ -30119,9 +29774,39 @@ func (c *ClientWithResponses) UpdateDeploymentWithResponse(ctx context.Context, 
 	return ParseUpdateDeploymentResponse(rsp)
 }
 
+// RenameDeploymentNamespaceWithBodyWithResponse Replace a deployment's DNS namespace label
+//
+// Change the deployment's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/namespace/rename (the `RenameDeploymentNamespace` operationId).
+func (c *ClientWithResponses) RenameDeploymentNamespaceWithBodyWithResponse(ctx context.Context, projectKey string, deployment string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenameDeploymentNamespaceResponse, error) {
+	rsp, err := c.RenameDeploymentNamespaceWithBody(ctx, projectKey, deployment, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenameDeploymentNamespaceResponse(rsp)
+}
+
+// RenameDeploymentNamespaceWithResponse Replace a deployment's DNS namespace label
+//
+// Change the deployment's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/namespace/rename (the `RenameDeploymentNamespace` operationId).
+func (c *ClientWithResponses) RenameDeploymentNamespaceWithResponse(ctx context.Context, projectKey string, deployment string, body RenameDeploymentNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*RenameDeploymentNamespaceResponse, error) {
+	rsp, err := c.RenameDeploymentNamespace(ctx, projectKey, deployment, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenameDeploymentNamespaceResponse(rsp)
+}
+
 // CreateDeploymentPublisherEnrollmentWithBodyWithResponse Approve scoped publisher enrollment
 //
-// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing deployment-publisher enrollment exchange.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -30136,7 +29821,7 @@ func (c *ClientWithResponses) CreateDeploymentPublisherEnrollmentWithBodyWithRes
 
 // CreateDeploymentPublisherEnrollmentWithResponse Approve scoped publisher enrollment
 //
-// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing deployment-publisher enrollment exchange.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -30151,7 +29836,7 @@ func (c *ClientWithResponses) CreateDeploymentPublisherEnrollmentWithResponse(ct
 
 // ListDeploymentPublishersWithResponse List a deployment's publishers
 //
-// List authorized publishers in this deployment, including revoked identities and retained observations. A management credential sees only scoped publishers whose entire captured service/protocol approval it covers; filtering precedes pagination. Legacy whole-group publishers require a current manager. No enrollment secrets or targets are returned.
+// List authorized publishers in this deployment, including revoked identities and retained observations. A management credential sees only scoped publishers whose entire captured service/protocol approval it covers; filtering precedes pagination. Legacy whole-deployment publishers require a current manager. No enrollment secrets or targets are returned.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -30166,7 +29851,7 @@ func (c *ClientWithResponses) ListDeploymentPublishersWithResponse(ctx context.C
 
 // RevokeDeploymentPublisherWithResponse Revoke one deployment publisher
 //
-// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager. Repetition is safe; the last observation is retained. Siblings and shared enrollment capacity are unchanged. Apply and enrollment replay cannot restore the revoked identity.
+// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-deployment publishers require a manager. Repetition is safe; the last observation is retained. Siblings and shared enrollment capacity are unchanged. Apply and enrollment replay cannot restore the revoked identity.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -30181,7 +29866,7 @@ func (c *ClientWithResponses) RevokeDeploymentPublisherWithResponse(ctx context.
 
 // GetDeploymentPublisherWithResponse Read one deployment publisher
 //
-// Read one publisher's captured scope and observation with exact deployment ownership. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager.
+// Read one publisher's captured scope and observation with exact deployment ownership. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-deployment publishers require a manager.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -30192,6 +29877,36 @@ func (c *ClientWithResponses) GetDeploymentPublisherWithResponse(ctx context.Con
 		return nil, err
 	}
 	return ParseGetDeploymentPublisherResponse(rsp)
+}
+
+// RenameDeploymentWithBodyWithResponse Rename a deployment's configuration selector without changing endpoints
+//
+// Rename the configuration key without changing the deployment's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this deployment. Update project configuration before the next apply; retrying a completed rename is safe.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/rename (the `RenameDeployment` operationId).
+func (c *ClientWithResponses) RenameDeploymentWithBodyWithResponse(ctx context.Context, projectKey string, deployment string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenameDeploymentResponse, error) {
+	rsp, err := c.RenameDeploymentWithBody(ctx, projectKey, deployment, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenameDeploymentResponse(rsp)
+}
+
+// RenameDeploymentWithResponse Rename a deployment's configuration selector without changing endpoints
+//
+// Rename the configuration key without changing the deployment's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this deployment. Update project configuration before the next apply; retrying a completed rename is safe.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/rename (the `RenameDeployment` operationId).
+func (c *ClientWithResponses) RenameDeploymentWithResponse(ctx context.Context, projectKey string, deployment string, body RenameDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*RenameDeploymentResponse, error) {
+	rsp, err := c.RenameDeployment(ctx, projectKey, deployment, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenameDeploymentResponse(rsp)
 }
 
 // SelectDeploymentServiceRunWithBodyWithResponse Select an authorized deployment service run
@@ -30241,7 +29956,7 @@ func (c *ClientWithResponses) GetLocalProjectServiceWithResponse(ctx context.Con
 
 // RealizeLocalProjectServiceWithBodyWithResponse Realize one declared local service for a worktree
 //
-// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote publisher groups are unchanged.
+// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote deployments are unchanged.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -30256,7 +29971,7 @@ func (c *ClientWithResponses) RealizeLocalProjectServiceWithBodyWithResponse(ctx
 
 // RealizeLocalProjectServiceWithResponse Realize one declared local service for a worktree
 //
-// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote publisher groups are unchanged.
+// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote deployments are unchanged.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -30284,114 +29999,9 @@ func (c *ClientWithResponses) GetProjectPublicMetadataWithResponse(ctx context.C
 	return ParseGetProjectPublicMetadataResponse(rsp)
 }
 
-// CreatePublisherGroupEnrollmentWithBodyWithResponse Issue a bounded enrollment key for a project's publisher group
-//
-// Create an expiring bootstrap credential using current project management permission. Each enrolled replica supplies its own key; the enrollment's member limit bounds how many identities it can create.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId).
-func (c *ClientWithResponses) CreatePublisherGroupEnrollmentWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublisherGroupEnrollmentResponse, error) {
-	rsp, err := c.CreatePublisherGroupEnrollmentWithBody(ctx, projectKey, groupName, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreatePublisherGroupEnrollmentResponse(rsp)
-}
-
-// CreatePublisherGroupEnrollmentWithResponse Issue a bounded enrollment key for a project's publisher group
-//
-// Create an expiring bootstrap credential using current project management permission. Each enrolled replica supplies its own key; the enrollment's member limit bounds how many identities it can create.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId).
-func (c *ClientWithResponses) CreatePublisherGroupEnrollmentWithResponse(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherGroupEnrollmentResponse, error) {
-	rsp, err := c.CreatePublisherGroupEnrollment(ctx, projectKey, groupName, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreatePublisherGroupEnrollmentResponse(rsp)
-}
-
-// RevokePublisherGroupMemberWithResponse Revoke one enrolled publisher replica from a group
-//
-// Revoke the exact enrolled publisher identity using current project management permission. Control closes that member's public URL and service runs without revoking other group members.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId).
-func (c *ClientWithResponses) RevokePublisherGroupMemberWithResponse(ctx context.Context, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams, reqEditors ...RequestEditorFn) (*RevokePublisherGroupMemberResponse, error) {
-	rsp, err := c.RevokePublisherGroupMember(ctx, projectKey, groupName, publisherIdentityId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRevokePublisherGroupMemberResponse(rsp)
-}
-
-// RenamePublisherNamespaceWithBodyWithResponse Replace a publisher group's DNS namespace label
-//
-// Change the group's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId).
-func (c *ClientWithResponses) RenamePublisherNamespaceWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenamePublisherNamespaceResponse, error) {
-	rsp, err := c.RenamePublisherNamespaceWithBody(ctx, projectKey, groupName, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRenamePublisherNamespaceResponse(rsp)
-}
-
-// RenamePublisherNamespaceWithResponse Replace a publisher group's DNS namespace label
-//
-// Change the group's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId).
-func (c *ClientWithResponses) RenamePublisherNamespaceWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherNamespaceResponse, error) {
-	rsp, err := c.RenamePublisherNamespace(ctx, projectKey, groupName, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRenamePublisherNamespaceResponse(rsp)
-}
-
-// RenamePublisherGroupWithBodyWithResponse Rename a group's configuration selector without changing endpoints
-//
-// Rename the configuration key without changing the group's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this group. Update project configuration before the next apply; retrying a completed rename is safe.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
-func (c *ClientWithResponses) RenamePublisherGroupWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error) {
-	rsp, err := c.RenamePublisherGroupWithBody(ctx, projectKey, groupName, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRenamePublisherGroupResponse(rsp)
-}
-
-// RenamePublisherGroupWithResponse Rename a group's configuration selector without changing endpoints
-//
-// Rename the configuration key without changing the group's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this group. Update project configuration before the next apply; retrying a completed rename is safe.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
-func (c *ClientWithResponses) RenamePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error) {
-	rsp, err := c.RenamePublisherGroup(ctx, projectKey, groupName, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRenamePublisherGroupResponse(rsp)
-}
-
 // RetireProjectWithBodyWithResponse Retire an applied project and its configuration-owned resources
 //
-// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
+// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire deployments, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -30406,7 +30016,7 @@ func (c *ClientWithResponses) RetireProjectWithBodyWithResponse(ctx context.Cont
 
 // RetireProjectWithResponse Retire an applied project and its configuration-owned resources
 //
-// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
+// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire deployments, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -30434,7 +30044,7 @@ func (c *ClientWithResponses) GetProjectServiceWithResponse(ctx context.Context,
 	return ParseGetProjectServiceResponse(rsp)
 }
 
-// GetProjectStatusWithResponse Inspect project publications across worktrees and publisher groups
+// GetProjectStatusWithResponse Inspect project publications across worktrees and deployments
 //
 // Read a manager-only snapshot of declared services, realized worktree resources, and open publications. Each publication appears separately; an idle resource or unrealized declaration appears once. Follow next_cursor with the same project, team, and identity. Readiness describes control's current lease, certificate, and relay observations, not a fresh visitor probe. Targets, credentials, and checkout paths are omitted.
 //
@@ -31364,139 +30974,139 @@ func (c *ClientWithResponses) RevokePublisherGrantWithResponse(ctx context.Conte
 	return ParseRevokePublisherGrantResponse(rsp)
 }
 
-// GetPublisherGroupAssignmentsWithResponse Read services and grants assigned to one leased group replica
+// GetDeploymentPublisherAssignmentsWithResponse Read services and grants assigned to one leased deployment replica
 //
-// Read the replica's assigned services and publisher grants using its current pgl_ lease. Assignments can include targets. A pta_ publisher token cannot read them.
+// Read the replica's assigned services and publisher grants using its current dpl_lease_ lease. Assignments can include targets. A pta_ publisher token cannot read them.
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/publisher/groups/assignments (the `GetPublisherGroupAssignments` operationId).
-func (c *ClientWithResponses) GetPublisherGroupAssignmentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublisherGroupAssignmentsResponse, error) {
-	rsp, err := c.GetPublisherGroupAssignments(ctx, reqEditors...)
+// Corresponds with GET /v1/publisher/deployments/assignments (the `GetDeploymentPublisherAssignments` operationId).
+func (c *ClientWithResponses) GetDeploymentPublisherAssignmentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetDeploymentPublisherAssignmentsResponse, error) {
+	rsp, err := c.GetDeploymentPublisherAssignments(ctx, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseGetPublisherGroupAssignmentsResponse(rsp)
+	return ParseGetDeploymentPublisherAssignmentsResponse(rsp)
 }
 
-// AcknowledgePublisherGroupConfigurationWithBodyWithResponse Acknowledge the exact configuration installed by a group replica
+// AcknowledgeDeploymentPublisherConfigurationWithBodyWithResponse Acknowledge the exact configuration installed by a deployment replica
 //
-// Report the installed configuration revision, hash, and health using the replica's current pgl_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
+// Report the installed configuration revision, hash, and health using the replica's current dpl_lease_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publisher/groups/configuration-acknowledgements (the `AcknowledgePublisherGroupConfiguration` operationId).
-func (c *ClientWithResponses) AcknowledgePublisherGroupConfigurationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error) {
-	rsp, err := c.AcknowledgePublisherGroupConfigurationWithBody(ctx, contentType, body, reqEditors...)
+// Corresponds with POST /v1/publisher/deployments/configuration-acknowledgements (the `AcknowledgeDeploymentPublisherConfiguration` operationId).
+func (c *ClientWithResponses) AcknowledgeDeploymentPublisherConfigurationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgeDeploymentPublisherConfigurationResponse, error) {
+	rsp, err := c.AcknowledgeDeploymentPublisherConfigurationWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseAcknowledgePublisherGroupConfigurationResponse(rsp)
+	return ParseAcknowledgeDeploymentPublisherConfigurationResponse(rsp)
 }
 
-// AcknowledgePublisherGroupConfigurationWithResponse Acknowledge the exact configuration installed by a group replica
+// AcknowledgeDeploymentPublisherConfigurationWithResponse Acknowledge the exact configuration installed by a deployment replica
 //
-// Report the installed configuration revision, hash, and health using the replica's current pgl_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
+// Report the installed configuration revision, hash, and health using the replica's current dpl_lease_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publisher/groups/configuration-acknowledgements (the `AcknowledgePublisherGroupConfiguration` operationId).
-func (c *ClientWithResponses) AcknowledgePublisherGroupConfigurationWithResponse(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error) {
-	rsp, err := c.AcknowledgePublisherGroupConfiguration(ctx, body, reqEditors...)
+// Corresponds with POST /v1/publisher/deployments/configuration-acknowledgements (the `AcknowledgeDeploymentPublisherConfiguration` operationId).
+func (c *ClientWithResponses) AcknowledgeDeploymentPublisherConfigurationWithResponse(ctx context.Context, body AcknowledgeDeploymentPublisherConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgeDeploymentPublisherConfigurationResponse, error) {
+	rsp, err := c.AcknowledgeDeploymentPublisherConfiguration(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseAcknowledgePublisherGroupConfigurationResponse(rsp)
+	return ParseAcknowledgeDeploymentPublisherConfigurationResponse(rsp)
 }
 
-// RedeemPublisherGroupEnrollmentWithBodyWithResponse Enroll a replica's signing key with a group enrollment secret
+// RedeemDeploymentPublisherEnrollmentWithBodyWithResponse Enroll a replica's signing key with a deployment enrollment secret
 //
 // Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publisher/groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
-func (c *ClientWithResponses) RedeemPublisherGroupEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error) {
-	rsp, err := c.RedeemPublisherGroupEnrollmentWithBody(ctx, contentType, body, reqEditors...)
+// Corresponds with POST /v1/publisher/deployments/enroll (the `RedeemDeploymentPublisherEnrollment` operationId).
+func (c *ClientWithResponses) RedeemDeploymentPublisherEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemDeploymentPublisherEnrollmentResponse, error) {
+	rsp, err := c.RedeemDeploymentPublisherEnrollmentWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseRedeemPublisherGroupEnrollmentResponse(rsp)
+	return ParseRedeemDeploymentPublisherEnrollmentResponse(rsp)
 }
 
-// RedeemPublisherGroupEnrollmentWithResponse Enroll a replica's signing key with a group enrollment secret
+// RedeemDeploymentPublisherEnrollmentWithResponse Enroll a replica's signing key with a deployment enrollment secret
 //
 // Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publisher/groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
-func (c *ClientWithResponses) RedeemPublisherGroupEnrollmentWithResponse(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error) {
-	rsp, err := c.RedeemPublisherGroupEnrollment(ctx, body, reqEditors...)
+// Corresponds with POST /v1/publisher/deployments/enroll (the `RedeemDeploymentPublisherEnrollment` operationId).
+func (c *ClientWithResponses) RedeemDeploymentPublisherEnrollmentWithResponse(ctx context.Context, body RedeemDeploymentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemDeploymentPublisherEnrollmentResponse, error) {
+	rsp, err := c.RedeemDeploymentPublisherEnrollment(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseRedeemPublisherGroupEnrollmentResponse(rsp)
+	return ParseRedeemDeploymentPublisherEnrollmentResponse(rsp)
 }
 
-// AcquirePublisherGroupLeaseWithBodyWithResponse Exchange a signed replica assertion for a group lease
+// AcquireDeploymentPublisherLeaseWithBodyWithResponse Exchange a signed replica assertion for a deployment lease
 //
-// Exchange a one-use signed assertion in the body for a pgl_ group lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the group ID.
+// Exchange a one-use signed assertion in the body for a dpl_lease_ deployment lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the deployment ID.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publisher/groups/lease (the `AcquirePublisherGroupLease` operationId).
-func (c *ClientWithResponses) AcquirePublisherGroupLeaseWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error) {
-	rsp, err := c.AcquirePublisherGroupLeaseWithBody(ctx, contentType, body, reqEditors...)
+// Corresponds with POST /v1/publisher/deployments/lease (the `AcquireDeploymentPublisherLease` operationId).
+func (c *ClientWithResponses) AcquireDeploymentPublisherLeaseWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcquireDeploymentPublisherLeaseResponse, error) {
+	rsp, err := c.AcquireDeploymentPublisherLeaseWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseAcquirePublisherGroupLeaseResponse(rsp)
+	return ParseAcquireDeploymentPublisherLeaseResponse(rsp)
 }
 
-// AcquirePublisherGroupLeaseWithResponse Exchange a signed replica assertion for a group lease
+// AcquireDeploymentPublisherLeaseWithResponse Exchange a signed replica assertion for a deployment lease
 //
-// Exchange a one-use signed assertion in the body for a pgl_ group lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the group ID.
+// Exchange a one-use signed assertion in the body for a dpl_lease_ deployment lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the deployment ID.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publisher/groups/lease (the `AcquirePublisherGroupLease` operationId).
-func (c *ClientWithResponses) AcquirePublisherGroupLeaseWithResponse(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error) {
-	rsp, err := c.AcquirePublisherGroupLease(ctx, body, reqEditors...)
+// Corresponds with POST /v1/publisher/deployments/lease (the `AcquireDeploymentPublisherLease` operationId).
+func (c *ClientWithResponses) AcquireDeploymentPublisherLeaseWithResponse(ctx context.Context, body AcquireDeploymentPublisherLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*AcquireDeploymentPublisherLeaseResponse, error) {
+	rsp, err := c.AcquireDeploymentPublisherLease(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseAcquirePublisherGroupLeaseResponse(rsp)
+	return ParseAcquireDeploymentPublisherLeaseResponse(rsp)
 }
 
-// VerifyPublisherGroupIdentityWithBodyWithResponse Verify a replica's group membership without acquiring a lease
+// VerifyDeploymentIdentityWithBodyWithResponse Verify a replica's deployment membership without acquiring a lease
 //
-// Verify group membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's group lease.
+// Verify deployment membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's deployment lease.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publisher/groups/verify (the `VerifyPublisherGroupIdentity` operationId).
-func (c *ClientWithResponses) VerifyPublisherGroupIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error) {
-	rsp, err := c.VerifyPublisherGroupIdentityWithBody(ctx, contentType, body, reqEditors...)
+// Corresponds with POST /v1/publisher/deployments/verify (the `VerifyDeploymentIdentity` operationId).
+func (c *ClientWithResponses) VerifyDeploymentIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyDeploymentIdentityResponse, error) {
+	rsp, err := c.VerifyDeploymentIdentityWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseVerifyPublisherGroupIdentityResponse(rsp)
+	return ParseVerifyDeploymentIdentityResponse(rsp)
 }
 
-// VerifyPublisherGroupIdentityWithResponse Verify a replica's group membership without acquiring a lease
+// VerifyDeploymentIdentityWithResponse Verify a replica's deployment membership without acquiring a lease
 //
-// Verify group membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's group lease.
+// Verify deployment membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's deployment lease.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publisher/groups/verify (the `VerifyPublisherGroupIdentity` operationId).
-func (c *ClientWithResponses) VerifyPublisherGroupIdentityWithResponse(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error) {
-	rsp, err := c.VerifyPublisherGroupIdentity(ctx, body, reqEditors...)
+// Corresponds with POST /v1/publisher/deployments/verify (the `VerifyDeploymentIdentity` operationId).
+func (c *ClientWithResponses) VerifyDeploymentIdentityWithResponse(ctx context.Context, body VerifyDeploymentIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyDeploymentIdentityResponse, error) {
+	rsp, err := c.VerifyDeploymentIdentity(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseVerifyPublisherGroupIdentityResponse(rsp)
+	return ParseVerifyDeploymentIdentityResponse(rsp)
 }
 
 // GetPublisherPublicURLWithResponse Read the saved URL selected by the current grant
@@ -31591,7 +31201,7 @@ func (c *ClientWithResponses) InspectPublisherRuntimeWithResponse(ctx context.Co
 
 // RenewPublisherRuntimeWithBodyWithResponse Renew a publisher runtime
 //
-// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease.
+// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Deployment runtimes also receive a deployment lease.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -31606,7 +31216,7 @@ func (c *ClientWithResponses) RenewPublisherRuntimeWithBodyWithResponse(ctx cont
 
 // RenewPublisherRuntimeWithResponse Renew a publisher runtime
 //
-// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease.
+// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Deployment runtimes also receive a deployment lease.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -31621,7 +31231,7 @@ func (c *ClientWithResponses) RenewPublisherRuntimeWithResponse(ctx context.Cont
 
 // StartPublisherRuntimeWithBodyWithResponse Start a publisher runtime
 //
-// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease.
+// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Deployment runtimes also receive a deployment lease.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -31636,7 +31246,7 @@ func (c *ClientWithResponses) StartPublisherRuntimeWithBodyWithResponse(ctx cont
 
 // StartPublisherRuntimeWithResponse Start a publisher runtime
 //
-// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease.
+// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Deployment runtimes also receive a deployment lease.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -34185,6 +33795,39 @@ func ParseUpdateDeploymentResponse(rsp *http.Response) (*UpdateDeploymentRespons
 	return response, nil
 }
 
+// ParseRenameDeploymentNamespaceResponse parses an HTTP response from a RenameDeploymentNamespaceWithResponse call
+func ParseRenameDeploymentNamespaceResponse(rsp *http.Response) (*RenameDeploymentNamespaceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RenameDeploymentNamespaceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AppliedProjectConfiguration
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseCreateDeploymentPublisherEnrollmentResponse parses an HTTP response from a CreateDeploymentPublisherEnrollmentWithResponse call
 func ParseCreateDeploymentPublisherEnrollmentResponse(rsp *http.Response) (*CreateDeploymentPublisherEnrollmentResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -34296,6 +33939,39 @@ func ParseGetDeploymentPublisherResponse(rsp *http.Response) (*GetDeploymentPubl
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest DeploymentPublisher
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRenameDeploymentResponse parses an HTTP response from a RenameDeploymentWithResponse call
+func ParseRenameDeploymentResponse(rsp *http.Response) (*RenameDeploymentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RenameDeploymentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AppliedProjectConfiguration
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -34428,134 +34104,6 @@ func ParseGetProjectPublicMetadataResponse(rsp *http.Response) (*GetProjectPubli
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ProjectPublicMetadata
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreatePublisherGroupEnrollmentResponse parses an HTTP response from a CreatePublisherGroupEnrollmentWithResponse call
-func ParseCreatePublisherGroupEnrollmentResponse(rsp *http.Response) (*CreatePublisherGroupEnrollmentResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreatePublisherGroupEnrollmentResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest PublisherGroupEnrollment
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRevokePublisherGroupMemberResponse parses an HTTP response from a RevokePublisherGroupMemberWithResponse call
-func ParseRevokePublisherGroupMemberResponse(rsp *http.Response) (*RevokePublisherGroupMemberResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RevokePublisherGroupMemberResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRenamePublisherNamespaceResponse parses an HTTP response from a RenamePublisherNamespaceWithResponse call
-func ParseRenamePublisherNamespaceResponse(rsp *http.Response) (*RenamePublisherNamespaceResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RenamePublisherNamespaceResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AppliedProjectConfiguration
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRenamePublisherGroupResponse parses an HTTP response from a RenamePublisherGroupWithResponse call
-func ParseRenamePublisherGroupResponse(rsp *http.Response) (*RenamePublisherGroupResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RenamePublisherGroupResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AppliedProjectConfiguration
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -35835,22 +35383,22 @@ func ParseRevokePublisherGrantResponse(rsp *http.Response) (*RevokePublisherGran
 	return response, nil
 }
 
-// ParseGetPublisherGroupAssignmentsResponse parses an HTTP response from a GetPublisherGroupAssignmentsWithResponse call
-func ParseGetPublisherGroupAssignmentsResponse(rsp *http.Response) (*GetPublisherGroupAssignmentsResponse, error) {
+// ParseGetDeploymentPublisherAssignmentsResponse parses an HTTP response from a GetDeploymentPublisherAssignmentsWithResponse call
+func ParseGetDeploymentPublisherAssignmentsResponse(rsp *http.Response) (*GetDeploymentPublisherAssignmentsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetPublisherGroupAssignmentsResponse{
+	response := &GetDeploymentPublisherAssignmentsResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupAssignments
+		var dest DeploymentPublisherAssignments
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -35868,15 +35416,15 @@ func ParseGetPublisherGroupAssignmentsResponse(rsp *http.Response) (*GetPublishe
 	return response, nil
 }
 
-// ParseAcknowledgePublisherGroupConfigurationResponse parses an HTTP response from a AcknowledgePublisherGroupConfigurationWithResponse call
-func ParseAcknowledgePublisherGroupConfigurationResponse(rsp *http.Response) (*AcknowledgePublisherGroupConfigurationResponse, error) {
+// ParseAcknowledgeDeploymentPublisherConfigurationResponse parses an HTTP response from a AcknowledgeDeploymentPublisherConfigurationWithResponse call
+func ParseAcknowledgeDeploymentPublisherConfigurationResponse(rsp *http.Response) (*AcknowledgeDeploymentPublisherConfigurationResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &AcknowledgePublisherGroupConfigurationResponse{
+	response := &AcknowledgeDeploymentPublisherConfigurationResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -35897,22 +35445,22 @@ func ParseAcknowledgePublisherGroupConfigurationResponse(rsp *http.Response) (*A
 	return response, nil
 }
 
-// ParseRedeemPublisherGroupEnrollmentResponse parses an HTTP response from a RedeemPublisherGroupEnrollmentWithResponse call
-func ParseRedeemPublisherGroupEnrollmentResponse(rsp *http.Response) (*RedeemPublisherGroupEnrollmentResponse, error) {
+// ParseRedeemDeploymentPublisherEnrollmentResponse parses an HTTP response from a RedeemDeploymentPublisherEnrollmentWithResponse call
+func ParseRedeemDeploymentPublisherEnrollmentResponse(rsp *http.Response) (*RedeemDeploymentPublisherEnrollmentResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &RedeemPublisherGroupEnrollmentResponse{
+	response := &RedeemDeploymentPublisherEnrollmentResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupMember
+		var dest DeploymentPublisherIdentity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -35930,22 +35478,22 @@ func ParseRedeemPublisherGroupEnrollmentResponse(rsp *http.Response) (*RedeemPub
 	return response, nil
 }
 
-// ParseAcquirePublisherGroupLeaseResponse parses an HTTP response from a AcquirePublisherGroupLeaseWithResponse call
-func ParseAcquirePublisherGroupLeaseResponse(rsp *http.Response) (*AcquirePublisherGroupLeaseResponse, error) {
+// ParseAcquireDeploymentPublisherLeaseResponse parses an HTTP response from a AcquireDeploymentPublisherLeaseWithResponse call
+func ParseAcquireDeploymentPublisherLeaseResponse(rsp *http.Response) (*AcquireDeploymentPublisherLeaseResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &AcquirePublisherGroupLeaseResponse{
+	response := &AcquireDeploymentPublisherLeaseResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupLease
+		var dest DeploymentPublisherLease
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -35963,22 +35511,22 @@ func ParseAcquirePublisherGroupLeaseResponse(rsp *http.Response) (*AcquirePublis
 	return response, nil
 }
 
-// ParseVerifyPublisherGroupIdentityResponse parses an HTTP response from a VerifyPublisherGroupIdentityWithResponse call
-func ParseVerifyPublisherGroupIdentityResponse(rsp *http.Response) (*VerifyPublisherGroupIdentityResponse, error) {
+// ParseVerifyDeploymentIdentityResponse parses an HTTP response from a VerifyDeploymentIdentityWithResponse call
+func ParseVerifyDeploymentIdentityResponse(rsp *http.Response) (*VerifyDeploymentIdentityResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &VerifyPublisherGroupIdentityResponse{
+	response := &VerifyDeploymentIdentityResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupVerification
+		var dest DeploymentPublisherVerification
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -38105,7 +37653,7 @@ type ServerInterface interface {
 	// GetProjectConfiguration Read a project's applied configuration and publisher status
 	// (GET /v1/projects/{project_key}/configuration)
 	GetProjectConfiguration(w http.ResponseWriter, r *http.Request, projectKey string, params GetProjectConfigurationParams)
-	// ApplyProjectConfiguration Apply a project's desired services and publisher groups
+	// ApplyProjectConfiguration Apply a project's desired services and deployments
 	// (PUT /v1/projects/{project_key}/configuration)
 	ApplyProjectConfiguration(w http.ResponseWriter, r *http.Request, projectKey string)
 	// RegisterDeploymentCredential Register scoped deployment permissions
@@ -38126,6 +37674,9 @@ type ServerInterface interface {
 	// UpdateDeployment Update selected deployment targets
 	// (PATCH /v1/projects/{project_key}/deployments/{deployment})
 	UpdateDeployment(w http.ResponseWriter, r *http.Request, projectKey string, deployment string, params UpdateDeploymentParams)
+	// RenameDeploymentNamespace Replace a deployment's DNS namespace label
+	// (POST /v1/projects/{project_key}/deployments/{deployment}/namespace/rename)
+	RenameDeploymentNamespace(w http.ResponseWriter, r *http.Request, projectKey string, deployment string)
 	// CreateDeploymentPublisherEnrollment Approve scoped publisher enrollment
 	// (POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments)
 	CreateDeploymentPublisherEnrollment(w http.ResponseWriter, r *http.Request, projectKey string, deployment string, params CreateDeploymentPublisherEnrollmentParams)
@@ -38138,6 +37689,9 @@ type ServerInterface interface {
 	// GetDeploymentPublisher Read one deployment publisher
 	// (GET /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher})
 	GetDeploymentPublisher(w http.ResponseWriter, r *http.Request, projectKey string, deployment string, publisher string, params GetDeploymentPublisherParams)
+	// RenameDeployment Rename a deployment's configuration selector without changing endpoints
+	// (POST /v1/projects/{project_key}/deployments/{deployment}/rename)
+	RenameDeployment(w http.ResponseWriter, r *http.Request, projectKey string, deployment string)
 	// SelectDeploymentServiceRun Select an authorized deployment service run
 	// (POST /v1/projects/{project_key}/deployments/{deployment}/services/{service}/select)
 	SelectDeploymentServiceRun(w http.ResponseWriter, r *http.Request, projectKey string, deployment string, service string, params SelectDeploymentServiceRunParams)
@@ -38150,25 +37704,13 @@ type ServerInterface interface {
 	// GetProjectPublicMetadata Read visitor-safe project service identities and hostnames
 	// (GET /v1/projects/{project_key}/public-metadata)
 	GetProjectPublicMetadata(w http.ResponseWriter, r *http.Request, projectKey string, params GetProjectPublicMetadataParams)
-	// CreatePublisherGroupEnrollment Issue a bounded enrollment key for a project's publisher group
-	// (POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments)
-	CreatePublisherGroupEnrollment(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
-	// RevokePublisherGroupMember Revoke one enrolled publisher replica from a group
-	// (DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id})
-	RevokePublisherGroupMember(w http.ResponseWriter, r *http.Request, projectKey string, groupName string, publisherIdentityId string, params RevokePublisherGroupMemberParams)
-	// RenamePublisherNamespace Replace a publisher group's DNS namespace label
-	// (POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename)
-	RenamePublisherNamespace(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
-	// RenamePublisherGroup Rename a group's configuration selector without changing endpoints
-	// (POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename)
-	RenamePublisherGroup(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
 	// RetireProject Retire an applied project and its configuration-owned resources
 	// (POST /v1/projects/{project_key}/retire)
 	RetireProject(w http.ResponseWriter, r *http.Request, projectKey string)
 	// GetProjectService Resolve an applied service by project source and key
 	// (GET /v1/projects/{project_key}/services/{service})
 	GetProjectService(w http.ResponseWriter, r *http.Request, projectKey string, service ServiceName, params GetProjectServiceParams)
-	// GetProjectStatus Inspect project publications across worktrees and publisher groups
+	// GetProjectStatus Inspect project publications across worktrees and deployments
 	// (GET /v1/projects/{project_key}/status)
 	GetProjectStatus(w http.ResponseWriter, r *http.Request, projectKey string, params GetProjectStatusParams)
 	// ListPublicURLs List public URLs for one team
@@ -38279,21 +37821,21 @@ type ServerInterface interface {
 	// RevokePublisherGrant Revoke one publisher grant without revoking the identity
 	// (DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id})
 	RevokePublisherGrant(w http.ResponseWriter, r *http.Request, publisherIdentityId PublisherIdentityID, grantId ResourceID, params RevokePublisherGrantParams)
-	// GetPublisherGroupAssignments Read services and grants assigned to one leased group replica
-	// (GET /v1/publisher/groups/assignments)
-	GetPublisherGroupAssignments(w http.ResponseWriter, r *http.Request)
-	// AcknowledgePublisherGroupConfiguration Acknowledge the exact configuration installed by a group replica
-	// (POST /v1/publisher/groups/configuration-acknowledgements)
-	AcknowledgePublisherGroupConfiguration(w http.ResponseWriter, r *http.Request)
-	// RedeemPublisherGroupEnrollment Enroll a replica's signing key with a group enrollment secret
-	// (POST /v1/publisher/groups/enroll)
-	RedeemPublisherGroupEnrollment(w http.ResponseWriter, r *http.Request)
-	// AcquirePublisherGroupLease Exchange a signed replica assertion for a group lease
-	// (POST /v1/publisher/groups/lease)
-	AcquirePublisherGroupLease(w http.ResponseWriter, r *http.Request)
-	// VerifyPublisherGroupIdentity Verify a replica's group membership without acquiring a lease
-	// (POST /v1/publisher/groups/verify)
-	VerifyPublisherGroupIdentity(w http.ResponseWriter, r *http.Request)
+	// GetDeploymentPublisherAssignments Read services and grants assigned to one leased deployment replica
+	// (GET /v1/publisher/deployments/assignments)
+	GetDeploymentPublisherAssignments(w http.ResponseWriter, r *http.Request)
+	// AcknowledgeDeploymentPublisherConfiguration Acknowledge the exact configuration installed by a deployment replica
+	// (POST /v1/publisher/deployments/configuration-acknowledgements)
+	AcknowledgeDeploymentPublisherConfiguration(w http.ResponseWriter, r *http.Request)
+	// RedeemDeploymentPublisherEnrollment Enroll a replica's signing key with a deployment enrollment secret
+	// (POST /v1/publisher/deployments/enroll)
+	RedeemDeploymentPublisherEnrollment(w http.ResponseWriter, r *http.Request)
+	// AcquireDeploymentPublisherLease Exchange a signed replica assertion for a deployment lease
+	// (POST /v1/publisher/deployments/lease)
+	AcquireDeploymentPublisherLease(w http.ResponseWriter, r *http.Request)
+	// VerifyDeploymentIdentity Verify a replica's deployment membership without acquiring a lease
+	// (POST /v1/publisher/deployments/verify)
+	VerifyDeploymentIdentity(w http.ResponseWriter, r *http.Request)
 	// GetPublisherPublicURL Read the saved URL selected by the current grant
 	// (GET /v1/publisher/public-url)
 	GetPublisherPublicURL(w http.ResponseWriter, r *http.Request)
@@ -39905,6 +39447,41 @@ func (siw *ServerInterfaceWrapper) UpdateDeployment(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// RenameDeploymentNamespace operation middleware
+func (siw *ServerInterfaceWrapper) RenameDeploymentNamespace(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "deployment" -------------
+	var deployment string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "deployment", r.PathValue("deployment"), &deployment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deployment", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenameDeploymentNamespace(w, r, projectKey, deployment)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreateDeploymentPublisherEnrollment operation middleware
 func (siw *ServerInterfaceWrapper) CreateDeploymentPublisherEnrollment(w http.ResponseWriter, r *http.Request) {
 
@@ -40178,6 +39755,41 @@ func (siw *ServerInterfaceWrapper) GetDeploymentPublisher(w http.ResponseWriter,
 	handler.ServeHTTP(w, r)
 }
 
+// RenameDeployment operation middleware
+func (siw *ServerInterfaceWrapper) RenameDeployment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "deployment" -------------
+	var deployment string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "deployment", r.PathValue("deployment"), &deployment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deployment", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenameDeployment(w, r, projectKey, deployment)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SelectDeploymentServiceRun operation middleware
 func (siw *ServerInterfaceWrapper) SelectDeploymentServiceRun(w http.ResponseWriter, r *http.Request) {
 
@@ -40383,171 +39995,6 @@ func (siw *ServerInterfaceWrapper) GetProjectPublicMetadata(w http.ResponseWrite
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetProjectPublicMetadata(w, r, projectKey, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreatePublisherGroupEnrollment operation middleware
-func (siw *ServerInterfaceWrapper) CreatePublisherGroupEnrollment(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "group_name" -------------
-	var groupName string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreatePublisherGroupEnrollment(w, r, projectKey, groupName)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RevokePublisherGroupMember operation middleware
-func (siw *ServerInterfaceWrapper) RevokePublisherGroupMember(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "group_name" -------------
-	var groupName string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "publisher_identity_id" -------------
-	var publisherIdentityId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publisher_identity_id", r.PathValue("publisher_identity_id"), &publisherIdentityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_identity_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params RevokePublisherGroupMemberParams
-
-	// ------------- Required query parameter "team_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RevokePublisherGroupMember(w, r, projectKey, groupName, publisherIdentityId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RenamePublisherNamespace operation middleware
-func (siw *ServerInterfaceWrapper) RenamePublisherNamespace(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "group_name" -------------
-	var groupName string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RenamePublisherNamespace(w, r, projectKey, groupName)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RenamePublisherGroup operation middleware
-func (siw *ServerInterfaceWrapper) RenamePublisherGroup(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "group_name" -------------
-	var groupName string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RenamePublisherGroup(w, r, projectKey, groupName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -42016,11 +41463,11 @@ func (siw *ServerInterfaceWrapper) RevokePublisherGrant(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
-// GetPublisherGroupAssignments operation middleware
-func (siw *ServerInterfaceWrapper) GetPublisherGroupAssignments(w http.ResponseWriter, r *http.Request) {
+// GetDeploymentPublisherAssignments operation middleware
+func (siw *ServerInterfaceWrapper) GetDeploymentPublisherAssignments(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetPublisherGroupAssignments(w, r)
+		siw.Handler.GetDeploymentPublisherAssignments(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -42030,11 +41477,11 @@ func (siw *ServerInterfaceWrapper) GetPublisherGroupAssignments(w http.ResponseW
 	handler.ServeHTTP(w, r)
 }
 
-// AcknowledgePublisherGroupConfiguration operation middleware
-func (siw *ServerInterfaceWrapper) AcknowledgePublisherGroupConfiguration(w http.ResponseWriter, r *http.Request) {
+// AcknowledgeDeploymentPublisherConfiguration operation middleware
+func (siw *ServerInterfaceWrapper) AcknowledgeDeploymentPublisherConfiguration(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AcknowledgePublisherGroupConfiguration(w, r)
+		siw.Handler.AcknowledgeDeploymentPublisherConfiguration(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -42044,11 +41491,11 @@ func (siw *ServerInterfaceWrapper) AcknowledgePublisherGroupConfiguration(w http
 	handler.ServeHTTP(w, r)
 }
 
-// RedeemPublisherGroupEnrollment operation middleware
-func (siw *ServerInterfaceWrapper) RedeemPublisherGroupEnrollment(w http.ResponseWriter, r *http.Request) {
+// RedeemDeploymentPublisherEnrollment operation middleware
+func (siw *ServerInterfaceWrapper) RedeemDeploymentPublisherEnrollment(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RedeemPublisherGroupEnrollment(w, r)
+		siw.Handler.RedeemDeploymentPublisherEnrollment(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -42058,11 +41505,11 @@ func (siw *ServerInterfaceWrapper) RedeemPublisherGroupEnrollment(w http.Respons
 	handler.ServeHTTP(w, r)
 }
 
-// AcquirePublisherGroupLease operation middleware
-func (siw *ServerInterfaceWrapper) AcquirePublisherGroupLease(w http.ResponseWriter, r *http.Request) {
+// AcquireDeploymentPublisherLease operation middleware
+func (siw *ServerInterfaceWrapper) AcquireDeploymentPublisherLease(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AcquirePublisherGroupLease(w, r)
+		siw.Handler.AcquireDeploymentPublisherLease(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -42072,11 +41519,11 @@ func (siw *ServerInterfaceWrapper) AcquirePublisherGroupLease(w http.ResponseWri
 	handler.ServeHTTP(w, r)
 }
 
-// VerifyPublisherGroupIdentity operation middleware
-func (siw *ServerInterfaceWrapper) VerifyPublisherGroupIdentity(w http.ResponseWriter, r *http.Request) {
+// VerifyDeploymentIdentity operation middleware
+func (siw *ServerInterfaceWrapper) VerifyDeploymentIdentity(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.VerifyPublisherGroupIdentity(w, r)
+		siw.Handler.VerifyDeploymentIdentity(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -44241,24 +43688,22 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-issuances", wrapper.CreateServiceCertificateIssuance)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id}", wrapper.GetServiceCertificateIssuance)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-installed", wrapper.MarkServiceCertificateInstalled)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename", wrapper.RenamePublisherNamespace)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/rename", wrapper.RenamePublisherGroup)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}/namespace/rename", wrapper.RenameDeploymentNamespace)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}/rename", wrapper.RenameDeployment)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/public-metadata", wrapper.GetProjectPublicMetadata)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/local-services/{service}", wrapper.GetLocalProjectService)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/projects/{project_key}/local-services/{service}", wrapper.RealizeLocalProjectService)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id}", wrapper.RevokePublisherGroupMember)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/configuration", wrapper.GetProjectConfiguration)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/projects/{project_key}/configuration", wrapper.ApplyProjectConfiguration)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/enrollments", wrapper.CreatePublisherGroupEnrollment)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/groups/enroll", wrapper.RedeemPublisherGroupEnrollment)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/groups/verify", wrapper.VerifyPublisherGroupIdentity)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/deployments/enroll", wrapper.RedeemDeploymentPublisherEnrollment)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/deployments/verify", wrapper.VerifyDeploymentIdentity)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/runtimes/{publisher_identity_id}/inspect", wrapper.InspectPublisherRuntime)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/runtimes/{publisher_identity_id}/start", wrapper.StartPublisherRuntime)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/runtimes/{publisher_identity_id}/renew", wrapper.RenewPublisherRuntime)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/runtimes/{publisher_identity_id}/stop", wrapper.StopPublisherRuntime)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/groups/lease", wrapper.AcquirePublisherGroupLease)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publisher/groups/assignments", wrapper.GetPublisherGroupAssignments)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/groups/configuration-acknowledgements", wrapper.AcknowledgePublisherGroupConfiguration)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/deployments/lease", wrapper.AcquireDeploymentPublisherLease)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publisher/deployments/assignments", wrapper.GetDeploymentPublisherAssignments)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/deployments/configuration-acknowledgements", wrapper.AcknowledgeDeploymentPublisherConfiguration)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/teams/{team_id}/service-audit", wrapper.ListServiceAudit)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{run_id}/service-observations", wrapper.ReportPublishRunServiceObservations)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/service-observations", wrapper.ReportServiceRunObservations)

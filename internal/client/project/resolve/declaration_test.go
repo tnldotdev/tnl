@@ -17,10 +17,10 @@ func appliedTestContext() team.Context {
 }
 
 func TestRemoteHTTPSettingsInheritDefaultsWithoutCreatingPublicURL(t *testing.T) {
-	group, address := "production", config.Target("http://app.internal:3000")
+	deployment, address := "production", config.Target("http://app.internal:3000")
 	total, concurrency := 100, 2
 	project := clientproject.Project{Config: config.TNL{
-		Deployment: group,
+		Deployment: deployment,
 		Tunnel:     &config.Tunnel{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.1"}}, Limits: &config.Limits{HTTP: &config.WorkLimits{Total: &total}}},
 		Services:   config.Services{"api": {Target: &config.ServiceTarget{Type: "address", Address: &address}, HTTP: &config.HTTPService{Limits: &config.WorkLimits{Concurrency: &concurrency}}}},
 	}}
@@ -39,7 +39,7 @@ func TestRemoteHTTPSettingsInheritDefaultsWithoutCreatingPublicURL(t *testing.T)
 }
 
 func TestProjectDeclarationUsesPublicURLPresenceAndPreservesPolicyLimitsAndGrantIntent(t *testing.T) {
-	group := "cloud"
+	deployment := "cloud"
 	remote := config.Target("http://api.internal:8080")
 	connections, total, count := 8, 100, 5
 	period := config.Duration(2 * time.Minute)
@@ -70,7 +70,7 @@ func TestProjectDeclarationUsesPublicURLPresenceAndPreservesPolicyLimitsAndGrant
 		t.Fatalf("apply dropped local HTTP behavior: %+v", web.Http)
 	}
 	remoteProject := project
-	remoteProject.Config.Deployment = group
+	remoteProject.Config.Deployment = deployment
 	remoteProject.Config.Services = config.Services{"remote": {Target: &config.ServiceTarget{Type: "address", Address: &remote}, Access: &config.ServiceAccess{Team: true}}}
 	remoteDeclaration, err := Declaration(t.Context(), remoteProject, appliedTestContext(), nil)
 	if err != nil {

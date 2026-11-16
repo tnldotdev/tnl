@@ -5,7 +5,7 @@ import (
 )
 
 func TestTelemetryInstallationPreservesInstallerChoiceForEveryJobKind(t *testing.T) {
-	for _, kind := range []Kind{KindPublicURL, KindService, KindConnector, KindGroup} {
+	for _, kind := range []Kind{KindPublicURL, KindService, KindConnector, KindDeployment} {
 		for _, choice := range []string{"default", "disabled"} {
 			t.Run(string(kind)+"/"+choice, func(t *testing.T) {
 				options := testOptions(t)
@@ -23,8 +23,8 @@ func TestTelemetryInstallationPreservesInstallerChoiceForEveryJobKind(t *testing
 					t.Fatal(err)
 				}
 				switch kind {
-				case KindGroup:
-					err = registry.InstallGroup(ctx, job, *job.GroupMember, key)
+				case KindDeployment:
+					err = registry.InstallDeployment(ctx, job, *job.DeploymentMember, key)
 				case KindConnector:
 					err = registry.InstallConnector(ctx, job)
 				default:
@@ -53,23 +53,23 @@ func TestTelemetryInstallationPreservesInstallerChoiceForEveryJobKind(t *testing
 	}
 }
 
-func TestTelemetryFixedGroupsCaptureInvocationOptOut(t *testing.T) {
+func TestTelemetryFixedDeploymentsCaptureInvocationOptOut(t *testing.T) {
 	options := testOptions(t)
-	options.StandaloneGroups = true
+	options.StandaloneDeployments = true
 	registry, err := Open(t.Context(), options)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer registry.Close()
-	job, _, key := kindFixture(t, KindGroup)
-	job.ID = JobKey(job.Server, "group", job.GroupMember.GroupId+":"+job.GroupInstance)
+	job, _, key := kindFixture(t, KindDeployment)
+	job.ID = JobKey(job.Server, "deployment", job.DeploymentMember.DeploymentId+":"+job.DeploymentInstance)
 	ctx := t.Context()
 	job.TelemetryDisabled = true
-	if err := registry.ReplaceGroups(ctx, []GroupInstall{{Job: job, Private: key}}); err != nil {
+	if err := registry.ReplaceDeployments(ctx, []DeploymentInstall{{Job: job, Private: key}}); err != nil {
 		t.Fatal(err)
 	}
 	jobs, err := registry.List(t.Context())
 	if err != nil || len(jobs) != 1 || !jobs[0].TelemetryDisabled {
-		t.Fatalf("fixed group lost invocation choice: %+v, err=%v", jobs, err)
+		t.Fatalf("fixed deployment lost invocation choice: %+v, err=%v", jobs, err)
 	}
 }

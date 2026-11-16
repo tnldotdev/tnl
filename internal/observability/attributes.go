@@ -68,9 +68,9 @@ var (
 	CloudRegion            = stringKey{keyName{"cloud.region"}}
 	CloudAvailabilityZone  = stringKey{keyName{"cloud.availability_zone"}}
 	TeamID                 = metricStringKey{keyName{"tnl.team_id"}}
-	DeploymentID           = metricStringKey{keyName{"tnl.deployment_id"}}
+	ReportedDeploymentID   = metricStringKey{keyName{"tnl.reported_deployment_id"}}
 	ReplicaKey             = metricStringKey{keyName{"tnl.replica_key"}}
-	PublisherGroupID       = metricStringKey{keyName{"tnl.publisher_group_id"}}
+	DeploymentID           = metricStringKey{keyName{"tnl.deployment_id"}}
 	PublisherIdentityID    = metricStringKey{keyName{"tnl.publisher_identity_id"}}
 	ServiceID              = metricStringKey{keyName{"tnl.service_id"}}
 	PublicURLID            = metricStringKey{keyName{"tnl.public_url_id"}}

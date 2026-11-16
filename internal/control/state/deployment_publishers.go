@@ -29,18 +29,23 @@ type CreateDeploymentPublisherEnrollmentRequest struct {
 }
 
 type DeploymentPublisherEnrollment struct {
-	PublisherGroupEnrollment
-	ID       string            `json:"enrollment_id"`
-	Services map[string]string `json:"services"`
+	Key          string            `json:"enrollment_key"`
+	DeploymentID string            `json:"deployment_id"`
+	ExpiresAt    time.Time         `json:"expires_at"`
+	MaxMembers   int               `json:"max_members"`
+	ID           string            `json:"enrollment_id"`
+	Services     map[string]string `json:"services"`
 }
 
 type DeploymentPublisher struct {
-	PublisherGroupMemberStatus
+	DeploymentPublisherStatus
 	Services  map[string]string `json:"services"`
 	RevokedAt *time.Time        `json:"revoked_at,omitempty"`
 }
 
-func publisherGroupEnrollmentContext(id string) string { return "publisher-group-enrollment/" + id }
+func deploymentPublisherEnrollmentContext(id string) string {
+	return "deployment-publisher-enrollment/" + id
+}
 
 // enrollment captures exact saved bindings, not a rule that admits future names.
 // recovery returns the original secret and deadline only while that approval is
@@ -87,13 +92,13 @@ func (d *Database) CreateDeploymentPublisherEnrollment(ctx context.Context, r Cr
 	if !access.deploymentAllowed(deployment.ID) {
 		return result, ErrDeploymentNotFound
 	}
-	row, err := q.FindPublisherGroupEnrollmentRequest(ctx, controlstatedb.FindPublisherGroupEnrollmentRequestParams{GroupID: deployment.ID, PrincipalID: access.principalID, IdempotencyKey: r.IdempotencyKey})
+	row, err := q.FindDeploymentPublisherEnrollmentRequest(ctx, controlstatedb.FindDeploymentPublisherEnrollmentRequestParams{DeploymentID: deployment.ID, PrincipalID: access.principalID, IdempotencyKey: r.IdempotencyKey})
 	if err == nil {
 		if !bytes.Equal(row.RequestDigest, digest[:]) {
 			return result, ErrServiceConflict
 		}
 		var consumed int
-		if err = tx.QueryRow(ctx, `SELECT count(*) FROM control.publisher_group_members WHERE enrollment_id=$1`, row.ID).Scan(&consumed); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT count(*) FROM control.deployment_publisher_members WHERE enrollment_id=$1`, row.ID).Scan(&consumed); err != nil {
 			return result, err
 		}
 		if row.RevokedAt.Valid || !row.ExpiresAt.Time.After(clock.current()) || consumed >= int(row.MaxMembers) {
@@ -103,7 +108,7 @@ func (d *Database) CreateDeploymentPublisherEnrollment(ctx context.Context, r Cr
 		if err != nil {
 			return result, err
 		}
-		secret, _, err := d.openSecret(row.StorageKeyID.String, publisherGroupEnrollmentContext(row.ID), row.SecretCiphertext)
+		secret, _, err := d.openSecret(row.StorageKeyID, deploymentPublisherEnrollmentContext(row.ID), row.SecretCiphertext)
 		if err != nil {
 			return result, err
 		}
@@ -112,7 +117,7 @@ func (d *Database) CreateDeploymentPublisherEnrollment(ctx context.Context, r Cr
 		if !bytes.Equal(actual[:], row.SecretDigest) {
 			return result, ErrPublisherEnrollment
 		}
-		result = DeploymentPublisherEnrollment{ID: row.ID, Services: services, PublisherGroupEnrollment: PublisherGroupEnrollment{Key: string(secret), GroupID: deployment.ID, ExpiresAt: row.ExpiresAt.Time.UTC(), MaxMembers: int(row.MaxMembers)}}
+		result = DeploymentPublisherEnrollment{ID: row.ID, Services: services, Key: string(secret), DeploymentID: deployment.ID, ExpiresAt: row.ExpiresAt.Time.UTC(), MaxMembers: int(row.MaxMembers)}
 	} else {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return result, err
@@ -121,7 +126,7 @@ func (d *Database) CreateDeploymentPublisherEnrollment(ctx context.Context, r Cr
 		if err != nil {
 			return result, err
 		}
-		bindings, err := q.ListPublisherGroupServices(ctx, deployment.ID)
+		bindings, err := q.ListDeploymentPublisherServices(ctx, deployment.ID)
 		if err != nil {
 			return result, err
 		}
@@ -129,14 +134,14 @@ func (d *Database) CreateDeploymentPublisherEnrollment(ctx context.Context, r Cr
 		for _, binding := range bindings {
 			byName[binding.Service] = binding
 		}
-		scopes := make([]controlstatedb.ControlPublisherGroupEnrollmentService, 0, len(names))
+		scopes := make([]controlstatedb.ControlDeploymentPublisherEnrollmentService, 0, len(names))
 		for _, name := range names {
 			binding, bound := byName[name]
 			service, saved := configuration.Services[name]
 			if !bound || !saved || !binding.ServiceID.Valid && !binding.PublicURLID.Valid {
 				return result, ErrProjectConfigurationInvalid
 			}
-			scopes = append(scopes, controlstatedb.ControlPublisherGroupEnrollmentService{Service: name, Protocol: service.Protocol, ServiceID: binding.ServiceID, PublicURLID: binding.PublicURLID})
+			scopes = append(scopes, controlstatedb.ControlDeploymentPublisherEnrollmentService{Service: name, Protocol: service.Protocol, ServiceID: binding.ServiceID, PublicURLID: binding.PublicURLID})
 		}
 		until := r.Now.Add(r.Lifetime)
 		if access.grantID != "" && access.expiresAt.Before(until) {
@@ -145,7 +150,7 @@ func (d *Database) CreateDeploymentPublisherEnrollment(ctx context.Context, r Cr
 		if err = d.lockDeploymentMutation(ctx, tx, access); err != nil {
 			return result, err
 		}
-		result, err = d.issuePublisherGroupEnrollment(ctx, tx, deployment.ID, r.ActorID, access.principalID, r.MaxMembers, until, r.IdempotencyKey, digest[:], scopes, clock.current())
+		result, err = d.issueDeploymentPublisherEnrollment(ctx, tx, deployment.ID, r.ActorID, access.principalID, r.MaxMembers, until, r.IdempotencyKey, digest[:], scopes, clock.current())
 		if err != nil {
 			return result, err
 		}
@@ -159,10 +164,8 @@ func (d *Database) CreateDeploymentPublisherEnrollment(ctx context.Context, r Cr
 	return result, nil
 }
 
-// the legacy manager command approves a whole group. scoped setup uses this same
-// issuer and redemption lifecycle with a fixed service set; no alternate identity
-// or grant engine is involved.
-func (d *Database) issuePublisherGroupEnrollment(ctx context.Context, tx pgx.Tx, group, actor, principal string, maxMembers int, until time.Time, key string, requestDigest []byte, scopes []controlstatedb.ControlPublisherGroupEnrollmentService, now time.Time) (result DeploymentPublisherEnrollment, err error) {
+// one enrollment approves only the captured service bindings.
+func (d *Database) issueDeploymentPublisherEnrollment(ctx context.Context, tx pgx.Tx, deployment, actor, principal string, maxMembers int, until time.Time, key string, requestDigest []byte, scopes []controlstatedb.ControlDeploymentPublisherEnrollmentService, now time.Time) (result DeploymentPublisherEnrollment, err error) {
 	// postgres stores microseconds; the original reply and recovery must agree.
 	until = until.UTC().Truncate(time.Microsecond)
 	id, err := opaqueid.New(opaqueid.PublisherEnrollmentPrefix)
@@ -175,23 +178,18 @@ func (d *Database) issuePublisherGroupEnrollment(ctx context.Context, tx pgx.Tx,
 	}
 	secret := id + "." + base64.RawURLEncoding.EncodeToString(random[:])
 	digest := sha256.Sum256([]byte(secret))
-	var ciphertext []byte
-	storageKey := ""
-	if key != "" {
-		ciphertext, err = d.sealSecret(publisherGroupEnrollmentContext(id), []byte(secret))
-		if err != nil {
-			return result, err
-		}
-		storageKey = d.storageKey.CurrentID()
-	}
-	_, err = tx.Exec(ctx, `INSERT INTO control.publisher_group_enrollments(id,group_id,secret_digest,max_members,created_by_identity_id,expires_at,scoped,idempotency_key,request_digest,secret_ciphertext,storage_key_id,create_principal_id)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, id, group, digest[:], maxMembers, actor, until, scopes != nil, nullableText(key), requestDigest, ciphertext, nullableText(storageKey), nullableText(principal))
+	ciphertext, err := d.sealSecret(deploymentPublisherEnrollmentContext(id), []byte(secret))
 	if err != nil {
 		return result, err
 	}
-	result = DeploymentPublisherEnrollment{ID: id, Services: map[string]string{}, PublisherGroupEnrollment: PublisherGroupEnrollment{Key: secret, GroupID: group, ExpiresAt: until, MaxMembers: maxMembers}}
+	_, err = tx.Exec(ctx, `INSERT INTO control.deployment_publisher_enrollments(id,deployment_id,secret_digest,max_members,created_by_identity_id,expires_at,idempotency_key,request_digest,secret_ciphertext,storage_key_id,create_principal_id)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, id, deployment, digest[:], maxMembers, actor, until, key, requestDigest, ciphertext, d.storageKey.CurrentID(), principal)
+	if err != nil {
+		return result, err
+	}
+	result = DeploymentPublisherEnrollment{ID: id, Services: map[string]string{}, Key: secret, DeploymentID: deployment, ExpiresAt: until, MaxMembers: maxMembers}
 	for _, scope := range scopes {
-		if _, err = tx.Exec(ctx, `INSERT INTO control.publisher_group_enrollment_services(enrollment_id,service,protocol,service_id,public_url_id) VALUES($1,$2,$3,$4,$5)`, id, scope.Service, scope.Protocol, scope.ServiceID, scope.PublicURLID); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO control.deployment_publisher_enrollment_services(enrollment_id,service,protocol,service_id,public_url_id) VALUES($1,$2,$3,$4,$5)`, id, scope.Service, scope.Protocol, scope.ServiceID, scope.PublicURLID); err != nil {
 			return result, err
 		}
 		result.Services[scope.Service] = scope.Protocol
@@ -200,25 +198,25 @@ func (d *Database) issuePublisherGroupEnrollment(ctx context.Context, tx pgx.Tx,
 	if principal != "" && principal != actor {
 		auditPerson, auditPublisher = "", principal
 	}
-	if err = recordPublisherGroupUpdate(ctx, tx, group, auditPerson, auditPublisher, "enrollment/"+id, now); err != nil {
+	if err = recordDeploymentPublisherUpdate(ctx, tx, deployment, auditPerson, auditPublisher, "enrollment/"+id, now); err != nil {
 		return result, err
 	}
 	return result, nil
 }
 
-func (d *Database) currentPublisherEnrollmentServices(ctx context.Context, q *controlstatedb.Queries, enrollment controlstatedb.ControlPublisherGroupEnrollment, deployment controlstatedb.ControlProjectPublisherGroup) (map[string]string, error) {
-	scopes, err := q.ListPublisherGroupEnrollmentServices(ctx, enrollment.ID)
+func (d *Database) currentPublisherEnrollmentServices(ctx context.Context, q *controlstatedb.Queries, enrollment controlstatedb.ControlDeploymentPublisherEnrollment, deployment controlstatedb.ControlDeployment) (map[string]string, error) {
+	scopes, err := q.ListDeploymentPublisherEnrollmentServices(ctx, enrollment.ID)
 	if err != nil {
 		return nil, err
 	}
-	if !enrollment.Scoped || len(scopes) == 0 || len(scopes) > 128 {
+	if len(scopes) == 0 || len(scopes) > 128 {
 		return nil, ErrPublisherEnrollment
 	}
 	configuration, err := d.openDeploymentConfiguration(deployment)
 	if err != nil {
 		return nil, err
 	}
-	bindings, err := q.ListPublisherGroupServices(ctx, deployment.ID)
+	bindings, err := q.ListDeploymentPublisherServices(ctx, deployment.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +283,7 @@ func (d *Database) ListDeploymentPublishers(ctx context.Context, scope Deploymen
 	if !access.deploymentAllowed(deployment.ID) {
 		return nil, ErrDeploymentNotFound
 	}
-	ids, err := q.ListDeploymentPublisherIDs(ctx, controlstatedb.ListDeploymentPublisherIDsParams{GroupID: deployment.ID, AfterID: after, PageLimit: int32(limit), ManagementGrant: access.grantID})
+	ids, err := q.ListDeploymentPublisherIDs(ctx, controlstatedb.ListDeploymentPublisherIDsParams{DeploymentID: deployment.ID, AfterID: after, PageLimit: int32(limit), ManagementGrant: access.grantID})
 	if err != nil {
 		return nil, err
 	}
@@ -301,15 +299,15 @@ func (d *Database) ListDeploymentPublishers(ctx context.Context, scope Deploymen
 	return result, d.commitDeploymentAccess(ctx, tx, access)
 }
 
-func deploymentPublisherStatus(ctx context.Context, q *controlstatedb.Queries, group, publisher string, now time.Time) (result DeploymentPublisher, err error) {
-	row, err := q.GetDeploymentPublisherStatus(ctx, controlstatedb.GetDeploymentPublisherStatusParams{GroupID: group, PublisherID: publisher})
+func deploymentPublisherStatus(ctx context.Context, q *controlstatedb.Queries, deployment, publisher string, now time.Time) (result DeploymentPublisher, err error) {
+	row, err := q.GetDeploymentPublisherStatus(ctx, controlstatedb.GetDeploymentPublisherStatusParams{DeploymentID: deployment, PublisherID: publisher})
 	if err != nil {
 		return result, publisherLookupError(err, ErrDeploymentPublisherNotFound)
 	}
-	member := row.ControlPublisherGroupMember
-	result.PublisherGroupMemberStatus = PublisherGroupMemberStatus{
-		PublisherGroupMember: PublisherGroupMember{TeamID: row.TeamID, ProjectKey: row.ProjectKey, GroupID: group, GroupName: row.GroupName, PublisherIdentityID: publisher, KeyID: member.KeyID},
-		ObservedRevision:     member.ObservedRevision, CurrentRevision: row.CurrentRevision, SnapshotAt: now,
+	member := row.ControlDeploymentPublisherMember
+	result.DeploymentPublisherStatus = DeploymentPublisherStatus{
+		DeploymentPublisherIdentity: DeploymentPublisherIdentity{TeamID: row.TeamID, ProjectKey: row.ProjectKey, DeploymentID: deployment, DeploymentName: row.DeploymentName, PublisherIdentityID: publisher, KeyID: member.KeyID},
+		ObservedRevision:            member.ObservedRevision, CurrentRevision: row.CurrentRevision, SnapshotAt: now,
 	}
 	if row.RevokedAt.Valid {
 		result.RevokedAt = &row.RevokedAt.Time
@@ -326,30 +324,12 @@ func deploymentPublisherStatus(ctx context.Context, q *controlstatedb.Queries, g
 	}
 	result.Healthy = !row.RevokedAt.Valid && member.Healthy && member.AcknowledgedAt.Valid && member.LeaseExpiresAt.Time.After(now) && member.ObservedRevision == row.CurrentRevision && (result.Runtime == nil || result.Runtime.Active)
 	result.Services = map[string]string{}
-	if row.Scoped {
-		scopes, err := q.ListPublisherGroupEnrollmentServices(ctx, member.EnrollmentID)
-		if err != nil {
-			return result, err
-		}
-		for _, scope := range scopes {
-			result.Services[scope.Service] = scope.Protocol
-		}
-	} else {
-		bindings, err := q.ListPublisherGroupServices(ctx, group)
-		if err != nil {
-			return result, err
-		}
-		for _, binding := range bindings {
-			protocol := "http"
-			if binding.ServiceID.Valid {
-				saved, err := q.GetService(ctx, binding.ServiceID.String)
-				if err != nil {
-					return result, err
-				}
-				protocol = saved.Protocol
-			}
-			result.Services[binding.Service] = protocol
-		}
+	scopes, err := q.ListDeploymentPublisherEnrollmentServices(ctx, member.EnrollmentID)
+	if err != nil {
+		return result, err
+	}
+	for _, scope := range scopes {
+		result.Services[scope.Service] = scope.Protocol
 	}
 	return result, nil
 }
@@ -376,7 +356,7 @@ func (d *Database) RevokeDeploymentPublisher(ctx context.Context, scope Deployme
 	if err = access.publisherAllowed(ctx, q, publisher); err != nil {
 		return err
 	}
-	if _, err = q.GetDeploymentPublisherStatus(ctx, controlstatedb.GetDeploymentPublisherStatusParams{GroupID: deployment.ID, PublisherID: publisher}); err != nil {
+	if _, err = q.GetDeploymentPublisherStatus(ctx, controlstatedb.GetDeploymentPublisherStatusParams{DeploymentID: deployment.ID, PublisherID: publisher}); err != nil {
 		return publisherLookupError(err, ErrDeploymentPublisherNotFound)
 	}
 	if err = access.setAuditActor(ctx, tx); err != nil {

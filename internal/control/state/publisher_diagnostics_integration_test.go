@@ -27,21 +27,21 @@ func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "remote", r.ActorID, 1, time.Hour, now)
+	enrollment, err := testDeploymentPublisherEnrollment(d, ctx, r.TeamID, r.ProjectKey, "remote", r.ActorID, 1, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replica := enrollAppliedGroup(t, d, r, enrollment, now)
+	replica := enrollAppliedDeployment(t, d, r, enrollment, now)
 	const audience = "https://control.example/v1/publisher-runtime"
 	const run = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	observe := func(action string, epoch int64) error {
-		proof, err := publisherproof.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, publisherproof.RuntimeScope(replica.member.GroupID, action, run, epoch, publisherprovenance.Digest(nil)), audience, replica.private, now)
+		proof, err := publisherproof.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, publisherproof.RuntimeScope(replica.member.DeploymentID, action, run, epoch, publisherprovenance.Digest(nil)), audience, replica.private, now)
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := d.PublisherRuntime(ctx, PublisherRuntimeRequest{PublisherIdentityID: replica.member.PublisherIdentityID, ScopeID: replica.member.GroupID, ProcessRunID: run, Action: action, Assertion: proof, Audience: audience, ExpectedEpoch: epoch, Now: now})
-		if err == nil && result.GroupLease != nil {
-			replica.lease = *result.GroupLease
+		result, err := d.PublisherRuntime(ctx, PublisherRuntimeRequest{PublisherIdentityID: replica.member.PublisherIdentityID, ScopeID: replica.member.DeploymentID, ProcessRunID: run, Action: action, Assertion: proof, Audience: audience, ExpectedEpoch: epoch, Now: now})
+		if err == nil && result.DeploymentLease != nil {
+			replica.lease = *result.DeploymentLease
 		}
 		return err
 	}
@@ -51,10 +51,10 @@ func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
 	if err := observe("renew", 0); !errors.Is(err, ErrPublisherRuntimeStale) {
 		t.Fatal("stale runtime was not rejected", err)
 	}
-	if err := d.AcknowledgePublisherGroupConfiguration(ctx, replica.lease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now); err != nil {
+	if err := d.AcknowledgeDeploymentPublisherConfiguration(ctx, replica.lease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now); err != nil {
 		t.Fatal(err)
 	}
-	read := func() PublisherGroupMemberStatus {
+	read := func() DeploymentPublisherStatus {
 		t.Helper()
 		status, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, r.ActorID, "remote")
 		if err != nil || len(status.Members) != 1 {
@@ -68,11 +68,11 @@ func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
 	}
 	restartedAt := now.Add(time.Second)
 	const replacement = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	proof, err := publisherproof.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, publisherproof.RuntimeScope(replica.member.GroupID, "start", replacement, 1, publisherprovenance.Digest(nil)), audience, replica.private, restartedAt)
+	proof, err := publisherproof.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, publisherproof.RuntimeScope(replica.member.DeploymentID, "start", replacement, 1, publisherprovenance.Digest(nil)), audience, replica.private, restartedAt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.PublisherRuntime(ctx, PublisherRuntimeRequest{PublisherIdentityID: replica.member.PublisherIdentityID, ScopeID: replica.member.GroupID, ProcessRunID: replacement, Action: "start", Assertion: proof, Audience: audience, ExpectedEpoch: 1, Now: restartedAt}); err != nil {
+	if _, err := d.PublisherRuntime(ctx, PublisherRuntimeRequest{PublisherIdentityID: replica.member.PublisherIdentityID, ScopeID: replica.member.DeploymentID, ProcessRunID: replacement, Action: "start", Assertion: proof, Audience: audience, ExpectedEpoch: 1, Now: restartedAt}); err != nil {
 		t.Fatal(err)
 	}
 	status = read()

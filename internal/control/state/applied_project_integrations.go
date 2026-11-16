@@ -8,7 +8,7 @@ import (
 
 // reuse the app-led webhook validator and definition normal form without
 // resolving provider catalogs or executing project source. integration handlers
-// remain local app registrations; group assignments contain service config only.
+// remain local app registrations; deployment assignments contain service config only.
 func normalizeAppliedProjectIntegrations(c *ProjectConfiguration) error {
 	if len(c.Webhooks) > 32 {
 		return ErrProjectConfigurationInvalid

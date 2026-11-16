@@ -36,13 +36,13 @@ func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 		t.Fatal(err)
 	}
 	localLookup := GetLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "local", WorktreeKey: "checkout", ActorID: r.ActorID, Now: now}
-	enrollment, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
+	enrollment, err := testDeploymentPublisherEnrollment(d, ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replica := enrollAppliedGroup(t, d, r, enrollment, now)
+	replica := enrollAppliedDeployment(t, d, r, enrollment, now)
 	assignment := replica.assignments.Services[0]
-	access := groupAssignmentAccess(t, d, replica, assignment, now)
+	access := deploymentAssignmentAccess(t, d, replica, assignment, now)
 	service, err := d.GetService(ctx, assignment.ServiceID, r.ActorID)
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 		var data string
 		if err := d.pool.QueryRow(ctx, `SELECT jsonb_build_array(
 		    (SELECT jsonb_agg(to_jsonb(p) ORDER BY team_id,project_key) FROM control.applied_projects p),
-		    (SELECT jsonb_agg(to_jsonb(g) ORDER BY id) FROM control.project_publisher_groups g),
+		    (SELECT jsonb_agg(to_jsonb(g) ORDER BY id) FROM control.deployments g),
 		    (SELECT jsonb_agg(to_jsonb(s) ORDER BY team_id,project_key,service) FROM control.applied_project_services s),
 		    (SELECT jsonb_agg(to_jsonb(l) ORDER BY team_id,project_key,service,worktree_key) FROM control.local_project_services l),
 		    (SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM control.services s),

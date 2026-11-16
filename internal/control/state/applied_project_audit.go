@@ -11,21 +11,21 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 )
 
-// the general publisher identity API and the scoped group API share this fact.
-// nongroup identities retain their existing audit behavior.
-func recordPublisherGroupMemberRevocation(ctx context.Context, tx pgx.Tx, publisher, actor string, now time.Time) error {
-	var group string
-	err := tx.QueryRow(ctx, `SELECT group_id FROM control.publisher_group_members WHERE publisher_identity_id=$1`, publisher).Scan(&group)
+// the general publisher identity API and the scoped deployment API share this fact.
+// nondeployment identities retain their existing audit behavior.
+func recordDeploymentPublisherIdentityRevocation(ctx context.Context, tx pgx.Tx, publisher, actor string, now time.Time) error {
+	var deployment string
+	err := tx.QueryRow(ctx, `SELECT deployment_id FROM control.deployment_publisher_members WHERE publisher_identity_id=$1`, publisher).Scan(&deployment)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	return recordPublisherGroupUpdate(ctx, tx, group, actor, publisher, "revoke-member/"+publisher, now)
+	return recordDeploymentPublisherUpdate(ctx, tx, deployment, actor, publisher, "revoke-member/"+publisher, now)
 }
 
-func recordAppliedGroupChange(ctx context.Context, tx pgx.Tx, s controlstatedb.ControlAppliedProjectService, actor, publisher, request string, revision int64, now time.Time) error {
+func recordAppliedDeploymentChange(ctx context.Context, tx pgx.Tx, s controlstatedb.ControlAppliedProjectService, actor, publisher, request string, revision int64, now time.Time) error {
 	id, kind := s.PublicURLID.String, "public_url"
 	if s.ServiceID.Valid {
 		id, kind = s.ServiceID.String, "service"
@@ -33,39 +33,39 @@ func recordAppliedGroupChange(ctx context.Context, tx pgx.Tx, s controlstatedb.C
 	if id == "" {
 		return nil
 	}
-	return RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: s.TeamID, ServiceID: id, ServiceKind: kind, EventType: "group.update", OccurredAt: now, ActorIdentityID: actor, PublisherIdentityID: publisher, ConfigurationRevision: revision}, request)
+	return RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: s.TeamID, ServiceID: id, ServiceKind: kind, EventType: "deployment.update", OccurredAt: now, ActorIdentityID: actor, PublisherIdentityID: publisher, ConfigurationRevision: revision}, request)
 }
 
-func recordPublisherGroupUpdate(ctx context.Context, tx pgx.Tx, group, actor, publisher, request string, now time.Time) error {
+func recordDeploymentPublisherUpdate(ctx context.Context, tx pgx.Tx, deployment, actor, publisher, request string, now time.Time) error {
 	var revision int64
-	if err := tx.QueryRow(ctx, `SELECT revision FROM control.project_publisher_groups WHERE id=$1`, group).Scan(&revision); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT revision FROM control.deployments WHERE id=$1`, deployment).Scan(&revision); err != nil {
 		return err
 	}
-	services, err := controlstatedb.New(tx).ListPublisherGroupServices(ctx, group)
+	services, err := controlstatedb.New(tx).ListDeploymentPublisherServices(ctx, deployment)
 	if err != nil {
 		return err
 	}
 	for _, s := range services {
-		if err = recordAppliedGroupChange(ctx, tx, s, actor, publisher, request, revision, now); err != nil {
+		if err = recordAppliedDeploymentChange(ctx, tx, s, actor, publisher, request, revision, now); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func recordAppliedGroupConfiguration(ctx context.Context, tx pgx.Tx, oldServices, newServices []controlstatedb.ControlAppliedProjectService, changed map[string]bool, actor string, revision int64, now time.Time) error {
+func recordAppliedDeploymentConfiguration(ctx context.Context, tx pgx.Tx, oldServices, newServices []controlstatedb.ControlAppliedProjectService, changed map[string]bool, actor string, revision int64, now time.Time) error {
 	seen := map[string]bool{}
 	for _, rows := range [][]controlstatedb.ControlAppliedProjectService{oldServices, newServices} {
 		for _, s := range rows {
-			if !changed[s.GroupID.String] {
+			if !changed[s.DeploymentID.String] {
 				continue
 			}
-			key := s.GroupID.String + "/" + s.ServiceID.String + "/" + s.PublicURLID.String
+			key := s.DeploymentID.String + "/" + s.ServiceID.String + "/" + s.PublicURLID.String
 			if seen[key] {
 				continue
 			}
 			seen[key] = true
-			if err := recordAppliedGroupChange(ctx, tx, s, actor, "", fmt.Sprintf("group/%s/configuration/%d", s.GroupID.String, revision), revision, now); err != nil {
+			if err := recordAppliedDeploymentChange(ctx, tx, s, actor, "", fmt.Sprintf("deployment/%s/configuration/%d", s.DeploymentID.String, revision), revision, now); err != nil {
 				return err
 			}
 		}

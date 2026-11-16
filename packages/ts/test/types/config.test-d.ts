@@ -49,8 +49,6 @@ test("deployments select declared bindings and reject infrastructure settings", 
   defineConfig(aws);
   // @ts-expect-error fresh AWS settings are rejected.
   defineConfig({ deployments: { production: { aws: {} } } });
-  // @ts-expect-error the replaced root layout has no compatibility alias.
-  defineConfig({ publisherGroups: { cloud: {} } });
 });
 
 const config = defineConfig({
@@ -232,10 +230,6 @@ test("configuration enforces service ownership and references for literals and f
   ({ publicURL: { limits: { requests: 3 } } }) satisfies TnlConfig;
   // @ts-expect-error browser opening belongs in a binding's HTTP settings.
   ({ publicURL: { open: true } }) satisfies TnlConfig;
-  // @ts-expect-error publisher placement is not project configuration.
-  ({ publisherGroup: { type: "host", port: 8765 } }) satisfies TnlConfig;
-  // @ts-expect-error publisher container placement is not project configuration.
-  ({ publisherGroup: { type: "compose", service: "publisher", port: 8765 } }) satisfies TnlConfig;
   // @ts-expect-error protocol limits use duration-literal periods.
   ({ publicURL: { limits: { tcp: { rate: { count: 1, per: "minute" } } } } }) satisfies TnlConfig;
   // @ts-expect-error combined byte totals are removed.

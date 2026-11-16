@@ -134,16 +134,16 @@ func (o *Owner) Renew(ctx context.Context) (controlv1.PublisherRuntimeResponse, 
 }
 
 // ObservabilityContext binds only this accepted runtime's immutable, validated
-// deployment report. report fields never choose tenant, service, or group scope.
-// callers supply the enrolled member's authenticated team and group identifiers.
-func (o *Owner) ObservabilityContext(ctx context.Context, teamID, groupID string) context.Context {
+// deployment report. report fields never choose tenant, service, or deployment scope.
+// callers supply the enrolled member's authenticated team and deployment identifiers.
+func (o *Owner) ObservabilityContext(ctx context.Context, teamID, deploymentID string) context.Context {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	id := observability.Identity{}
-	if running, ok := o.stage.(runtimeRunning); ok && running.leaseExpires.After(time.Now()) && groupID == o.scope && teamID != "" {
-		id.TeamID, id.PublisherGroupID, id.PublisherIdentityID = teamID, groupID, o.id
+	if running, ok := o.stage.(runtimeRunning); ok && running.leaseExpires.After(time.Now()) && deploymentID == o.scope && teamID != "" {
+		id.TeamID, id.DeploymentID, id.PublisherIdentityID = teamID, deploymentID, o.id
 		if o.deployment != nil {
-			id.DeploymentID, id.ReplicaKey = o.deployment.DeploymentId, o.deployment.ReplicaKey
+			id.ReportedDeploymentID, id.ReplicaKey = o.deployment.DeploymentId, o.deployment.ReplicaKey
 		}
 	}
 	return observability.ReplaceIdentity(ctx, id)

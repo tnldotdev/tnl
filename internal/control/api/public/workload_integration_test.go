@@ -66,16 +66,16 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	group, protocol := "production", controlv1.Kubernetes
+	deployment, protocol := "production", controlv1.Kubernetes
 	policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}, Environment: new("ci"), JobWorkflowRef: new("example/shared/.github/workflows/reuse.yml@refs/tags/v1")}, Services: []string{"cluster"}, MaxDurationSeconds: 3600}}
 	continuous := policies["test"]
 	continuous.MaxDurationSeconds = 0
 	policies["continuous"] = continuous
 	for name, policy := range policies {
-		policy.Deployment = group
+		policy.Deployment = deployment
 		policies[name] = policy
 	}
-	body := controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"cluster": protocol}, TeamId: team, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Workloads: &policies, Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"cluster": {Protocol: &protocol, Target: "", TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}, Webhooks: map[string]controlv1.ProjectWebhook{}}}
+	body := controlv1.ApplyProjectConfigurationRequest{Deployment: deployment, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"cluster": protocol}, TeamId: team, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Workloads: &policies, Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"cluster": {Protocol: &protocol, Target: "", TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}, Webhooks: map[string]controlv1.ProjectWebhook{}}}
 	applied, err := owner.ApplyProjectConfiguration(ctx, "example", body)
 	if err != nil {
 		t.Fatal(err)
@@ -232,7 +232,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	if _, err = workloadControl.ApplyProjectConfiguration(ctx, "example", body); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("workload self-applied policy", err)
 	}
-	if _, err = workloadControl.GetProjectConfiguration(ctx, team, "example", group); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if _, err = workloadControl.GetProjectConfiguration(ctx, team, "example", deployment); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("workload read manager target inventory", err)
 	}
 	authority, err := clientauthority.New(server.URL, server.Client(), credentials.AccessToken(session.Credential))
@@ -242,7 +242,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	if _, err = authority.IdentityContext(ctx); !errors.Is(err, clientauthority.ErrUnauthenticated) {
 		t.Fatal("workload became a human control session", err)
 	}
-	if _, err = workloadControl.GetPublisherGroupAssignments(ctx, session.Credential); err == nil {
+	if _, err = workloadControl.GetDeploymentPublisherAssignments(ctx, session.Credential); err == nil {
 		t.Fatal("workload became a publisher")
 	}
 	// verify actual response bodies contain no assertion, provider selector or
@@ -270,7 +270,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 		t.Fatal("revoked workload retained visitor access")
 	}
 	// human administration remains independently usable after job revocation.
-	if _, err = owner.GetProjectConfiguration(ctx, team, "example", group); err != nil {
+	if _, err = owner.GetProjectConfiguration(ctx, team, "example", deployment); err != nil {
 		t.Fatal(err)
 	}
 	t.Run("retained and collected deletion ownership", func(t *testing.T) {

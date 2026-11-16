@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -178,46 +177,46 @@ func TestIntegrationAppliedProjectConcurrencyRollbackAndSource(t *testing.T) {
 	}
 }
 
-type enrolledGroupReplica struct {
-	member      PublisherGroupMember
+type enrolledDeploymentReplica struct {
+	member      DeploymentPublisherIdentity
 	private     ed25519.PrivateKey
-	lease       PublisherGroupLease
-	assignments PublisherGroupAssignments
+	lease       DeploymentPublisherLease
+	assignments DeploymentPublisherAssignments
 }
 
-func enrollAppliedGroup(t *testing.T, d *Database, r ApplyProjectConfigurationRequest, e PublisherGroupEnrollment, now time.Time) enrolledGroupReplica {
+func enrollAppliedDeployment(t *testing.T, d *Database, r ApplyProjectConfigurationRequest, e DeploymentPublisherEnrollment, now time.Time) enrolledDeploymentReplica {
 	t.Helper()
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := d.RedeemPublisherGroupEnrollment(t.Context(), e.Key, public, now)
+	m, err := d.RedeemDeploymentPublisherEnrollment(t.Context(), e.Key, public, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	retry, err := d.RedeemPublisherGroupEnrollment(t.Context(), e.Key, public, now)
+	retry, err := d.RedeemDeploymentPublisherEnrollment(t.Context(), e.Key, public, now)
 	if err != nil || retry != m {
 		t.Fatal("same key redemption changed member", err)
 	}
-	assertion, err := publisherproof.Sign(m.PublisherIdentityID, m.KeyID, m.GroupID, "https://control.example/v1/publisher-groups/lease", key, now)
+	assertion, err := publisherproof.Sign(m.PublisherIdentityID, m.KeyID, m.DeploymentID, "https://control.example/v1/deployment-runtime/lease", key, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := d.AcquirePublisherGroupLease(t.Context(), m.PublisherIdentityID, m.GroupID, assertion, "https://control.example/v1/publisher-groups/lease", now)
+	lease, err := d.AcquireDeploymentPublisherLease(t.Context(), m.PublisherIdentityID, m.DeploymentID, assertion, "https://control.example/v1/deployment-runtime/lease", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.AcquirePublisherGroupLease(t.Context(), m.PublisherIdentityID, m.GroupID, assertion, "https://control.example/v1/publisher-groups/lease", now); !errors.Is(err, ErrPublisherGroup) {
-		t.Fatalf("group assertion replay: %v", err)
+	if _, err = d.AcquireDeploymentPublisherLease(t.Context(), m.PublisherIdentityID, m.DeploymentID, assertion, "https://control.example/v1/deployment-runtime/lease", now); !errors.Is(err, ErrDeploymentPublisher) {
+		t.Fatalf("deployment assertion replay: %v", err)
 	}
-	assignments, err := d.GetPublisherGroupAssignments(t.Context(), lease.AccessToken, now)
+	assignments, err := d.GetDeploymentPublisherAssignments(t.Context(), lease.AccessToken, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return enrolledGroupReplica{m, key, lease, assignments}
+	return enrolledDeploymentReplica{m, key, lease, assignments}
 }
 
-func groupAssignmentAccess(t *testing.T, d *Database, replica enrolledGroupReplica, a PublisherGroupServiceAssignment, now time.Time) PublisherAccess {
+func deploymentAssignmentAccess(t *testing.T, d *Database, replica enrolledDeploymentReplica, a DeploymentPublisherServiceAssignment, now time.Time) PublisherAccess {
 	t.Helper()
 	assertion, err := publisherproof.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, a.GrantID, publisherTestAudience, replica.private, now)
 	if err != nil {
@@ -230,7 +229,7 @@ func groupAssignmentAccess(t *testing.T, d *Database, replica enrolledGroupRepli
 	return access
 }
 
-func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T) {
+func TestIntegrationAppliedProjectDeploymentAssignmentsRunsAndRevocation(t *testing.T) {
 	d, now, _, leases := newPublishRunPrerequisites(t)
 	d.managedURLMode = naming.ManagedURLModeSimple
 	r := appliedProjectRequest(t, d, now)
@@ -250,34 +249,34 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 2, time.Hour, now)
+	e, err := testDeploymentPublisherEnrollment(d, t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 2, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, b := enrollAppliedGroup(t, d, r, e, now), enrollAppliedGroup(t, d, r, e, now)
+	a, b := enrollAppliedDeployment(t, d, r, e, now), enrollAppliedDeployment(t, d, r, e, now)
 	if a.member.PublisherIdentityID == b.member.PublisherIdentityID || a.member.KeyID == b.member.KeyID || bytes.Equal(a.private, b.private) {
 		t.Fatal("replicas share a signed identity")
 	}
 	public, _, _ := ed25519.GenerateKey(rand.Reader)
-	if _, err = d.RedeemPublisherGroupEnrollment(t.Context(), e.Key, public, now); !errors.Is(err, ErrPublisherGroup) {
+	if _, err = d.RedeemDeploymentPublisherEnrollment(t.Context(), e.Key, public, now); !errors.Is(err, ErrDeploymentPublisher) {
 		t.Fatal("bootstrap capacity was not bounded", err)
 	}
-	stageEnrollment, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "staging", r.ActorID, 1, time.Hour, now)
+	stageEnrollment, err := testDeploymentPublisherEnrollment(d, t.Context(), r.TeamID, r.ProjectKey, "staging", r.ActorID, 1, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stage := enrollAppliedGroup(t, d, r, stageEnrollment, now)
+	stage := enrollAppliedDeployment(t, d, r, stageEnrollment, now)
 	if len(stage.assignments.Services) != 1 || stage.assignments.Services[0].Service != "stage" || len(a.assignments.Services) != 2 || len(b.assignments.Services) != 2 {
-		t.Fatal("group assignment leaked another group's target")
+		t.Fatal("deployment assignment leaked another deployment's target")
 	}
-	if _, err = d.RedeemPublisherGroupEnrollment(t.Context(), stageEnrollment.Key, a.private.Public().(ed25519.PublicKey), now); !errors.Is(err, ErrPublisherGroup) {
-		t.Fatal("one key enrolled in two groups", err)
+	if _, err = d.RedeemDeploymentPublisherEnrollment(t.Context(), stageEnrollment.Key, a.private.Public().(ed25519.PublicKey), now); !errors.Is(err, ErrDeploymentPublisher) {
+		t.Fatal("one key enrolled in two deployments", err)
 	}
 	var oldAccess []PublisherAccess
 	var serviceRuns []ServiceRunState
-	for _, replica := range []enrolledGroupReplica{a, b} {
+	for _, replica := range []enrolledDeploymentReplica{a, b} {
 		for _, assignment := range replica.assignments.Services {
-			access := groupAssignmentAccess(t, d, replica, assignment, now)
+			access := deploymentAssignmentAccess(t, d, replica, assignment, now)
 			oldAccess = append(oldAccess, access)
 			if assignment.Kind == "service" {
 				trust, err := appliedServiceTargetTrust(assignment.Configuration.TargetTLS)
@@ -285,7 +284,7 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 					t.Fatal(err)
 				}
 				metadata := ServiceMetadata{Protocol: assignment.Configuration.Protocol, TLS: trust, PublisherPool: true, TrustRevision: assignment.TrustRevision}
-				prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "group", now, metadata)
+				prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "deployment", now, metadata)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -305,13 +304,13 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 					}
 				}
 				if state, err := d.HeartbeatServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil || state.State != "ready" {
-					t.Fatalf("group private run not ready: %+v %v", state, err)
+					t.Fatalf("deployment private run not ready: %+v %v", state, err)
 				}
 			} else {
-				t.Fatal("group HTTP selected superseded public URL run")
+				t.Fatal("deployment HTTP selected superseded public URL run")
 			}
 		}
-		if err = d.AcknowledgePublisherGroupConfiguration(t.Context(), replica.lease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now); err != nil {
+		if err = d.AcknowledgeDeploymentPublisherConfiguration(t.Context(), replica.lease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -329,14 +328,14 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 	if err != nil || len(stageStatus.Members) != 1 {
 		t.Fatal("selected status lost or borrowed staging members", stageStatus, err)
 	}
-	if err = d.RevokePublisherGroupMember(t.Context(), r.TeamID, r.ProjectKey, "staging", a.member.PublisherIdentityID, r.ActorID, now); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatal("member revocation crossed group scope", err)
+	if err = d.RevokeDeploymentPublisher(t.Context(), DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID}, "staging", a.member.PublisherIdentityID, now); !errors.Is(err, ErrDeploymentPublisherNotFound) {
+		t.Fatal("member revocation crossed deployment scope", err)
 	}
-	if err = d.RevokePublisherGroupMember(t.Context(), r.TeamID, r.ProjectKey, "production", a.member.PublisherIdentityID, r.ActorID, now); err != nil {
+	if err = d.RevokeDeploymentPublisher(t.Context(), DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID}, "production", a.member.PublisherIdentityID, now); err != nil {
 		t.Fatal("admin member revocation", err)
 	}
-	if _, err = d.GetPublisherGroupAssignments(t.Context(), a.lease.AccessToken, now); !errors.Is(err, ErrPublisherGroup) {
-		t.Fatal("revoked replica retained group lease", err)
+	if _, err = d.GetDeploymentPublisherAssignments(t.Context(), a.lease.AccessToken, now); !errors.Is(err, ErrDeploymentPublisher) {
+		t.Fatal("revoked replica retained deployment lease", err)
 	}
 	if _, err = d.HeartbeatServiceRun(t.Context(), serviceRuns[0].ServiceID, serviceRuns[0].RunID, serviceRuns[0].Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("revoked replica retained private run", err)
@@ -362,10 +361,10 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = d.AcknowledgePublisherGroupConfiguration(t.Context(), b.lease.AccessToken, b.assignments.Revision, b.assignments.ConfigurationHash, true, now); !errors.Is(err, ErrProjectConfigurationStale) {
+	if err = d.AcknowledgeDeploymentPublisherConfiguration(t.Context(), b.lease.AccessToken, b.assignments.Revision, b.assignments.ConfigurationHash, true, now); !errors.Is(err, ErrProjectConfigurationStale) {
 		t.Fatal("stale ack was accepted", err)
 	}
-	newAssignments, err := d.GetPublisherGroupAssignments(t.Context(), b.lease.AccessToken, now)
+	newAssignments, err := d.GetDeploymentPublisherAssignments(t.Context(), b.lease.AccessToken, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +394,7 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 	}
 	enrolled, revoked, described := false, false, false
 	for _, event := range page.Events {
-		if event.EventType == "group.update" {
+		if event.EventType == "deployment.update" {
 			if event.PublisherIdentityID == a.member.PublisherIdentityID && event.ActorIdentityID == "" {
 				enrolled = true
 			}
@@ -408,7 +407,7 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 		}
 	}
 	if !enrolled || !revoked || !described {
-		t.Fatalf("missing group audit facts: enrolled=%t revoked=%t description=%t", enrolled, revoked, described)
+		t.Fatalf("missing deployment audit facts: enrolled=%t revoked=%t description=%t", enrolled, revoked, described)
 	}
 	scope := DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID}
 	productionDeployment, err := d.GetDeployment(t.Context(), scope, "production")
@@ -418,22 +417,22 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 	if err = d.DeleteDeployment(t.Context(), scope, "production", productionDeployment.Revision, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.GetPublisherGroupAssignments(t.Context(), a.lease.AccessToken, now); !errors.Is(err, ErrPublisherGroup) {
-		t.Fatal("removed group retained assignments", err)
+	if _, err = d.GetDeploymentPublisherAssignments(t.Context(), a.lease.AccessToken, now); !errors.Is(err, ErrDeploymentPublisher) {
+		t.Fatal("removed deployment retained assignments", err)
 	}
 	for _, access := range oldAccess {
 		if _, err = d.AuthenticatePublisherAccess(t.Context(), access.Token, "", now); !errors.Is(err, ErrPublisherIdentity) {
-			t.Fatal("removed group retained native grants", err)
+			t.Fatal("removed deployment retained native grants", err)
 		}
 	}
-	if _, err = d.GetPublisherGroupAssignments(t.Context(), stage.lease.AccessToken, now); err != nil {
+	if _, err = d.GetDeploymentPublisherAssignments(t.Context(), stage.lease.AccessToken, now); err != nil {
 		t.Fatal("removing production disturbed staging", err)
 	}
 	if err = d.RevokePublisherIdentity(t.Context(), r.TeamID, stage.member.PublisherIdentityID, r.ActorID, now); err != nil {
 		t.Fatal("general admin identity revocation", err)
 	}
-	if _, err = d.GetPublisherGroupAssignments(t.Context(), stage.lease.AccessToken, now); !errors.Is(err, ErrPublisherGroup) {
-		t.Fatal("general admin revoke retained group access", err)
+	if _, err = d.GetDeploymentPublisherAssignments(t.Context(), stage.lease.AccessToken, now); !errors.Is(err, ErrDeploymentPublisher) {
+		t.Fatal("general admin revoke retained deployment access", err)
 	}
 	stageAudit, err := d.ListServiceAudit(t.Context(), r.TeamID, r.ActorID, ServiceAuditFilter{ServiceID: stage.assignments.Services[0].ServiceID, Limit: 256}, now)
 	if err != nil {
@@ -441,16 +440,16 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 	}
 	generalRevoked := false
 	for _, event := range stageAudit.Events {
-		if event.EventType == "group.update" && event.PublisherIdentityID == stage.member.PublisherIdentityID && event.ActorIdentityID == r.ActorID {
+		if event.EventType == "deployment.update" && event.PublisherIdentityID == stage.member.PublisherIdentityID && event.ActorIdentityID == r.ActorID {
 			generalRevoked = true
 		}
 	}
 	if !generalRevoked {
-		t.Fatal("general admin revoke omitted group audit fact")
+		t.Fatal("general admin revoke omitted deployment audit fact")
 	}
 }
 
-func TestIntegrationAppliedProjectGroupReassignmentKeepsSavedService(t *testing.T) {
+func TestIntegrationAppliedProjectDeploymentReassignmentKeepsSavedService(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "applied_move")
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"api": {Target: "https://api.internal:8443", Access: &ProjectServiceAccess{Team: true}}}}
@@ -469,15 +468,18 @@ func TestIntegrationAppliedProjectGroupReassignmentKeepsSavedService(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	var replicas []enrolledGroupReplica
-	for _, group := range []string{"production", "staging"} {
-		e, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, group, r.ActorID, 1, time.Hour, now)
+	var replicas []enrolledDeploymentReplica
+	if _, err := testDeploymentPublisherEnrollment(d, t.Context(), r.TeamID, r.ProjectKey, "staging", r.ActorID, 1, time.Hour, now); !errors.Is(err, ErrProjectConfigurationInvalid) {
+		t.Fatal("empty deployment accepted publisher approval", err)
+	}
+	for _, deployment := range []string{"production"} {
+		e, err := testDeploymentPublisherEnrollment(d, t.Context(), r.TeamID, r.ProjectKey, deployment, r.ActorID, 1, time.Hour, now)
 		if err != nil {
 			t.Fatal(err)
 		}
-		replicas = append(replicas, enrollAppliedGroup(t, d, r, e, now))
+		replicas = append(replicas, enrollAppliedDeployment(t, d, r, e, now))
 	}
-	old := groupAssignmentAccess(t, d, replicas[0], replicas[0].assignments.Services[0], now)
+	old := deploymentAssignmentAccess(t, d, replicas[0], replicas[0].assignments.Services[0], now)
 	service.Access = nil
 	r.Deployment = "staging"
 	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"api": service}}
@@ -486,6 +488,11 @@ func TestIntegrationAppliedProjectGroupReassignmentKeepsSavedService(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	e, err := testDeploymentPublisherEnrollment(d, t.Context(), r.TeamID, r.ProjectKey, "staging", r.ActorID, 1, time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replicas = append(replicas, enrollAppliedDeployment(t, d, r, e, now))
 	if updated.Services[0].ServiceID == initial.Services[0].ServiceID {
 		t.Fatal("another deployment adopted the saved service")
 	}
@@ -496,18 +503,18 @@ func TestIntegrationAppliedProjectGroupReassignmentKeepsSavedService(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	production, err := d.GetPublisherGroupAssignments(t.Context(), replicas[0].lease.AccessToken, now)
+	production, err := d.GetDeploymentPublisherAssignments(t.Context(), replicas[0].lease.AccessToken, now)
 	if err != nil || len(production.Services) != 0 {
-		t.Fatal("old group retained assignment", err)
+		t.Fatal("old deployment retained assignment", err)
 	}
-	staging, err := d.GetPublisherGroupAssignments(t.Context(), replicas[1].lease.AccessToken, now)
+	staging, err := d.GetDeploymentPublisherAssignments(t.Context(), replicas[1].lease.AccessToken, now)
 	if err != nil || len(staging.Services) != 1 {
-		t.Fatal("new group did not receive assignment", err)
+		t.Fatal("new deployment did not receive assignment", err)
 	}
 	if _, err = d.AuthenticatePublisherAccess(t.Context(), old.Token, "", now); !errors.Is(err, ErrPublisherIdentity) {
-		t.Fatal("old group retained publication grant", err)
+		t.Fatal("old deployment retained publication grant", err)
 	}
-	current := groupAssignmentAccess(t, d, replicas[1], staging.Services[0], now)
+	current := deploymentAssignmentAccess(t, d, replicas[1], staging.Services[0], now)
 	a := staging.Services[0]
 	trust, err := appliedServiceTargetTrust(service.TargetTLS)
 	if err != nil {
@@ -548,11 +555,11 @@ func TestIntegrationAppliedProjectStorageRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "remote", r.ActorID, 1, time.Hour, now)
+	enrollment, err := testDeploymentPublisherEnrollment(d, t.Context(), r.TeamID, r.ProjectKey, "remote", r.ActorID, 1, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replica := enrollAppliedGroup(t, d, r, enrollment, now)
+	replica := enrollAppliedDeployment(t, d, r, enrollment, now)
 	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
 	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey, naming.ManagedURLModeGenerated)
 	if err != nil {
@@ -571,7 +578,7 @@ func TestIntegrationAppliedProjectStorageRotation(t *testing.T) {
 	if err != nil || after.ConfigurationHash != before.ConfigurationHash || after.Configuration.Services["web"].Target != before.Configuration.Services["web"].Target {
 		t.Fatal("applied target cannot be read after dropping the old key", err)
 	}
-	assignments, err := reopened.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, now)
+	assignments, err := reopened.GetDeploymentPublisherAssignments(t.Context(), replica.lease.AccessToken, now)
 	if err != nil || !reflect.DeepEqual(assignments, replica.assignments) {
 		t.Fatal("deployment targets cannot be read after dropping the old key", err)
 	}
@@ -629,7 +636,7 @@ func TestIntegrationAppliedProjectHTTPSettingsAndTargetTrust(t *testing.T) {
 		t.Fatal(err)
 	}
 	if u.Endpoint == nil || u.Endpoint.Public || !strings.HasPrefix(u.Endpoint.Hostname, "application.") || status.Services[0].Public {
-		t.Fatalf("HTTP settings overrode group reachability: %+v", u)
+		t.Fatalf("HTTP settings overrode deployment reachability: %+v", u)
 	}
 	checkIP := func(allowed, denied string) {
 		t.Helper()
@@ -642,16 +649,16 @@ func TestIntegrationAppliedProjectHTTPSettingsAndTargetTrust(t *testing.T) {
 		}
 	}
 	checkIP("192.0.2.10", "203.0.113.10")
-	enrollment, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
+	enrollment, err := testDeploymentPublisherEnrollment(d, t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replica := enrollAppliedGroup(t, d, r, enrollment, now)
+	replica := enrollAppliedDeployment(t, d, r, enrollment, now)
 	a := replica.assignments.Services[0]
 	if a.Configuration.TargetTLS == nil || *a.Configuration.TargetTLS != *trust || a.Configuration.HTTP.Access.IP[0] != "192.0.2.10/32" {
 		t.Fatalf("assignment lost target trust or HTTP settings: %+v", a.Configuration)
 	}
-	old := groupAssignmentAccess(t, d, replica, a, now)
+	old := deploymentAssignmentAccess(t, d, replica, a, now)
 	approved, err := d.GetServiceForPublisher(t.Context(), id, old.PublisherIdentity, now)
 	if err != nil || approved.HTTPLimits == nil || *approved.HTTPLimits.Total != 100 {
 		t.Fatal("publisher did not receive approved HTTP limits", err)
@@ -672,7 +679,7 @@ func TestIntegrationAppliedProjectHTTPSettingsAndTargetTrust(t *testing.T) {
 	if _, err = d.AuthenticatePublisherAccess(t.Context(), old.Token, "", now); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatal("replaced desired state retained its old grant", err)
 	}
-	current, err := d.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, now)
+	current, err := d.GetDeploymentPublisherAssignments(t.Context(), replica.lease.AccessToken, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -700,7 +707,7 @@ func TestIntegrationAppliedProjectHTTPSettingsAndTargetTrust(t *testing.T) {
 	s.PublicURL = nil
 	period := config.Duration(time.Second)
 	s.HTTP.Limits.Rate = &config.Rate{Per: &period}
-	deployment, err := controlstatedb.New(d.pool).LockProjectPublisherGroup(t.Context(), replica.member.GroupID)
+	deployment, err := controlstatedb.New(d.pool).LockDeploymentByID(t.Context(), replica.member.DeploymentID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -717,7 +724,7 @@ func TestIntegrationAppliedProjectHTTPSettingsAndTargetTrust(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.pool.Exec(t.Context(), `UPDATE control.project_publisher_groups SET configuration_ciphertext=$2,storage_key_id=$3 WHERE id=$1`, deployment.ID, encrypted, d.storageKey.CurrentID()); err != nil {
+	if _, err = d.pool.Exec(t.Context(), `UPDATE control.deployments SET configuration_ciphertext=$2,storage_key_id=$3 WHERE id=$1`, deployment.ID, encrypted, d.storageKey.CurrentID()); err != nil {
 		t.Fatal(err)
 	}
 	if err = d.serviceHTTPSourceAllowed(t.Context(), controlstatedb.New(d.pool), id, netip.MustParseAddr("203.0.113.10")); !errors.Is(err, ErrServiceAccess) {

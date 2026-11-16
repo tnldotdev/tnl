@@ -21,7 +21,7 @@ func TestTypeScriptServiceDiscoveryAndPlacementValidation(t *testing.T) {
 		{"app default", typeScriptServiceCase("web", "http", `{}`), true},
 		{"removed HTTP publisher pool", typeScriptServiceCase("web", "http", `{publisherPool:true}`), false},
 		{"removed private publisher pool", typeScriptServiceCase("db", "tcp", `{publisherPool:true,address:5432}`), false},
-		{"remote group", `{services:{db:{protocol:"postgres"}},deployments:{cloud:{description:"database",targets:{db:{address:"db.internal:5432",access:{team:true}}}}}}`, true},
+		{"remote deployment", `{services:{db:{protocol:"postgres"}},deployments:{cloud:{description:"database",targets:{db:{address:"db.internal:5432",access:{team:true}}}}}}`, true},
 		{"no root pool default", `{publisherPool:true,services:{web:{}}}`, false},
 		{"no public URL pool", typeScriptServiceCase("web", "http", `{publicURL:{publisherPool:true,access:"anonymous"}}`), false},
 		{"no duplicated public URL name", typeScriptServiceCase("web", "http", `{name:"site",publicURL:{name:"other",access:"anonymous"}}`), false},

@@ -13,10 +13,10 @@ func TestServiceReferencesAgreeForStaticAndTypeScript(t *testing.T) {
 	}{
 		{"public local alias", `"services":{"web":{}},"deployments":{"local":{"targets":{"web":{"public_url":{}}}}},"aliases":{"review":{"service":"web"}}`, `services: {web: {}}, deployments: {local: {targets: {web: {publicURL: {}}}}}, aliases: {review: {service: "web"}}`, true},
 		{"private alias", `"services":{"web":{}},"aliases":{"review":{"service":"web"}}`, `services: {web: {}}, aliases: {review: {service: "web"}}`, false},
-		{"group alias", `"services":{"web":{}},"deployments":{"cloud":{"targets":{"web":{"public_url":{},"address":3000}}}},"aliases":{"review":{"service":"web"}}`, `services: {web: {}}, deployments: {cloud: {targets: {web: {publicURL: {}, address: 3000}}}}, aliases: {review: {service: "web"}}`, false},
+		{"remote alias", `"services":{"web":{}},"deployments":{"cloud":{"targets":{"web":{"public_url":{},"address":3000}}}},"aliases":{"review":{"service":"web"}}`, `services: {web: {}}, deployments: {cloud: {targets: {web: {publicURL: {}, address: 3000}}}}, aliases: {review: {service: "web"}}`, false},
 		{"implicit local workload", `"services":{"web":{}},"workloads":{"ci":{"fly":{"app":"web"},"services":["web"]}}`, `services: {web: {}}, workloads: {ci: {fly: {app: "web"}, services: ["web"]}}`, false},
 		{"explicit local workload", `"services":{"web":{}},"deployments":{"local":{"targets":{"web":{}}}},"workloads":{"ci":{"deployment":"local","fly":{"app":"web"},"services":["web"]}}`, `services: {web: {}}, deployments: {local: {targets: {web: {}}}}, workloads: {ci: {deployment: "local", fly: {app: "web"}, services: ["web"]}}`, false},
-		{"group workload", `"services":{"web":{}},"deployments":{"cloud":{"targets":{"web":{"address":3000}}}},"workloads":{"ci":{"deployment":"cloud","fly":{"app":"web"},"services":["web"]}}`, `services: {web: {}}, deployments: {cloud: {targets: {web: {address: 3000}}}}, workloads: {ci: {deployment: "cloud", fly: {app: "web"}, services: ["web"]}}`, true},
+		{"deployment workload", `"services":{"web":{}},"deployments":{"cloud":{"targets":{"web":{"address":3000}}}},"workloads":{"ci":{"deployment":"cloud","fly":{"app":"web"},"services":["web"]}}`, `services: {web: {}}, deployments: {cloud: {targets: {web: {address: 3000}}}}, workloads: {ci: {deployment: "cloud", fly: {app: "web"}, services: ["web"]}}`, true},
 	} {
 		for _, file := range []struct{ name, source string }{
 			{"tnl.json", `{"version":1,"tnl":{` + test.static + `}}`},

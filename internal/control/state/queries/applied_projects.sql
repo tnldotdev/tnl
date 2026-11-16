@@ -13,7 +13,7 @@ WHERE team_id=sqlc.arg(team_id) AND created_by_identity_id=sqlc.arg(created_by_i
 ORDER BY id LIMIT 101;
 -- name: GetDeploymentServiceConfiguration :one
 SELECT sqlc.embed(deployment),binding.service FROM control.applied_project_services binding
-JOIN control.project_publisher_groups deployment ON deployment.id=binding.group_id AND deployment.deleted_at IS NULL
+JOIN control.deployments deployment ON deployment.id=binding.deployment_id AND deployment.deleted_at IS NULL
 WHERE binding.service_id=sqlc.arg(service_id);
 
 -- name: ListProjectServiceDeclarations :many
@@ -35,54 +35,54 @@ SELECT (EXISTS(SELECT 1 FROM control.service_namespace_claims
     OR EXISTS(SELECT 1 FROM control.service_endpoints WHERE hostname=sqlc.arg(hostname)))::boolean;
 
 -- name: ListAppliedProjectServices :many
-SELECT * FROM control.applied_project_services WHERE team_id=sqlc.arg(team_id) AND project_key=sqlc.arg(project_key) ORDER BY group_id,service;
+SELECT * FROM control.applied_project_services WHERE team_id=sqlc.arg(team_id) AND project_key=sqlc.arg(project_key) ORDER BY deployment_id,service;
 
--- name: ListPublisherGroupServices :many
-SELECT * FROM control.applied_project_services WHERE group_id=sqlc.arg(group_id)::text ORDER BY service;
+-- name: ListDeploymentPublisherServices :many
+SELECT * FROM control.applied_project_services WHERE deployment_id=sqlc.arg(deployment_id)::text ORDER BY service;
 
--- name: ListProjectPublisherGroups :many
-SELECT * FROM control.project_publisher_groups WHERE team_id=sqlc.arg(team_id) AND project_key=sqlc.arg(project_key) AND deleted_at IS NULL ORDER BY name;
+-- name: ListProjectDeployments :many
+SELECT * FROM control.deployments WHERE team_id=sqlc.arg(team_id) AND project_key=sqlc.arg(project_key) AND deleted_at IS NULL ORDER BY name;
 
--- name: LockProjectPublisherGroup :one
-SELECT * FROM control.project_publisher_groups WHERE id=sqlc.arg(id) AND deleted_at IS NULL FOR UPDATE;
+-- name: LockDeploymentByID :one
+SELECT * FROM control.deployments WHERE id=sqlc.arg(id) AND deleted_at IS NULL FOR UPDATE;
 
 -- name: LockDeployment :one
-SELECT g.* FROM control.project_publisher_groups g
+SELECT g.* FROM control.deployments g
 WHERE g.team_id=sqlc.arg(team_id) AND g.project_key=sqlc.arg(project_key) AND g.deleted_at IS NULL
-AND (g.id=sqlc.arg(selector) OR EXISTS(SELECT 1 FROM control.publisher_group_names alias WHERE alias.group_id=g.id AND alias.name=sqlc.arg(selector))) FOR UPDATE;
+AND (g.id=sqlc.arg(selector) OR EXISTS(SELECT 1 FROM control.deployment_names alias WHERE alias.deployment_id=g.id AND alias.name=sqlc.arg(selector))) FOR UPDATE;
 
 -- name: ListDeployments :many
-SELECT * FROM control.project_publisher_groups
+SELECT * FROM control.deployments
 WHERE team_id=sqlc.arg(team_id) AND project_key=sqlc.arg(project_key) AND deleted_at IS NULL
 AND id COLLATE "C">sqlc.arg(after_id)::text COLLATE "C" ORDER BY id COLLATE "C" LIMIT sqlc.arg(page_limit);
 
 -- name: ListAuthorizedDeployments :many
-SELECT deployment.* FROM control.project_publisher_groups deployment
+SELECT deployment.* FROM control.deployments deployment
 JOIN control.deployment_management_grants approval ON approval.grant_id=sqlc.arg(grant_id)
 AND approval.team_id=deployment.team_id AND approval.project_key=deployment.project_key
 WHERE deployment.deleted_at IS NULL
 AND (approval.all_deployments OR EXISTS(SELECT 1 FROM control.deployment_management_deployments scope WHERE scope.grant_id=approval.grant_id AND scope.deployment_id=deployment.id))
 AND EXISTS(SELECT 1 FROM control.applied_project_services binding JOIN control.deployment_management_services scope
-    ON scope.grant_id=approval.grant_id AND scope.capability='manage' AND scope.service=binding.service AND scope.revoked_at IS NULL WHERE binding.group_id=deployment.id)
+    ON scope.grant_id=approval.grant_id AND scope.capability='manage' AND scope.service=binding.service AND scope.revoked_at IS NULL WHERE binding.deployment_id=deployment.id)
 AND deployment.id COLLATE "C">sqlc.arg(after_id)::text COLLATE "C" ORDER BY deployment.id COLLATE "C" LIMIT sqlc.arg(page_limit);
 
--- name: AcknowledgePublisherGroupConfiguration :exec
-UPDATE control.publisher_group_members
+-- name: AcknowledgeDeploymentPublisherConfiguration :exec
+UPDATE control.deployment_publisher_members
 SET observed_revision=sqlc.arg(revision), healthy=sqlc.arg(healthy), acknowledged_at=sqlc.arg(acknowledged_at)
 WHERE publisher_identity_id=sqlc.arg(publisher_identity_id);
 
--- name: InvalidatePublisherGroupRuntimeHealth :exec
-UPDATE control.publisher_group_members
+-- name: InvalidateDeploymentPublisherRuntimeHealth :exec
+UPDATE control.deployment_publisher_members
 SET healthy=false, acknowledged_at=NULL
 WHERE publisher_identity_id=sqlc.arg(publisher_identity_id);
 
--- name: ListPublisherGroupMemberStatus :many
-SELECT g.id AS group_id, g.name AS group_name, m.publisher_identity_id, m.key_id,
+-- name: ListDeploymentPublisherStatus :many
+SELECT g.id AS deployment_id, g.name AS deployment_name, m.publisher_identity_id, m.key_id,
     m.observed_revision, g.revision AS current_revision, m.acknowledged_at,
     (m.healthy AND m.lease_expires_at>sqlc.arg(now) AND m.observed_revision=g.revision)::boolean AS healthy,
     m.lease_expires_at
-FROM control.project_publisher_groups g
-JOIN control.publisher_group_members m ON m.group_id=g.id
+FROM control.deployments g
+JOIN control.deployment_publisher_members m ON m.deployment_id=g.id
 JOIN control.publisher_identities i ON i.id=m.publisher_identity_id
 WHERE g.team_id=sqlc.arg(team_id) AND g.project_key=sqlc.arg(project_key)
     AND g.deleted_at IS NULL AND i.revoked_at IS NULL

@@ -125,7 +125,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	}
 	serviceID := *applied.Services[0].ServiceId
 	// a group assignment is the only publisher grant for this service.
-	publisherMetrics := startServiceHTTPGroupPublisher(t, f, applied, "http-auth", group, target.Listener.Addr().String())
+	publisherMetrics := startServiceHTTPDeploymentPublisher(t, f, applied, "http-auth", group, target.Listener.Addr().String())
 	services, err := f.identity.routes.ListAvailableServices(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -639,21 +639,25 @@ func serviceHTTPTestTargetTrust(hostname, caPEM string) controlv1.ProjectTargetT
 	return controlv1.ProjectTargetTLS{Hostname: hostname, CaPem: &caPEM, Digest: hex.EncodeToString(digest[:])}
 }
 
-func startServiceHTTPGroupPublisher(t *testing.T, f *privateSeparatedFixture, applied controlv1.AppliedProjectConfiguration, project, group, target string) *observability.Metrics {
+func startServiceHTTPDeploymentPublisher(t *testing.T, f *privateSeparatedFixture, applied controlv1.AppliedProjectConfiguration, project, group, target string) *observability.Metrics {
 	t.Helper()
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := f.identity.routes.CreatePublisherGroupEnrollment(t.Context(), project, group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: f.identity.teamID, MaxMembers: 1, ExpiresIn: 600})
+	services := make([]string, 0, len(applied.Services))
+	for _, binding := range applied.Services {
+		services = append(services, binding.Service)
+	}
+	enrollment, err := f.identity.routes.CreateDeploymentPublisherEnrollment(t.Context(), f.identity.teamID, project, group, "http-enrollment", controlv1.CreateDeploymentPublisherEnrollmentRequest{Services: services, MaxMembers: new(1), ExpiresIn: new(600)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := f.identity.routes.RedeemPublisherGroupEnrollment(t.Context(), enrollment.EnrollmentKey, public)
+	member, err := f.identity.routes.RedeemDeploymentPublisherEnrollment(t.Context(), enrollment.EnrollmentKey, public)
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner, err := publisheridentity.NewGroup(publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.routes, f.identity.authority, f.identity.routes.ControlURL(), member, key)
+	owner, err := publisheridentity.NewDeployment(publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.routes, f.identity.authority, f.identity.routes.ControlURL(), member, key)
 	if err != nil {
 		t.Fatal(err)
 	}

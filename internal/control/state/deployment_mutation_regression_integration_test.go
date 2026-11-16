@@ -74,7 +74,7 @@ func TestIntegrationDeploymentTargetUpdateAuditRevisions(t *testing.T) {
 	var updates []serviceaudit.Event
 	seen := map[string]bool{}
 	for _, event := range page.Events {
-		if event.EventType != "group.update" {
+		if event.EventType != "deployment.update" {
 			continue
 		}
 		if seen[event.ID] {

@@ -41,6 +41,11 @@ func cliWorkflowInChild(t *testing.T) bool {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	command := exec.CommandContext(ctx, executable, "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.v", "-test.timeout=110s", "-tnl-test-tier=integration", "-tnl-test-postgres-url="+flag.Lookup("tnl-test-postgres-url").Value.String(), "-tnl-cli-binary="+*cliWorkflowBinary, "-tnl-cli-workflow-child")
+	for _, name := range []string{"tnl-test-postgres-address", "tnl-test-postgres-ca-file", "tnl-test-postgres-tls-hostname", "tnl-test-postgres-client-container"} {
+		if value := flag.Lookup(name).Value.String(); value != "" {
+			command.Args = append(command.Args, "-"+name+"="+value)
+		}
+	}
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("CLI workflow child: %v\n%s", err, output)

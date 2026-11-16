@@ -292,7 +292,7 @@ func TestIntegrationServiceAuditCursorFollowsCommitOrder(t *testing.T) {
 	result := make(chan error, 1)
 	workers.Go(func() {
 		event := e
-		event.EventType = "group.update"
+		event.EventType = "deployment.update"
 		err := RecordServiceAudit(ctx, second, event, "second")
 		if err == nil {
 			err = second.Commit(ctx)
@@ -315,7 +315,7 @@ func TestIntegrationServiceAuditCursorFollowsCommitOrder(t *testing.T) {
 		t.Fatalf("slow commit skipped: %+v %v", page, err)
 	}
 	page, err = d.ListServiceAudit(ctx, creation.TeamID, creation.ActingIdentityID, ServiceAuditFilter{ServiceID: service.ID, After: page.NextCursor}, now)
-	if err != nil || len(page.Events) != 1 || page.Events[0].EventType != "group.update" {
+	if err != nil || len(page.Events) != 1 || page.Events[0].EventType != "deployment.update" {
 		t.Fatalf("next commit skipped: %+v %v", page, err)
 	}
 }

@@ -95,15 +95,15 @@ func TestRuntimeDeploymentRetainedAcrossLostReply(t *testing.T) {
 	}
 	parent := observability.ReplaceIdentity(t.Context(), observability.Identity{TeamID: "old-team", DeploymentID: "old-deployment", PublicURLID: "old-url"})
 	scoped := owner.ObservabilityContext(parent, "team", "scope")
-	if id := observability.IdentityFromContext(scoped); id != (observability.Identity{TeamID: "team", PublisherGroupID: "scope", PublisherIdentityID: "publisher", DeploymentID: expected.DeploymentId, ReplicaKey: expected.ReplicaKey}) {
+	if id := observability.IdentityFromContext(scoped); id != (observability.Identity{TeamID: "team", DeploymentID: "scope", PublisherIdentityID: "publisher", ReportedDeploymentID: expected.DeploymentId, ReplicaKey: expected.ReplicaKey}) {
 		t.Fatal("accepted immutable runtime deployment was not bound to a fresh identity", id)
 	}
 	service := observability.NarrowIdentity(scoped, observability.Identity{ServiceID: "service"})
-	if id := observability.IdentityFromContext(service); id.DeploymentID != expected.DeploymentId || id.ReplicaKey != expected.ReplicaKey || id.ServiceID != "service" || id.PublicURLID != "" {
+	if id := observability.IdentityFromContext(service); id.DeploymentID != "scope" || id.ReportedDeploymentID != expected.DeploymentId || id.ReplicaKey != expected.ReplicaKey || id.ServiceID != "service" || id.PublicURLID != "" {
 		t.Fatal("service scope lost deployment provenance or leaked prior public URL", id)
 	}
-	if id := observability.IdentityFromContext(owner.ObservabilityContext(parent, "team", "different-group")); id != (observability.Identity{}) {
-		t.Fatal("runtime attributed a foreign group", id)
+	if id := observability.IdentityFromContext(owner.ObservabilityContext(parent, "team", "different-deployment")); id != (observability.Identity{}) {
+		t.Fatal("runtime attributed a foreign deployment", id)
 	}
 	if _, err := owner.Renew(t.Context()); err != nil {
 		t.Fatal(err)

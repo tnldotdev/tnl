@@ -114,7 +114,7 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 			t.Fatalf("Git fixture: %v %s", err, output)
 		}
 	}
-	saved, group := "orders-saved", "production"
+	saved, deployment := "orders-saved", "production"
 	project := projectConfiguration{Project: clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")}, Worktree: clientproject.Worktree{Root: root, IsGit: true}, Config: config.TNL{Services: config.Services{
 		"orders": {Name: &saved}, "remote": {HTTP: &config.HTTPService{}, Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://app.internal:3000"))}}, "web": {Tunnel: &config.Tunnel{}},
 	}}}}
@@ -122,7 +122,7 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, selector := range []string{"orders", "remote", shareTestService, saved, group, "web", "url_0123456789abcdefghijkl"} {
+	for _, selector := range []string{"orders", "remote", shareTestService, saved, deployment, "web", "url_0123456789abcdefghijkl"} {
 		t.Run(selector, func(t *testing.T) {
 			lookups, reads := 0, 0
 			scope := controlv1.LocalServiceSource{ProjectKey: source.Key, SourceFingerprint: source.Fingerprint, Service: selector}
@@ -167,7 +167,7 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 			s := clientteam.NewSession(nil, nil, &auth.Client{Control: control}, authorityv1.IdentityContext{Memberships: []authorityv1.Membership{{TeamId: shareTestTeam}}}, clientteam.Options{SelectedTeam: shareTestTeam})
 			selectedProject := project
 			if selector == "remote" {
-				selectedProject.Config.Deployment = group
+				selectedProject.Config.Deployment = deployment
 				selectedProject.Config.Services = config.Services{"remote": project.Config.Services["remote"]}
 			} else {
 				selectedProject.Config.Services = config.Services{"orders": project.Config.Services["orders"], "web": project.Config.Services["web"]}
@@ -503,7 +503,7 @@ func TestServiceShareServiceHTTPUsesExplicitSubjectAndOneTimeOutput(t *testing.T
 						return
 					}
 					if r.Method != http.MethodPost || r.URL.Path != "/v1/services/"+shareTestService+"/http-grants" {
-						t.Errorf("service HTTP used a public URL or group grant: %s %s", r.Method, r.URL)
+						t.Errorf("service HTTP used another resource's grant: %s %s", r.Method, r.URL)
 					}
 					var body controlv1.CreateVisitorCredentialRequest
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Kind != kind || !body.ExpiresAt.Equal(at) {

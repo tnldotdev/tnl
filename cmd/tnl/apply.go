@@ -90,7 +90,7 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 	if flags.Output == statusOutputJSON {
 		return json.NewEncoder(output).Encode(applied)
 	}
-	return writeHumanFrame(output, "tnl apply", "applied", "start remote publishers with tnl publisher serve --group NAME", appliedProjectBlocks(applied)...)
+	return writeHumanFrame(output, "tnl apply", "applied", "start publishers with tnl publisher serve --deployment NAME", appliedProjectBlocks(applied)...)
 }
 
 func appliedProjectBlocks(applied controlv1.AppliedProjectConfiguration) []clioutput.Block {
@@ -100,12 +100,12 @@ func appliedProjectBlocks(applied controlv1.AppliedProjectConfiguration) []cliou
 		if service.ServiceId != nil {
 			id = *service.ServiceId
 		}
-		blocks = append(blocks, clioutput.Section(service.Service, clioutput.Fields(clioutput.Field{Label: "publisher", Value: service.PublisherGroup}, clioutput.Field{Label: "service ID", Value: id}, clioutput.Field{Label: "assignment", Value: string(service.ServiceKind)}, clioutput.Field{Label: "desired revision", Value: strconv.FormatInt(service.DesiredRevision, 10)})))
+		blocks = append(blocks, clioutput.Section(service.Service, clioutput.Fields(clioutput.Field{Label: "deployment", Value: service.Deployment}, clioutput.Field{Label: "service ID", Value: id}, clioutput.Field{Label: "assignment", Value: string(service.ServiceKind)}, clioutput.Field{Label: "desired revision", Value: strconv.FormatInt(service.DesiredRevision, 10)})))
 	}
 	for _, member := range applied.Members {
 		fields := []clioutput.Field{{Label: "publisher ID", Value: member.PublisherIdentityId}, {Label: "observed revision", Value: strconv.FormatInt(member.ObservedRevision, 10)}, {Label: "healthy", Value: strconv.FormatBool(member.Healthy)}}
 		fields = append(fields, publisherRuntimeFields(member.Runtime)...)
-		blocks = append(blocks, clioutput.Section(member.GroupName, clioutput.Fields(fields...)))
+		blocks = append(blocks, clioutput.Section(member.DeploymentName, clioutput.Fields(fields...)))
 	}
 	return blocks
 }

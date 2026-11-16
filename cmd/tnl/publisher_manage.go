@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,17 +21,13 @@ import (
 )
 
 type publisherCommand struct {
-	Namespace struct {
-		Rename publisherNamespaceRenameCommand `cmd:"" help:"Change managed DNS hostnames and certificate scope, retaining service IDs and ports."`
-	} `cmd:"" help:"Manage a group's DNS namespace separately from its configuration selector."`
-	Rename    publisherGroupRenameCommand `cmd:"" help:"Rename a group selector while preserving its endpoints and publisher identities."`
-	Serve     publisherServeCommand       `cmd:"" help:"Run this replica's assigned services with a saved or portable group identity."`
-	Current   publisherCurrentCommand     `cmd:"" help:"Show the selected local or file-backed publisher without exposing its key."`
-	Setup     publisherSetupCommand       `cmd:"" help:"Set up a local publisher for your HTTP namespace."`
-	Provision publisherProvisionCommand   `cmd:"" help:"Write a portable scoped publisher file for deployment."`
-	Enroll    publisherEnrollCommand      `cmd:"" help:"Issue one-use enrollment for a public URL, HTTP namespace, or service."`
-	List      publisherListCommand        `cmd:"" help:"List publisher identities and grants."`
-	Revoke    publisherRevokeCommand      `cmd:"" help:"Revoke a publisher identity."`
+	Serve     publisherServeCommand     `cmd:"" help:"Run this replica's assigned services with a saved or portable deployment identity."`
+	Current   publisherCurrentCommand   `cmd:"" help:"Show the selected local or file-backed publisher without exposing its key."`
+	Setup     publisherSetupCommand     `cmd:"" help:"Approve scoped deployment publisher enrollment or set up a local publisher."`
+	Provision publisherProvisionCommand `cmd:"" help:"Write a portable scoped publisher file for deployment."`
+	Enroll    publisherEnrollCommand    `cmd:"" help:"Issue one-use enrollment for a public URL, HTTP namespace, or service."`
+	List      publisherListCommand      `cmd:"" help:"List publisher identities and grants."`
+	Revoke    publisherRevokeCommand    `cmd:"" help:"Revoke a publisher identity."`
 	Grant     struct {
 		Add    publisherGrantAddCommand    `cmd:"" help:"Add a public URL, HTTP namespace, or service grant."`
 		Revoke publisherGrantRevokeCommand `cmd:"" help:"Revoke one publisher grant."`
@@ -38,25 +35,48 @@ type publisherCommand struct {
 }
 type publisherSetupCommand struct {
 	scopedTeamFlags `embed:""`
-	Namespace       bool   `help:"Set up this team's HTTP namespace for tnl.open."`
-	URL             string `name:"url" help:"Set up one saved development public URL by ID."`
-	ServiceID       string `name:"service" help:"Set up one exact saved service publisher."`
-	Domain          string `help:"Ready team domain; defaults to the team's default domain."`
+	Deployment      string           `name:"deployment" help:"Saved deployment name or ID for bounded publisher enrollment."`
+	ProjectKey      string           `name:"project-key" help:"Applied project key; defaults to this Git configuration source."`
+	Services        []string         `name:"service" help:"Service name to approve with --deployment; repeat for several. Without --deployment, selects one exact saved service ID."`
+	Members         int              `name:"members" default:"1" help:"Maximum distinct publishers redeeming deployment enrollment, from 1 to 256."`
+	ExpiresIn       time.Duration    `name:"expires-in" default:"10m" help:"Deployment enrollment lifetime, from 1m to 24h."`
+	IdempotencyKey  string           `name:"idempotency-key" help:"Original deployment setup request key for lost-response recovery."`
+	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"With --deployment, print a raw enrollment key with human diagnostics, or JSON containing the key."`
+	Namespace       bool             `help:"Set up this team's HTTP namespace for tnl.open."`
+	URL             string           `name:"url" help:"Set up one saved development public URL by ID."`
+	Domain          string           `help:"Ready team domain; defaults to the team's default domain."`
 }
 type publisherProvisionCommand struct {
 	scopedTeamFlags `embed:""`
-	Group           string `name:"group" help:"Configured publisher group for one replica's portable signing identity."`
-	ProjectKey      string `name:"project-key" help:"Applied project key for a group identity; defaults to this Git configuration source."`
-	Instance        string `name:"instance" help:"Replica identity name; required with --group and bound into the private file."`
-	Namespace       bool   `help:"Grant temporary HTTP URLs in your namespace."`
-	URL             string `name:"url" help:"Saved public URL ID for an exact grant."`
-	ServiceID       string `name:"service" help:"Saved service ID for an exact grant."`
-	Domain          string `help:"Ready team domain for a namespace grant."`
-	OutputFile      string `name:"output-file" type:"path" required:"" help:"New private file for deployment; never overwrites an existing file."`
+	Deployment      string   `name:"deployment" help:"Configured deployment for one replica's portable signing identity."`
+	ProjectKey      string   `name:"project-key" help:"Applied project key for a deployment identity; defaults to this Git configuration source."`
+	Instance        string   `name:"instance" help:"Replica identity name; required with --deployment and bound into the private file."`
+	Namespace       bool     `help:"Grant temporary HTTP URLs in your namespace."`
+	URL             string   `name:"url" help:"Saved public URL ID for an exact grant."`
+	ServiceID       string   `name:"service-id" help:"Saved service ID for an exact grant without --deployment."`
+	Services        []string `name:"service" help:"Exact binding name to approve with --deployment; repeat for multiple bindings."`
+	Domain          string   `help:"Ready team domain for a namespace grant."`
+	OutputFile      string   `name:"output-file" type:"path" required:"" help:"New private file for deployment; never overwrites an existing file."`
 }
 
-func runPublisherSetup(ctx context.Context, f publisherSetupCommand, output, diagnostics io.Writer) error {
-	if f.ServiceID != "" {
+func (f publisherProvisionCommand) Validate() error {
+	if len(f.Services) != 0 && f.Deployment == "" {
+		return publisherCLIError("--service requires --deployment; use --service-id for one exact saved service")
+	}
+	return nil
+}
+
+func runPublisherSetup(ctx context.Context, f publisherSetupCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+	if f.Deployment != "" {
+		return runDeploymentPublisherSetup(ctx, f, project, output, diagnostics)
+	}
+	if f.ProjectKey != "" || f.IdempotencyKey != "" || f.Output == statusOutputJSON || f.Members != 1 || f.ExpiresIn != 10*time.Minute {
+		return publisherCLIError("--project-key, --idempotency-key, --output json, --members, and --expires-in require --deployment")
+	}
+	if len(f.Services) > 0 {
+		if len(f.Services) != 1 {
+			return publisherCLIError("select one exact saved service ID without --deployment")
+		}
 		if f.Namespace || f.URL != "" || f.Domain != "" {
 			return publisherCLIError("select --namespace, --url, or --service")
 		}
@@ -118,14 +138,17 @@ func runPublisherSetup(ctx context.Context, f publisherSetupCommand, output, dia
 }
 
 func runPublisherProvision(ctx context.Context, f publisherProvisionCommand, project projectConfiguration, output, diagnostics io.Writer) error {
-	if f.Group != "" {
-		if f.Namespace || f.URL != "" || f.ServiceID != "" || f.Domain != "" {
-			return publisherCLIError("select --group, --namespace, --url, or --service")
+	if err := f.Validate(); err != nil {
+		return err
+	}
+	if f.Deployment != "" {
+		if f.Namespace || f.URL != "" || f.ServiceID != "" || f.Domain != "" || len(f.Services) == 0 {
+			return publisherCLIError("select --deployment, --namespace, --url, or --service")
 		}
-		return runPublisherGroupProvision(ctx, groupIdentityProvisionOptions{Remote: f.selection(), Group: f.Group, ProjectKey: f.ProjectKey, Instance: f.Instance, OutputFile: f.OutputFile}, project, output, diagnostics)
+		return runDeploymentPublisherProvision(ctx, deploymentIdentityProvisionOptions{Remote: f.selection(), Deployment: f.Deployment, ProjectKey: f.ProjectKey, Instance: f.Instance, OutputFile: f.OutputFile, Services: f.Services}, project, output, diagnostics)
 	}
 	if f.ProjectKey != "" || f.Instance != "" {
-		return publisherCLIError("--project-key and --instance require --group")
+		return publisherCLIError("--project-key and --instance require --deployment")
 	}
 	if f.OutputFile == "" {
 		return publisherCLIError("pass --output-file for the portable publisher identity")
@@ -207,24 +230,27 @@ func runPublisherProvision(ctx context.Context, f publisherProvisionCommand, pro
 
 type publisherEnrollCommand struct {
 	scopedTeamFlags `embed:""`
-	Group           string        `name:"group" help:"Issue one-use bootstrap for one replica of this configured publisher group."`
-	ProjectKey      string        `name:"project-key" help:"Applied project key for group bootstrap; defaults to this Git configuration source."`
-	Members         int           `name:"members" default:"1" help:"Maximum distinct task keys redeeming a group bootstrap, from 1 to 256."`
-	ExpiresIn       time.Duration `name:"expires-in" default:"10m" help:"Group bootstrap lifetime, from 1m to 24h; each replica creates its own protected key."`
-	PublicURLID     string        `arg:"" optional:"" name:"public-url-id" help:"Enabled saved public URL ID."`
-	ServiceID       string        `name:"service" help:"Exact saved service ID."`
-	Name            string        `default:"publisher" help:"Lowercase publisher name."`
-	Namespace       bool          `help:"Grant temporary HTTP URLs in your authorized namespace."`
-	Domain          string        `help:"Ready team domain for namespace enrollment."`
-	Automation      bool          `help:"Expire the initial grant after one hour."`
+	PublicURLID     string `arg:"" optional:"" name:"public-url-id" help:"Enabled saved public URL ID."`
+	ServiceID       string `name:"service" help:"Exact saved service ID."`
+	Name            string `default:"publisher" help:"Lowercase publisher name."`
+	Namespace       bool   `help:"Grant temporary HTTP URLs in your authorized namespace."`
+	Domain          string `help:"Ready team domain for namespace enrollment."`
+	Automation      bool   `help:"Expire the initial grant after one hour."`
 }
 type publisherListCommand struct {
 	scopedTeamFlags `embed:""`
-	After           string `help:"Continue after this publisher identity ID."`
+	Deployment      string           `name:"deployment" help:"List only publishers belonging to this saved deployment."`
+	ProjectKey      string           `name:"project-key" help:"Applied project key with --deployment; defaults to this Git configuration source."`
+	Limit           int              `name:"limit" default:"50" help:"Deployment publishers per page, from 1 to 100."`
+	Output          statusOutputMode `name:"output" enum:"human,json" default:"human"`
+	After           string           `help:"Continue after this publisher identity ID."`
 }
 type publisherRevokeCommand struct {
 	scopedTeamFlags `embed:""`
-	ID              string `arg:"" name:"publisher-identity-id"`
+	Deployment      string           `name:"deployment" help:"Require this saved deployment's ownership before revoking."`
+	ProjectKey      string           `name:"project-key" help:"Applied project key with --deployment; defaults to this Git configuration source."`
+	Output          statusOutputMode `name:"output" enum:"human,json" default:"human"`
+	ID              string           `arg:"" name:"publisher-identity-id"`
 }
 type publisherGrantAddCommand struct {
 	scopedTeamFlags     `embed:""`
@@ -294,7 +320,13 @@ func runPublisherEnroll(ctx context.Context, f publisherEnrollCommand, output, d
 	return err
 }
 
-func runPublisherList(ctx context.Context, f publisherListCommand, output, diagnostics io.Writer) error {
+func runPublisherList(ctx context.Context, f publisherListCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+	if f.Deployment != "" {
+		return runDeploymentPublisherList(ctx, f, project, output, diagnostics)
+	}
+	if f.ProjectKey != "" || f.Limit != 50 {
+		return publisherCLIError("--project-key and --limit require --deployment")
+	}
 	if f.After != "" && !opaqueid.Valid(f.After, opaqueid.PublisherIdentityPrefix) {
 		return publisherCLIError("--after requires a publisher identity ID")
 	}
@@ -310,6 +342,9 @@ func runPublisherList(ctx context.Context, f publisherListCommand, output, diagn
 	page, err := session.Authenticated().Control.ListPublisherIdentities(ctx, current.Team().Id, f.After)
 	if err != nil {
 		return err
+	}
+	if f.Output == statusOutputJSON {
+		return failure.Wrap("write publishers", failure.OutputUnavailable, json.NewEncoder(output).Encode(page))
 	}
 	blocks := []clioutput.Block{}
 	for _, p := range page.Identities {
@@ -346,7 +381,13 @@ func runPublisherList(ctx context.Context, f publisherListCommand, output, diagn
 	return writeHumanFrame(output, "tnl publisher list", countState(len(page.Identities), "publisher", "publishers"), footer, blocks...)
 }
 
-func runPublisherRevoke(ctx context.Context, f publisherRevokeCommand, output, diagnostics io.Writer) error {
+func runPublisherRevoke(ctx context.Context, f publisherRevokeCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+	if f.Deployment != "" {
+		return runDeploymentPublisherRevoke(ctx, f, project, output, diagnostics)
+	}
+	if f.ProjectKey != "" {
+		return publisherCLIError("--project-key requires --deployment")
+	}
 	if !opaqueid.Valid(f.ID, opaqueid.PublisherIdentityPrefix) {
 		return publisherCLIError("pass a publisher identity ID")
 	}
@@ -361,6 +402,9 @@ func runPublisherRevoke(ctx context.Context, f publisherRevokeCommand, output, d
 	}
 	if err := session.Authenticated().Control.RevokePublisherIdentity(ctx, current.Team().Id, f.ID); err != nil {
 		return err
+	}
+	if f.Output == statusOutputJSON {
+		return writePublisherRevoked(output, f.ID)
 	}
 	return writeHumanFrame(output, "tnl publisher revoke", "revoked", "active runs stop on heartbeat", clioutput.Fields(clioutput.Field{Label: "publisher", Value: f.ID}))
 }

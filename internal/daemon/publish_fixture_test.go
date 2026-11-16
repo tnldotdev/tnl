@@ -142,7 +142,7 @@ func newIntegrationPublishingIdentity(t *testing.T, controlOrigin string, contro
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	stateDatabase, err := clientstate.Open(ctx, filepath.Join(owner.directory, "state"))
+	stateDatabase, err := clientstate.OpenWithOptions(ctx, filepath.Join(owner.directory, "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		t.Fatal(err)
 	}

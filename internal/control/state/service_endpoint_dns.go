@@ -11,9 +11,9 @@ import (
 )
 
 type serviceEndpoint struct {
-	ServiceID, GroupID, DomainID, Hostname, Namespace, PoolID string
-	LocalSourceKey                                            string
-	Public, Automation                                        bool
+	ServiceID, DeploymentID, DomainID, Hostname, Namespace, PoolID string
+	LocalSourceKey                                                 string
+	Public, Automation                                             bool
 }
 
 func reconcileServiceEndpoint(ctx context.Context, tx pgx.Tx, endpoint serviceEndpoint, now time.Time) error {
@@ -26,21 +26,21 @@ func reconcileServiceEndpoint(ctx context.Context, tx pgx.Tx, endpoint serviceEn
 		state, available = PublicURLDNSPending, &now
 	}
 	var hostname string
-	err := tx.QueryRow(ctx, `INSERT INTO control.service_endpoints(hostname,service_id,group_id,domain_id,namespace,ingress_pool_id,public,dns_authority_reference,dns_state,dns_available_at,created_at,local_source_key)
+	err := tx.QueryRow(ctx, `INSERT INTO control.service_endpoints(hostname,service_id,deployment_id,domain_id,namespace,ingress_pool_id,public,dns_authority_reference,dns_state,dns_available_at,created_at,local_source_key)
 	    SELECT $1,$2,$3,domain.id,$5,$6,$7,domain.dns_authority_reference,$8,$9,$10,$11 FROM control.domains domain WHERE domain.id=$4
-	    ON CONFLICT(hostname) DO UPDATE SET service_id=EXCLUDED.service_id,group_id=EXCLUDED.group_id,domain_id=EXCLUDED.domain_id,namespace=EXCLUDED.namespace,ingress_pool_id=EXCLUDED.ingress_pool_id,public=EXCLUDED.public,
+	    ON CONFLICT(hostname) DO UPDATE SET service_id=EXCLUDED.service_id,deployment_id=EXCLUDED.deployment_id,domain_id=EXCLUDED.domain_id,namespace=EXCLUDED.namespace,ingress_pool_id=EXCLUDED.ingress_pool_id,public=EXCLUDED.public,
 	      retired_at=NULL,reusable_after=NULL,dns_authority_reference=EXCLUDED.dns_authority_reference,
 	      dns_state=CASE WHEN control.service_endpoints.service_id=EXCLUDED.service_id AND control.service_endpoints.public=EXCLUDED.public AND control.service_endpoints.retired_at IS NULL AND control.service_endpoints.dns_state NOT IN('unmanaged','removed','failed') THEN control.service_endpoints.dns_state ELSE EXCLUDED.dns_state END,
 	      dns_available_at=CASE WHEN control.service_endpoints.service_id=EXCLUDED.service_id AND control.service_endpoints.public=EXCLUDED.public AND control.service_endpoints.retired_at IS NULL AND control.service_endpoints.dns_state NOT IN('unmanaged','removed','failed') THEN control.service_endpoints.dns_available_at ELSE EXCLUDED.dns_available_at END,
 	      dns_revision=control.service_endpoints.dns_revision+1,dns_work_owner=NULL,dns_work_expires_at=NULL
 	    WHERE control.service_endpoints.service_id=EXCLUDED.service_id
-	      OR(control.service_endpoints.group_id=EXCLUDED.group_id AND EXCLUDED.group_id IS NOT NULL
+	      OR(control.service_endpoints.deployment_id=EXCLUDED.deployment_id AND EXCLUDED.deployment_id IS NOT NULL
 	        AND EXISTS(SELECT 1 FROM control.services previous WHERE previous.id=control.service_endpoints.service_id AND previous.deleted_at IS NOT NULL))
 	      OR(control.service_endpoints.local_source_key=EXCLUDED.local_source_key AND EXCLUDED.local_source_key<>''
 	        AND EXISTS(SELECT 1 FROM control.services previous WHERE previous.id=control.service_endpoints.service_id AND previous.deleted_at IS NOT NULL))
 	      OR(control.service_endpoints.retired_at IS NOT NULL AND control.service_endpoints.reusable_after<=$10 AND control.service_endpoints.dns_state='removed'
-	        AND EXISTS(SELECT 1 FROM control.service_namespace_claims claim WHERE claim.namespace=control.service_endpoints.namespace AND claim.group_id=EXCLUDED.group_id AND claim.retired_at IS NULL))
-	    RETURNING hostname`, endpoint.Hostname, endpoint.ServiceID, nullableText(endpoint.GroupID), endpoint.DomainID, endpoint.Namespace, endpoint.PoolID, endpoint.Public, string(state), available, now, endpoint.LocalSourceKey).Scan(&hostname)
+	        AND EXISTS(SELECT 1 FROM control.service_namespace_claims claim WHERE claim.namespace=control.service_endpoints.namespace AND claim.deployment_id=EXCLUDED.deployment_id AND claim.retired_at IS NULL))
+	    RETURNING hostname`, endpoint.Hostname, endpoint.ServiceID, nullableText(endpoint.DeploymentID), endpoint.DomainID, endpoint.Namespace, endpoint.PoolID, endpoint.Public, string(state), available, now, endpoint.LocalSourceKey).Scan(&hostname)
 	return projectConstraintError(publisherLookupError(err, ErrServiceConflict))
 }
 
@@ -61,8 +61,8 @@ type ServiceEndpointDNSWork struct {
 
 func managedDNSWork(row controlstatedb.ControlServiceEndpoint) ServiceEndpointDNSWork {
 	owner := row.ServiceID
-	if row.GroupID.Valid {
-		owner = row.GroupID.String
+	if row.DeploymentID.Valid {
+		owner = row.DeploymentID.String
 	}
 	return ServiceEndpointDNSWork{Hostname: row.Hostname, ServiceID: row.ServiceID, OwnerID: owner, DomainID: row.DomainID, PoolID: row.IngressPoolID, AuthorityReference: row.DnsAuthorityReference.String, Public: row.Public, State: PublicURLDNSState(row.DnsState), Revision: row.DnsRevision, Epoch: row.DnsWorkEpoch, Attempts: row.DnsAttempts, Worker: row.DnsWorkOwner.String, ExpiresAt: row.DnsWorkExpiresAt.Time, AvailableAt: row.DnsAvailableAt.Time, LastError: row.DnsLastError.String}
 }
