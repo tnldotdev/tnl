@@ -735,42 +735,6 @@ func (q *Queries) ReserveFeedbackEventCursor(ctx context.Context) (int64, error)
 	return cursor, err
 }
 
-const reviewerShareCookieValid = `-- name: ReviewerShareCookieValid :one
-SELECT LEAST(share.expires_at, cookie.expires_at)::timestamptz FROM control.shares AS share
-JOIN control.share_cookies AS cookie ON cookie.share_id = share.id
-JOIN control.share_services AS included ON included.share_id = share.id
-WHERE share.id = $1
-  AND cookie.service_id = $2
-  AND included.service_id = $2
-  AND $3::text=ANY(cookie.run_ids)
-  AND cookie.token_digest = $4
-  AND cookie.expires_at > $5
-  AND share.expires_at > $5
-  AND share.revoked_at IS NULL
-  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, $5))
-`
-
-type ReviewerShareCookieValidParams struct {
-	ShareID      string
-	ServiceID    string
-	ServiceRunID string
-	TokenDigest  []byte
-	Now          pgtype.Timestamptz
-}
-
-func (q *Queries) ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (pgtype.Timestamptz, error) {
-	row := q.db.QueryRow(ctx, reviewerShareCookieValid,
-		arg.ShareID,
-		arg.ServiceID,
-		arg.ServiceRunID,
-		arg.TokenDigest,
-		arg.Now,
-	)
-	var column_1 pgtype.Timestamptz
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const updateFeedbackThreadState = `-- name: UpdateFeedbackThreadState :one
 UPDATE control.feedback_threads
 SET state = $1, state_updated_at = $2

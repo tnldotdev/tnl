@@ -359,7 +359,6 @@ UPDATE control.service_http_browser_sessions browser SET revoked_at=COALESCE(bro
 WHERE browser.token_digest=$2
 AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
     WHERE bound.session_digest=browser.token_digest AND bound.service_id=$3
-    AND $4::text=ANY(bound.run_ids)
     AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL)
 `
 
@@ -367,16 +366,10 @@ type RevokeServiceHTTPBrowserSessionParams struct {
 	Now          pgtype.Timestamptz
 	CookieDigest []byte
 	ServiceID    string
-	ServiceRunID string
 }
 
 func (q *Queries) RevokeServiceHTTPBrowserSession(ctx context.Context, arg RevokeServiceHTTPBrowserSessionParams) error {
-	_, err := q.db.Exec(ctx, revokeServiceHTTPBrowserSession,
-		arg.Now,
-		arg.CookieDigest,
-		arg.ServiceID,
-		arg.ServiceRunID,
-	)
+	_, err := q.db.Exec(ctx, revokeServiceHTTPBrowserSession, arg.Now, arg.CookieDigest, arg.ServiceID)
 	return err
 }
 
@@ -470,14 +463,13 @@ AND browser.expires_at>$2 AND session.access_expires_at>$2 AND session.refresh_e
 AND (browser.parent_control_session_id IS NULL OR original.revoked_at IS NULL AND original.refresh_expires_at>$2)
 AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
     WHERE bound.session_digest=browser.token_digest AND bound.service_id=$3
-    AND $4::text=ANY(bound.run_ids) AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL)
+    AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL)
 `
 
 type ServiceHTTPBrowserPermissionParams struct {
 	CookieDigest []byte
 	Now          pgtype.Timestamptz
 	ServiceID    string
-	ServiceRunID string
 }
 
 type ServiceHTTPBrowserPermissionRow struct {
@@ -488,12 +480,7 @@ type ServiceHTTPBrowserPermissionRow struct {
 }
 
 func (q *Queries) ServiceHTTPBrowserPermission(ctx context.Context, arg ServiceHTTPBrowserPermissionParams) (ServiceHTTPBrowserPermissionRow, error) {
-	row := q.db.QueryRow(ctx, serviceHTTPBrowserPermission,
-		arg.CookieDigest,
-		arg.Now,
-		arg.ServiceID,
-		arg.ServiceRunID,
-	)
+	row := q.db.QueryRow(ctx, serviceHTTPBrowserPermission, arg.CookieDigest, arg.Now, arg.ServiceID)
 	var i ServiceHTTPBrowserPermissionRow
 	err := row.Scan(
 		&i.IdentityID,

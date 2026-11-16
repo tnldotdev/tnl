@@ -90,7 +90,7 @@ AND browser.expires_at>sqlc.arg(now) AND session.access_expires_at>sqlc.arg(now)
 AND (browser.parent_control_session_id IS NULL OR original.revoked_at IS NULL AND original.refresh_expires_at>sqlc.arg(now))
 AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
     WHERE bound.session_digest=browser.token_digest AND bound.service_id=sqlc.arg(service_id)
-    AND sqlc.arg(service_run_id)::text=ANY(bound.run_ids) AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL);
+    AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL);
 
 -- name: ServiceHTTPPreviewTeamPermission :one
 SELECT control.company_subject_deadline(service.team_id,sqlc.arg(identity_id)::text,sqlc.arg(control_session_id)::text,sqlc.arg(now)::timestamptz)::timestamptz AS expires_at
@@ -107,7 +107,6 @@ UPDATE control.service_http_browser_sessions browser SET revoked_at=COALESCE(bro
 WHERE browser.token_digest=sqlc.arg(cookie_digest)
 AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
     WHERE bound.session_digest=browser.token_digest AND bound.service_id=sqlc.arg(service_id)
-    AND sqlc.arg(service_run_id)::text=ANY(bound.run_ids)
     AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL);
 
 -- name: InsertServiceHTTPGrant :exec

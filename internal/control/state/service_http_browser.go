@@ -302,8 +302,10 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 	return result, tx.Commit(ctx)
 }
 
-func (d *Database) serviceBrowserPermission(ctx context.Context, tx pgx.Tx, service, run string, digest []byte, now time.Time) (VisitorPermission, error) {
-	row, err := controlstatedb.New(tx).ServiceHTTPBrowserPermission(ctx, controlstatedb.ServiceHTTPBrowserPermissionParams{ServiceID: service, ServiceRunID: run, CookieDigest: digest, Now: timestamptz(now)})
+// callers validate their exact current service run before consulting the
+// service-bound browser identity. only one-use handoffs retain run captures.
+func (d *Database) serviceBrowserPermission(ctx context.Context, tx pgx.Tx, service string, digest []byte, now time.Time) (VisitorPermission, error) {
+	row, err := controlstatedb.New(tx).ServiceHTTPBrowserPermission(ctx, controlstatedb.ServiceHTTPBrowserPermissionParams{ServiceID: service, CookieDigest: digest, Now: timestamptz(now)})
 	if err != nil {
 		return VisitorPermission{}, publisherLookupError(err, ErrVisitorSignIn)
 	}
@@ -432,7 +434,7 @@ func (d *Database) RedeemServiceBrowserHandoff(ctx context.Context, auth Service
 	if err != nil {
 		return result, err
 	}
-	if _, err = d.serviceBrowserPermission(ctx, tx, auth.Subject.ID, auth.RunID, row.SessionDigest, now); err != nil {
+	if _, err = d.serviceBrowserPermission(ctx, tx, auth.Subject.ID, row.SessionDigest, now); err != nil {
 		return result, err
 	}
 	result = controlv1.BrowserHandoffResponse{CookieSecret: string(cookie), ReturnPath: row.ReturnPath, NextUrl: &row.RedirectUrl, Bridge: &row.Bridge, ExpiresAt: row.ExpiresAt.Time}
@@ -453,9 +455,9 @@ func (d *Database) ServiceBrowserSession(ctx context.Context, auth ServiceHTTPRu
 		return result, err
 	}
 	if revoke {
-		err = controlstatedb.New(tx).RevokeServiceHTTPBrowserSession(ctx, controlstatedb.RevokeServiceHTTPBrowserSessionParams{ServiceID: auth.Subject.ID, ServiceRunID: auth.RunID, CookieDigest: digest, Now: timestamptz(now)})
+		err = controlstatedb.New(tx).RevokeServiceHTTPBrowserSession(ctx, controlstatedb.RevokeServiceHTTPBrowserSessionParams{ServiceID: auth.Subject.ID, CookieDigest: digest, Now: timestamptz(now)})
 	} else {
-		result, err = d.serviceBrowserPermission(ctx, tx, auth.Subject.ID, auth.RunID, digest, now)
+		result, err = d.serviceBrowserPermission(ctx, tx, auth.Subject.ID, digest, now)
 	}
 	if errors.Is(err, ErrServiceAccess) {
 		err = ErrVisitorSignIn

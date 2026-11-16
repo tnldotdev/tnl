@@ -80,7 +80,7 @@ func (d *Database) currentReviewer(ctx context.Context, tx pgx.Tx, service contr
 	permission := VisitorPermission{}
 	if len(actor.BrowserCookieSecret) != 0 {
 		digest, _ := browserDigest(base64.RawURLEncoding.EncodeToString(actor.BrowserCookieSecret))
-		permission, err = d.serviceBrowserPermission(ctx, tx, service.ID, actor.ServiceRun.RunID, digest, clock.current())
+		permission, err = d.serviceBrowserPermission(ctx, tx, service.ID, digest, clock.current())
 		if err != nil {
 			return authorizedFeedbackActor{}, err
 		}

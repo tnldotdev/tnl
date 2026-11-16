@@ -133,17 +133,3 @@ SELECT p.id, p.team_id, p.guest_id, r.service_id, sqlc.arg(now)::timestamptz
 FROM control.previews p JOIN control.service_runs r ON r.id = p.demo_service_run_id
 WHERE p.id = sqlc.arg(preview_id)
 ON CONFLICT (preview_id, service_id) DO NOTHING;
-
--- name: ReviewerShareCookieValid :one
-SELECT LEAST(share.expires_at, cookie.expires_at)::timestamptz FROM control.shares AS share
-JOIN control.share_cookies AS cookie ON cookie.share_id = share.id
-JOIN control.share_services AS included ON included.share_id = share.id
-WHERE share.id = sqlc.arg(share_id)
-  AND cookie.service_id = sqlc.arg(service_id)
-  AND included.service_id = sqlc.arg(service_id)
-  AND sqlc.arg(service_run_id)::text=ANY(cookie.run_ids)
-  AND cookie.token_digest = sqlc.arg(token_digest)
-  AND cookie.expires_at > sqlc.arg(now)
-  AND share.expires_at > sqlc.arg(now)
-  AND share.revoked_at IS NULL
-  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(now)));

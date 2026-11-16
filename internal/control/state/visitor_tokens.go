@@ -480,7 +480,7 @@ func (d *Database) browserTokenFacts(ctx context.Context, tx pgx.Tx, scope visit
 	    AND parent.revoked_at IS NULL AND parent.access_expires_at>$3 AND parent.refresh_expires_at>$3
 	    AND (browser.parent_control_session_id IS NULL OR original.revoked_at IS NULL AND original.refresh_expires_at>$3)
 	    AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
-	        JOIN control.service_runs run ON run.id=ANY(bound.run_ids) AND run.service_id=bound.service_id
+	        JOIN control.service_runs run ON run.service_id=bound.service_id
 	        WHERE bound.session_digest=browser.token_digest AND bound.service_id=$1 AND bound.consumed_at IS NOT NULL
 	        AND bound.revoked_at IS NULL AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
 	        AND run.publisher_expires_at>$3 AND run.certificate_expires_at>$3

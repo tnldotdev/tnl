@@ -493,7 +493,6 @@ type Querier interface {
 	RetireConnectorPeerPair(ctx context.Context, arg RetireConnectorPeerPairParams) (ControlConnectorPeerPair, error)
 	RetirePublisherKey(ctx context.Context, arg RetirePublisherKeyParams) (int64, error)
 	RetireVisitorTokenSigningKeys(ctx context.Context, now pgtype.Timestamptz) error
-	ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (pgtype.Timestamptz, error)
 	RevokeControlSession(ctx context.Context, arg RevokeControlSessionParams) (int64, error)
 	RevokeGuestShare(ctx context.Context, arg RevokeGuestShareParams) (ControlShare, error)
 	RevokePublisherGrant(ctx context.Context, arg RevokePublisherGrantParams) (int64, error)

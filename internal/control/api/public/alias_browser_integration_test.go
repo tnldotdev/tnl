@@ -22,7 +22,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func publishBrowserService(t *testing.T, f *companyHTTPFixture, ctx context.Context, actor, team, member, name string) (controlstate.ServiceRecord, controlstate.ServiceHTTPRun) {
+func publishBrowserService(t *testing.T, f *companyHTTPFixture, ctx context.Context, actor, team, member, name string, existingRelays ...map[string]controlstate.RelayLease) (controlstate.ServiceRecord, controlstate.ServiceHTTPRun) {
 	t.Helper()
 	local, err := f.d.RealizeLocalProjectService(ctx, controlstate.RealizeLocalProjectServiceRequest{
 		TeamID: team, ActorID: actor, ProjectKey: "browser", SourceFingerprint: strings.Repeat("a", 64),
@@ -54,7 +54,12 @@ func publishBrowserService(t *testing.T, f *companyHTTPFixture, ctx context.Cont
 	if err != nil {
 		t.Fatal("redeem browser service publisher enrollment", err)
 	}
-	relays := newAuditCompositionRelays(t, f.d, f.now)
+	var relays map[string]controlstate.RelayLease
+	if len(existingRelays) != 0 {
+		relays = existingRelays[0]
+	} else {
+		relays = newAuditCompositionRelays(t, f.d, f.now)
+	}
 	prepared, err := f.d.PrepareServiceRun(ctx, service.ID, publisher, name, f.now, controlstate.ServiceRunRequest{Metadata: service.ServiceMetadata})
 	if err != nil {
 		t.Fatal("prepare browser service run", err)

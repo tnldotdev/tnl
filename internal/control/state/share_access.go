@@ -33,7 +33,8 @@ func (d *Database) currentShareVisitorAuthority(ctx context.Context, tx pgx.Tx, 
 }
 
 // every share consumer rechecks the same captured service membership and current
-// issuer management. a cookie also remains bound to actual captured replica runs.
+// issuer management. a cookie keeps its service scope and original deadline;
+// obtaining permission after an app restart still requires a current ready run.
 func (d *Database) shareVisitorPermission(ctx context.Context, tx pgx.Tx, service, run, shareID, secret string, cookie bool, now time.Time) (time.Time, error) {
 	raw, err := base64.RawURLEncoding.Strict().DecodeString(secret)
 	if err != nil || len(raw) != 32 || base64.RawURLEncoding.EncodeToString(raw) != secret {
@@ -58,8 +59,8 @@ func (d *Database) shareVisitorPermission(ctx context.Context, tx pgx.Tx, servic
 	var deadline time.Time
 	err = tx.QueryRow(ctx, `SELECT cookie.expires_at FROM control.share_cookies cookie
 		WHERE cookie.share_id=$1 AND cookie.service_id=$2 AND cookie.token_digest=$3 AND cookie.expires_at>$4
-		AND EXISTS(SELECT 1 FROM control.service_runs captured WHERE captured.id=ANY(cookie.run_ids)
-		    AND ($5='' OR captured.id=$5) AND captured.service_id=cookie.service_id
+		AND EXISTS(SELECT 1 FROM control.service_runs captured WHERE
+		    ($5='' OR captured.id=$5) AND captured.service_id=cookie.service_id
 		    AND captured.state='ready' AND captured.healthy AND captured.closed_at IS NULL
 		    AND captured.publisher_expires_at>$4 AND captured.certificate_expires_at>$4
 		    AND EXISTS(SELECT 1 FROM control.publisher_service_permission(captured.publisher_identity_id,

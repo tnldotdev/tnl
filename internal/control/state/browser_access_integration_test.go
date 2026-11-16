@@ -223,15 +223,11 @@ func TestIntegrationBrowserLoginInstallsAccessOnReadyPreviewHostnames(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest, err := browserDigest(first.CookieSecret)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// a consumed service binding is still not authority for another run.
-	if err := controlstatedb.New(f.database.pool).RevokeServiceHTTPBrowserSession(t.Context(), controlstatedb.RevokeServiceHTTPBrowserSessionParams{
-		ServiceID: f.service.ID, ServiceRunID: other.run.RunID, CookieDigest: digest, Now: timestamptz(f.now),
-	}); err != nil {
-		t.Fatal(err)
+	// the service-bound session never supplies authority to a mismatched run.
+	wrongRun := f.auth()
+	wrongRun.RunID = other.run.RunID
+	if _, err := f.database.ServiceBrowserSession(t.Context(), wrongRun, first.CookieSecret, true, f.now); err == nil {
+		t.Fatal("mismatched run was authorized to revoke the browser session")
 	}
 	if _, err := f.database.ServiceBrowserSession(t.Context(), f.auth(), first.CookieSecret, false, f.now); err != nil {
 		t.Fatalf("mismatched run revoked the shared session: %v", err)
