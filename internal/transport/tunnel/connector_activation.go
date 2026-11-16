@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -70,6 +71,7 @@ func (s *Session) activateConnectorLeg(ctx context.Context, requestID string, ac
 	if err != nil {
 		return errors.Join(err, &ProtocolError{Code: tunnelv1.Unavailable})
 	}
+	replyEndedNormally := false
 	defer func() {
 		err = errors.Join(err, finish(err == nil))
 		// a socket deadline can fire before the context's timer goroutine runs.
@@ -77,12 +79,17 @@ func (s *Session) activateConnectorLeg(ctx context.Context, requestID string, ac
 		if deadline, ok := ctx.Deadline(); ok && !deadline.After(time.Now()) {
 			err = errors.Join(err, context.DeadlineExceeded)
 		}
+		// the local unavailable diagnostic is not the failed read. first check
+		// the complete operation and finish result, without promoting a received
+		// rejection, a live-stream reset, or a later locally-created session end.
+		replyEndedNormally = replyEndedNormally && muxsession.NormalSessionCloseOnly(err)
 		if err != nil {
 			var classified *ProtocolError
 			if !errors.As(err, &classified) || classified == nil {
 				err = errors.Join(&ProtocolError{Code: tunnelv1.Unavailable}, err)
 			}
 		}
+		err = connectorReplyResult(err, replyEndedNormally)
 	}()
 	// an ambiguous response cannot be retried on this control stream. the role
 	// owner closes this candidate rather than risking a second installation.
@@ -94,6 +101,7 @@ func (s *Session) activateConnectorLeg(ctx context.Context, requestID string, ac
 	}
 	response, err := tunnelv1.ReadControl(s.control)
 	if err != nil {
+		replyEndedNormally = connectorReplySessionEnded(s.transport, err)
 		return err
 	}
 	if response.RequestID != requestID {

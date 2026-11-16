@@ -14,6 +14,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
@@ -322,6 +323,77 @@ func TestConnectorPendingActivationLostReplyKeepsOperationAndCleanup(t *testing.
 					t.Error("activation retry skipped or duplicated current-owner inspection")
 				}
 			}
+		})
+	}
+}
+
+func TestConnectorPendingActivationNormalEndKeepsOperationAndCleanup(t *testing.T) {
+	for _, failedClose := range []bool{false, true} {
+		t.Run(fmt.Sprintf("failed-close=%t", failedClose), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				budget, stop := context.WithTimeout(t.Context(), 5*time.Second)
+				defer stop()
+				call, cancel := context.WithCancelCause(budget)
+				defer cancel(nil)
+				p, op := pendingRetryOwner(t, budget)
+				pendingRetryEndpoint(t, budget, p, op)
+				until, initial, prepare := op.until, op.initial, op.prepare
+				normal := errors.Join(muxsession.ErrClosed, &quic.ApplicationError{Remote: true})
+				physical := errors.New("normally ended activation close failed")
+				script := legOriginScript{phase: connectorAttemptActivation, operation: normal, ended: true, sessionErr: normal}
+				if failedClose {
+					script.closeErr = physical
+				}
+				session := newLegOriginSession(t, call, cancel, op.pair, script)
+				var calls [2]atomic.Int32
+				key, err := connectorPairSecret(op.pair.Key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				leg, err := dialConnectorLeg(call, budget, legOriginConfig(session, errors.New("unused alternate"), &calls),
+					p.signer, op.pair, key, 0, nil, op.initial[0])
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = leg.Close() })
+				op.legs[0] = leg
+				sibling, _ := pendingRetryLeg(t, budget, p, op, 1, legRetryScript{response: tunnelv1.HelloAccepted})
+				op.legs[1] = sibling
+				p.config.Control = recoveryPhaseControl{call: func(request controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
+					if request.Phase != controlv1.ConnectorPeerPairInspect {
+						t.Error("pending activation performed a control mutation")
+					}
+					active, pending := p.pair, op.pair
+					pending.PublisherPreparedUntil = new(op.until)
+					return controlv1.ConnectorPeerPairRebindState{Active: &active, Pending: &pending,
+						HighWaterGeneration: p.highWater, ReadyRelays: pending.Relays, PendingUntil: new(op.until),
+						Operation: &controlv1.ConnectorPeerPairRebindOperation{OperationId: pending.OperationId,
+							DeliveryGeneration: pending.DeliveryGeneration, Status: controlv1.ConnectorPeerPairOperationPending}}, nil
+				}}
+				result := p.connectPendingLegs(op)
+				if result.retry == failedClose || !errors.Is(result.err, normal) ||
+					op.legs[0] != nil || op.legs[1] != sibling || op.activated[0] || op.retired ||
+					!op.until.Equal(until) || op.initial != initial || op.prepare != prepare || context.Cause(p.ctx) != nil ||
+					session.closes.Load() != 1 || session.reads.Load() != 1 || calls[0].Load() != 1 || calls[1].Load() != 0 {
+					t.Error("normal activation end lost its pending operation, sibling, cleanup, or retry decision", result.err)
+				}
+				select {
+				case binding := <-session.activation:
+					activation, err := binding.Activation()
+					operation, ok := activation.InitialOperation()
+					if err != nil || !ok || operation != initial[0] {
+						t.Error("normal activation end changed its retained initial operation", err)
+					}
+				case <-budget.Done():
+					t.Fatal("normal activation end did not reach the wire within the case budget")
+				}
+				if failedClose {
+					var cleanup *CleanupError
+					if !errors.Is(result.err, physical) || !errors.As(result.err, &cleanup) || errors.Is(cleanup, normal) {
+						t.Error("normal activation end absorbed an independent physical cleanup", result.err)
+					}
+				}
+			})
 		})
 	}
 }

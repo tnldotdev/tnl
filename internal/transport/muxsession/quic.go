@@ -381,9 +381,10 @@ func (s *quicSession) OpenStream(ctx context.Context) (Stream, error) {
 		return nil, normalizeQUICError(err)
 	}
 	return &quicStream{
-		Stream: stream,
-		local:  s.connection.LocalAddr(),
-		remote: s.connection.RemoteAddr(),
+		Stream:      stream,
+		sessionDone: s.Done(),
+		local:       s.connection.LocalAddr(),
+		remote:      s.connection.RemoteAddr(),
 	}, nil
 }
 
@@ -393,9 +394,10 @@ func (s *quicSession) AcceptStream(ctx context.Context) (Stream, error) {
 		return nil, normalizeQUICError(err)
 	}
 	return &quicStream{
-		Stream: stream,
-		local:  s.connection.LocalAddr(),
-		remote: s.connection.RemoteAddr(),
+		Stream:      stream,
+		sessionDone: s.Done(),
+		local:       s.connection.LocalAddr(),
+		remote:      s.connection.RemoteAddr(),
 	}, nil
 }
 
@@ -446,18 +448,29 @@ func normalizeQUICError(err error) error {
 
 type quicStream struct {
 	*quic.Stream
-	local  net.Addr
-	remote net.Addr
+	sessionDone <-chan struct{}
+	local       net.Addr
+	remote      net.Addr
 }
 
 func (s *quicStream) Read(b []byte) (int, error) {
 	n, err := s.Stream.Read(b)
-	return n, normalizeQUICError(err)
+	return n, normalizeQUICStreamError(s.sessionDone, err)
 }
 
 func (s *quicStream) Write(b []byte) (int, error) {
 	n, err := s.Stream.Write(b)
-	return n, normalizeQUICError(err)
+	return n, normalizeQUICStreamError(s.sessionDone, err)
+}
+
+func normalizeQUICStreamError(sessionDone <-chan struct{}, err error) error {
+	if application, ok := err.(*quic.ApplicationError); ok && application.ErrorCode == 0 {
+		// quic-go wakes stream i/o before canceling the connection context.
+		// join that already-decided session end before exposing its normal
+		// closure; a stream reset or independent operation never waits here.
+		<-sessionDone
+	}
+	return normalizeQUICError(err)
 }
 
 func (s *quicStream) Close() error {

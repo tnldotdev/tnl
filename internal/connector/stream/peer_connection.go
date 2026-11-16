@@ -558,7 +558,19 @@ func (p *connectorConnection) currentLocked() bool {
 }
 
 func (p *connectorConnection) ownerCurrentLocked() bool {
-	return !p.closing && p.ctx.Err() == nil && p.authorityCurrentLocked(time.Now())
+	return p.ownerErrorLocked() == nil
+}
+
+// local entry guards snapshot the stop cause before starting work. a received
+// operation or authority failure must never be reclassified through this guard.
+func (p *connectorConnection) ownerErrorLocked() error {
+	if cause := context.Cause(p.ctx); cause != nil {
+		return cause
+	}
+	if p.closing || !p.authorityCurrentLocked(time.Now()) {
+		return ErrServiceConnection
+	}
+	return nil
 }
 
 func (p *connectorConnection) notifyLocked() { close(p.changed); p.changed = make(chan struct{}) }

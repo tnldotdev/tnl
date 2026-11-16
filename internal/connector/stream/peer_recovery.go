@@ -160,10 +160,10 @@ func (p *connectorConnection) requestRecovery(next connectorRecoveryState) {
 func (p *connectorConnection) newRebindPhase(phase controlv1.ConnectorPeerPairRebindPhase, operation string, generation int64, relays []controlv1.ConnectorPeerPairRelay, challenge string, proofs []controlv1.ConnectorPeerPairPathProof) (*connectorRebindPhase, error) {
 	p.mu.Lock()
 	run, pair := p.run, p.pair
-	current := p.ownerCurrentLocked()
+	ownerErr := p.ownerErrorLocked()
 	p.mu.Unlock()
-	if !current {
-		return nil, ErrServiceConnection
+	if ownerErr != nil {
+		return nil, ownerErr
 	}
 	started := time.Now()
 	request, err := connectorRebindRequest(p.signer, run, pair, p.owner, phase, operation, generation, relays, challenge, proofs)
@@ -173,10 +173,10 @@ func (p *connectorConnection) newRebindPhase(phase controlv1.ConnectorPeerPairRe
 func (p *connectorConnection) callRebind(phase *connectorRebindPhase) (controlv1.ConnectorPeerPairRebindState, time.Time, error) {
 	p.mu.Lock()
 	run, original, until, highWater := p.run, p.pair, p.until, p.highWater
-	current := p.ownerCurrentLocked()
+	ownerErr := p.ownerErrorLocked()
 	p.mu.Unlock()
-	if !current {
-		return controlv1.ConnectorPeerPairRebindState{}, time.Time{}, ErrServiceConnection
+	if ownerErr != nil {
+		return controlv1.ConnectorPeerPairRebindState{}, time.Time{}, ownerErr
 	}
 	call, stop := context.WithDeadline(p.ctx, minConnectorCall(until))
 	defer stop()
@@ -190,8 +190,8 @@ func (p *connectorConnection) callRebind(phase *connectorRebindPhase) (controlv1
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if !p.ownerCurrentLocked() {
-		return state, time.Time{}, ErrServiceConnection
+	if ownerErr := p.ownerErrorLocked(); ownerErr != nil {
+		return state, time.Time{}, ownerErr
 	}
 	p.highWater = state.HighWaterGeneration
 	return state, pendingUntil, nil
@@ -277,10 +277,10 @@ func (p *connectorConnection) recoverBinding() connectorRecoveryResult {
 	p.mu.Lock()
 	recovery := p.recoveryState
 	op := p.rebind
-	current := p.ownerCurrentLocked()
+	ownerErr := p.ownerErrorLocked()
 	p.mu.Unlock()
-	if !current {
-		return connectorRecoveryResult{err: ErrServiceConnection}
+	if ownerErr != nil {
+		return connectorRecoveryResult{err: ownerErr}
 	}
 	if recovery == connectorBindingReady {
 		return connectorRecoveryResult{}
@@ -572,13 +572,14 @@ func (p *connectorConnection) connectPendingLegs(op *connectorRebindOperation) c
 			if err == nil {
 				err = context.Cause(call)
 			}
-			stop()
 			if err != nil {
-				err = errors.Join(err, connectorCleanupFailure(leg.Close()))
+				err = connectorActivationFailure(call, leg, err)
+				stop()
 				op.legs[slot], op.installed[slot], op.activated[slot] = nil, false, false
 				failures[slot] = err
 				return p.pendingLegFailures(op, failures)
 			}
+			stop()
 			op.activated[slot] = true
 		}
 	}

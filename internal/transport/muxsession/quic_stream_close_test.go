@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"testing"
+	"testing/synctest"
 
 	quic "github.com/quic-go/quic-go"
 )
@@ -50,11 +51,18 @@ func TestQUICStreamSessionClosureKeepsClassificationAndCause(t *testing.T) {
 				if err := server.(*quicSession).connection.CloseWithError(code, "fixture"); err != nil {
 					t.Fatal(err)
 				}
-				muxAwait(t, client.Done())
 				if write {
+					muxAwait(t, client.Done())
 					_, err = outbound.Write([]byte("late"))
 				} else {
 					_, err = outbound.Read(ready[:])
+				}
+				if code == 0 {
+					select {
+					case <-client.Done():
+					default:
+						t.Fatal("normal stream error preceded the session's terminal observation")
+					}
 				}
 				var application *quic.ApplicationError
 				if !errors.As(err, &application) || !application.Remote || application.ErrorCode != code {
@@ -65,6 +73,38 @@ func TestQUICStreamSessionClosureKeepsClassificationAndCause(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestQUICStreamNormalErrorJoinsAlreadyDecidedSessionEnd(t *testing.T) {
+	for _, cause := range []error{
+		&quic.ApplicationError{Remote: true}, &quic.ApplicationError{Remote: true, ErrorCode: 7},
+		&quic.StreamError{Remote: true}, context.Canceled, io.ErrUnexpectedEOF,
+	} {
+		t.Run(fmt.Sprintf("%T/%v", cause, cause), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				done, result := make(chan struct{}), make(chan error, 1)
+				go func() { result <- normalizeQUICStreamError(done, cause) }()
+				synctest.Wait()
+				application, normal := cause.(*quic.ApplicationError)
+				normal = normal && application.ErrorCode == 0
+				if normal {
+					select {
+					case <-result:
+						t.Fatal("normal stream error escaped before the session end joined")
+					default:
+					}
+					close(done)
+				}
+				err := <-result
+				if !errors.Is(err, cause) || errors.Is(err, ErrClosed) != normal {
+					t.Fatal("session-end join changed the operation cause or classification", err)
+				}
+				if !normal {
+					close(done)
+				}
+			})
+		})
 	}
 }
 

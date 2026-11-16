@@ -195,10 +195,13 @@ func TestConnectorFixtureRetirementClosesSessionBeforeControlCancellation(t *tes
 func (f *connectorFixture) RebindConnectorPeerPair(ctx context.Context, service, pairID string, body controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if cause := context.Cause(ctx); cause != nil {
+		return controlv1.ConnectorPeerPairRebindState{}, cause
+	}
 	p := f.peers[pairID]
 	message, err := controlv1.ConnectorPeerPairRebindProofMessage(service, pairID, body)
 	signature, decodeErr := base64.RawURLEncoding.Strict().DecodeString(body.Signature)
-	if p == nil || ctx.Err() != nil || err != nil || decodeErr != nil || !ed25519.Verify(f.device.PublicKey, message, signature) || body.Phase != controlv1.ConnectorPeerPairInspect {
+	if p == nil || err != nil || decodeErr != nil || !ed25519.Verify(f.device.PublicKey, message, signature) || body.Phase != controlv1.ConnectorPeerPairInspect {
 		return controlv1.ConnectorPeerPairRebindState{}, ErrServiceConnection
 	}
 	pair := p.pair

@@ -98,16 +98,22 @@ func DialConnector(ctx context.Context, transport muxsession.Session, hello tunn
 	if result.cleanupErr != nil {
 		result.cleanupErr = &SessionCleanupError{Err: result.cleanupErr}
 	}
-	return result.session, result.receipt, errors.Join(result.err, result.cleanupErr)
+	err := errors.Join(result.err, result.cleanupErr)
+	if err != nil {
+		err = controlContextError(ctx, err)
+	}
+	return result.session, result.receipt, connectorReplyResult(err,
+		result.replyEndedNormally && result.cleanupErr == nil && muxsession.NormalSessionCloseOnly(err))
 }
 
 // dial owns the failed handshake's transport cleanup. keep its error separate
 // so a transport race can recover from a rejection but never lose failed Close.
 type dialResult struct {
-	session    *Session
-	receipt    tunnelv1.ConnectorPairLegAccepted
-	err        error
-	cleanupErr error
+	session            *Session
+	receipt            tunnelv1.ConnectorPairLegAccepted
+	err                error
+	cleanupErr         error
+	replyEndedNormally bool
 }
 
 func dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Message, expectedDeliveryID string, native bool) (result dialResult) {
@@ -152,7 +158,8 @@ func dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Mess
 	}
 	response, err := tunnelv1.ReadControl(control)
 	if err != nil {
-		return dialResult{err: fmt.Errorf("tunnel: read hello response: %w", err)}
+		return dialResult{err: fmt.Errorf("tunnel: read hello response: %w", err),
+			replyEndedNormally: native && connectorReplySessionEnded(transport, err)}
 	}
 	if response.Type == tunnelv1.Error {
 		if native {

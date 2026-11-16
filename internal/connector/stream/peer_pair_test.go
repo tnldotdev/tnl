@@ -1080,6 +1080,10 @@ func assertLegOriginResult(t *testing.T, s *legOriginSession, err error, wantRet
 	if connectorTemporary(errors.Join(s.script.operation, independent)) {
 		t.Error("raw operation aggregate acquired retry permission")
 	}
+	if muxsession.NormalSessionCloseOnly(s.script.operation) &&
+		(connectorTemporary(s.script.operation) || connectorAttemptTemporary(s.script.operation)) {
+		t.Error("a raw normal close acquired retry without its owned pre-cleanup evidence")
+	}
 }
 
 func TestConnectorLegHelloNormalEndRequiresPreCloseEvidence(t *testing.T) {

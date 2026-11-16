@@ -291,9 +291,11 @@ func (e *connectorLegAttemptError) disposition(authenticated bool) reconnectDisp
 		if candidate.canceled {
 			continue
 		}
+		normalReplyEnd := (candidate.stage == connectorAttemptHello || candidate.stage == connectorAttemptActivation) &&
+			tunnel.ConnectorReplyEndedNormally(candidate.cause)
 		if connectorReconnectError(candidate.cause) == rebindConnection {
 			stale = true
-		} else if connectorAttemptTemporary(candidate.cause) {
+		} else if connectorAttemptTemporary(candidate.cause) || normalReplyEnd {
 			retry = true
 		} else if candidate.stage != connectorAttemptConnect || !connectorSingleConnectFailure(candidate.cause) {
 			return terminateConnection
@@ -438,11 +440,16 @@ func prepareConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 		return nil, err
 	}
 	if err := activateConnectorLeg(ctx, l, replacement, initial); err != nil {
-		return nil, &connectorLegAttemptError{count: 1,
-			candidates: [2]connectorCandidateFailure{{stage: connectorAttemptActivation, cause: err}},
-			cleanup:    connectorCleanupFailure(l.Close())}
+		return nil, connectorActivationFailure(ctx, l, err)
 	}
 	return l, nil
+}
+
+func connectorActivationFailure(ctx context.Context, l *connectorRelayLeg, err error) error {
+	cleanup := connectorCleanupFailure(l.Close())
+	return &connectorLegAttemptError{count: 1,
+		candidates: [2]connectorCandidateFailure{{stage: connectorAttemptActivation, cause: err}},
+		context:    context.Cause(ctx), cleanup: cleanup}
 }
 
 // dialConnectorLeg obtains the relay's source claim without selecting packet
