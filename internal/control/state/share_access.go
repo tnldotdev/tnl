@@ -59,15 +59,15 @@ func (d *Database) shareVisitorPermission(ctx context.Context, tx pgx.Tx, servic
 	var deadline time.Time
 	err = tx.QueryRow(ctx, `SELECT cookie.expires_at FROM control.share_cookies cookie
 		WHERE cookie.share_id=$1 AND cookie.service_id=$2 AND cookie.token_digest=$3 AND cookie.expires_at>$4
-		AND EXISTS(SELECT 1 FROM control.service_runs captured WHERE
-		    ($5='' OR captured.id=$5) AND captured.service_id=cookie.service_id
-		    AND captured.state='ready' AND captured.healthy AND captured.closed_at IS NULL
-		    AND captured.publisher_expires_at>$4 AND captured.certificate_expires_at>$4
-		    AND EXISTS(SELECT 1 FROM control.publisher_service_permission(captured.publisher_identity_id,
-		        captured.publisher_grant_id,captured.service_id,$4) permission
-		        JOIN control.publisher_grants grant_record ON grant_record.id=captured.publisher_grant_id
-		        JOIN control.publisher_identity_keys signing ON signing.id=captured.publisher_key_id
-		            AND signing.publisher_identity_id=captured.publisher_identity_id
+		AND EXISTS(SELECT 1 FROM control.service_runs current_run WHERE
+		    ($5='' OR current_run.id=$5) AND current_run.service_id=cookie.service_id
+		    AND current_run.state='ready' AND current_run.healthy AND current_run.closed_at IS NULL
+		    AND current_run.publisher_expires_at>$4 AND current_run.certificate_expires_at>$4
+		    AND EXISTS(SELECT 1 FROM control.publisher_service_permission(current_run.publisher_identity_id,
+		        current_run.publisher_grant_id,current_run.service_id,$4) permission
+		        JOIN control.publisher_grants grant_record ON grant_record.id=current_run.publisher_grant_id
+		        JOIN control.publisher_identity_keys signing ON signing.id=current_run.publisher_key_id
+		            AND signing.publisher_identity_id=current_run.publisher_identity_id
 		            AND (grant_record.kind='service' OR signing.retired_at IS NULL))) FOR SHARE OF cookie`,
 		shareID, service, digest[:], now, run).Scan(&deadline)
 	if err != nil {
@@ -103,10 +103,14 @@ func (d *Database) RedeemShare(ctx context.Context, auth ServiceHTTPRun, shareID
 	if err != nil {
 		return result, err
 	}
-	cookieRuns := endpoint.RunIds
+	if !slices.Contains(endpoint.RunIds, auth.RunID) {
+		return result, ErrShareNotFound
+	}
 	nextURL := ""
 	bridge := false
 	if len(handoff) == 32 {
+		// only a captured, currently ready run may redeem the one-use ticket.
+		// the installed cookie then follows the service's current authorized runs.
 		digest := sha256.Sum256(handoff)
 		consumed, err := q.ConsumeShareHandoff(ctx, controlstatedb.ConsumeShareHandoffParams{
 			Now: timestamptz(now), TokenDigest: digest[:], ServiceID: auth.Subject.ID, ServiceRunID: auth.RunID})
@@ -114,9 +118,6 @@ func (d *Database) RedeemShare(ctx context.Context, auth ServiceHTTPRun, shareID
 			return result, publisherLookupError(err, ErrShareNotFound)
 		}
 		shareID, nextURL, bridge = consumed.ShareID, consumed.RedirectUrl, consumed.Bridge
-		// keep only the original captured replicas. a newly started run does not
-		// inherit a ticket or the cookie installed by redeeming that ticket.
-		cookieRuns = slices.DeleteFunc(slices.Clone(consumed.RunIds), func(id string) bool { return !slices.Contains(endpoint.RunIds, id) })
 	}
 	share, until, err := d.currentShareVisitorAuthority(ctx, tx, auth.Subject.ID, shareID, now)
 	if err != nil {
@@ -182,9 +183,6 @@ func (d *Database) RedeemShare(ctx context.Context, auth ServiceHTTPRun, shareID
 			nextURL = origin + "/__tnl/share/handoff/" + token
 		}
 	}
-	if !slices.Contains(cookieRuns, auth.RunID) {
-		return result, ErrShareNotFound
-	}
 	cookie, _, err := randomBrowserSecret()
 	if err != nil {
 		return result, err
@@ -194,7 +192,7 @@ func (d *Database) RedeemShare(ctx context.Context, auth ServiceHTTPRun, shareID
 		return result, err
 	}
 	if _, err = q.InsertShareCookie(ctx, controlstatedb.InsertShareCookieParams{TokenDigest: digest, ServiceID: auth.Subject.ID,
-		RunIds: cookieRuns, CreatedAt: timestamptz(now), ExpiresAt: timestamptz(until), ShareID: shareID}); err != nil {
+		CreatedAt: timestamptz(now), ExpiresAt: timestamptz(until), ShareID: shareID}); err != nil {
 		return result, publisherLookupError(err, ErrShareNotFound)
 	}
 	if err = tx.Commit(ctx); err != nil {

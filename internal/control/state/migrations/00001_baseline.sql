@@ -1125,7 +1125,6 @@ ALTER TABLE control.shares ADD CONSTRAINT shares_entry_service_fkey
 CREATE TABLE control.share_cookies (
     token_digest bytea PRIMARY KEY CHECK (octet_length(token_digest) = 32),
     share_id text NOT NULL, service_id text NOT NULL,
-    run_ids text[] NOT NULL CHECK (cardinality(run_ids) BETWEEN 1 AND 256),
     created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL CHECK (expires_at > created_at),
     FOREIGN KEY (share_id,service_id) REFERENCES control.share_services(share_id,service_id) ON DELETE CASCADE
 );
@@ -1772,7 +1771,8 @@ CREATE VIEW control.service_visitor_capacity AS
 SELECT visitor_connection_id,service_run_id,valid_until,closed_at FROM control.public_service_visitors;
 
 -- browser identity has one refresh owner across captured service hostnames.
--- handoffs and installed cookies never include a later replacement run.
+-- one-use logins and handoffs capture runs; installed sessions retain service
+-- scope and original deadlines while obtaining current run permission.
 CREATE TABLE control.service_http_browser_logins (
     state_digest bytea PRIMARY KEY CHECK (octet_length(state_digest)=32),
     binding_digest bytea NOT NULL CHECK (octet_length(binding_digest)=32),

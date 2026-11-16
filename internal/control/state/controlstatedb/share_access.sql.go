@@ -19,7 +19,7 @@ WHERE handoff.token_digest=$2 AND handoff.service_id=$3
     AND handoff.consumed_at IS NULL AND handoff.expires_at>$1
     AND share.id=handoff.share_id AND share.revoked_at IS NULL AND share.expires_at>$1
     AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,$1))
-RETURNING handoff.share_id,handoff.redirect_url,handoff.bridge,handoff.run_ids
+RETURNING handoff.share_id,handoff.redirect_url,handoff.bridge
 `
 
 type ConsumeShareHandoffParams struct {
@@ -33,7 +33,6 @@ type ConsumeShareHandoffRow struct {
 	ShareID     string
 	RedirectUrl string
 	Bridge      bool
-	RunIds      []string
 }
 
 func (q *Queries) ConsumeShareHandoff(ctx context.Context, arg ConsumeShareHandoffParams) (ConsumeShareHandoffRow, error) {
@@ -44,12 +43,7 @@ func (q *Queries) ConsumeShareHandoff(ctx context.Context, arg ConsumeShareHando
 		arg.ServiceRunID,
 	)
 	var i ConsumeShareHandoffRow
-	err := row.Scan(
-		&i.ShareID,
-		&i.RedirectUrl,
-		&i.Bridge,
-		&i.RunIds,
-	)
+	err := row.Scan(&i.ShareID, &i.RedirectUrl, &i.Bridge)
 	return i, err
 }
 
@@ -154,19 +148,18 @@ func (q *Queries) GetActiveShareForService(ctx context.Context, arg GetActiveSha
 }
 
 const insertShareCookie = `-- name: InsertShareCookie :one
-INSERT INTO control.share_cookies(token_digest,share_id,service_id,run_ids,created_at,expires_at)
-SELECT $1,share.id,included.service_id,$2::text[],
-    $3,LEAST(share.expires_at,$4::timestamptz)
+INSERT INTO control.share_cookies(token_digest,share_id,service_id,created_at,expires_at)
+SELECT $1,share.id,included.service_id,
+    $2,LEAST(share.expires_at,$3::timestamptz)
 FROM control.shares share
-JOIN control.share_services included ON included.share_id=share.id AND included.service_id=$5
-WHERE share.id=$6 AND share.revoked_at IS NULL AND share.expires_at>$3
-    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,$3))
+JOIN control.share_services included ON included.share_id=share.id AND included.service_id=$4
+WHERE share.id=$5 AND share.revoked_at IS NULL AND share.expires_at>$2
+    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,$2))
 RETURNING token_digest
 `
 
 type InsertShareCookieParams struct {
 	TokenDigest []byte
-	RunIds      []string
 	CreatedAt   pgtype.Timestamptz
 	ExpiresAt   pgtype.Timestamptz
 	ServiceID   string
@@ -176,7 +169,6 @@ type InsertShareCookieParams struct {
 func (q *Queries) InsertShareCookie(ctx context.Context, arg InsertShareCookieParams) ([]byte, error) {
 	row := q.db.QueryRow(ctx, insertShareCookie,
 		arg.TokenDigest,
-		arg.RunIds,
 		arg.CreatedAt,
 		arg.ExpiresAt,
 		arg.ServiceID,

@@ -37,8 +37,8 @@ WHERE included.share_id=sqlc.arg(share_id) AND service.enabled AND service.delet
 GROUP BY service.id,service.certificate_hostname ORDER BY service.id;
 
 -- name: InsertShareCookie :one
-INSERT INTO control.share_cookies(token_digest,share_id,service_id,run_ids,created_at,expires_at)
-SELECT sqlc.arg(token_digest),share.id,included.service_id,sqlc.arg(run_ids)::text[],
+INSERT INTO control.share_cookies(token_digest,share_id,service_id,created_at,expires_at)
+SELECT sqlc.arg(token_digest),share.id,included.service_id,
     sqlc.arg(created_at),LEAST(share.expires_at,sqlc.arg(expires_at)::timestamptz)
 FROM control.shares share
 JOIN control.share_services included ON included.share_id=share.id AND included.service_id=sqlc.arg(service_id)
@@ -64,7 +64,7 @@ WHERE handoff.token_digest=sqlc.arg(token_digest) AND handoff.service_id=sqlc.ar
     AND handoff.consumed_at IS NULL AND handoff.expires_at>sqlc.arg(now)
     AND share.id=handoff.share_id AND share.revoked_at IS NULL AND share.expires_at>sqlc.arg(now)
     AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,sqlc.arg(now)))
-RETURNING handoff.share_id,handoff.redirect_url,handoff.bridge,handoff.run_ids;
+RETURNING handoff.share_id,handoff.redirect_url,handoff.bridge;
 
 -- name: DeleteExpiredShareCookies :exec
 DELETE FROM control.share_cookies cookie WHERE cookie.token_digest IN

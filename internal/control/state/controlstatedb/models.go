@@ -1258,7 +1258,6 @@ type ControlShareCookie struct {
 	TokenDigest []byte
 	ShareID     string
 	ServiceID   string
-	RunIds      []string
 	CreatedAt   pgtype.Timestamptz
 	ExpiresAt   pgtype.Timestamptz
 }
