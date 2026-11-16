@@ -45,16 +45,11 @@ func (s *serviceDeclarationInputRestorationStore) ConfigureService(_ context.Con
 	return s.record(metadata, configuration)
 }
 
-func callServiceDeclarationInputRestoration(t *testing.T, operation, protocol, configuration, suffix string) (*httptest.ResponseRecorder, *serviceDeclarationInputRestorationStore) {
-	t.Helper()
-	store := &serviceDeclarationInputRestorationStore{}
-	h := &handler{dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testControlReadPrincipal()}}
+func serviceDeclarationInputRestorationBody(operation, protocol, configuration string) string {
 	body := fmt.Sprintf(`{"protocol":%q,"publisher_pool":false`, protocol)
-	method, path := http.MethodPost, "/v1/services"
 	if operation == "create" {
 		body += `,"team_id":"team_1","name":"declaration"`
 	} else {
-		method, path = http.MethodPut, "/v1/services/svc_aaaaaaaaaaaaaaaaaaaaaa"
 		body += `,"expected_trust_revision":"7"`
 	}
 	if configuration != "" {
@@ -63,7 +58,19 @@ func callServiceDeclarationInputRestoration(t *testing.T, operation, protocol, c
 			body += `,"unconditional_configuration":true`
 		}
 	}
-	request := httptest.NewRequest(method, path, strings.NewReader(body+"}"+suffix))
+	return body + "}"
+}
+
+func callServiceDeclarationInputRestoration(t *testing.T, operation, protocol, configuration, suffix string) (*httptest.ResponseRecorder, *serviceDeclarationInputRestorationStore) {
+	t.Helper()
+	store := &serviceDeclarationInputRestorationStore{}
+	h := &handler{dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testControlReadPrincipal()}}
+	method, path := http.MethodPost, "/v1/services"
+	if operation != "create" {
+		method, path = http.MethodPut, "/v1/services/svc_aaaaaaaaaaaaaaaaaaaaaa"
+	}
+	body := serviceDeclarationInputRestorationBody(operation, protocol, configuration) + suffix
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer access-token")
 	request.Header.Set("Idempotency-Key", "operation")
 	response := httptest.NewRecorder()
@@ -100,6 +107,9 @@ func TestServiceDeclarationInputRestorationRejectsInvalidBeforeMutation(t *testi
 			{"empty IP", `{"target":"app","http":{"access":{"ip":[]}}}`, ""},
 			{"duplicate masked prefix", `{"target":"app","http":{"access":{"ip":["192.0.2.9/24","192.0.2.0/24"]}}}`, ""},
 			{"duplicate address prefix", `{"target":"app","http":{"access":{"ip":["192.0.2.1","192.0.2.1/32"]}}}`, ""},
+			{"duplicate mapped address", `{"target":"app","http":{"access":{"ip":["192.0.2.1","::ffff:192.0.2.1"]}}}`, ""},
+			{"duplicate mapped prefix", `{"target":"app","http":{"access":{"ip":["192.0.2.0/24","::ffff:192.0.2.9/120"]}}}`, ""},
+			{"mapped prefix outside IPv4", `{"target":"app","http":{"access":{"ip":["::ffff:192.0.2.1/95"]}}}`, ""},
 			{"invalid IP", `{"target":"app","http":{"access":{"ip":["invalid"]}}}`, ""},
 			{"zoned IP", `{"target":"app","http":{"access":{"ip":["fe80::1%en0"]}}}`, ""},
 			{"257 prefixes", `{"target":"app","http":{"access":{"ip":` + string(encoded) + `}}}`, ""},
@@ -156,6 +166,16 @@ func TestServiceDeclarationInputRestorationNormalizesAndPreservesOmission(t *tes
 				configuration: `{"target":"app","http":{"access":{"mode":"restricted"}}}`,
 			},
 			{
+				name: "mapped address and prefix", protocol: "http", target: "app", http: true,
+				configuration: `{"target":"app","http":{"access":{"mode":"restricted","ip":["::ffff:192.0.2.9/120","::ffff:198.51.100.7"]}}}`,
+				ip:            []string{"192.0.2.0/24", "198.51.100.7/32"},
+			},
+			{
+				name: "mapped IPv4 universe", protocol: "http", target: "app", http: true,
+				configuration: `{"target":"app","http":{"access":{"mode":"restricted","ip":["::ffff:192.0.2.9/96"]}}}`,
+				ip:            []string{"0.0.0.0/0"},
+			},
+			{
 				name: "explicit PQ false", protocol: "http", target: "app", postQuantum: new(false),
 				configuration: `{"target":"app","require_post_quantum":false}`,
 			},
@@ -199,6 +219,41 @@ func TestServiceDeclarationInputRestorationNormalizesAndPreservesOmission(t *tes
 				}
 				if test.protocol == "tcp" && saved.Protocol != "tcp" {
 					t.Fatal("native declaration acquired HTTP protocol")
+				}
+			})
+		}
+	}
+}
+
+func TestServiceDeclarationExactBodyLimitBeforeMutation(t *testing.T) {
+	const limit = 2 << 20
+	const configuration = `{"target":"private-body-boundary.internal:3000"}`
+	for _, operation := range []string{"create", "configure"} {
+		body := serviceDeclarationInputRestorationBody(operation, "http", configuration)
+		for _, size := range []int{limit - 1, limit, limit + 1} {
+			t.Run(fmt.Sprintf("%s/%d", operation, size), func(t *testing.T) {
+				// trailing whitespace is valid JSON input, so only the actual
+				// request-body bound can reject the one-byte-over case.
+				suffix := strings.Repeat(" ", size-len(body))
+				response, store := callServiceDeclarationInputRestoration(t, operation, "http", configuration, suffix)
+				if size <= limit {
+					want := http.StatusOK
+					if operation == "create" {
+						want = http.StatusCreated
+					}
+					if response.Code != want || store.calls != 1 || store.configuration == nil ||
+						store.configuration.Target != "private-body-boundary.internal:3000" {
+						t.Fatal("legal boundary body did not reach its exact mutation once", response.Code, store.calls)
+					}
+					return
+				}
+				var problem controlv1.Problem
+				if response.Code != http.StatusBadRequest || store.calls != 0 ||
+					json.Unmarshal(response.Body.Bytes(), &problem) != nil || problem.Code != controlv1.InvalidRequest {
+					t.Fatal("over-limit body reached mutation or lost its invalid-request problem", response.Code, store.calls)
+				}
+				if strings.Contains(response.Body.String(), "private-body-boundary.internal") {
+					t.Fatal("over-limit body rejection exposed private declaration input")
 				}
 			})
 		}
