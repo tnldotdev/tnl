@@ -119,11 +119,14 @@ func normalizeAppliedProjectService(key string, s *ProjectServiceConfiguration, 
 		return ErrProjectConfigurationInvalid
 	}
 	if !descriptor {
-		if s.Protocol == "http" && s.TargetTLS == nil && strings.HasPrefix(s.Target, "https://") {
-			return ErrProjectConfigurationInvalid
-		}
-		if s.Protocol == "http" && s.TargetTLS != nil && strings.HasPrefix(s.Target, "http://") {
-			return ErrProjectConfigurationInvalid
+		if s.Protocol == "http" && strings.Contains(s.Target, "://") {
+			// reachability does not change the origin syntax accepted by config
+			// and the publisher. validate before converting to a dial address.
+			origin, err := targetsyntax.NormalizeTarget(s.Target)
+			if err != nil || s.TargetTLS == nil && strings.HasPrefix(origin, "https://") ||
+				s.TargetTLS != nil && strings.HasPrefix(origin, "http://") {
+				return ErrProjectConfigurationInvalid
+			}
 		}
 		address, err := normalizeAppliedPrivateAddress(s.Target, s.Protocol)
 		if err != nil {

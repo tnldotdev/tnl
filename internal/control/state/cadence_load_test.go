@@ -463,7 +463,7 @@ waiting:
 	if completed.Load() != int64(f.routes)*int64(duration/cadenceHeartbeatInterval) || repaired.Load() != affected || late.Load() != 0 {
 		t.Fatal("incomplete cadence workload")
 	}
-	verifyCtx, stopVerification := context.WithTimeout(ctx, cadenceControlTimeout)
+	verifyCtx, stopVerification := context.WithTimeout(ctx, 10*time.Second)
 	defer stopVerification()
 	// publisher workers have joined. lease controllers remain live while each
 	// ingress verifies the exact current service and connected relay tuples.

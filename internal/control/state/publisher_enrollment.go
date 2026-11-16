@@ -29,13 +29,13 @@ func (d *Database) IssuePublisherEnrollment(ctx context.Context, r CreatePublish
 	}
 	defer rollback(ctx, tx, "issue publisher enrollment", &retErr)()
 	q := controlstatedb.New(tx)
-	resolved, err := d.authorizePublisherScope(ctx, tx, q, r.Scope, r.EditorID, r.EditorMembershipID, r.PolicyRevision)
+	resolved, err := d.authorizePublisherScope(ctx, tx, q, r.Scope, r.EditorID, r.EditorMembershipID, r.PolicyRevision, r.Protocols)
 	if err != nil {
 		return result, err
 	}
 	s := resolved.publisherScope()
 	ownership, owner := "member", r.EditorMembershipID
-	if s.Kind == "service" || s.NamespaceScope == NamespaceScopeShared {
+	if resolved.teamOwnedDefault() {
 		ownership, owner = "team", ""
 	}
 	if r.Ownership != "" {
@@ -60,14 +60,15 @@ func (d *Database) IssuePublisherEnrollment(ctx context.Context, r CreatePublish
 	key := id + "." + base64.RawURLEncoding.EncodeToString(secret[:])
 	digest := sha256.Sum256([]byte(key))
 	until := r.Now.Add(PublisherEnrollmentLifetime)
-	_, err = q.InsertPublisherEnrollment(ctx, controlstatedb.InsertPublisherEnrollmentParams{ID: id, EnrollmentKeyDigest: digest[:], TeamID: s.TeamID, Name: r.Name, IdentityKind: r.Kind, GrantKind: s.Kind, ServiceID: nullableText(s.ServiceID), DomainID: nullableText(s.DomainID), Namespace: nullableText(s.Namespace), MembershipID: nullableText(s.MembershipID), NamespaceScope: nullableText(string(s.NamespaceScope)), CreatedByIdentityID: r.EditorID, CreatedAt: timestamptz(r.Now), ExpiresAt: timestamptz(until), Ownership: ownership, OwnerMembershipID: nullableText(owner)})
+	protocols := resolved.protocolCapability().values()
+	_, err = q.InsertPublisherEnrollment(ctx, controlstatedb.InsertPublisherEnrollmentParams{ID: id, EnrollmentKeyDigest: digest[:], TeamID: s.TeamID, Name: r.Name, IdentityKind: r.Kind, GrantKind: s.Kind, ServiceID: nullableText(s.ServiceID), DomainID: nullableText(s.DomainID), Namespace: nullableText(s.Namespace), MembershipID: nullableText(s.MembershipID), NamespaceScope: nullableText(string(s.NamespaceScope)), Protocols: protocols, CreatedByIdentityID: r.EditorID, CreatedAt: timestamptz(r.Now), ExpiresAt: timestamptz(until), Ownership: ownership, OwnerMembershipID: nullableText(owner)})
 	if err != nil {
 		return result, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return result, err
 	}
-	return PublisherEnrollment{id, key, s, until}, nil
+	return PublisherEnrollment{ID: id, Key: key, Scope: s, Until: until, Protocols: protocols}, nil
 }
 
 func insertPublisherGrant(ctx context.Context, q *controlstatedb.Queries, publisher, issuer string, resolved resolvedPublisherScope, expires *time.Time, now time.Time) (controlstatedb.ControlPublisherGrant, error) {
@@ -75,11 +76,21 @@ func insertPublisherGrant(ctx context.Context, q *controlstatedb.Queries, publis
 		return controlstatedb.ControlPublisherGrant{}, ErrPublisherIdentity
 	}
 	s := resolved.publisherScope()
+	protocols := resolved.protocolCapability().values()
+	if s.Kind == "service" {
+		validated, err := normalizePublisherProtocols(protocols)
+		if err != nil {
+			return controlstatedb.ControlPublisherGrant{}, err
+		}
+		protocols = validated.values()
+	} else if protocols != nil {
+		return controlstatedb.ControlPublisherGrant{}, ErrPublisherIdentity
+	}
 	id, err := opaqueid.New(opaqueid.PublisherGrantPrefix)
 	if err != nil {
 		return controlstatedb.ControlPublisherGrant{}, err
 	}
-	grant, err := q.InsertPublisherGrant(ctx, controlstatedb.InsertPublisherGrantParams{ID: id, PublisherIdentityID: publisher, CreatedByIdentityID: nullableText(issuer), Kind: s.Kind, ServiceID: nullableText(s.ServiceID), DomainID: nullableText(s.DomainID), Namespace: nullableText(s.Namespace), MembershipID: nullableText(s.MembershipID), NamespaceScope: nullableText(string(s.NamespaceScope)), CreatedAt: timestamptz(now), ExpiresAt: nullableTime(expires)})
+	grant, err := q.InsertPublisherGrant(ctx, controlstatedb.InsertPublisherGrantParams{ID: id, PublisherIdentityID: publisher, CreatedByIdentityID: nullableText(issuer), Kind: s.Kind, ServiceID: nullableText(s.ServiceID), DomainID: nullableText(s.DomainID), Namespace: nullableText(s.Namespace), MembershipID: nullableText(s.MembershipID), NamespaceScope: nullableText(string(s.NamespaceScope)), Protocols: protocols, CreatedAt: timestamptz(now), ExpiresAt: nullableTime(expires)})
 	var constraint *pgconn.PgError
 	if errors.As(err, &constraint) && constraint.Code == "23505" && (constraint.ConstraintName == "publisher_grants_active_namespace" || constraint.ConstraintName == "publisher_grants_active_service") {
 		return grant, ErrAuthorityConflict
@@ -151,7 +162,7 @@ func (d *Database) RedeemPublisherEnrollment(ctx context.Context, secret string,
 		result.KeyID = e.RedeemedKeyID.String
 		return result, nil
 	}
-	resolved, err := resolvePublisherScope(ctx, q, s, "")
+	resolved, err := resolvePublisherScope(ctx, q, s, "", e.Protocols)
 	if err != nil {
 		return result, publisherLookupError(err, ErrPublisherEnrollment)
 	}
@@ -205,7 +216,7 @@ func (d *Database) EnrollGuestPublisher(ctx context.Context, credential GuestCre
 		return result, ErrPublisherIdentity
 	}
 	s := PublisherScope{GuestID: trial.ID, Kind: "service", ServiceID: serviceID}
-	resolved, err := resolvePublisherScope(ctx, q, s, trial.ID)
+	resolved, err := resolvePublisherScope(ctx, q, s, trial.ID, []string{"http"})
 	if err != nil {
 		return result, err
 	}

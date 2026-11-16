@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -60,23 +61,25 @@ func TestNormalizeProjectConfiguration(t *testing.T) {
 }
 
 func TestNormalizeAppliedPublicOriginsMatchRuntime(t *testing.T) {
-	for _, test := range []struct{ target, want string }{
-		{"http://localhost:3000", "localhost:3000"}, {"https://EXAMPLE.test:443", "EXAMPLE.test:443"},
-		{"3000", ""}, {"http://example.test", "example.test:80"}, {"https://example.test", "example.test:443"},
-		{"http://example.test:80/", "example.test:80"}, {"http://example.test:80#", "example.test:80"},
-		{"http://example.test:80?", ""}, {"http://[2001:db8::1]:80", "[2001:db8::1]:80"},
-		{"http://user:secret@example.test:80", ""}, {"http://example.test:0", ""},
-	} {
-		t.Run(test.target, func(t *testing.T) {
-			service := ProjectServiceConfiguration{Target: test.target, Public: new(true)}
-			if strings.HasPrefix(test.target, "https://") {
-				service.TargetTLS = appliedTargetTrust(t, "upstream.internal")
-			}
-			c, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": service}})
-			if (test.want == "") != (err != nil) || err == nil && c.Services["web"].Target != test.want {
-				t.Fatal("public reachability changed service target normalization", c, err)
-			}
-		})
+	for _, public := range []bool{false, true} {
+		for _, test := range []struct{ target, want string }{
+			{"http://localhost:3000", "localhost:3000"}, {"https://EXAMPLE.test:443", "EXAMPLE.test:443"},
+			{"3000", ""}, {"http://example.test", "example.test:80"}, {"https://example.test", "example.test:443"},
+			{"http://example.test:80/", ""}, {"http://example.test:80#", ""},
+			{"http://example.test:80?", ""}, {"http://[2001:db8::1]:80", "[2001:db8::1]:80"},
+			{"http://user:secret@example.test:80", ""}, {"http://example.test:0", ""},
+		} {
+			t.Run(fmt.Sprintf("%s/public=%t", test.target, public), func(t *testing.T) {
+				service := ProjectServiceConfiguration{Target: test.target, Public: new(public)}
+				if strings.HasPrefix(test.target, "https://") {
+					service.TargetTLS = appliedTargetTrust(t, "upstream.internal")
+				}
+				c, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": service}})
+				if (test.want == "") != (err != nil) || err == nil && c.Services["web"].Target != test.want {
+					t.Fatal("public reachability changed service target normalization", c, err)
+				}
+			})
+		}
 	}
 }
 
@@ -192,6 +195,7 @@ func TestNormalizeAppliedProjectTargetsAndTrustBoundaries(t *testing.T) {
 		"local docker":               {Target: "docker:redis_1:6379", Protocol: "tcp"},
 		"local deferred public":      {Target: "app", Public: new(true), Ephemeral: true},
 		"public target trust":        {Target: "https://upstream.internal:8443", Public: new(true), TargetTLS: trust},
+		"public uppercase trust":     {Target: "HTTPS://upstream.internal:8443", Public: new(true), TargetTLS: trust},
 		"remote app":                 {Target: "app"},
 		"remote literal docker host": {Target: "docker:5432", Protocol: "postgres"},
 	} {
@@ -202,7 +206,7 @@ func TestNormalizeAppliedProjectTargetsAndTrustBoundaries(t *testing.T) {
 			}
 			c, _, err := NormalizeProjectConfiguration(input)
 			want := s.Target
-			if strings.HasPrefix(want, "https://") {
+			if strings.HasPrefix(strings.ToLower(want), "https://") {
 				want = "upstream.internal:8443"
 			}
 			if err != nil || c.Services["service"].Target != want {
@@ -221,6 +225,8 @@ func TestNormalizeAppliedProjectTargetsAndTrustBoundaries(t *testing.T) {
 		"descriptor port":           {Target: "compose:web:65536"},
 		"descriptor ambiguous port": {Target: "compose:web:03000"},
 		"target TLS plaintext":      {Target: "http://upstream.internal:3000", Public: new(true), TargetTLS: trust},
+		"uppercase TLS plaintext":   {Target: "HTTP://upstream.internal:3000", Public: new(true), TargetTLS: trust},
+		"uppercase TLS missing":     {Target: "HTTPS://upstream.internal:8443", Public: new(true)},
 		"target trust tamper":       {Target: "https://upstream.internal:8443", Public: new(true), TargetTLS: &ProjectTargetTLS{Hostname: "different.internal", CAPEM: trust.CAPEM, Digest: trust.Digest}},
 		"target trust key material": {Target: "https://upstream.internal:8443", Public: new(true), TargetTLS: &keyTrust},
 	} {

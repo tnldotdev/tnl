@@ -27,6 +27,7 @@ type visitorAdmission struct {
 	deadline         time.Time
 	upload, download int64
 	release          func()
+	copyReady        chan struct{}
 }
 
 // before control selects a run, only the process pending slot is known.
@@ -36,7 +37,7 @@ func (s *Server) admitPendingService() (*visitorAdmission, string) {
 	if release == nil {
 		return nil, reason
 	}
-	return &visitorAdmission{server: s, release: release,
+	return &visitorAdmission{server: s, release: release, copyReady: make(chan struct{}),
 		deadline: time.Now().Add(s.config.Pending.Timeout), upload: s.config.Pending.UploadBytes, download: s.config.Pending.DownloadBytes}, ""
 }
 
@@ -80,34 +81,74 @@ func (v *visitorAdmission) close() {
 		return
 	}
 	v.state = closedCapacity
+	v.signalCopyLocked()
 	v.release()
 }
 
 func (v *visitorAdmission) beforeWrite(ctx context.Context, upload bool, size int) error {
-	v.mu.Lock()
-	if v.state == closedCapacity {
-		v.mu.Unlock()
-		return net.ErrClosed
-	}
-	ordinary := v.state == reservedCapacity && v.metered
-	if !ordinary {
-		remaining := &v.download
-		if upload {
-			remaining = &v.upload
-		}
-		if !v.deadline.After(time.Now()) || int64(size) > *remaining {
-			v.mu.Unlock()
-			return trafficError("pending_byte_or_time_budget")
-		}
-		*remaining -= int64(size)
-	}
-	v.mu.Unlock()
-	err := v.server.traffic.bytes(ctx, v.key, upload, size, ordinary)
-	if err != nil {
-		v.server.rejectCapacity("traffic_bandwidth")
-		v.server.observeTraffic("bytes", "bandwidth")
-	}
+	_, err := v.reserveBytes(ctx, upload, size, false)
 	return err
+}
+
+// only cached http copying may fragment at the pending bound and wait for the
+// existing metering acknowledgment. direct callers retain strict overflow.
+func (v *visitorAdmission) reserveHTTPCopy(ctx context.Context, upload bool, size int) (int, error) {
+	return v.reserveBytes(ctx, upload, size, true)
+}
+
+func (v *visitorAdmission) reserveBytes(ctx context.Context, upload bool, size int, fragment bool) (int, error) {
+	for {
+		if fragment && ctx.Err() != nil {
+			return 0, context.Cause(ctx)
+		}
+		v.mu.Lock()
+		if v.state == closedCapacity {
+			v.mu.Unlock()
+			return 0, net.ErrClosed
+		}
+		ordinary := v.state == reservedCapacity && v.metered
+		allowed := size
+		if !ordinary {
+			remaining := &v.download
+			if upload {
+				remaining = &v.upload
+			}
+			if !v.deadline.After(time.Now()) || (!fragment && int64(size) > *remaining) {
+				v.mu.Unlock()
+				return 0, trafficError("pending_byte_or_time_budget")
+			}
+			if fragment {
+				allowed = int(min(int64(size), *remaining))
+				if allowed == 0 {
+					ready, deadline := v.copyReady, v.deadline
+					v.mu.Unlock()
+					timer := time.NewTimer(time.Until(deadline))
+					select {
+					case <-ctx.Done():
+						timer.Stop()
+						return 0, context.Cause(ctx)
+					case <-ready:
+						timer.Stop()
+					case <-timer.C:
+					}
+					continue
+				}
+			}
+			// reserve before accounting or writing, without refunding uncertain
+			// partial writes. both directions share this locked phase check.
+			*remaining -= int64(allowed)
+		}
+		key := v.key
+		v.mu.Unlock()
+		// live copying uses the capacity guard's cancelable context, not a
+		// context permanently fenced by the obsolete setup deadline.
+		err := v.server.traffic.bytes(ctx, key, upload, allowed, ordinary)
+		if err != nil {
+			v.server.rejectCapacity("traffic_bandwidth")
+			v.server.observeTraffic("bytes", "bandwidth")
+		}
+		return allowed, err
+	}
 }
 
 func (v *visitorAdmission) reserve(limits TrafficLimits) string {
@@ -131,7 +172,18 @@ func (v *visitorAdmission) reserveForVisitor() string {
 func (v *visitorAdmission) meterOrdinaryBytes() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	v.metered = true
+	if v.state == reservedCapacity && !v.metered {
+		v.metered = true
+		v.signalCopyLocked()
+	}
+}
+
+func (v *visitorAdmission) signalCopyLocked() {
+	select {
+	case <-v.copyReady:
+	default:
+		close(v.copyReady)
+	}
 }
 
 func (v *visitorAdmission) reserveLocked(limits TrafficLimits) string {

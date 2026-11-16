@@ -116,6 +116,9 @@ func (b *Bound) peerCurrentLocked(binding PeerBinding) bool {
 }
 
 func (b *Bound) peerIdentityCurrentLocked(identity peerIdentity) bool {
+	if p := b.connectorPeers[identity.pairID]; p != nil && p.ownerRetired {
+		return false
+	}
 	return !b.closed && b.prepared.policy != nil && identity.sessionKey != [32]byte{} && identity.trustRevision == b.prepared.metadataRevision &&
 		identity.serviceID == b.prepared.Preparation.ServiceId && identity.runID == b.prepared.Preparation.ServiceRunId &&
 		identity.number == uint64(b.prepared.Preparation.RunNumber) && identity.publisherID == b.prepared.Preparation.PublisherIdentityId

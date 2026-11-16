@@ -25,7 +25,7 @@ func TestConnectorCompletionCannotExtendItsCallerOrReviveControl(t *testing.T) {
 		{cancelled, context.Canceled},
 		{expired, context.DeadlineExceeded},
 	} {
-		if err := writer.Complete(test.ctx, update.VisitorConnectionID, update.DeliveryGeneration); !errors.Is(err, test.want) {
+		if _, err := writer.Complete(test.ctx, tunnelv1.ConnectorVisitorTerminalKey{VisitorConnectionID: update.VisitorConnectionID, DeliveryGeneration: update.DeliveryGeneration}); !errors.Is(err, test.want) {
 			t.Fatal("completion changed its caller's deadline or cancellation", err)
 		}
 	}
@@ -33,7 +33,7 @@ func TestConnectorCompletionCannotExtendItsCallerOrReviveControl(t *testing.T) {
 		t.Fatal("invalid completion ended control or spent a permission update number")
 	}
 	writer.Close()
-	if err := writer.Complete(tunnelContext(t), update.VisitorConnectionID, update.DeliveryGeneration); !errors.Is(err, context.Canceled) {
+	if _, err := writer.Complete(tunnelContext(t), tunnelv1.ConnectorVisitorTerminalKey{VisitorConnectionID: update.VisitorConnectionID, DeliveryGeneration: update.DeliveryGeneration}); !errors.Is(err, context.Canceled) {
 		t.Fatal("completion revived closed control", err)
 	}
 }
@@ -49,16 +49,16 @@ func TestConnectorCompletionUsesExistingControlWithoutRenewingPermission(t *test
 			updates := make(chan tunnelv1.ConnectorPermissionUpdate, 1)
 			var permissionGate ConnectorPermissionGate
 			done := tunnelWorker(t, cancel, func() error {
-				return ServeConnectorPermissionControl(ctx, control, func(update tunnelv1.ConnectorPermissionUpdate, responder *ConnectorPermissionResponder) {
+				return servePermissionTestControl(ctx, control, func(update tunnelv1.ConnectorPermissionUpdate, responder *ConnectorPermissionResponder) {
 					updates <- update
-					_ = responder.Respond(update, true)
+					_ = responder.Respond(ctx, update, true)
 				}, func(receipt tunnelv1.ConnectorVisitorCompletion) { completed <- receipt }, func() {}, &permissionGate)
 			})
 			if err := writer.Suspend(time.Now().Add(time.Second)); err != nil {
 				t.Fatal(err)
 			}
 			update := connectorPermissionFixture()
-			if err := writer.Complete(tunnelContext(t), update.VisitorConnectionID, update.DeliveryGeneration); err != nil {
+			if _, err := writer.Complete(tunnelContext(t), tunnelv1.ConnectorVisitorTerminalKey{VisitorConnectionID: update.VisitorConnectionID, DeliveryGeneration: update.DeliveryGeneration}); err != nil {
 				t.Fatal("completion waited for permission renewal", err)
 			}
 			receipt := await(t, completed)

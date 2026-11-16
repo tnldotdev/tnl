@@ -270,8 +270,8 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = d.pool.Exec(ctx, `INSERT INTO control.connector_peer_pairs (id,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,subject_id,parent_control_session_id,owner_key,idempotency_key,request_digest,key_digest,key_ciphertext,delivery_id,storage_key_id,slots,delivery_generation,created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at)
-		SELECT $2,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,$3,parent_control_session_id,owner_key,idempotency_key,request_digest,key_digest,key_ciphertext,$4,storage_key_id,slots,nextval('control.connector_peer_delivery_generation'),created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at FROM control.connector_peer_pairs WHERE id=$1`, first.ID, id, fmt.Sprintf("collision-%s", id), duplicate)
+		_, err = d.pool.Exec(ctx, `INSERT INTO control.connector_peer_pairs (id,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,subject_id,parent_control_session_id,owner_key,idempotency_key,owner_public_key,request_digest,key_digest,key_ciphertext,delivery_id,storage_key_id,slots,delivery_generation,created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at)
+		SELECT $2,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,$3,parent_control_session_id,owner_key,idempotency_key,owner_public_key,request_digest,key_digest,key_ciphertext,$4,storage_key_id,slots,nextval('control.connector_peer_delivery_generation'),created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at FROM control.connector_peer_pairs WHERE id=$1`, first.ID, id, fmt.Sprintf("collision-%s", id), duplicate)
 		if err == nil {
 			t.Fatal("database accepted duplicate or zero delivery identifier")
 		}

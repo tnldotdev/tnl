@@ -16,24 +16,19 @@ import (
 // saveConnectorPeerAuditBinding records only checked installation facts. it cannot
 // hold delivery keys, authorize a visitor, or transfer authority to a replacement.
 func saveConnectorPeerAuditBinding(ctx context.Context, tx pgx.Tx, pair controlstatedb.ControlConnectorPeerPair, binding connectorPeerBinding, until time.Time) error {
-	result, err := tx.Exec(ctx, `INSERT INTO control.connector_peer_audit_bindings
-		(pair_id,service_id,service_run_id,run_number,publisher_identity_id,identity_id,device_id,source_ip,created_at,expires_at,delivery_generation)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-		ON CONFLICT (pair_id,delivery_generation) DO UPDATE SET expires_at=GREATEST(control.connector_peer_audit_bindings.expires_at,EXCLUDED.expires_at)
-		WHERE control.connector_peer_audit_bindings.service_id=EXCLUDED.service_id
-		AND control.connector_peer_audit_bindings.service_run_id=EXCLUDED.service_run_id
-		AND control.connector_peer_audit_bindings.run_number=EXCLUDED.run_number
-		AND control.connector_peer_audit_bindings.publisher_identity_id=EXCLUDED.publisher_identity_id
-		AND control.connector_peer_audit_bindings.identity_id IS NOT DISTINCT FROM EXCLUDED.identity_id
-		AND control.connector_peer_audit_bindings.device_id IS NOT DISTINCT FROM EXCLUDED.device_id
-		AND control.connector_peer_audit_bindings.source_ip=EXCLUDED.source_ip
-		AND control.connector_peer_audit_bindings.created_at=EXCLUDED.created_at`,
-		pair.ID, pair.ServiceID, pair.ServiceRunID, pair.RunNumber, pair.PublisherIdentityID,
-		nullableText(binding.subject.IdentityID), nullableText(binding.subject.DeviceID), binding.source, pair.CreatedAt.Time, until, pair.DeliveryGeneration)
+	if !connectorPeerPairUnretired(pair) {
+		return ErrServiceAuditAccess
+	}
+	count, err := controlstatedb.New(tx).SaveConnectorPeerAuditBinding(ctx, controlstatedb.SaveConnectorPeerAuditBindingParams{
+		PairID: pair.ID, ServiceID: pair.ServiceID, ServiceRunID: pair.ServiceRunID, RunNumber: pair.RunNumber,
+		PublisherIdentityID: pair.PublisherIdentityID, IdentityID: nullableText(binding.subject.IdentityID),
+		DeviceID: nullableText(binding.subject.DeviceID), SourceIp: binding.source, CreatedAt: pair.CreatedAt,
+		ExpiresAt: timestamptz(until), DeliveryGeneration: pair.DeliveryGeneration,
+	})
 	if err != nil {
 		return err
 	}
-	if result.RowsAffected() != 1 {
+	if count != 1 {
 		return ErrServiceAuditAccess
 	}
 	return nil
@@ -92,10 +87,6 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 	if now.After(until.Add(serviceObservationDeliveryGrace)) {
 		return result, ErrServiceAccess
 	}
-	var protocol string
-	if err := tx.QueryRow(ctx, `SELECT protocol FROM control.services WHERE id=$1`, serviceID).Scan(&protocol); err != nil {
-		return result, err
-	}
 	events := make([]serviceaudit.Event, 0, len(batch.Events))
 	for _, o := range batch.Events {
 		if o.ServiceKind != "service" || o.ServiceID != serviceID || o.RunID != runID || o.RunNumber != number {
@@ -103,7 +94,7 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 		}
 		e := observationEvent(o)
 		e.TeamID, e.PublisherIdentityID = run.TeamID.String, run.PublisherIdentityID
-		if protocol == "http" && o.PairID == "" {
+		if run.Protocol == "http" && o.PairID == "" {
 			// the HTTP frontend reports requests and public connection lifetime
 			// under its exact run credential. it supplies no actor identity.
 			deadline := until

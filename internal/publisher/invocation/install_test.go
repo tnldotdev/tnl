@@ -192,19 +192,33 @@ func TestInstalledHTTPPreparationRetainsPolicyAcrossUpdateRetry(t *testing.T) {
 
 func TestInstalledHTTPPreparationRecoversLostCreateReplyWithoutAnotherService(t *testing.T) {
 	f := newServiceSetupFixture(t, "lost-install.member.example")
+	inventories := 0
+	f.before = func(r *http.Request) (*http.Response, bool) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/services" {
+			inventories++
+		}
+		return nil, false
+	}
 	lost := errors.New("lost creation reply")
 	f.afterCreate = func() error {
 		f.afterCreate = nil
 		return errors.Join(io.ErrUnexpectedEOF, lost)
 	}
 	saved, err := prepareInstalledHTTPService(t.Context(), f.services, InstallationOptions{}, foregroundPlan(), resolvedVisitorAccess{})
-	if err != nil || saved.Id != f.saved.Id || f.creates != 1 || len(f.createKeys) != 1 || f.updates != 0 {
-		t.Fatal("installation lost or duplicated the committed service", saved, f.creates, f.updates, err)
+	if err != nil || saved.Id != f.saved.Id || f.creates != 1 || len(f.createKeys) != 2 ||
+		f.createKeys[0] != f.createKeys[1] || len(f.creations) != 1 || inventories != 0 || f.updates != 0 ||
+		f.enrollments != 0 || f.redemptions != 0 {
+		t.Fatal("installation did not recover one committed service through the same-key reservation", saved, f.creates, f.createKeys, inventories, f.updates, err)
 	}
 	for range 2 {
 		retry, err := prepareInstalledHTTPService(t.Context(), f.services, InstallationOptions{}, foregroundPlan(), resolvedVisitorAccess{})
-		if err != nil || retry.Id != saved.Id || f.creates != 1 || f.updates != 0 {
+		if err != nil || retry.Id != saved.Id || f.creates != 1 || f.updates != 0 || inventories != 0 ||
+			f.enrollments != 0 || f.redemptions != 0 {
 			t.Fatal("installation retry changed the recovered service", retry, err)
 		}
+	}
+	if len(f.createKeys) != 4 || len(f.creations) != 3 ||
+		f.createKeys[2] == f.createKeys[0] || f.createKeys[3] == f.createKeys[0] || f.createKeys[2] == f.createKeys[3] {
+		t.Fatal("independent preparation retries did not record distinct receipts on the same lifetime", f.createKeys)
 	}
 }

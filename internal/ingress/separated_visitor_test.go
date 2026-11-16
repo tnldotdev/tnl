@@ -48,7 +48,7 @@ func (c separatedHTTPControl) ReadPublisherVisitorPolicy(ctx context.Context, re
 
 func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 	var transport *serviceTransportFixture
-	var opens atomic.Int32
+	var opens, capacityRequests atomic.Int32
 	capacity := make(chan tunnelv1.ServiceForwardingHeader, 2)
 	config := serviceIngressConfig(t, func(ctx context.Context, header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) (net.Conn, error) {
 		opens.Add(1)
@@ -139,6 +139,7 @@ func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 				connectionHTTP.Header = header
 				connectionHTTP.Source = metadata.Source
 				connectionHTTP.ReserveCapacity = func(call context.Context) error {
+					capacityRequests.Add(1)
 					return transport.publisher.RequestServiceCapacity(call, header)
 				}
 				return connectionHTTP.Forward(t.Context(), secured, target)
@@ -193,14 +194,23 @@ func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 		if response.StatusCode != test.want {
 			t.Fatalf("source %s status %d; want %d", test.source, response.StatusCode, test.want)
 		}
-		reserved := ingressAwait(t, capacity)
-		if reserved.VisitorConnectionID == "" || reserved.SourceIP != netip.MustParseAddrPort(test.source).Addr().String() ||
-			len(control.claims) != 0 {
-			t.Fatal("HTTP capacity lost the admitted source/visitor or called control for a prepared visitor", reserved)
+		if test.proof == "" {
+			reserved := ingressAwait(t, capacity)
+			if reserved.VisitorConnectionID == "" || reserved.SourceIP != netip.MustParseAddrPort(test.source).Addr().String() {
+				t.Fatal("HTTP capacity lost the admitted source or visitor", reserved)
+			}
 		}
 		transfer := ingressAwait(t, transport.transfers)
 		if transfer.LeftToRight <= 0 || transfer.RightToLeft <= 0 || !serviceHTTPStreamClosed(transfer.err) {
 			t.Fatalf("HTTP relay lost bytes or failed before expected stream closure: bytes=%+v error=%v", transfer.Result, transfer.err)
+		}
+		if len(control.claims) != 0 {
+			t.Fatal("prepared HTTP visitor called control for admission")
+		}
+		// the authenticated owner probe uses its separate request budget, not
+		// application admission. inspect after its real forwarding has joined.
+		if capacityRequests.Load() != 1 || len(capacity) != 0 {
+			t.Fatal("readiness proof reserved application visitor capacity", capacityRequests.Load(), len(capacity))
 		}
 	}
 	if err := ingressAwait(t, publisher); err != nil {

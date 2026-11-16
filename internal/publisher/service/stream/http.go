@@ -53,6 +53,9 @@ func DenyHTTP(w http.ResponseWriter, r *http.Request, status int) {
 }
 
 func HTTPDecisionStatus(err error) int {
+	if code, ok := diagnostic.CodeOf(err); ok && code == diagnostic.VisitorAccessDenied {
+		return http.StatusForbidden
+	}
 	if err == nil || errors.Is(err, visitortoken.ErrToken) || errors.Is(err, visitortoken.ErrBinding) || errors.Is(err, clientcontrol.ErrNotFound) || errors.Is(err, clientcontrol.ErrUnauthenticated) || errors.Is(err, clientcontrol.ErrStatusConflict) {
 		return http.StatusForbidden
 	}

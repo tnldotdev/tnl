@@ -150,6 +150,24 @@ func (e ConnectorPeerPairBindingState) Valid() bool {
 	}
 }
 
+// Defines values for ConnectorPeerPairDisposition.
+const (
+	ConnectorPeerPairDispositionCandidate ConnectorPeerPairDisposition = "candidate"
+	ConnectorPeerPairDispositionRetired   ConnectorPeerPairDisposition = "retired"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorPeerPairDisposition enum.
+func (e ConnectorPeerPairDisposition) Valid() bool {
+	switch e {
+	case ConnectorPeerPairDispositionCandidate:
+		return true
+	case ConnectorPeerPairDispositionRetired:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectorPeerPairPreparedPhase.
 const (
 	ConnectorPeerPairPreparedInstalled ConnectorPeerPairPreparedPhase = "installed"
@@ -2065,13 +2083,20 @@ type ConnectorPeerPair struct {
 // ConnectorPeerPairBindingState defines model for ConnectorPeerPairBindingState.
 type ConnectorPeerPairBindingState string
 
-// ConnectorPeerPairCandidate A pair to reconcile, not delivery authority or permission to open an application stream.
+// ConnectorPeerPairCandidate An exact pair disposition, never permission to open an application stream. Candidate requires owner_revision 1, no retirement, and optional positive owner_authority. Retired requires owner_revision 2, a retirement observation, and no owner_authority; do not prepare or revive it even for a higher delivery generation. Unknown or contradictory states are invalid. Omission, pagination, and missing positive authority never mean retired.
 type ConnectorPeerPairCandidate struct {
 	DeliveryGeneration int64 `json:"delivery_generation,string"`
 
+	// Disposition Candidate is a preparation hint, not serving authority. Retired is an explicit durable terminal fact for this exact pair and outranks every delivery generation.
+	Disposition ConnectorPeerPairDisposition `json:"disposition"`
+
 	// OwnerAuthority Current authorization for an installed connector owner in this publisher run. It contains no delivery key and does not renew any relay claim, installation, path proof, or visitor permission. It can be read during relay loss but cannot revive an expired owner.
 	OwnerAuthority *ConnectorPeerPairOwnerAuthority `json:"owner_authority,omitempty"`
+	OwnerRevision  int64                            `json:"owner_revision,string"`
 	PairId         string                           `json:"pair_id"`
+
+	// Retirement Negative-only observation: retired_at <= observed_at < retained_until. retained_until is the unchanged max(expires_at, replay_fence_until), at most five minutes plus existing five-second request skew after retired_at. It is not a new serving lease, cleanup window, or proof of remote join. Repeated observations never extend retention.
+	Retirement *ConnectorPeerPairRetirementObservation `json:"retirement,omitempty"`
 }
 
 // ConnectorPeerPairCandidates defines model for ConnectorPeerPairCandidates.
@@ -2113,6 +2138,9 @@ type ConnectorPeerPairDelivery struct {
 	Subject       VisitorSubject `json:"subject"`
 	TrustRevision int64          `json:"trust_revision,omitempty,string"`
 }
+
+// ConnectorPeerPairDisposition Candidate is a preparation hint, not serving authority. Retired is an explicit durable terminal fact for this exact pair and outranks every delivery generation.
+type ConnectorPeerPairDisposition string
 
 // ConnectorPeerPairOwnerAuthority Current authorization for an installed connector owner in this publisher run. It contains no delivery key and does not renew any relay claim, installation, path proof, or visitor permission. It can be read during relay loss but cannot revive an expired owner.
 type ConnectorPeerPairOwnerAuthority struct {
@@ -2255,6 +2283,48 @@ type ConnectorPeerPairRequest struct {
 // ConnectorPeerPairRequestAction defines model for ConnectorPeerPairRequest.Action.
 type ConnectorPeerPairRequestAction string
 
+// ConnectorPeerPairRetireRequest Negative-only proof for the exact path service/pair and stored run, publisher, delivery identifier, and original owner key. Both the original enrolled-key signature and stable session-key MAC are required. The source, key snapshot, and session key are never supplied by the caller. Network rebind does not change this proof scope. Reuse the identical body after reply loss; neither a new timestamp nor a new key can confirm an earlier uncertain retirement.
+type ConnectorPeerPairRetireRequest struct {
+	// DeliveryId Canonical unpadded base64url of the exact nonzero 16-byte stable delivery identifier.
+	DeliveryId          string         `json:"delivery_id"`
+	IdempotencyKey      IdempotencyKey `json:"idempotency_key"`
+	PublisherIdentityId string         `json:"publisher_identity_id"`
+	RequestedAt         time.Time      `json:"requested_at"`
+	RunNumber           int64          `json:"run_number,string"`
+	ServiceRunId        ServiceRunID   `json:"service_run_id"`
+
+	// SessionProof Domain-separated HMAC-SHA256 from ConnectorPeerPairRetireProof.SessionProof using the existing stable session key, never a relay delivery key.
+	SessionProof string `json:"session_proof"`
+
+	// Signature Ed25519 signature by the original enrolled key over ConnectorPeerPairRetireProof.Message, including the raw session MAC.
+	Signature string `json:"signature"`
+}
+
+// ConnectorPeerPairRetirement Exact committed negative-only retirement. The scope must match the request, disposition must be retired, and owner_revision must be 2. It proves neither publisher observation nor remote join or terminal-result consumption.
+type ConnectorPeerPairRetirement struct {
+	DeliveryId string `json:"delivery_id"`
+
+	// Disposition Candidate is a preparation hint, not serving authority. Retired is an explicit durable terminal fact for this exact pair and outranks every delivery generation.
+	Disposition         ConnectorPeerPairDisposition `json:"disposition"`
+	IdempotencyKey      IdempotencyKey               `json:"idempotency_key"`
+	OwnerRevision       int64                        `json:"owner_revision,string"`
+	PairId              string                       `json:"pair_id"`
+	PublisherIdentityId string                       `json:"publisher_identity_id"`
+
+	// Retirement Negative-only observation: retired_at <= observed_at < retained_until. retained_until is the unchanged max(expires_at, replay_fence_until), at most five minutes plus existing five-second request skew after retired_at. It is not a new serving lease, cleanup window, or proof of remote join. Repeated observations never extend retention.
+	Retirement   ConnectorPeerPairRetirementObservation `json:"retirement"`
+	RunNumber    int64                                  `json:"run_number,string"`
+	ServiceId    ServiceID                              `json:"service_id"`
+	ServiceRunId ServiceRunID                           `json:"service_run_id"`
+}
+
+// ConnectorPeerPairRetirementObservation Negative-only observation: retired_at <= observed_at < retained_until. retained_until is the unchanged max(expires_at, replay_fence_until), at most five minutes plus existing five-second request skew after retired_at. It is not a new serving lease, cleanup window, or proof of remote join. Repeated observations never extend retention.
+type ConnectorPeerPairRetirementObservation struct {
+	ObservedAt    time.Time `json:"observed_at"`
+	RetainedUntil time.Time `json:"retained_until"`
+	RetiredAt     time.Time `json:"retired_at"`
+}
+
 // ConnectorPeerRelayLease defines model for ConnectorPeerRelayLease.
 type ConnectorPeerRelayLease struct {
 	RelayId            string `json:"relay_id"`
@@ -2329,7 +2399,7 @@ type CreatePreviewRequest struct {
 	TeamId TeamID `json:"team_id"`
 }
 
-// CreatePublisherEnrollmentRequest Enroll with one exact service or namespace.
+// CreatePublisherEnrollmentRequest Enroll with one exact service or namespace. Exact protocols are authorized and stored now, not inferred from the service definition or issuer role at redemption. An ordinary member's exact service enrollment is HTTP-only and member-owned. Administrators retain explicit native capability and may request a narrower protocol set. Namespace enrollment retains its current restrictions.
 type CreatePublisherEnrollmentRequest struct {
 	DomainId *DomainID                            `json:"domain_id,omitempty"`
 	Kind     CreatePublisherEnrollmentRequestKind `json:"kind"`
@@ -2337,8 +2407,11 @@ type CreatePublisherEnrollmentRequest struct {
 
 	// Ownership Member-owned publishers stop with that membership. Team ownership requires a shared service and current team administration; the creator remains audit history only. Defaults to member for namespaces and team for shared services.
 	Ownership *CreatePublisherEnrollmentRequestOwnership `json:"ownership,omitempty"`
-	ServiceId *ServiceID                                 `json:"service_id,omitempty"`
-	TeamId    TeamID                                     `json:"team_id"`
+
+	// Protocols Immutable protocols authorized for one actual exact service grant. The current service protocol must be included before the grant can authorize publication. Service edits, token exchange, key rotation, and retries never widen this set. This is independent of public reachability and visitor permission.
+	Protocols *PublisherServiceProtocols `json:"protocols,omitempty"`
+	ServiceId *ServiceID                 `json:"service_id,omitempty"`
+	TeamId    TeamID                     `json:"team_id"`
 }
 
 // CreatePublisherEnrollmentRequestKind defines model for CreatePublisherEnrollmentRequest.Kind.
@@ -2347,12 +2420,15 @@ type CreatePublisherEnrollmentRequestKind string
 // CreatePublisherEnrollmentRequestOwnership Member-owned publishers stop with that membership. Team ownership requires a shared service and current team administration; the creator remains audit history only. Defaults to member for namespaces and team for shared services.
 type CreatePublisherEnrollmentRequestOwnership string
 
-// CreatePublisherGrantRequest Select exactly one service or namespace within the team.
+// CreatePublisherGrantRequest Select exactly one service or namespace within the team. Exact protocols are captured at issuance. An ordinary member may request only HTTP for an owned HTTP service; an administrator defaults to the explicitly stored currently supported protocol set and may narrow it. Namespace authority retains its existing restrictions and cannot select protocols.
 type CreatePublisherGrantRequest struct {
 	DomainId  *DomainID  `json:"domain_id,omitempty"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	ServiceId *ServiceID `json:"service_id,omitempty"`
-	TeamId    TeamID     `json:"team_id"`
+
+	// Protocols Immutable protocols authorized for one actual exact service grant. The current service protocol must be included before the grant can authorize publication. Service edits, token exchange, key rotation, and retries never widen this set. This is independent of public reachability and visitor permission.
+	Protocols *PublisherServiceProtocols `json:"protocols,omitempty"`
+	ServiceId *ServiceID                 `json:"service_id,omitempty"`
+	TeamId    TeamID                     `json:"team_id"`
 }
 
 // CreateServiceCertificateIssuanceRequest defines model for CreateServiceCertificateIssuanceRequest.
@@ -2385,6 +2461,9 @@ type CreateServiceRequest struct {
 	Placement     *ServicePlacement            `json:"placement,omitempty"`
 	Protocol      *ServiceProtocol             `json:"protocol,omitempty"`
 	PublisherPool *bool                        `json:"publisher_pool,omitempty"`
+
+	// Reserve Create or recover one exact standalone service at the explicit domain and hostname, without reading team inventory. Requires a service-owned declaration and no worktree placement. Current members may reserve HTTP in their own namespace; shared names require current team administration. Recovery returns current intent without replacing it. This request flag does not select durable ownership, visitor permission, or publisher capability.
+	Reserve *bool `json:"reserve,omitempty"`
 
 	// TargetTls Approved publisher-to-target trust. This never selects or disables visitor TLS.
 	TargetTls *ServiceTargetTLS `json:"target_tls,omitempty"`
@@ -3309,8 +3388,11 @@ type PublisherEnrollment struct {
 	Id            ResourceID              `json:"id"`
 	Kind          PublisherEnrollmentKind `json:"kind"`
 	Namespace     *string                 `json:"namespace,omitempty"`
-	ServiceId     *ServiceID              `json:"service_id,omitempty"`
-	TeamId        TeamID                  `json:"team_id"`
+
+	// Protocols Immutable protocols authorized for one actual exact service grant. The current service protocol must be included before the grant can authorize publication. Service edits, token exchange, key rotation, and retries never widen this set. This is independent of public reachability and visitor permission.
+	Protocols *PublisherServiceProtocols `json:"protocols,omitempty"`
+	ServiceId *ServiceID                 `json:"service_id,omitempty"`
+	TeamId    TeamID                     `json:"team_id"`
 }
 
 // PublisherEnrollmentKind defines model for PublisherEnrollment.Kind.
@@ -3342,9 +3424,12 @@ type PublisherGrant struct {
 	Id        ResourceID         `json:"id"`
 	Kind      PublisherGrantKind `json:"kind"`
 	Namespace *string            `json:"namespace,omitempty"`
-	RevokedAt *time.Time         `json:"revoked_at,omitempty"`
-	ServiceId *ServiceID         `json:"service_id,omitempty"`
-	TeamId    TeamID             `json:"team_id,omitempty"`
+
+	// Protocols Immutable protocols authorized for one actual exact service grant. The current service protocol must be included before the grant can authorize publication. Service edits, token exchange, key rotation, and retries never widen this set. This is independent of public reachability and visitor permission.
+	Protocols *PublisherServiceProtocols `json:"protocols,omitempty"`
+	RevokedAt *time.Time                 `json:"revoked_at,omitempty"`
+	ServiceId *ServiceID                 `json:"service_id,omitempty"`
+	TeamId    TeamID                     `json:"team_id,omitempty"`
 }
 
 // PublisherGrantKind defines model for PublisherGrant.Kind.
@@ -3431,6 +3516,9 @@ type PublisherRuntimeStatusAddressFamily string
 
 // PublisherRuntimeStatusEvidence defines model for PublisherRuntimeStatus.Evidence.
 type PublisherRuntimeStatusEvidence string
+
+// PublisherServiceProtocols Immutable protocols authorized for one actual exact service grant. The current service protocol must be included before the grant can authorize publication. Service edits, token exchange, key rotation, and retries never widen this set. This is independent of public reachability and visitor permission.
+type PublisherServiceProtocols = []ServiceProtocol
 
 // PublisherVisitorPolicyRequest defines model for PublisherVisitorPolicyRequest.
 type PublisherVisitorPolicyRequest struct {
@@ -3974,15 +4062,16 @@ type ServiceSummary struct {
 	Id       ServiceID        `json:"id"`
 
 	// KubernetesAuth Approved nonsecret native client authentication hint. Contains no publisher target address, CA, or credentials.
-	KubernetesAuth *KubernetesAuth     `json:"kubernetes_auth,omitempty"`
-	Name           ServiceName         `json:"name"`
-	Placement      *ServicePlacement   `json:"placement,omitempty"`
-	Protocol       ServiceProtocol     `json:"protocol"`
-	PublisherPool  bool                `json:"publisher_pool"`
-	RunNumber      *int64              `json:"run_number,omitempty,string"`
-	ServiceRunId   *ServiceRunID       `json:"service_run_id,omitempty"`
-	Source         *LocalServiceSource `json:"source,omitempty"`
-	TeamId         TeamID              `json:"team_id,omitempty"`
+	KubernetesAuth     *KubernetesAuth     `json:"kubernetes_auth,omitempty"`
+	Name               ServiceName         `json:"name"`
+	Placement          *ServicePlacement   `json:"placement,omitempty"`
+	Protocol           ServiceProtocol     `json:"protocol"`
+	PublisherPool      bool                `json:"publisher_pool"`
+	RequirePostQuantum bool                `json:"require_post_quantum"`
+	RunNumber          *int64              `json:"run_number,omitempty,string"`
+	ServiceRunId       *ServiceRunID       `json:"service_run_id,omitempty"`
+	Source             *LocalServiceSource `json:"source,omitempty"`
+	TeamId             TeamID              `json:"team_id,omitempty"`
 
 	// TeamName Actual stored team name. Present in signed-in visitor inventory; omitted in management inventory.
 	TeamName      string `json:"team_name,omitempty"`
@@ -4909,6 +4998,9 @@ type RebindConnectorPeerPairJSONRequestBody = ConnectorPeerPairRebindRequest
 
 // RenewConnectorPeerPairJSONRequestBody defines body for RenewConnectorPeerPair for application/json ContentType.
 type RenewConnectorPeerPairJSONRequestBody = ConnectorPeerPairRequest
+
+// RetireConnectorPeerPairJSONRequestBody defines body for RetireConnectorPeerPair for application/json ContentType.
+type RetireConnectorPeerPairJSONRequestBody = ConnectorPeerPairRetireRequest
 
 // SetServiceEnabledJSONRequestBody defines body for SetServiceEnabled for application/json ContentType.
 type SetServiceEnabledJSONRequestBody = SetServiceEnabledRequest
@@ -6143,14 +6235,14 @@ type ClientInterface interface {
 
 	// ListServices List manageable saved services in one team
 	//
-	// Team-owned saved services; never return target addresses or stream keys.
+	// Administrator-only team inventory; exact member service ownership does not authorize this operation. Never returns target addresses or stream keys.
 	//
 	// Corresponds with GET /v1/services (the `ListServices` operationId).
 	ListServices(ctx context.Context, params *ListServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateServiceWithBody Create one saved service with approved protocol and placement
 	//
-	// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
+	// Save a service name, protocol, target TLS trust, and optional source-bound worktree placement. Ordinary creation requires current team administration. With reserve true, create or recover only the exact eligible standalone service in an authorized namespace, using current membership, company sign-in, domain, and stored ownership. Recovery never adopts a project, deployment, worktree, or allocated service and never replaces saved declaration or policy. Each idempotency key remains bound to its normalized request and service lifetime. Creating or recovering a service does not issue a publisher grant, start a service run, or issue a certificate.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6159,7 +6251,7 @@ type ClientInterface interface {
 
 	// CreateService Create one saved service with approved protocol and placement
 	//
-	// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
+	// Save a service name, protocol, target TLS trust, and optional source-bound worktree placement. Ordinary creation requires current team administration. With reserve true, create or recover only the exact eligible standalone service in an authorized namespace, using current membership, company sign-in, domain, and stored ownership. Recovery never adopts a project, deployment, worktree, or allocated service and never replaces saved declaration or policy. Each idempotency key remains bound to its normalized request and service lifetime. Creating or recovering a service does not issue a publisher grant, start a service run, or issue a certificate.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6276,6 +6368,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 	RenewConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RetireConnectorPeerPairWithBody Retire one exact connector pair without renewing serving authority
+	//
+	// Authenticate with the original enrolled signing key and the exact pair's existing stable session-key MAC. Omit Authorization entirely, including empty headers. No current parent credential or serving permission is required. Sign the handwritten ConnectorPeerPairRetireProof bytes, not this HTTP JSON object. Retirement ends this pair across network rebinds, never a sibling or replacement pair. Retain the identical signed body and owner key after an uncertain reply. Confirmation is bounded by the unchanged max(expires_at, replay_fence_until); missing, replaced, or retention-expired pairs are not confirmed retired. A successful response proves a committed retirement, not publisher observation, remote join, or delivery of a terminal result.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/retire (the `RetireConnectorPeerPair` operationId).
+	RetireConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RetireConnectorPeerPair Retire one exact connector pair without renewing serving authority
+	//
+	// Authenticate with the original enrolled signing key and the exact pair's existing stable session-key MAC. Omit Authorization entirely, including empty headers. No current parent credential or serving permission is required. Sign the handwritten ConnectorPeerPairRetireProof bytes, not this HTTP JSON object. Retirement ends this pair across network rebinds, never a sibling or replacement pair. Retain the identical signed body and owner key after an uncertain reply. Confirmation is bounded by the unchanged max(expires_at, replay_fence_until); missing, replaced, or retention-expired pairs are not confirmed retired. A successful response proves a committed retirement, not publisher observation, remote join, or delivery of a terminal result.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/retire (the `RetireConnectorPeerPair` operationId).
+	RetireConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RetireConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetServiceEnabledWithBody Suspend or enable a saved service
 	//
@@ -6549,9 +6659,9 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id} (the `GetServiceCertificateIssuance` operationId).
 	GetServiceCertificateIssuance(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListConnectorPeerPairs List connector pair candidates for the current service run
+	// ListConnectorPeerPairs Reconcile candidates and explicit retirements for an exact service run
 	//
-	// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. An installed owner may include an independent authority observation during temporary relay loss. A candidate may still lack relay claims; prepare its delivery independently before serving it.
+	// Authenticate the exact stored started-run token. Current serving permission is required for positive candidates and owner-authority observations; a candidate still needs independent delivery preparation. After serving permission revocation, run closure, or retained service/owner deletion, the exact token can read only explicit retired dispositions within existing pair retention windows. No key, subject, source address, or serving authority is returned by that negative-only read. An omitted pair, absent owner_authority, empty page, or backend error never proves retirement. Restart from the first page on each pass; pagination is not a snapshot or retirement acknowledgment. Listing changes no state or deadline.
 	//
 	// Corresponds with GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId).
 	ListConnectorPeerPairs(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8829,7 +8939,7 @@ func (c *Client) AcceptServiceInvitation(ctx context.Context, body AcceptService
 
 // ListServices List manageable saved services in one team
 //
-// Team-owned saved services; never return target addresses or stream keys.
+// Administrator-only team inventory; exact member service ownership does not authorize this operation. Never returns target addresses or stream keys.
 //
 // Corresponds with GET /v1/services (the `ListServices` operationId).
 func (c *Client) ListServices(ctx context.Context, params *ListServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8846,7 +8956,7 @@ func (c *Client) ListServices(ctx context.Context, params *ListServicesParams, r
 
 // CreateServiceWithBody Create one saved service with approved protocol and placement
 //
-// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
+// Save a service name, protocol, target TLS trust, and optional source-bound worktree placement. Ordinary creation requires current team administration. With reserve true, create or recover only the exact eligible standalone service in an authorized namespace, using current membership, company sign-in, domain, and stored ownership. Recovery never adopts a project, deployment, worktree, or allocated service and never replaces saved declaration or policy. Each idempotency key remains bound to its normalized request and service lifetime. Creating or recovering a service does not issue a publisher grant, start a service run, or issue a certificate.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8865,7 +8975,7 @@ func (c *Client) CreateServiceWithBody(ctx context.Context, params *CreateServic
 
 // CreateService Create one saved service with approved protocol and placement
 //
-// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
+// Save a service name, protocol, target TLS trust, and optional source-bound worktree placement. Ordinary creation requires current team administration. With reserve true, create or recover only the exact eligible standalone service in an authorized namespace, using current membership, company sign-in, domain, and stored ownership. Recovery never adopts a project, deployment, worktree, or allocated service and never replaces saved declaration or policy. Each idempotency key remains bound to its normalized request and service lifetime. Creating or recovering a service does not issue a publisher grant, start a service run, or issue a certificate.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9113,6 +9223,44 @@ func (c *Client) RenewConnectorPeerPairWithBody(ctx context.Context, serviceId S
 // Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 func (c *Client) RenewConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenewConnectorPeerPairRequest(c.Server, serviceId, pairId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RetireConnectorPeerPairWithBody Retire one exact connector pair without renewing serving authority
+//
+// Authenticate with the original enrolled signing key and the exact pair's existing stable session-key MAC. Omit Authorization entirely, including empty headers. No current parent credential or serving permission is required. Sign the handwritten ConnectorPeerPairRetireProof bytes, not this HTTP JSON object. Retirement ends this pair across network rebinds, never a sibling or replacement pair. Retain the identical signed body and owner key after an uncertain reply. Confirmation is bounded by the unchanged max(expires_at, replay_fence_until); missing, replaced, or retention-expired pairs are not confirmed retired. A successful response proves a committed retirement, not publisher observation, remote join, or delivery of a terminal result.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/retire (the `RetireConnectorPeerPair` operationId).
+func (c *Client) RetireConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRetireConnectorPeerPairRequestWithBody(c.Server, serviceId, pairId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RetireConnectorPeerPair Retire one exact connector pair without renewing serving authority
+//
+// Authenticate with the original enrolled signing key and the exact pair's existing stable session-key MAC. Omit Authorization entirely, including empty headers. No current parent credential or serving permission is required. Sign the handwritten ConnectorPeerPairRetireProof bytes, not this HTTP JSON object. Retirement ends this pair across network rebinds, never a sibling or replacement pair. Retain the identical signed body and owner key after an uncertain reply. Confirmation is bounded by the unchanged max(expires_at, replay_fence_until); missing, replaced, or retention-expired pairs are not confirmed retired. A successful response proves a committed retirement, not publisher observation, remote join, or delivery of a terminal result.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/retire (the `RetireConnectorPeerPair` operationId).
+func (c *Client) RetireConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RetireConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRetireConnectorPeerPairRequest(c.Server, serviceId, pairId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -9715,9 +9863,9 @@ func (c *Client) GetServiceCertificateIssuance(ctx context.Context, serviceId Se
 	return c.Client.Do(req)
 }
 
-// ListConnectorPeerPairs List connector pair candidates for the current service run
+// ListConnectorPeerPairs Reconcile candidates and explicit retirements for an exact service run
 //
-// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. An installed owner may include an independent authority observation during temporary relay loss. A candidate may still lack relay claims; prepare its delivery independently before serving it.
+// Authenticate the exact stored started-run token. Current serving permission is required for positive candidates and owner-authority observations; a candidate still needs independent delivery preparation. After serving permission revocation, run closure, or retained service/owner deletion, the exact token can read only explicit retired dispositions within existing pair retention windows. No key, subject, source address, or serving authority is returned by that negative-only read. An omitted pair, absent owner_authority, empty page, or backend error never proves retirement. Restart from the first page on each pass; pagination is not a snapshot or retirement acknowledgment. Listing changes no state or deadline.
 //
 // Corresponds with GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId).
 func (c *Client) ListConnectorPeerPairs(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -14811,6 +14959,60 @@ func NewRenewConnectorPeerPairRequestWithBody(server string, serviceId ServiceID
 	return req, nil
 }
 
+// NewRetireConnectorPeerPairRequest calls the generic RetireConnectorPeerPair builder with application/json body
+func NewRetireConnectorPeerPairRequest(server string, serviceId ServiceID, pairId string, body RetireConnectorPeerPairJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRetireConnectorPeerPairRequestWithBody(server, serviceId, pairId, "application/json", bodyReader)
+}
+
+// NewRetireConnectorPeerPairRequestWithBody constructs an http.Request for the RetireConnectorPeerPair method, with any body, and a specified content type
+func NewRetireConnectorPeerPairRequestWithBody(server string, serviceId ServiceID, pairId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "pair_id", pairId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/connector-peer-pairs/%s/retire", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewSetServiceEnabledRequest calls the generic SetServiceEnabled builder with application/json body
 func NewSetServiceEnabledRequest(server string, serviceId ServiceID, body SetServiceEnabledJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -18313,7 +18515,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListServicesWithResponse List manageable saved services in one team
 	//
-	// Team-owned saved services; never return target addresses or stream keys.
+	// Administrator-only team inventory; exact member service ownership does not authorize this operation. Never returns target addresses or stream keys.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -18322,7 +18524,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateServiceWithBodyWithResponse Create one saved service with approved protocol and placement
 	//
-	// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
+	// Save a service name, protocol, target TLS trust, and optional source-bound worktree placement. Ordinary creation requires current team administration. With reserve true, create or recover only the exact eligible standalone service in an authorized namespace, using current membership, company sign-in, domain, and stored ownership. Recovery never adopts a project, deployment, worktree, or allocated service and never replaces saved declaration or policy. Each idempotency key remains bound to its normalized request and service lifetime. Creating or recovering a service does not issue a publisher grant, start a service run, or issue a certificate.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18331,7 +18533,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateServiceWithResponse Create one saved service with approved protocol and placement
 	//
-	// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
+	// Save a service name, protocol, target TLS trust, and optional source-bound worktree placement. Ordinary creation requires current team administration. With reserve true, create or recover only the exact eligible standalone service in an authorized namespace, using current membership, company sign-in, domain, and stored ownership. Recovery never adopts a project, deployment, worktree, or allocated service and never replaces saved declaration or policy. Each idempotency key remains bound to its normalized request and service lifetime. Creating or recovering a service does not issue a publisher grant, start a service run, or issue a certificate.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18454,6 +18656,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 	RenewConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error)
+
+	// RetireConnectorPeerPairWithBodyWithResponse Retire one exact connector pair without renewing serving authority
+	//
+	// Authenticate with the original enrolled signing key and the exact pair's existing stable session-key MAC. Omit Authorization entirely, including empty headers. No current parent credential or serving permission is required. Sign the handwritten ConnectorPeerPairRetireProof bytes, not this HTTP JSON object. Retirement ends this pair across network rebinds, never a sibling or replacement pair. Retain the identical signed body and owner key after an uncertain reply. Confirmation is bounded by the unchanged max(expires_at, replay_fence_until); missing, replaced, or retention-expired pairs are not confirmed retired. A successful response proves a committed retirement, not publisher observation, remote join, or delivery of a terminal result.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/retire (the `RetireConnectorPeerPair` operationId).
+	RetireConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RetireConnectorPeerPairResponse, error)
+
+	// RetireConnectorPeerPairWithResponse Retire one exact connector pair without renewing serving authority
+	//
+	// Authenticate with the original enrolled signing key and the exact pair's existing stable session-key MAC. Omit Authorization entirely, including empty headers. No current parent credential or serving permission is required. Sign the handwritten ConnectorPeerPairRetireProof bytes, not this HTTP JSON object. Retirement ends this pair across network rebinds, never a sibling or replacement pair. Retain the identical signed body and owner key after an uncertain reply. Confirmation is bounded by the unchanged max(expires_at, replay_fence_until); missing, replaced, or retention-expired pairs are not confirmed retired. A successful response proves a committed retirement, not publisher observation, remote join, or delivery of a terminal result.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/retire (the `RetireConnectorPeerPair` operationId).
+	RetireConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RetireConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RetireConnectorPeerPairResponse, error)
 
 	// SetServiceEnabledWithBodyWithResponse Suspend or enable a saved service
 	//
@@ -18743,9 +18963,9 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id} (the `GetServiceCertificateIssuance` operationId).
 	GetServiceCertificateIssuanceWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*GetServiceCertificateIssuanceResponse, error)
 
-	// ListConnectorPeerPairsWithResponse List connector pair candidates for the current service run
+	// ListConnectorPeerPairsWithResponse Reconcile candidates and explicit retirements for an exact service run
 	//
-	// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. An installed owner may include an independent authority observation during temporary relay loss. A candidate may still lack relay claims; prepare its delivery independently before serving it.
+	// Authenticate the exact stored started-run token. Current serving permission is required for positive candidates and owner-authority observations; a candidate still needs independent delivery preparation. After serving permission revocation, run closure, or retained service/owner deletion, the exact token can read only explicit retired dispositions within existing pair retention windows. No key, subject, source address, or serving authority is returned by that negative-only read. An omitted pair, absent owner_authority, empty page, or backend error never proves retirement. Restart from the first page on each pass; pagination is not a snapshot or retirement acknowledgment. Listing changes no state or deadline.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -22519,10 +22739,17 @@ func (r ListServicesResponse) ContentType() string {
 type CreateServiceResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Service
 	// JSON201 the response for an HTTP 201 `application/json` response
 	JSON201 *Service
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateServiceResponse) GetJSON200() *Service {
+	return r.JSON200
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -22951,6 +23178,89 @@ func (r RenewConnectorPeerPairResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RenewConnectorPeerPairResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RetireConnectorPeerPairResponse200Headers the declared response headers of an HTTP 200 response for RetireConnectorPeerPair
+type RetireConnectorPeerPairResponse200Headers struct {
+	CacheControl *string
+}
+
+type RetireConnectorPeerPairResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorPeerPairRetirement
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *RetireConnectorPeerPairResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RetireConnectorPeerPairResponse) GetJSON200() *ConnectorPeerPairRetirement {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RetireConnectorPeerPairResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RetireConnectorPeerPairResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RetireConnectorPeerPairResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RetireConnectorPeerPairResponse) GetApplicationproblemJSON503() *Problem {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RetireConnectorPeerPairResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RetireConnectorPeerPairResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RetireConnectorPeerPairResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RetireConnectorPeerPairResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RetireConnectorPeerPairResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -26807,7 +27117,7 @@ func (c *ClientWithResponses) AcceptServiceInvitationWithResponse(ctx context.Co
 
 // ListServicesWithResponse List manageable saved services in one team
 //
-// Team-owned saved services; never return target addresses or stream keys.
+// Administrator-only team inventory; exact member service ownership does not authorize this operation. Never returns target addresses or stream keys.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -26822,7 +27132,7 @@ func (c *ClientWithResponses) ListServicesWithResponse(ctx context.Context, para
 
 // CreateServiceWithBodyWithResponse Create one saved service with approved protocol and placement
 //
-// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
+// Save a service name, protocol, target TLS trust, and optional source-bound worktree placement. Ordinary creation requires current team administration. With reserve true, create or recover only the exact eligible standalone service in an authorized namespace, using current membership, company sign-in, domain, and stored ownership. Recovery never adopts a project, deployment, worktree, or allocated service and never replaces saved declaration or policy. Each idempotency key remains bound to its normalized request and service lifetime. Creating or recovering a service does not issue a publisher grant, start a service run, or issue a certificate.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26837,7 +27147,7 @@ func (c *ClientWithResponses) CreateServiceWithBodyWithResponse(ctx context.Cont
 
 // CreateServiceWithResponse Create one saved service with approved protocol and placement
 //
-// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
+// Save a service name, protocol, target TLS trust, and optional source-bound worktree placement. Ordinary creation requires current team administration. With reserve true, create or recover only the exact eligible standalone service in an authorized namespace, using current membership, company sign-in, domain, and stored ownership. Recovery never adopts a project, deployment, worktree, or allocated service and never replaces saved declaration or policy. Each idempotency key remains bound to its normalized request and service lifetime. Creating or recovering a service does not issue a publisher grant, start a service run, or issue a certificate.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27043,6 +27353,36 @@ func (c *ClientWithResponses) RenewConnectorPeerPairWithResponse(ctx context.Con
 		return nil, err
 	}
 	return ParseRenewConnectorPeerPairResponse(rsp)
+}
+
+// RetireConnectorPeerPairWithBodyWithResponse Retire one exact connector pair without renewing serving authority
+//
+// Authenticate with the original enrolled signing key and the exact pair's existing stable session-key MAC. Omit Authorization entirely, including empty headers. No current parent credential or serving permission is required. Sign the handwritten ConnectorPeerPairRetireProof bytes, not this HTTP JSON object. Retirement ends this pair across network rebinds, never a sibling or replacement pair. Retain the identical signed body and owner key after an uncertain reply. Confirmation is bounded by the unchanged max(expires_at, replay_fence_until); missing, replaced, or retention-expired pairs are not confirmed retired. A successful response proves a committed retirement, not publisher observation, remote join, or delivery of a terminal result.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/retire (the `RetireConnectorPeerPair` operationId).
+func (c *ClientWithResponses) RetireConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RetireConnectorPeerPairResponse, error) {
+	rsp, err := c.RetireConnectorPeerPairWithBody(ctx, serviceId, pairId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRetireConnectorPeerPairResponse(rsp)
+}
+
+// RetireConnectorPeerPairWithResponse Retire one exact connector pair without renewing serving authority
+//
+// Authenticate with the original enrolled signing key and the exact pair's existing stable session-key MAC. Omit Authorization entirely, including empty headers. No current parent credential or serving permission is required. Sign the handwritten ConnectorPeerPairRetireProof bytes, not this HTTP JSON object. Retirement ends this pair across network rebinds, never a sibling or replacement pair. Retain the identical signed body and owner key after an uncertain reply. Confirmation is bounded by the unchanged max(expires_at, replay_fence_until); missing, replaced, or retention-expired pairs are not confirmed retired. A successful response proves a committed retirement, not publisher observation, remote join, or delivery of a terminal result.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/retire (the `RetireConnectorPeerPair` operationId).
+func (c *ClientWithResponses) RetireConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RetireConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RetireConnectorPeerPairResponse, error) {
+	rsp, err := c.RetireConnectorPeerPair(ctx, serviceId, pairId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRetireConnectorPeerPairResponse(rsp)
 }
 
 // SetServiceEnabledWithBodyWithResponse Suspend or enable a saved service
@@ -27525,9 +27865,9 @@ func (c *ClientWithResponses) GetServiceCertificateIssuanceWithResponse(ctx cont
 	return ParseGetServiceCertificateIssuanceResponse(rsp)
 }
 
-// ListConnectorPeerPairsWithResponse List connector pair candidates for the current service run
+// ListConnectorPeerPairsWithResponse Reconcile candidates and explicit retirements for an exact service run
 //
-// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. An installed owner may include an independent authority observation during temporary relay loss. A candidate may still lack relay claims; prepare its delivery independently before serving it.
+// Authenticate the exact stored started-run token. Current serving permission is required for positive candidates and owner-authority observations; a candidate still needs independent delivery preparation. After serving permission revocation, run closure, or retained service/owner deletion, the exact token can read only explicit retired dispositions within existing pair retention windows. No key, subject, source address, or serving authority is returned by that negative-only read. An omitted pair, absent owner_authority, empty page, or backend error never proves retirement. Restart from the first page on each pass; pagination is not a snapshot or retirement acknowledgment. Listing changes no state or deadline.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -30585,6 +30925,13 @@ func ParseCreateServiceResponse(rsp *http.Response) (*CreateServiceResponse, err
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Service
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
 		var dest Service
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -30899,6 +31246,80 @@ func ParseRenewConnectorPeerPairResponse(rsp *http.Response) (*RenewConnectorPee
 		}
 		response.ApplicationproblemJSONDefault = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseRetireConnectorPeerPairResponse parses an HTTP response from a RetireConnectorPeerPairWithResponse call
+func ParseRetireConnectorPeerPairResponse(rsp *http.Response) (*RetireConnectorPeerPairResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RetireConnectorPeerPairResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorPeerPairRetirement
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers RetireConnectorPeerPairResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
 	}
 
 	return response, nil
@@ -32765,6 +33186,9 @@ type ServerInterface interface {
 	// RenewConnectorPeerPair Renew an exact signed connector pair and visitor permission
 	// (POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew)
 	RenewConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID, pairId string)
+	// RetireConnectorPeerPair Retire one exact connector pair without renewing serving authority
+	// (POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/retire)
+	RetireConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID, pairId string)
 	// SetServiceEnabled Suspend or enable a saved service
 	// (PUT /v1/services/{service_id}/enabled)
 	SetServiceEnabled(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
@@ -32825,7 +33249,7 @@ type ServerInterface interface {
 	// GetServiceCertificateIssuance Read a service run's current certificate issuance
 	// (GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id})
 	GetServiceCertificateIssuance(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID)
-	// ListConnectorPeerPairs List connector pair candidates for the current service run
+	// ListConnectorPeerPairs Reconcile candidates and explicit retirements for an exact service run
 	// (GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs)
 	ListConnectorPeerPairs(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, params ListConnectorPeerPairsParams)
 	// DeliverConnectorPeerPair Deliver an existing connector pair to its current publisher run
@@ -35876,6 +36300,41 @@ func (siw *ServerInterfaceWrapper) RenewConnectorPeerPair(w http.ResponseWriter,
 	handler.ServeHTTP(w, r)
 }
 
+// RetireConnectorPeerPair operation middleware
+func (siw *ServerInterfaceWrapper) RetireConnectorPeerPair(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pair_id" -------------
+	var pairId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pair_id", r.PathValue("pair_id"), &pairId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pair_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RetireConnectorPeerPair(w, r, serviceId, pairId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SetServiceEnabled operation middleware
 func (siw *ServerInterfaceWrapper) SetServiceEnabled(w http.ResponseWriter, r *http.Request) {
 
@@ -37917,6 +38376,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/connector-peer-pairs", wrapper.PrepareConnectorPeerPair)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew", wrapper.RenewConnectorPeerPair)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind", wrapper.RebindConnectorPeerPair)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/connector-peer-pairs/{pair_id}/retire", wrapper.RetireConnectorPeerPair)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs", wrapper.PrepareServiceRun)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}", wrapper.CloseServiceRun)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/renew", wrapper.RenewServiceRun)

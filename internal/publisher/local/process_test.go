@@ -109,6 +109,7 @@ func assertProcessStopped(t *testing.T, state *clientstate.Database, project cli
 
 func TestAppWorkflowProcessShutdownReleasesOwnershipAndPendingRegistration(t *testing.T) {
 	project, state, _, path := processFixture(t)
+	const hostname = "web.developer.example.test"
 	token, _, _, err := credentials.NewAccessToken()
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +131,9 @@ func TestAppWorkflowProcessShutdownReleasesOwnershipAndPendingRegistration(t *te
 				Oidc:    &controlv1.OIDCAuthenticationFacts{Issuer: "https://identity.example", LoginFlow: controlv1.DeviceCode},
 			}}
 		case "GET /v1/identity":
-			response = authorityv1.IdentityContext{PersonalTeamId: "team_1", Memberships: []authorityv1.Membership{{TeamId: "team_1"}}}
+			response = authorityv1.IdentityContext{PersonalTeamId: "team_1", Memberships: []authorityv1.Membership{
+				{TeamId: "team_1", MemberSlug: "developer", ManagedLabel: "developer"},
+			}}
 		case "GET /v1/teams/team_1":
 			response = authorityv1.Team{Id: "team_1", DisplayName: "developer", Kind: authorityv1.Personal, DefaultDomainId: "domain_1"}
 		case "GET /v1/teams/team_1/domains":
@@ -144,10 +147,17 @@ func TestAppWorkflowProcessShutdownReleasesOwnershipAndPendingRegistration(t *te
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-			if request.Configuration.Target != "app" || request.Configuration.Public != nil && *request.Configuration.Public {
+			if request.TeamId != "team_1" || request.SourceFingerprint != project.LocalPublicationIdentity().Fingerprint ||
+				request.WorktreeKey != project.LocalWorktreeKey() ||
+				request.Configuration.Name == nil || *request.Configuration.Name != "web" ||
+				request.Configuration.Protocol == nil || *request.Configuration.Protocol != controlv1.ServiceProtocolHTTP ||
+				request.Configuration.Target != "app" || request.Configuration.Public != nil && *request.Configuration.Public {
 				t.Error("pending preparation changed its private app declaration")
 			}
-			response = controlv1.LocalProjectService{Service: "web", WorktreeKey: request.WorktreeKey, ServiceId: "svc_0123456789abcdefghijkl"}
+			response = controlv1.LocalProjectService{Service: "web", WorktreeKey: request.WorktreeKey, ServiceId: "svc_0123456789abcdefghijkl",
+				Hostname: new(hostname),
+				Metadata: &controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP, TrustRevision: 1,
+					Endpoint: &controlv1.ServiceEndpoint{Hostname: hostname, Port: 443, Public: false}}}
 		default:
 			t.Errorf("pending preparation requested unrelated work: %s %s", r.Method, r.URL)
 			w.WriteHeader(http.StatusNotFound)
@@ -189,8 +199,21 @@ func TestAppWorkflowProcessShutdownReleasesOwnershipAndPendingRegistration(t *te
 	if err := publisherprotocol.Call(t.Context(), scoped, "POST", "/v1/prepare", publisherprotocol.Prepare{Version: 1, Directory: project.Root, Service: name, Owner: strings.Repeat("a", 32), PID: os.Getpid(), Framework: publisherprotocol.FrameworkNode}, &assignment); err != nil {
 		t.Fatal(err)
 	}
-	if assignment.RegistrationID == "" || assignment.Service != name {
+	selected := assignment.Project.Services[name]
+	if assignment.RegistrationID == "" || assignment.Service != name || assignment.Hostname != hostname ||
+		assignment.PublicURL != "" || len(assignment.Project.Services) != 1 || !assignment.Project.Dev ||
+		selected.Protocol != "http" || selected.Namespace != "developer.example.test" || selected.Hostname != hostname ||
+		selected.URL != "https://"+hostname || selected.Port != 443 || selected.Public {
 		t.Fatalf("process did not prepare its configured app: %+v", assignment)
+	}
+	var pending app.Snapshot
+	if err := publisherprotocol.Call(t.Context(), scoped, "GET", "/v1/status", nil, &pending); err != nil {
+		t.Fatal(err)
+	}
+	if len(pending.Services) != 1 || pending.Services[0].RegistrationID != assignment.RegistrationID ||
+		pending.Services[0].Registered || pending.Services[0].Routable || pending.Services[0].Ready ||
+		pending.Services[0].RunNumber != 0 || pending.Services[0].PublicURL != "" {
+		t.Fatalf("process did not retain exactly its pending private reservation: %+v", pending.Services)
 	}
 	contender, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()

@@ -8,6 +8,7 @@ import {
   createProjectFixture,
   temporaryDirectory,
   testPublicProject,
+  testPrivateAssignment,
   withCurrentDirectory,
 } from "../helpers/project.js";
 import {
@@ -67,6 +68,24 @@ const buildEnvironment: ConfigEnv = {
 };
 
 describe("tnl", () => {
+  test("allows only the selected connector-only canonical hostname", async () => {
+    const selected = testPrivateAssignment();
+    const bootstrap = await startTestBootstrap({ responseBody: JSON.stringify(selected) });
+    await withProcessEnvironment(bootstrap.environment, async () => {
+      const result = z
+        .strictObject({
+          define: z.strictObject({ "process.env.TNL_PROJECT_RUNTIME": z.string() }),
+          server: z.strictObject({ allowedHosts: z.array(z.string()) }),
+        })
+        .parse(await runConfigHook(tnl(), { server: { allowedHosts: ["existing.example"] } }));
+      expect(result.server.allowedHosts).toEqual(["existing.example", selected.hostname]);
+      const payload = z
+        .string()
+        .parse(JSON.parse(result.define["process.env.TNL_PROJECT_RUNTIME"]));
+      expect(JSON.parse(payload)).toEqual(selected.project);
+    });
+  });
+
   test("allows aliases that reach the service without broadening other hosts", async () => {
     const bootstrap = await startTestBootstrap({
       responseBody: JSON.stringify(testAliasAssignment()),

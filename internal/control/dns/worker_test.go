@@ -202,20 +202,21 @@ func testDNSWork(now time.Time) controlstate.DNSAuthorityWork {
 }
 
 type dnsStoreStub struct {
-	serviceEndpointWork   controlstate.ServiceEndpointDNSWork
-	serviceEndpointSaved  controlstate.ServiceEndpointDNSWork
-	serviceEndpointClaims int
-	serviceEndpointSaves  int
-	serviceEndpointLocked bool
-	work                  controlstate.DNSAuthorityWork
-	saved                 controlstate.DNSAuthorityWork
-	releaseReady          bool
-	authority             controlstate.DNSAuthority
-	pool                  controlstate.IngressPool
-	authorityReferences   []string
-	getErr, saveErr       error
-	saves                 int
-	savedAt               time.Time
+	serviceEndpointWork    controlstate.ServiceEndpointDNSWork
+	serviceEndpointSaved   controlstate.ServiceEndpointDNSWork
+	serviceEndpointClaims  int
+	serviceEndpointSaves   int
+	serviceEndpointSavedAt time.Time
+	serviceEndpointLocked  bool
+	work                   controlstate.DNSAuthorityWork
+	saved                  controlstate.DNSAuthorityWork
+	releaseReady           bool
+	authority              controlstate.DNSAuthority
+	pool                   controlstate.IngressPool
+	authorityReferences    []string
+	getErr, saveErr        error
+	saves                  int
+	savedAt                time.Time
 }
 
 func (s *dnsStoreStub) ClaimServiceEndpointDNSWork(context.Context, string, time.Time, time.Duration) (controlstate.ServiceEndpointDNSWork, bool, error) {
@@ -225,9 +226,10 @@ func (s *dnsStoreStub) ClaimServiceEndpointDNSWork(context.Context, string, time
 	return work, work.Hostname != "", nil
 }
 
-func (s *dnsStoreStub) SaveServiceEndpointDNSWork(_ context.Context, work controlstate.ServiceEndpointDNSWork, _ time.Time) (controlstate.ServiceEndpointDNSWork, error) {
+func (s *dnsStoreStub) SaveServiceEndpointDNSWork(_ context.Context, work controlstate.ServiceEndpointDNSWork, now time.Time) (controlstate.ServiceEndpointDNSWork, error) {
 	s.serviceEndpointSaves++
 	s.serviceEndpointSaved = work
+	s.serviceEndpointSavedAt = now
 	return work, s.saveErr
 }
 
@@ -430,8 +432,8 @@ func TestWorkerReconcilesCustomServiceEndpointPublicationAndRemoval(t *testing.T
 					want.State = controlstate.ServiceEndpointDNSRemoved
 				}
 			}
-			if !reflect.DeepEqual(store.serviceEndpointSaved, want) || store.serviceEndpointSaves != 1 {
-				t.Fatalf("saved = %#v, want %#v", store.serviceEndpointSaved, want)
+			if !reflect.DeepEqual(store.serviceEndpointSaved, want) || store.serviceEndpointSaves != 1 || !store.serviceEndpointSavedAt.Equal(now) {
+				t.Fatalf("saved = %#v at %s, want %#v at %s", store.serviceEndpointSaved, store.serviceEndpointSavedAt, want, now)
 			}
 		})
 	}
@@ -479,6 +481,47 @@ func TestWorkerServiceEndpointAuthorityBoundaries(t *testing.T) {
 			}
 			if (store.serviceEndpointSaved.LastError != "") != (test.state != controlstate.DNSAuthorityPending) {
 				t.Fatalf("last error = %q", store.serviceEndpointSaved.LastError)
+			}
+		})
+	}
+}
+
+func TestWorkerServiceEndpointAuthorityLookupRetryBackoff(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name     string
+		attempts int64
+		delay    time.Duration
+	}{
+		{"first attempt", 1, time.Second},
+		{"third attempt", 3, 4 * time.Second},
+		{"capped attempt", 20, time.Minute},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			work := testServiceDNSWork(now)
+			work.Hostname, work.AuthorityReference = "api.claimed.example.test", testDNSWork(now).Reference
+			work.Attempts = test.attempts
+			authority := testDNSWork(now).DNSAuthority
+			authority.State, authority.ProviderZoneID = controlstate.DNSAuthorityReady, "ZCLAIMED"
+			store := &dnsStoreStub{
+				serviceEndpointWork: work, authority: authority,
+				getErr: errors.New("lookup unavailable"),
+			}
+			provider, verifier := &providerStub{}, &verifierStub{}
+			worker := testDNSWorker(t, store, provider, verifier, now)
+			worker.config.IngressIPv4Addresses = []string{"192.0.2.10"}
+			if found, err := worker.processServiceEndpoint(t.Context(), now); !found || err != nil {
+				t.Fatalf("process = %v, %v", found, err)
+			}
+			want := work
+			want.LastError, want.AvailableAt = "server.dns_failed", now.Add(test.delay)
+			if !reflect.DeepEqual(store.serviceEndpointSaved, want) || store.serviceEndpointSaves != 1 ||
+				!store.serviceEndpointSavedAt.Equal(now) {
+				t.Fatalf("lookup retry = %#v at %s, want %#v at %s", store.serviceEndpointSaved, store.serviceEndpointSavedAt, want, now)
+			}
+			if !reflect.DeepEqual(store.authorityReferences, []string{work.AuthorityReference}) ||
+				provider.publishCalls != 0 || provider.removeCalls != 0 || verifier.addressCalls != 0 {
+				t.Fatalf("lookup failure reached DNS: references %v, provider %#v, verifier %#v", store.authorityReferences, provider, verifier)
 			}
 		})
 	}

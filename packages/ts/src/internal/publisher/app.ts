@@ -58,11 +58,12 @@ const assignmentSchema = z
     const metadata = project.services[service];
     return (
       project.dev &&
-      (hostname === "" && public_url === ""
-        ? metadata === undefined
-        : public_url === `https://${hostname}` &&
-          metadata?.hostname === hostname &&
-          metadata.protocol === "http")
+      (hostname === ""
+        ? public_url === "" && metadata === undefined
+        : metadata?.protocol === "http" &&
+          metadata.hostname === hostname &&
+          metadata.url === `https://${hostname}` &&
+          public_url === (metadata.public ? metadata.url : ""))
     );
   })
   .transform(({ registration_id, service, hostname, public_url, project }) => ({
@@ -183,7 +184,7 @@ async function createPreparedServiceUntraced(
   };
   const endpoint = await dependencies.start(directory, undefined, selection, signal);
   signal?.throwIfAborted();
-  const assignment = parseAssignment(
+  const assignment = parsePreparedAssignment(
     await dependencies.request(endpoint, "prepare", prepareRequest, signal),
   );
   if (signal?.aborted) {
@@ -233,7 +234,7 @@ async function createPreparedServiceUntraced(
   const reconnect = (signal?: AbortSignal) =>
     operation("sdk.app.recover", async () => {
       const replacementEndpoint = await dependencies.start(directory, undefined, selection, signal);
-      const replacement = parseAssignment(
+      const replacement = parsePreparedAssignment(
         await dependencies.request(replacementEndpoint, "prepare", prepareRequest, signal),
       );
       if (
@@ -405,4 +406,12 @@ function validateOptions(options: PrepareOptions): void {
 }
 export function parseAssignment(value: unknown): Assignment {
   return parseValue(assignmentSchema, value, "sdk.response_invalid");
+}
+
+// acquisition may precede endpoint allocation, but app/framework preparation
+// promises its selected canonical endpoint before the listener starts.
+function parsePreparedAssignment(value: unknown): Assignment {
+  const assignment = parseAssignment(value);
+  if (assignment.hostname === undefined) throw new TnlError("sdk.response_invalid");
+  return assignment;
 }

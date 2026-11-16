@@ -58,6 +58,9 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 	if preparation.Hostname != approved.Endpoint.Hostname || preparation.DomainId == "" || approved.DomainId != nil && preparation.DomainId != *approved.DomainId || preparation.RequirePostQuantum != approved.RequirePostQuantum {
 		return nil, ErrPrivateStream
 	}
+	capturedPlan := *preparation.CertificatePlan
+	capturedPlan.Identifiers = slices.Clone(capturedPlan.Identifiers)
+	preparation.CertificatePlan = &capturedPlan
 	plan, err := certificateidentity.CanonicalPlan(*preparation.CertificatePlan)
 	if err != nil || !certificateidentity.Covers(plan.Identifiers, approved.Endpoint.Hostname) || plan.ChallengeMethod != controlv1.Dns01 {
 		return nil, ErrPrivateStream
@@ -240,7 +243,9 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 		}
 		return nil, nil, err
 	}
-	certificates := Certificates{Control: control, Cache: cache, ServiceID: setup.ServiceId, RunID: setup.ServiceRunId, PublisherIdentityID: config.PublisherIdentityID, RunNumber: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken), Hostname: prepared.managedHostname, Plan: *prepared.Preparation.CertificatePlan, Install: prepared.installManagedCertificate}
+	installed := make(chan struct{}, 1)
+	prepared.certificateInstalled = installed
+	certificates := Certificates{Control: control, Cache: cache, ServiceID: setup.ServiceId, RunID: setup.ServiceRunId, PublisherIdentityID: config.PublisherIdentityID, RunNumber: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken), Hostname: prepared.managedHostname, Plan: *prepared.Preparation.CertificatePlan, Install: prepared.installManagedCertificate, installed: installed}
 	certificateCtx, cancel := context.WithCancel(ctx)
 	return func() error { return certificates.Maintain(certificateCtx) }, func() error {
 		cancel()

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -172,8 +173,10 @@ func TestLeaseExpiryStopsWorkersWhenAssignmentPollingFails(t *testing.T) {
 		t.Fatal(got)
 	}
 	cancel()
-	if err := <-done; err != nil {
-		t.Fatal(err)
+	// this fixture also fails the independent process stop; lease expiry
+	// must join the worker without discarding that separate failure.
+	if err := <-done; !failure.Only(err, clientcontrol.ErrUnavailable) {
+		t.Fatal("lease expiry lost or replaced the process stop failure", err)
 	}
 }
 

@@ -2,6 +2,7 @@ package tunnelv1
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -60,9 +61,64 @@ func TestFramedWireFixturesRejectEveryTruncation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			wire := goldenWire(t, test.name)
 			for length := 0; length < len(wire); length++ {
-				if err := test.read(bytes.NewReader(wire[:length])); err == nil {
-					t.Fatalf("accepted frame truncated to %d of %d bytes", length, len(wire))
+				want := io.ErrUnexpectedEOF
+				if length == 0 {
+					want = io.EOF
 				}
+				if err := test.read(bytes.NewReader(wire[:length])); !errors.Is(err, want) {
+					t.Fatalf("frame truncated to %d of %d bytes: got %v, want %v", length, len(wire), err, want)
+				}
+			}
+		})
+	}
+}
+
+type frameReadFailure struct{ err error }
+
+func (r frameReadFailure) Read([]byte) (int, error) { return 0, r.err }
+
+func TestReadFramePayloadPreservesIndependentEOFErrors(t *testing.T) {
+	independent := errors.New("independent frame read failure")
+	joined := errors.Join(io.EOF, context.Canceled, independent)
+	header := binary.BigEndian.AppendUint32(nil, 2)
+	for _, test := range []struct {
+		name      string
+		prefix    []byte
+		failure   error
+		want      error
+		preserved error
+		exact     bool
+	}{
+		{name: "between-frames", failure: io.EOF, want: io.EOF, exact: true},
+		{name: "between-frames-independent-failure", failure: joined, want: io.EOF, preserved: joined, exact: true},
+		{name: "complete-header-no-payload", prefix: header, failure: io.EOF, want: io.ErrUnexpectedEOF, exact: true},
+		{name: "partial-payload", prefix: append(bytes.Clone(header), '{'), failure: io.EOF, want: io.ErrUnexpectedEOF, exact: true},
+		{name: "payload-independent-failure", prefix: header, failure: independent, want: independent, exact: true},
+		{name: "payload-EOF-with-independent-failure", prefix: header, failure: joined, want: io.ErrUnexpectedEOF, preserved: joined},
+		{name: "partial-payload-EOF-with-independent-failure", prefix: append(bytes.Clone(header), '{'), failure: joined, want: io.ErrUnexpectedEOF, preserved: joined},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reader := io.MultiReader(bytes.NewReader(test.prefix), frameReadFailure{err: test.failure})
+			payload, err := readFramePayload(reader, 2)
+			if payload != nil || !errors.Is(err, test.want) {
+				t.Fatal("frame boundary or truncation classification changed", payload, err)
+			}
+			if test.exact {
+				want := test.want
+				if test.preserved != nil {
+					want = test.preserved
+				}
+				if err != want {
+					t.Fatal("read failure was unnecessarily replaced or wrapped", err)
+				}
+			}
+			if test.preserved != nil {
+				if !errors.Is(err, test.preserved) || !errors.Is(err, independent) || !errors.Is(err, context.Canceled) {
+					t.Fatal("truncation erased an independent read failure", err)
+				}
+			}
+			if len(test.prefix) >= 4 && errors.Is(test.failure, io.EOF) && err == io.EOF {
+				t.Fatal("payload EOF was mistaken for a clean frame boundary")
 			}
 		})
 	}

@@ -23,6 +23,7 @@ type ConnectorPermissionGate struct {
 	paused   time.Duration
 	err      error
 	writing  *connectorPermissionWrite
+	failed   func(error)
 }
 
 type connectorPermissionWrite struct {
@@ -188,14 +189,17 @@ func (g *ConnectorPermissionGate) write(ctx context.Context, stream muxsession.S
 		result = g.errorLocked(time.Now())
 		sharedFailure = result != nil
 		g.mu.Unlock()
+		if result != nil && g.failed != nil {
+			g.failed(result)
+		}
 	}()
 	if result != nil {
 		return true, result
 	}
 	result = write(stream)
 	if result != nil {
-		// never retry a frame after an IO error, including partial writes.
-		_ = stream.Reset(0)
+		// the owner records/fences this failure before its joined reset callback.
+		// never retry a frame after an io error, including partial writes.
 		result = errors.Join(result, context.Cause(ctx))
 	}
 	return result != nil, result

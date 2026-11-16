@@ -54,7 +54,7 @@ func TestConnectorPermissionVisitorCancellationDoesNotInterruptSharedFrame(t *te
 			cause := errors.New("visitor finished")
 			stop := func() { cancel(cause) }
 			tracked.cancel.Store(&stop)
-			done := tunnelWorker(t, writer.Close, func() error { return writer.Renew(ctx, connectorPermissionFixture()) })
+			done := tunnelWorker(t, func() { _ = writer.Close() }, func() error { return writer.Renew(ctx, connectorPermissionFixture()) })
 			if _, err := tunnelv1.ReadConnectorPermissionUpdate(control); err != nil {
 				t.Fatal("visitor cancellation interrupted the shared frame", err)
 			}
@@ -66,7 +66,7 @@ func TestConnectorPermissionVisitorCancellationDoesNotInterruptSharedFrame(t *te
 			}
 			// the next visitor must use the same control stream, with no retry of
 			// the canceled visitor's complete frame or ambiguity in its framing.
-			next := tunnelWorker(t, writer.Close, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
+			next := tunnelWorker(t, func() { _ = writer.Close() }, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
 			update, err := tunnelv1.ReadConnectorPermissionUpdate(control)
 			if err != nil || update.UpdateNumber != 2 {
 				t.Fatal("cancellation changed the next visitor's frame", update.UpdateNumber, err)
@@ -94,7 +94,7 @@ func TestConnectorPermissionVisitorStopPreservesIndependentOwnerFailure(t *testi
 		writer.cancel(ownerFailure)
 	}
 	tracked.cancel.Store(&stop)
-	done := tunnelWorker(t, writer.Close, func() error { return writer.Renew(ctx, connectorPermissionFixture()) })
+	done := tunnelWorker(t, func() { _ = writer.Close() }, func() error { return writer.Renew(ctx, connectorPermissionFixture()) })
 	if _, err := tunnelv1.ReadConnectorPermissionUpdate(control); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestConnectorPermissionQueuedDeadlineDoesNotRetireControl(t *testing.T) {
 		writer, control := permissionControlPair(t, client, server)
 		writer.gate <- struct{}{}
 		ctx := permissionDelayedDeadline{Context: t.Context(), until: time.Now().Add(time.Second)}
-		done := tunnelWorker(t, writer.Close, func() error { return writer.Renew(ctx, connectorPermissionFixture()) })
+		done := tunnelWorker(t, func() { _ = writer.Close() }, func() error { return writer.Renew(ctx, connectorPermissionFixture()) })
 		synctest.Wait()
 		writer.mu.Lock()
 		queued := len(writer.pending)
@@ -134,7 +134,7 @@ func TestConnectorPermissionQueuedDeadlineDoesNotRetireControl(t *testing.T) {
 		if err := writer.Err(); err != nil {
 			t.Fatal("a request that wrote no frame retired shared control", err)
 		}
-		next := tunnelWorker(t, writer.Close, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
+		next := tunnelWorker(t, func() { _ = writer.Close() }, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
 		update, err := tunnelv1.ReadConnectorPermissionUpdate(control)
 		if err != nil || update.UpdateNumber != 2 {
 			t.Fatal("expired queued request changed sibling framing", update.UpdateNumber, err)

@@ -483,7 +483,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		if entry.DeploymentID.Valid {
 			previous = serving[key]
 		}
-		changed := !found || !sameAppliedPublication(previous, s)
+		definitionChanged := !found || !reflect.DeepEqual(previous, s)
 		if !found {
 			entry = controlstatedb.ControlAppliedProjectService{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Service: key}
 			if r.Deployment != "local" {
@@ -504,7 +504,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		} else {
 			previousDeployment := entry.DeploymentID
 			entry.DeploymentID = nullableText(deploymentID)
-			if entry.ServiceID.Valid && changed {
+			if entry.ServiceID.Valid && definitionChanged {
 				if err = d.updateAppliedService(ctx, tx, q, entry.ServiceID.String, entry.DeploymentID.String, s, entry.DeploymentID.Valid, r.Now); err != nil {
 					return result, err
 				}

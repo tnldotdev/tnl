@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
@@ -310,8 +311,8 @@ func TestIntegrationPublisherNamespaceMemberOwnershipAndRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.GetServiceForPublisher(t.Context(), u.ID, other, now); err == nil {
-		t.Fatal("foreign credential adopted the service")
+	if _, err := d.GetServiceForPublisher(t.Context(), u.ID, other, now); !failure.Only(err, ErrServiceAccess) {
+		t.Fatal("foreign credential did not receive only the access denial", err)
 	}
 	if err := d.DeletePublisherService(t.Context(), other, u.ID, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("foreign allocation cleanup = %v", err)

@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -110,6 +111,9 @@ func TestConnectorHTTPDrainKeepsCarrierUntilCompletionReceiptWithinOriginalAutho
 					wire := &drainingConnectorWire{half: make(chan struct{}), closed: make(chan struct{})}
 					a := &connectorAdmission{peer: peer, ctx: ctx, caller: ctx, cancel: cancel, stream: wire, state: readyConnectorAdmission{}, completed: make(chan struct{})}
 					entry := opening("D")
+					a.terminalKey = tunnelv1.ConnectorVisitorTerminalKey{VisitorConnectionID: entry.VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration}
+					a.joined = make(chan struct{})
+					receipts := newModeledConnectorTerminal(t, peer)
 					view, _, _ := b.prepared.policy.Current()
 					permission, err := visitortoken.VerifyConnectorPeerSession(entry, nil, peer.bindingSnapshot().expected(), view, time.Now())
 					if err != nil {
@@ -129,17 +133,22 @@ func TestConnectorHTTPDrainKeepsCarrierUntilCompletionReceiptWithinOriginalAutho
 						t.Fatal("physical close lost its cleanup failure", err)
 					}
 					b.visitorWorkers.Add(1)
-					go func() { defer b.visitorWorkers.Done(); done <- a.finishDelivery(nil) }()
+					go func() {
+						defer b.visitorWorkers.Done()
+						err := a.finishDelivery(nil)
+						joinModeledConnectorAdmission(a, err)
+						done <- err
+					}()
 					joined := make(chan error, 1)
 					go func() { joined <- b.joinDrain() }()
 					<-wire.closed
 					synctest.Wait()
 					// even a request-side FIN before the response cannot acknowledge
 					// return delivery, nor can a wrong visitor or delivery receipt.
-					peer.completeVisitor(tunnelv1.ConnectorVisitorCompletion{Kind: tunnelv1.ConnectorVisitorCompleted, VisitorConnectionID: opening("E").VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration})
-					peer.completeVisitor(tunnelv1.ConnectorVisitorCompletion{Kind: tunnelv1.ConnectorVisitorCompleted, VisitorConnectionID: entry.VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration + 1})
+					receipts.Complete(peer, tunnelv1.ConnectorVisitorCompletion{Kind: tunnelv1.ConnectorVisitorCompleted, VisitorConnectionID: opening("E").VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration})
+					receipts.Complete(peer, tunnelv1.ConnectorVisitorCompletion{Kind: tunnelv1.ConnectorVisitorCompleted, VisitorConnectionID: entry.VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration + 1})
 					other := &PeerSession{bound: b, streams: make(map[*connectorAdmission]struct{})}
-					other.completeVisitor(tunnelv1.ConnectorVisitorCompletion{Kind: tunnelv1.ConnectorVisitorCompleted, VisitorConnectionID: entry.VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration})
+					receipts.Complete(other, tunnelv1.ConnectorVisitorCompletion{Kind: tunnelv1.ConnectorVisitorCompleted, VisitorConnectionID: entry.VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration})
 					synctest.Wait()
 					select {
 					case err := <-done:
@@ -162,8 +171,8 @@ func TestConnectorHTTPDrainKeepsCarrierUntilCompletionReceiptWithinOriginalAutho
 						want = context.DeadlineExceeded
 					default:
 						receipt := tunnelv1.ConnectorVisitorCompletion{Kind: tunnelv1.ConnectorVisitorCompleted, VisitorConnectionID: entry.VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration}
-						peer.completeVisitor(receipt)
-						peer.completeVisitor(receipt)
+						receipts.Complete(peer, receipt)
+						receipts.Complete(peer, receipt)
 					}
 					if err := <-done; !errors.Is(err, want) {
 						t.Fatal("HTTP drain lost its independent close or cancellation failure", err, want)
@@ -199,9 +208,14 @@ func TestConnectorHTTPConcurrentCloseJoinsCompletionAndPhysicalFailure(t *testin
 	b.drainUntil, _ = ctx.Deadline()
 	cause := errors.New("independent concurrent physical close failure")
 	wire := &drainingConnectorWire{half: make(chan struct{}), closed: make(chan struct{}), closeErr: cause}
-	a := &connectorAdmission{peer: peer, ctx: ctx, caller: ctx, cancel: cancel, stream: wire,
+	admissionCtx, stopAdmission := context.WithCancel(ctx)
+	defer stopAdmission()
+	a := &connectorAdmission{peer: peer, ctx: admissionCtx, caller: ctx, cancel: stopAdmission, stream: wire,
 		state: readyConnectorAdmission{}, completed: make(chan struct{})}
 	entry := opening("D")
+	a.terminalKey = tunnelv1.ConnectorVisitorTerminalKey{VisitorConnectionID: entry.VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration}
+	a.joined = make(chan struct{})
+	receipts := newModeledConnectorTerminal(t, peer)
 	view, _, _ := b.prepared.policy.Current()
 	permission, err := visitortoken.VerifyConnectorPeerSession(entry, nil, peer.bindingSnapshot().expected(), view, time.Now())
 	if err != nil {
@@ -230,7 +244,17 @@ func TestConnectorHTTPConcurrentCloseJoinsCompletionAndPhysicalFailure(t *testin
 			done <- errors.Join(closed, a.finishDelivery(closed))
 		})
 	}
-	defer func() { cancel(); workers.Wait() }()
+	defer func() {
+		stopAdmission()
+		workers.Wait()
+		joinModeledConnectorAdmission(a, cause)
+		b.mu.Lock()
+		phase := a.terminal
+		b.mu.Unlock()
+		if phase != nil {
+			<-phase.done
+		}
+	}()
 	for range 2 {
 		select {
 		case <-entered:
@@ -246,8 +270,7 @@ func TestConnectorHTTPConcurrentCloseJoinsCompletionAndPhysicalFailure(t *testin
 	if wire.closes.Load() != 1 {
 		t.Fatal("HTTP completion did not physically close its stream before waiting")
 	}
-	peer.completeVisitor(tunnelv1.ConnectorVisitorCompletion{Kind: tunnelv1.ConnectorVisitorCompleted,
-		VisitorConnectionID: entry.VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration})
+	workers.Wait()
 	for range 2 {
 		select {
 		case err := <-done:
@@ -257,6 +280,62 @@ func TestConnectorHTTPConcurrentCloseJoinsCompletionAndPhysicalFailure(t *testin
 		case <-ctx.Done():
 			t.Fatal("concurrent HTTP close did not join", ctx.Err())
 		}
+	}
+	// enter the real completion before modeled admission cleanup cancels its
+	// own child context. physical failure requires a failed, observed result.
+	type terminalReply struct {
+		exchange tunnel.ConnectorTerminalExchange
+		err      error
+	}
+	replied := make(chan terminalReply, 1)
+	receipts.calls.Go(func() {
+		exchange, err := receipts.writer.Complete(ctx, a.terminalKey)
+		replied <- terminalReply{exchange: exchange, err: err}
+	})
+	var dispatch terminalFixtureDispatch
+	select {
+	case dispatch = <-receipts.dispatched:
+		if dispatch.err != nil {
+			t.Fatal("live completion was rejected before modeled admission joined", dispatch.err)
+		}
+	case <-ctx.Done():
+		t.Fatal("live completion did not reach its admission", ctx.Err())
+	}
+	b.mu.Lock()
+	phase := a.terminal
+	premature := phase != nil && phase.result != nil
+	b.mu.Unlock()
+	if phase == nil || premature {
+		t.Fatal("completion lacked its entered phase or returned before admission join")
+	}
+	select {
+	case <-a.joined:
+		t.Fatal("modeled admission claimed joined before its actual cleanup")
+	case <-replied:
+		t.Fatal("completion returned before its actual admission joined")
+	default:
+	}
+	joinModeledConnectorAdmission(a, cause)
+	select {
+	case reply := <-replied:
+		if !errors.Is(reply.err, tunnel.ErrConnectorTerminalFailed) ||
+			serviceWorkerError(reply.err, tunnel.ErrConnectorTerminalFailed) != nil ||
+			!reply.exchange.Matched || !reply.exchange.ObservedWritten ||
+			reply.exchange.Result.Outcome != tunnelv1.ConnectorTerminalFailed ||
+			reply.exchange.Result.TerminalRequest() != dispatch.request || dispatch.request.TerminalNumber == 0 {
+			t.Fatal("physical failure lost its real matched failed result and Observed write", reply)
+		}
+	case <-ctx.Done():
+		t.Fatal("failed completion did not join within its original bound", ctx.Err())
+	}
+	select {
+	case <-phase.done:
+		if !phase.observed || phase.end.Cause != tunnel.ConnectorTerminalResultObserved ||
+			!errors.Is(a.joinedOutcome.err, cause) {
+			t.Fatal("failed completion did not join its observed phase and physical cause", phase.end)
+		}
+	case <-ctx.Done():
+		t.Fatal("failed completion retained its terminal worker", ctx.Err())
 	}
 	if wire.closes.Load() != 1 {
 		t.Fatal("concurrent HTTP cleanup physically closed more than once")

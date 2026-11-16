@@ -4,11 +4,45 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+// RetireConnectorPeerPair sends the already-captured exact proof once. it neither
+// reads nor refreshes a parent credential; callers own identical-body retries.
+func (c *Client) RetireConnectorPeerPair(ctx context.Context, service, pair string, body controlv1.ConnectorPeerPairRetireRequest) (controlv1.ConnectorPeerPairRetirement, error) {
+	if _, err := controlv1.ConnectorPeerPairRetireProof(service, pair, body); err != nil {
+		return controlv1.ConnectorPeerPairRetirement{}, failure.Wrap("retire connector peer pair", failure.ServerRequestInvalid, err)
+	}
+	if _, _, err := controlv1.ConnectorPeerPairRetireAuthentication(body); err != nil {
+		return controlv1.ConnectorPeerPairRetirement{}, failure.Wrap("retire connector peer pair", failure.ServerRequestInvalid, err)
+	}
+	// the existing auth transport recognizes body authentication and must not
+	// fetch a session token or replay this operation after an auth refresh.
+	ctx = context.WithValue(ctx, visitorSourceAuthenticationKey{}, true)
+	result, err := request[controlv1.ConnectorPeerPairRetirement](ctx, c, "", func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		editors = append(editors, func(_ context.Context, request *http.Request) error {
+			for name := range request.Header {
+				if strings.EqualFold(name, "Authorization") {
+					delete(request.Header, name)
+				}
+			}
+			return nil
+		})
+		return c.api.RetireConnectorPeerPair(ctx, service, pair, body, editors...)
+	})
+	if err != nil {
+		return controlv1.ConnectorPeerPairRetirement{}, err
+	}
+	if err := result.ValidateFor(service, pair, body); err != nil {
+		return controlv1.ConnectorPeerPairRetirement{}, failure.Wrap("retire connector peer pair", failure.ServerResponseInvalid, err)
+	}
+	return result, nil
+}
 
 func (c *Client) PrepareSourceConnectorPeerPair(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
 	return visitorSourceRequest[controlv1.ConnectorPeerPair](ctx, c, body.Source, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {

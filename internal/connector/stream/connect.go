@@ -62,6 +62,7 @@ type Control interface {
 	PrepareConnectorPeerPair(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error)
 	RenewConnectorPeerPair(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error)
 	RebindConnectorPeerPair(context.Context, string, string, controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error)
+	RetireConnectorPeerPair(context.Context, string, string, controlv1.ConnectorPeerPairRetireRequest) (controlv1.ConnectorPeerPairRetirement, error)
 	VisitorPermission(context.Context, string) (controlv1.VisitorTokenResponse, error)
 	Close(context.Context) error
 }
@@ -78,6 +79,7 @@ type Config struct {
 	Endpoint                        *controlv1.ServiceEndpoint
 	ServiceTLS                      *tls.Config            `json:"-"`
 	CleanupContext                  func() context.Context `json:"-"`
+	cleanup                         *connectorCleanup
 	RelayQUIC, RelayTCP             muxsession.Connector
 	Connectivity                    peer.ConnectivityOptions
 	// PeerSocket is borrowed by qualification; the default connection owns one.
@@ -129,14 +131,10 @@ func serveConnections(ctx context.Context, config Config, consume connectionCons
 	if config.MaxConnections < 1 || config.MaxConnections > 4096 {
 		return ErrServiceConnection
 	}
+	config.cleanup = newConnectorCleanup(ctx, config.CleanupContext)
 	defer func() {
-		cleanup := observability.Independent(context.WithoutCancel(ctx))
-		if config.CleanupContext != nil {
-			cleanup = config.CleanupContext()
-		}
-		bounded, stop := context.WithTimeout(cleanup, 5*time.Second)
-		defer stop()
-		err := config.Control.Close(bounded)
+		defer config.cleanup.close()
+		err := config.Control.Close(config.cleanup.context())
 		if err != nil {
 			result = errors.Join(result, &CleanupError{Err: err})
 		}
@@ -154,7 +152,7 @@ func serveConnections(ctx context.Context, config Config, consume connectionCons
 	if err != nil {
 		return err
 	}
-	defer p.Close()
+	defer func() { result = errors.Join(result, p.Close(config.cleanup.context())) }()
 	finish(nil)
 	err = consume(p.ctx, p.Forward)
 	if ctx.Err() != nil {

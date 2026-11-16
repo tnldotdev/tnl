@@ -46,3 +46,23 @@ func TestServiceProjectionsKeepActualOwnerAndFixedExpiry(t *testing.T) {
 		}
 	}
 }
+
+func TestServiceProjectionsPreserveSavedPostQuantumPolicy(t *testing.T) {
+	for _, required := range []bool{false, true} {
+		record := controlstate.ServiceRecord{RequirePostQuantum: required}
+		for _, projection := range []any{Service(record), Summary(record)} {
+			encoded, err := json.Marshal(projection)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &fields); err != nil {
+				t.Fatal(err)
+			}
+			var actual bool
+			if err := json.Unmarshal(fields["require_post_quantum"], &actual); err != nil || actual != required {
+				t.Fatalf("projection lost saved post-quantum policy %t: %s", required, encoded)
+			}
+		}
+	}
+}

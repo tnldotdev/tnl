@@ -74,7 +74,7 @@ func (e Engine) publishJob(ctx context.Context, job Job, attempts uint64, runtim
 			cfg.ReadinessProof = readiness.Proof
 		}
 	}
-	err = targetplan.PublishPrivate(worker, job.TargetPlan(), cfg, targetplan.TargetHooks{Capture: readiness.Capture})
+	err = targetplan.PublishPrivate(worker, job.TargetPlan(), cfg, targetplan.TargetHooks{Resolver: readiness.resolver, Capture: readiness.Capture})
 	cancel(context.Canceled)
 	ready, cleanup := readiness.Close()
 	if cause := context.Cause(worker); cause != nil && !failure.Only(cause, context.Canceled) {

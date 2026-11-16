@@ -6,12 +6,15 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"sync"
+	"testing"
 	"time"
 
 	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
+	"github.com/tnldotdev/tnl/internal/testutil/connectorfixture"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -31,7 +34,10 @@ type fixtureConnectorPeer struct {
 	paths           [2]*peer.CarrierSlot
 	nonces          [2][]byte
 	handoffs        [2]tunnelv1.ConnectorHandoff
-	seen            map[string]struct{}
+	seen            map[string]*connectorfixture.JoinedVisitor
+	controlOwner    *connectorfixture.JoinedControl
+	retirement      *connectorfixture.Retirement
+	retired         bool
 	session         muxsession.Session
 	updates         chan tunnelv1.ConnectorPermissionUpdate
 	control         muxsession.Stream
@@ -64,6 +70,9 @@ func (f *connectorFixture) PrepareConnectorPeerPair(ctx context.Context, service
 	}
 	for _, p := range f.peers {
 		if p.owner == body.IdempotencyKey {
+			if p.retired {
+				return controlv1.ConnectorPeerPair{}, ErrServiceConnection
+			}
 			result := p.pair
 			result.ObservedAt, result.ExpiresAt = time.Now(), f.expires
 			return result, nil
@@ -73,7 +82,7 @@ func (f *connectorFixture) PrepareConnectorPeerPair(ctx context.Context, service
 	if err != nil {
 		return controlv1.ConnectorPeerPair{}, err
 	}
-	p := &fixtureConnectorPeer{owner: body.IdempotencyKey, seen: make(map[string]struct{})}
+	p := &fixtureConnectorPeer{owner: body.IdempotencyKey, seen: make(map[string]*connectorfixture.JoinedVisitor)}
 	var delivery [16]byte
 	if _, err := rand.Read(delivery[:]); err != nil {
 		return controlv1.ConnectorPeerPair{}, err
@@ -87,6 +96,7 @@ func (f *connectorFixture) PrepareConnectorPeerPair(ctx context.Context, service
 	p.pair = controlv1.ConnectorPeerPair{PairId: id, DeliveryId: base64.RawURLEncoding.EncodeToString(delivery[:]), Key: base64.RawURLEncoding.EncodeToString(p.key[:]), DeliveryGeneration: 17,
 		SessionKey: base64.RawURLEncoding.EncodeToString(p.sessionKey[:]), BindingState: controlv1.ConnectorPeerPairBindingActive, TrustRevision: f.run.TrustRevision,
 		ServiceId: service, ServiceRunId: body.ServiceRunId, RunNumber: body.RunNumber, PublisherIdentityId: body.PublisherIdentityId, Subject: body.Subject, Relays: body.ExpectedRelays, ObservedAt: time.Now(), ExpiresAt: f.expires}
+	p.retirement = connectorfixture.NewRetirement(p.pair, p.owner, f.device.PublicKey, p.sessionKey)
 	for slot := range p.paths {
 		p.paths[slot] = peer.NewCarrierSlot()
 	}
@@ -101,6 +111,81 @@ func (f *connectorFixture) PrepareConnectorPeerPair(ctx context.Context, service
 		return p.pair, err
 	case <-ctx.Done():
 		return controlv1.ConnectorPeerPair{}, context.Cause(ctx)
+	}
+}
+
+func (f *connectorFixture) RetireConnectorPeerPair(ctx context.Context, service, pair string, body controlv1.ConnectorPeerPairRetireRequest) (controlv1.ConnectorPeerPairRetirement, error) {
+	f.mu.Lock()
+	peer := f.peers[pair]
+	f.mu.Unlock()
+	if peer == nil {
+		return controlv1.ConnectorPeerPairRetirement{}, ErrServiceConnection
+	}
+	receipt, err := peer.retirement.Retire(ctx, service, pair, body)
+	if err != nil {
+		return receipt, err
+	}
+	f.mu.Lock()
+	peer.retired = true
+	owner, session := peer.controlOwner, peer.session
+	f.mu.Unlock()
+	return receipt, f.retirePeerControl(session, owner)
+}
+
+// retirement is a negative authority decision, not a control-stream reset.
+// keep the packet owner alive and close the session before canceling its decoder.
+func (f *connectorFixture) retirePeerControl(session muxsession.Session, owner *connectorfixture.JoinedControl) error {
+	var err error
+	if session != nil {
+		err = session.Close()
+	}
+	if owner != nil {
+		owner.Retire()
+	}
+	if err != nil {
+		f.mu.Lock()
+		f.peerCloseErr = errors.Join(f.peerCloseErr, err)
+		f.mu.Unlock()
+	}
+	return err
+}
+
+type fixtureRetirementSession struct {
+	muxsession.Session
+	close func() error
+}
+
+func (s fixtureRetirementSession) Close() error { return s.close() }
+
+func TestConnectorFixtureRetirementClosesSessionBeforeControlCancellation(t *testing.T) {
+	for _, mixed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "clean", true: "independent close failure"}[mixed], func(t *testing.T) {
+			f := new(connectorFixture)
+			control := connectorfixture.NewJoinedControl(t.Context(), connectorTestControlScope(), nil)
+			defer control.Retire()
+			var cause error
+			if mixed {
+				cause = errors.Join(context.Canceled, errors.New("fixture physical close failed"))
+			}
+			closed := false
+			session := fixtureRetirementSession{close: func() error {
+				if control.Context.Err() != nil {
+					t.Fatal("fixture reset live control before closing its session")
+				}
+				closed = true
+				return cause
+			}}
+			err := f.retirePeerControl(session, control)
+			if !closed || control.Context.Err() != context.Canceled || !errors.Is(err, cause) {
+				t.Fatal("fixture did not finish session closure before control cancellation", err)
+			}
+			f.mu.Lock()
+			retained := f.peerCloseErr
+			f.mu.Unlock()
+			if !errors.Is(retained, cause) {
+				t.Fatal("fixture cleanup lost an independent session close failure", retained)
+			}
+		})
 	}
 }
 
@@ -177,30 +262,45 @@ func (f *connectorFixture) serveConnectorPeer(p *fixtureConnectorPeer, ready cha
 	f.mu.Lock()
 	p.control = permissions
 	f.mu.Unlock()
-	control, cancelControl := context.WithCancel(f.ctx)
-	defer cancelControl()
+	scope := tunnelv1.ConnectorControlScope{ServiceID: p.pair.ServiceId, ServiceRunID: p.pair.ServiceRunId, RunNumber: uint64(p.pair.RunNumber),
+		PublisherIdentityID: p.pair.PublisherIdentityId, PairID: p.pair.PairId}
+	control := connectorfixture.NewJoinedControl(f.ctx, scope, func(key tunnelv1.ConnectorVisitorTerminalKey) *connectorfixture.JoinedVisitor {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return p.seen[key.VisitorConnectionID]
+	})
+	control.Permission = func(update tunnelv1.ConnectorPermissionUpdate, responder *tunnel.ConnectorPermissionResponder) {
+		f.mu.Lock()
+		updates, reply := p.updates, p.permissionReply
+		f.mu.Unlock()
+		if updates != nil {
+			select {
+			case updates <- update:
+			case <-control.Context.Done():
+			}
+		}
+		if reply != nil {
+			reply(update, responder)
+		} else {
+			ack, stop := context.WithTimeout(control.Context, 2*time.Second)
+			defer stop()
+			_ = responder.Respond(ack, update, true)
+		}
+	}
+	f.mu.Lock()
+	p.controlOwner = control
+	retired := p.retired
+	f.mu.Unlock()
+	if retired {
+		_ = f.retirePeerControl(session, control)
+	}
+	defer control.Retire()
 	var permissionGate tunnel.ConnectorPermissionGate
 	workers.Go(func() {
-		_ = tunnel.ServeConnectorPermissionControl(control, permissions, func(update tunnelv1.ConnectorPermissionUpdate, responder *tunnel.ConnectorPermissionResponder) {
-			f.mu.Lock()
-			updates := p.updates
-			reply := p.permissionReply
-			f.mu.Unlock()
-			if updates != nil {
-				select {
-				case updates <- update:
-				case <-control.Done():
-				}
-			}
-			if reply != nil {
-				workers.Go(func() { reply(update, responder) })
-			} else {
-				_ = responder.Respond(update, true)
-			}
-		}, func(tunnelv1.ConnectorVisitorCompletion) {}, func() { _ = session.Close() }, &permissionGate)
+		_ = control.Serve(permissions, &permissionGate)
 	})
 	for {
-		stream, err := session.AcceptStream(f.ctx)
+		stream, err := session.AcceptStream(control.Context)
 		if err != nil {
 			// inner close packets are queued on the borrowed carriers. keep the
 			// fixture's packet transport alive until its owning context ends,
@@ -208,6 +308,6 @@ func (f *connectorFixture) serveConnectorPeer(p *fixtureConnectorPeer, ready cha
 			<-f.ctx.Done()
 			return
 		}
-		workers.Go(func() { defer stream.Close(); f.visitor(f.ctx, stream, p) })
+		workers.Go(func() { _ = f.visitor(control.Context, stream, p) })
 	}
 }

@@ -35,6 +35,17 @@ type carrierRevision struct {
 	revision uint64
 }
 
+// available means only that this revision still has an installed carrier.
+// static carriers retain their existing dispatch and failure handling.
+func (r carrierRevision) available() bool {
+	if r.slot == nil {
+		return true
+	}
+	r.slot.mu.Lock()
+	defer r.slot.mu.Unlock()
+	return !r.slot.closed && r.slot.current != nil && r.slot.revision == r.revision
+}
+
 // copyTo commits input under the same lock that fences carrier replacement.
 // the zero token belongs to an endpoint path with a non-replaceable carrier.
 func (r carrierRevision) copyTo(destination, source []byte) (int, bool) {

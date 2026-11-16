@@ -85,6 +85,60 @@ func TestServiceDispatcherWaitsAfterExpiredOpeningUntilCallerEnds(t *testing.T) 
 	}
 }
 
+func TestServiceDispatcherRejectsEmptyFrameWithoutClosingBorrowedSession(t *testing.T) {
+	header := maximumServiceHeader("relay-one")
+	header.ExpiresAt, header.LeaseExpiresAt = header.ExpiresAt.UTC(), header.LeaseExpiresAt.UTC()
+	ref := ServiceForwardingRef(header)
+	owner, sender := newHeaderBoundsPair(t, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version,
+		Role: tunnelv1.Publisher, Credential: "test-credential", ServiceConnection: &ref})
+	dispatcher, err := NewServiceStreamDispatcher(t.Context(), owner, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := dispatcher.Close(); err != nil {
+			t.Error("join dispatcher after malformed sibling", err)
+		}
+	}()
+	invalid, err := sender.transport.OpenStream(tunnelContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer invalid.Close()
+	if err := invalid.SetDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	wrote := make(chan error, 1)
+	go func() { _, err := invalid.Write([]byte{0, 0, 0, 0}); wrote <- err }()
+	rejection, err := tunnelv1.ReadReturnFrame(invalid)
+	if err != nil || rejection.Kind != tunnelv1.ReturnRejected || rejection.Code != tunnelv1.InvalidMessage {
+		t.Fatal("empty frame lost its bounded stream-local rejection", rejection, err)
+	}
+	if err := await(t, wrote); err != nil {
+		t.Fatal(err)
+	}
+	stream, err := sender.transport.OpenStream(tunnelContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	go func() { _, err := tunnelv1.WriteServiceOpening(stream, header); wrote <- err }()
+	incoming, err := owner.AcceptDispatchedServiceForwardingStream(tunnelContext(t), dispatcher)
+	if err != nil {
+		t.Fatal("malformed sibling prevented a healthy forwarding stream", err)
+	}
+	defer incoming.Stream().Close()
+	if !reflect.DeepEqual(incoming.Header, header) {
+		t.Fatal("malformed sibling changed the next forwarding header")
+	}
+	if err := await(t, wrote); err != nil {
+		t.Fatal(err)
+	}
+	if sender.transport.Err() != nil || owner.transport.Err() != nil {
+		t.Fatal("malformed sibling closed the borrowed session")
+	}
+}
+
 type blockedPeerIntroduction struct{ started chan struct{} }
 
 func (p blockedPeerIntroduction) AcceptIntroduction(ctx context.Context, stream muxsession.Stream) {

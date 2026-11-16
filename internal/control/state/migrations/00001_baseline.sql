@@ -1260,12 +1260,21 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
 $$;
 -- +goose StatementEnd
 CREATE UNIQUE INDEX publisher_identity_keys_current ON control.publisher_identity_keys(publisher_identity_id) WHERE retired_at IS NULL;
+-- +goose StatementBegin
+CREATE FUNCTION control.valid_publisher_protocols(protocols text[]) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
+    SELECT protocols IS NOT NULL AND cardinality(protocols) BETWEEN 1 AND 5
+        AND array_position(protocols,NULL) IS NULL
+        AND protocols <@ ARRAY['http','tcp','mysql','postgres','kubernetes']::text[]
+        AND cardinality(protocols)=(SELECT count(DISTINCT protocol) FROM unnest(protocols) protocol);
+$$;
+-- +goose StatementEnd
 CREATE TABLE control.publisher_grants (
     id text PRIMARY KEY CHECK (id <> ''), publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE CASCADE,
     team_id text, guest_id text,
     created_by_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
     kind text NOT NULL CHECK (kind IN ('namespace', 'service', 'deployment_credential')),
     service_id text,
+    protocols text[],
     domain_id text REFERENCES control.domains(id) ON DELETE RESTRICT, namespace text,
     membership_id text, namespace_scope text CHECK (namespace_scope IN ('member', 'shared')),
     created_at timestamptz NOT NULL, expires_at timestamptz, revoked_at timestamptz,
@@ -1277,6 +1286,7 @@ CREATE TABLE control.publisher_grants (
     FOREIGN KEY (publisher_identity_id,guest_id) REFERENCES control.publisher_identities(id,guest_id) ON DELETE CASCADE,
     FOREIGN KEY (guest_id,expires_at) REFERENCES control.guest_trials(id,expires_at) ON DELETE RESTRICT,
     CHECK (expires_at IS NULL OR expires_at > created_at),
+    CHECK (CASE WHEN kind='service' THEN control.valid_publisher_protocols(protocols) ELSE protocols IS NULL END),
     CHECK ((kind = 'namespace' AND service_id IS NULL AND domain_id IS NOT NULL AND namespace IS NOT NULL AND namespace <> '' AND namespace_scope IS NOT NULL AND (namespace_scope = 'member') = (membership_id IS NOT NULL))
         OR (kind = 'service' AND service_id IS NOT NULL AND domain_id IS NULL AND namespace IS NULL AND namespace_scope IS NULL AND membership_id IS NULL)
         OR (kind = 'deployment_credential' AND service_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND namespace_scope IS NULL AND membership_id IS NULL AND expires_at IS NOT NULL))
@@ -1289,6 +1299,7 @@ CREATE TABLE control.publisher_enrollments (
     team_id text NOT NULL, name text NOT NULL, identity_kind text NOT NULL CHECK (identity_kind IN ('installed', 'automation', 'run')),
     grant_kind text NOT NULL CHECK (grant_kind IN ('namespace', 'service')), service_id text, domain_id text, namespace text,
     membership_id text, namespace_scope text,
+    protocols text[],
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     ownership text NOT NULL CHECK (ownership IN ('team', 'member')),
     owner_membership_id text,
@@ -1299,9 +1310,24 @@ CREATE TABLE control.publisher_enrollments (
     redeemed_key_id text, redeemed_grant_id text, redeemed_public_key bytea, redeemed_at timestamptz,
     CHECK ((redeemed_at IS NULL) = (redeemed_identity_id IS NULL)),
     CHECK ((redeemed_at IS NULL) = (redeemed_public_key IS NULL)),
+    CHECK (CASE WHEN grant_kind='service' THEN control.valid_publisher_protocols(protocols) ELSE protocols IS NULL END),
     CHECK ((grant_kind = 'namespace' AND service_id IS NULL AND domain_id IS NOT NULL)
         OR (grant_kind = 'service' AND service_id IS NOT NULL AND domain_id IS NULL AND namespace IS NULL AND membership_id IS NULL AND namespace_scope IS NULL))
 );
+-- +goose StatementBegin
+CREATE FUNCTION control.protect_publisher_protocols() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.protocols IS DISTINCT FROM OLD.protocols THEN
+        RAISE EXCEPTION 'publisher protocol capability is immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER protect_publisher_grant_protocols BEFORE UPDATE ON control.publisher_grants
+    FOR EACH ROW EXECUTE FUNCTION control.protect_publisher_protocols();
+CREATE TRIGGER protect_publisher_enrollment_protocols BEFORE UPDATE ON control.publisher_enrollments
+    FOR EACH ROW EXECUTE FUNCTION control.protect_publisher_protocols();
 CREATE TABLE control.publisher_assertions (
     publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE CASCADE,
     assertion_id text NOT NULL CHECK (char_length(assertion_id) BETWEEN 24 AND 128), expires_at timestamptz NOT NULL,
@@ -1432,6 +1458,16 @@ ALTER TABLE control.publisher_enrollments ADD CONSTRAINT publisher_enrollments_s
     FOREIGN KEY (service_id,team_id) REFERENCES control.services(id,team_id) ON DELETE RESTRICT;
 CREATE UNIQUE INDEX publisher_grants_active_service ON control.publisher_grants(publisher_identity_id, service_id)
     WHERE revoked_at IS NULL AND kind = 'service';
+-- creation receipts bind every ordinary or exact-recovery request to its original
+-- normalized intent and service lifetime, without another saved resource family.
+CREATE TABLE control.service_creation_requests (
+    created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128),
+    service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
+    request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
+    created_at timestamptz NOT NULL,
+    PRIMARY KEY (created_by_identity_id,idempotency_key)
+);
 
 ALTER TABLE control.visitor_grants ADD CONSTRAINT visitor_grants_service_fkey
     FOREIGN KEY (service_id,team_id) REFERENCES control.services(id,team_id) ON DELETE RESTRICT;
@@ -1475,6 +1511,7 @@ CREATE TABLE control.service_runs (
     preferred_regions text[] NOT NULL DEFAULT '{}' CHECK (cardinality(preferred_regions)<=8 AND array_position(preferred_regions, NULL) IS NULL),
     traffic_limits jsonb NOT NULL CHECK (jsonb_typeof(traffic_limits) = 'object'),
     id text PRIMARY KEY CHECK (id ~ '^srun_[A-Za-z0-9]{22}$'), service_id text NOT NULL, team_id text, guest_id text,
+    protocol text NOT NULL CHECK (protocol IN ('http','tcp','mysql','postgres','kubernetes')),
     run_number bigint NOT NULL CHECK (run_number >= 1),
     publisher_identity_id text NOT NULL, publisher_grant_id text NOT NULL,
     publisher_key_id text NOT NULL,
@@ -1568,6 +1605,11 @@ CREATE FUNCTION control.reject_publication_owner_change() RETURNS trigger LANGUA
 BEGIN
     IF (OLD.team_id,OLD.guest_id) IS DISTINCT FROM (NEW.team_id,NEW.guest_id) THEN
         RAISE EXCEPTION 'publication ownership is immutable' USING ERRCODE='23514';
+    END IF;
+    IF TG_TABLE_NAME='service_runs' THEN
+        IF OLD.protocol IS DISTINCT FROM NEW.protocol THEN
+            RAISE EXCEPTION 'service run protocol is immutable' USING ERRCODE='23514';
+        END IF;
     END IF;
     RETURN NEW;
 END;
@@ -1920,13 +1962,14 @@ CREATE TABLE control.service_namespace_claims (
     deployment_id text REFERENCES control.deployments(id) ON DELETE RESTRICT,
     local_source_key text NOT NULL DEFAULT '',
     membership_id text REFERENCES control.team_memberships(id) ON DELETE RESTRICT,
+    owner_team_id text REFERENCES control.teams(id) ON DELETE RESTRICT,
     domain_id text NOT NULL REFERENCES control.domains(id) ON DELETE RESTRICT,
     created_at timestamptz NOT NULL,
     retired_at timestamptz,
     reusable_after timestamptz,
     CHECK ((retired_at IS NULL) = (reusable_after IS NULL)),
-    CHECK ((deployment_id IS NOT NULL AND local_source_key='' AND membership_id IS NULL)
-        OR (deployment_id IS NULL AND local_source_key<>'' AND membership_id IS NOT NULL))
+    CHECK ((deployment_id IS NOT NULL AND local_source_key='' AND membership_id IS NULL AND owner_team_id IS NULL)
+        OR (deployment_id IS NULL AND local_source_key<>'' AND num_nonnulls(membership_id,owner_team_id)=1))
 );
 CREATE TABLE control.service_endpoints (
     hostname text PRIMARY KEY CHECK (hostname<>''),
@@ -2169,6 +2212,7 @@ RETURNS TABLE(expires_at timestamptz) LANGUAGE plpgsql STABLE ROWS 1 AS $$
 DECLARE binding record;
 BEGIN
     SELECT grant_record.kind AS grant_kind,grant_record.service_id AS granted_service_id,
+        grant_record.protocols AS granted_protocols,
         grant_record.domain_id AS granted_domain_id,grant_record.namespace,grant_record.namespace_scope,
         grant_record.membership_id,publisher.ownership,publisher.owner_membership_id,
         service.team_id,service.domain_id,service.certificate_hostname,service.ephemeral,service.protocol,
@@ -2203,6 +2247,7 @@ BEGIN
     IF binding.grant_kind='service' THEN
         RETURN QUERY SELECT binding.deadline
         WHERE binding.granted_service_id=selected_service_id
+            AND binding.protocol=ANY(binding.granted_protocols)
             AND NOT EXISTS(SELECT 1 FROM control.publisher_namespace_allocations allocation WHERE allocation.service_id=selected_service_id);
     ELSIF binding.grant_kind='namespace' THEN
         RETURN QUERY SELECT binding.deadline
@@ -2718,6 +2763,10 @@ CREATE TABLE control.connector_peer_pairs (
     -- the initial create key survives replacement so replay cannot revive it.
     owner_key text NOT NULL CHECK (length(owner_key) BETWEEN 1 AND 128),
     idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128),
+    owner_public_key bytea NOT NULL CHECK (octet_length(owner_public_key)=32),
+    owner_revision bigint NOT NULL DEFAULT 1,
+    retired_at timestamptz,
+    retire_request_digest bytea CHECK (retire_request_digest IS NULL OR octet_length(retire_request_digest)=32),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
     last_renewal_digest bytea CHECK (last_renewal_digest IS NULL OR octet_length(last_renewal_digest)=32),
     publisher_prepared_until timestamptz,
@@ -2752,6 +2801,17 @@ CREATE TABLE control.connector_peer_pairs (
     CONSTRAINT connector_peer_pairs_stable_owner_key CHECK (owner_key=idempotency_key),
     CONSTRAINT connector_peer_pairs_request_key UNIQUE (subject_kind,subject_id,service_run_id,idempotency_key),
     CONSTRAINT connector_peer_pairs_delivery_id_key UNIQUE (delivery_id),
+    CONSTRAINT connector_peer_pairs_retirement_shape CHECK (
+        (owner_revision=1 AND retired_at IS NULL AND retire_request_digest IS NULL)
+        OR (owner_revision=2 AND retired_at IS NOT NULL AND retire_request_digest IS NOT NULL
+            AND retired_at>=last_authorized_at AND retired_at<GREATEST(expires_at,replay_fence_until)
+            AND session_key_ciphertext IS NOT NULL AND session_key_digest IS NOT NULL
+            AND session_key_storage_key_id IS NOT NULL
+            AND publisher_prepared_until IS NULL AND publisher_proved_until IS NULL AND publisher_proof_digest IS NULL)),
+    CONSTRAINT connector_peer_pairs_session_key_shape CHECK (
+        (session_key_ciphertext IS NULL AND session_key_digest IS NULL AND session_key_storage_key_id IS NULL)
+        OR (session_key_ciphertext IS NOT NULL AND octet_length(session_key_ciphertext)>0
+            AND session_key_digest IS NOT NULL AND session_key_storage_key_id IS NOT NULL AND session_key_storage_key_id<>'')),
     CHECK (last_authorized_at>=created_at AND expires_at>last_authorized_at
         AND expires_at<=last_authorized_at+interval '5 minutes'),
     CHECK ((subject_kind='human_device') = (parent_control_session_id IS NOT NULL)),
@@ -2771,6 +2831,50 @@ $$;
 -- +goose StatementEnd
 CREATE TRIGGER connector_peer_generation_defaults BEFORE INSERT OR UPDATE ON control.connector_peer_pairs
     FOR EACH ROW EXECUTE FUNCTION control.connector_peer_generation_defaults();
+
+-- +goose StatementBegin
+CREATE FUNCTION control.connector_peer_pair_lifecycle() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP='INSERT' THEN
+        IF NEW.owner_revision<>1 OR NEW.retired_at IS NOT NULL OR NEW.retire_request_digest IS NOT NULL THEN
+            RAISE EXCEPTION 'connector pair must begin unretired' USING ERRCODE='23514';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF ROW(NEW.id,NEW.service_id,NEW.service_run_id,NEW.run_number,NEW.publisher_identity_id,
+        NEW.subject_kind,NEW.subject_id,NEW.parent_control_session_id,NEW.owner_key,NEW.idempotency_key,
+        NEW.owner_public_key,NEW.delivery_id,NEW.created_at)
+        IS DISTINCT FROM
+        ROW(OLD.id,OLD.service_id,OLD.service_run_id,OLD.run_number,OLD.publisher_identity_id,
+        OLD.subject_kind,OLD.subject_id,OLD.parent_control_session_id,OLD.owner_key,OLD.idempotency_key,
+        OLD.owner_public_key,OLD.delivery_id,OLD.created_at) THEN
+        RAISE EXCEPTION 'connector pair owner scope is immutable' USING ERRCODE='23514';
+    END IF;
+    IF OLD.session_key_digest IS NOT NULL AND
+        ROW(NEW.session_key_digest,NEW.trust_revision) IS DISTINCT FROM ROW(OLD.session_key_digest,OLD.trust_revision) THEN
+        RAISE EXCEPTION 'connector pair session identity is immutable' USING ERRCODE='23514';
+    END IF;
+    IF OLD.retired_at IS NOT NULL THEN
+        IF NEW IS DISTINCT FROM OLD THEN
+            RAISE EXCEPTION 'retired connector pair is immutable' USING ERRCODE='23514';
+        END IF;
+    ELSIF NEW.retired_at IS NOT NULL THEN
+        -- retirement changes only terminal facts and clears installation barriers.
+        IF NEW.owner_revision<>2 OR NEW.retire_request_digest IS NULL OR
+            (to_jsonb(NEW)-ARRAY['owner_revision','retired_at','retire_request_digest',
+                'publisher_prepared_until','publisher_proved_until','publisher_proof_digest'])
+            IS DISTINCT FROM
+            (to_jsonb(OLD)-ARRAY['owner_revision','retired_at','retire_request_digest',
+                'publisher_prepared_until','publisher_proved_until','publisher_proof_digest']) THEN
+            RAISE EXCEPTION 'connector pair retirement cannot change authority or retention' USING ERRCODE='23514';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER connector_peer_pair_lifecycle BEFORE INSERT OR UPDATE ON control.connector_peer_pairs
+    FOR EACH ROW EXECUTE FUNCTION control.connector_peer_pair_lifecycle();
 
 CREATE TABLE control.connector_peer_pending_bindings (
     pair_id text PRIMARY KEY REFERENCES control.connector_peer_pairs(id) ON DELETE CASCADE,
@@ -2805,6 +2909,26 @@ CREATE TABLE control.connector_peer_pair_leg_claims (
     PRIMARY KEY(pair_id,delivery_generation,connection_slot)
 );
 
+-- +goose StatementBegin
+CREATE FUNCTION control.connector_peer_binding_requires_owner() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    pair_retired_at timestamptz;
+BEGIN
+    -- callers take the run and pair locks before writing any binding or claim.
+    SELECT retired_at INTO pair_retired_at FROM control.connector_peer_pairs WHERE id=NEW.pair_id FOR UPDATE;
+    IF FOUND AND pair_retired_at IS NOT NULL THEN
+        RAISE EXCEPTION 'retired connector pair cannot acquire binding authority' USING ERRCODE='23514';
+    END IF;
+    -- a missing parent is rejected by the existing foreign key.
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER connector_peer_pending_requires_owner BEFORE INSERT OR UPDATE ON control.connector_peer_pending_bindings
+    FOR EACH ROW EXECUTE FUNCTION control.connector_peer_binding_requires_owner();
+CREATE TRIGGER connector_peer_claim_requires_owner BEFORE INSERT OR UPDATE ON control.connector_peer_pair_leg_claims
+    FOR EACH ROW EXECUTE FUNCTION control.connector_peer_binding_requires_owner();
+
 CREATE INDEX connector_peer_pairs_expiry ON control.connector_peer_pairs(expires_at);
 
 CREATE INDEX connector_peer_pairs_run_inventory ON control.connector_peer_pairs(service_run_id,id COLLATE "C");
@@ -2830,6 +2954,34 @@ CREATE TABLE control.connector_peer_audit_bindings (
     FOREIGN KEY (service_run_id,service_id,run_number) REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT
 );
 CREATE INDEX connector_peer_audit_expiry ON control.connector_peer_audit_bindings(expires_at);
+
+-- +goose StatementBegin
+CREATE FUNCTION control.connector_peer_audit_requires_owner() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    pair_retired_at timestamptz;
+BEGIN
+    IF TG_OP='UPDATE' THEN
+        -- a retained audit scope may acquire only its first negative retirement.
+        IF NEW.retired_at IS NOT NULL AND
+            (OLD.retired_at IS NULL OR NEW.retired_at=OLD.retired_at) AND
+            (to_jsonb(NEW)-'retired_at') IS NOT DISTINCT FROM (to_jsonb(OLD)-'retired_at') THEN
+            RETURN NEW;
+        END IF;
+        IF OLD.retired_at IS NOT NULL THEN
+            RAISE EXCEPTION 'retired connector audit scope is immutable' USING ERRCODE='23514';
+        END IF;
+    END IF;
+    -- installation holds the run and pair locks before saving its audit scope.
+    SELECT retired_at INTO pair_retired_at FROM control.connector_peer_pairs WHERE id=NEW.pair_id FOR UPDATE;
+    IF NOT FOUND OR pair_retired_at IS NOT NULL OR NEW.retired_at IS NOT NULL THEN
+        RAISE EXCEPTION 'connector audit installation requires an unretired pair' USING ERRCODE='23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER connector_peer_audit_requires_owner BEFORE INSERT OR UPDATE ON control.connector_peer_audit_bindings
+    FOR EACH ROW EXECUTE FUNCTION control.connector_peer_audit_requires_owner();
 
 CREATE TABLE control.relay_run_signing_keys (
     relay_id text NOT NULL CHECK (relay_id <> ''),

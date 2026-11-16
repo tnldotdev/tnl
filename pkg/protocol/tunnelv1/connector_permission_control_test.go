@@ -60,7 +60,7 @@ func TestConnectorPermissionControlGoldenAndTruncation(t *testing.T) {
 		if accepted {
 			kind += "_accepted"
 		}
-		body := `{"protocol_version":1,"kind":"` + kind + `","application_admission":true}`
+		body := `{"protocol_version":1,"kind":"` + kind + `","application_admission":true,"control_revision":2}`
 		want := append(binary.BigEndian.AppendUint32(nil, uint32(len(body))), body...)
 		if !bytes.Equal(hello.Bytes(), want) || ReadConnectorPermissionHello(bytes.NewReader(want), accepted) != nil || ReadConnectorPermissionHello(bytes.NewReader(want), !accepted) == nil {
 			t.Fatal("control negotiation lost its exact direction")
@@ -126,6 +126,77 @@ func TestConnectorPermissionControlBoundsAndInvalidPayloadIsolation(t *testing.T
 	}
 	if ReadConnectorPermissionHello(&old, false) == nil {
 		t.Fatal("old application opening negotiated the new protocol")
+	}
+}
+
+func TestConnectorPermissionHelloRequiresExactControlRevision(t *testing.T) {
+	for _, accepted := range []bool{false, true} {
+		kind := "connector_permission_control"
+		if accepted {
+			kind += "_accepted"
+		}
+		body := `{"protocol_version":1,"kind":"` + kind + `","application_admission":true,"control_revision":2}`
+		invalid := []string{
+			strings.Replace(body, `,"control_revision":2`, "", 1),
+			strings.Replace(body, `"protocol_version":1`, `"protocol_version":2`, 1),
+			strings.Replace(body, `"application_admission":true`, `"application_admission":false`, 1),
+		}
+		for _, revision := range []string{"null", "0", "1", "3", "4294967296", "2.0", `"2"`} {
+			invalid = append(invalid, strings.Replace(body, `"control_revision":2`, `"control_revision":`+revision, 1))
+		}
+		for _, payload := range invalid {
+			if err := ReadConnectorPermissionHello(bytes.NewReader(connectorTerminalFrame(payload)), accepted); err != ErrConnectorPermissionUpdate {
+				t.Fatal("hello accepted missing, old, future, or malformed control revision", payload, err)
+			}
+		}
+	}
+}
+
+func TestConnectorPermissionStrictFieldsAndSiblingIsolation(t *testing.T) {
+	var update bytes.Buffer
+	if err := WriteConnectorPermissionUpdate(&update, permissionUpdateFixture()); err != nil {
+		t.Fatal(err)
+	}
+	updatePayload := string(update.Bytes()[4:])
+	for _, test := range []struct {
+		name    string
+		payload string
+		read    func(io.Reader) error
+	}{
+		{"hello", `{"protocol_version":1,"kind":"connector_permission_control","application_admission":true,"control_revision":2}`,
+			func(r io.Reader) error { return ReadConnectorPermissionHello(r, false) }},
+		{"accepted-hello", `{"protocol_version":1,"kind":"connector_permission_control_accepted","application_admission":true,"control_revision":2}`,
+			func(r io.Reader) error { return ReadConnectorPermissionHello(r, true) }},
+		{"update", updatePayload,
+			func(r io.Reader) error { _, err := ReadConnectorPermissionUpdate(r); return err }},
+		{"request-update", updatePayload,
+			func(r io.Reader) error { _, err := ReadConnectorControlMessage(r); return err }},
+		{"result", `{"visitor_connection_id":"vc_aaaaaaaaaaaaaaaaaaaaaa","update_number":1,"delivery_generation":7,"kind":"connector_permission_accepted"}`,
+			func(r io.Reader) error { _, err := ReadConnectorPermissionResult(r); return err }},
+		{"reply-result", `{"visitor_connection_id":"vc_aaaaaaaaaaaaaaaaaaaaaa","update_number":1,"delivery_generation":7,"kind":"connector_permission_accepted"}`,
+			func(r io.Reader) error { _, err := ReadConnectorControlReply(r); return err }},
+	} {
+		invalid := connectorControlInvalidPayloads(t, test.payload)
+		if test.payload == updatePayload {
+			permission := `{"visitor_token":"signed-visitor-token","public_key":"` + strings.Repeat("A", 43) + `","signature":"` + strings.Repeat("A", 86) + `"}`
+			for _, nested := range connectorControlInvalidPayloads(t, permission) {
+				invalid = append(invalid, connectorControlInvalidPayload{
+					name:    "permission-" + nested.name,
+					payload: strings.Replace(test.payload, permission, nested.payload, 1),
+				})
+			}
+		}
+		for _, invalid := range invalid {
+			t.Run(test.name+"/"+invalid.name, func(t *testing.T) {
+				reader := bytes.NewReader(append(connectorTerminalFrame(invalid.payload), connectorTerminalFrame(test.payload)...))
+				if err := test.read(reader); err != ErrConnectorPermissionUpdate {
+					t.Fatal("strict bounded failure was not an inert malformed leaf", err)
+				}
+				if err := test.read(reader); err != nil || reader.Len() != 0 {
+					t.Fatal("malformed control payload consumed its valid sibling", err)
+				}
+			})
+		}
 	}
 }
 

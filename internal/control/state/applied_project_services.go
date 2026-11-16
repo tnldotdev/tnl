@@ -279,7 +279,19 @@ func (d *Database) ensureDeploymentServiceGrant(ctx context.Context, tx pgx.Tx, 
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	scope := servicePublisherScope{teamID: s.TeamID, serviceID: s.ServiceID.String}
+	var approvedProtocol string
+	if err := tx.QueryRow(ctx, `SELECT scope.protocol FROM control.deployment_publisher_members member
+	    JOIN control.deployment_publisher_enrollment_services scope ON scope.enrollment_id=member.enrollment_id
+	    WHERE member.publisher_identity_id=$1 AND member.deployment_id=$2
+	      AND scope.service=$3 AND scope.service_id=$4 AND scope.revoked_at IS NULL`,
+		publisher, s.DeploymentID, s.Service, s.ServiceID).Scan(&approvedProtocol); err != nil {
+		return publisherLookupError(err, ErrPublisherIdentity)
+	}
+	protocols, err := normalizePublisherProtocols([]string{approvedProtocol})
+	if err != nil {
+		return err
+	}
+	scope := publisherScopeForAppliedService(s, protocols)
 	g, err := insertPublisherGrant(ctx, q, publisher, actor, scope, nil, now)
 	if err != nil {
 		return err

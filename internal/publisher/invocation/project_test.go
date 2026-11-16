@@ -23,10 +23,44 @@ import (
 )
 
 func TestProjectRuntimePreparationRealizesOnlySelectedLocalService(t *testing.T) {
+	for _, public := range []bool{false, true} {
+		name := "connector-only"
+		if public {
+			name = "public"
+		}
+		t.Run(name, func(t *testing.T) {
+			testProjectRuntimePreparation(t, public, nil)
+		})
+	}
+}
+
+func TestProjectRuntimePreparationRejectsInvalidSelectedEndpoint(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		change func(*controlv1.LocalProjectService)
+	}{
+		{"missing metadata", func(s *controlv1.LocalProjectService) { s.Metadata = nil }},
+		{"missing endpoint", func(s *controlv1.LocalProjectService) { s.Metadata.Endpoint = nil }},
+		{"another service", func(s *controlv1.LocalProjectService) { s.Service = "private" }},
+		{"another worktree", func(s *controlv1.LocalProjectService) { s.WorktreeKey = "other" }},
+		{"missing service ID", func(s *controlv1.LocalProjectService) { s.ServiceId = "" }},
+		{"another protocol", func(s *controlv1.LocalProjectService) { s.Metadata.Protocol = controlv1.ServiceProtocol("tcp") }},
+		{"mismatched hostname", func(s *controlv1.LocalProjectService) { s.Hostname = new("other.developer.example.test") }},
+		{"noncanonical hostname", func(s *controlv1.LocalProjectService) { s.Metadata.Endpoint.Hostname = "Web.developer.example.test" }},
+		{"zero HTTP port", func(s *controlv1.LocalProjectService) { s.Metadata.Endpoint.Port = 0 }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			testProjectRuntimePreparation(t, false, test.change)
+		})
+	}
+}
+
+func testProjectRuntimePreparation(t *testing.T, public bool, corrupt func(*controlv1.LocalProjectService)) {
+	t.Helper()
 	root := t.TempDir()
 	project := clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")},
 		Config: config.TNL{Services: config.Services{
-			"web": {Public: new(true)},
+			"web": {Public: new(public)},
 			"other": {Public: new(true), Target: &config.ServiceTarget{Type: "docker", Container: new("unrelated"), Port: new(443),
 				TLS: &config.TargetTLS{CA: new("system")}}},
 			"private": {},
@@ -46,6 +80,15 @@ func TestProjectRuntimePreparationRealizesOnlySelectedLocalService(t *testing.T)
 	var mu sync.Mutex
 	var mutations []string
 	realized := false
+	preparing := false
+	selected := controlv1.LocalProjectService{Service: "web", WorktreeKey: worktree, ServiceId: "svc_0123456789abcdefghijkl",
+		Hostname: new("web.developer.example.test"),
+		Metadata: &controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP, TrustRevision: 1,
+			TargetTls: &controlv1.ServiceTargetTLS{Hostname: "target.internal", Pem: new("must-not-reach-browser"), Digest: "private-trust"},
+			Endpoint:  &controlv1.ServiceEndpoint{Hostname: "web.developer.example.test", Port: 443, Public: public}}}
+	if corrupt != nil {
+		corrupt(&selected)
+	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -81,12 +124,14 @@ func TestProjectRuntimePreparationRealizesOnlySelectedLocalService(t *testing.T)
 				return
 			}
 			if request.TeamId != "team_1" || request.WorktreeKey != worktree || request.SourceFingerprint != source.Fingerprint ||
-				request.Configuration.Target != "app" || request.Configuration.Public == nil || !*request.Configuration.Public ||
+				request.Configuration.Name == nil || *request.Configuration.Name != "web" ||
+				request.Configuration.Protocol == nil || *request.Configuration.Protocol != controlv1.ServiceProtocolHTTP ||
+				request.Configuration.Target != "app" || request.Configuration.Public == nil || *request.Configuration.Public != public ||
 				request.Configuration.TargetTls != nil {
 				t.Error("preparation changed its exact local declaration", request)
 			}
 			realized = true
-			response = controlv1.LocalProjectService{Service: "web", WorktreeKey: worktree, ServiceId: "svc_0123456789abcdefghijkl"}
+			response = selected
 		case "GET " + localPath + "web":
 			if r.URL.Query().Get("team_id") != "team_1" || r.URL.Query().Get("source_fingerprint") != source.Fingerprint ||
 				r.URL.Query().Get("worktree_key") != worktree {
@@ -97,9 +142,12 @@ func TestProjectRuntimePreparationRealizesOnlySelectedLocalService(t *testing.T)
 				response = controlv1.Problem{Code: controlv1.NotFound, Status: 404}
 				break
 			}
-			response = controlv1.LocalProjectService{Service: "web", WorktreeKey: worktree, ServiceId: "svc_0123456789abcdefghijkl",
-				Metadata: &controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP, TrustRevision: 1,
-					Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.developer.example.test", Port: 443, Public: true}}}
+			// only ordinary metadata reads use this projection. preparation must
+			// retain the endpoint returned by its selected realization instead.
+			response = selected
+			if preparing {
+				t.Error("preparation discarded its selected realization endpoint")
+			}
 		case "GET " + localPath + "other":
 			w.WriteHeader(http.StatusNotFound)
 			response = controlv1.Problem{Code: controlv1.NotFound, Status: 404}
@@ -138,14 +186,26 @@ func TestProjectRuntimePreparationRealizesOnlySelectedLocalService(t *testing.T)
 	if initialMutations != 0 {
 		t.Fatal("read-only metadata realized a service")
 	}
+	mu.Lock()
+	preparing = true
+	mu.Unlock()
 	prepared, err := operation.PrepareLocalService(t.Context(), "web")
+	mu.Lock()
+	preparing = false
+	mu.Unlock()
+	if corrupt != nil {
+		if err == nil {
+			t.Fatal("preparation accepted invalid selected endpoint metadata")
+		}
+		return
+	}
 	if err != nil || len(prepared.Services) != 1 || prepared.Services["web"].URL != "https://web.developer.example.test" ||
-		!prepared.Services["web"].Public || prepared.Services["web"].Port != 443 {
+		prepared.Services["web"].Public != public || prepared.Services["web"].Port != 443 {
 		t.Fatal("preparation omitted its selected endpoint", prepared, err)
 	}
 	after, err := operation.Metadata(t.Context())
-	if err != nil || !reflect.DeepEqual(after, prepared) {
-		t.Fatal("read-only metadata changed the prepared endpoint", after, err)
+	if err != nil || public && !reflect.DeepEqual(after, prepared) || !public && len(after.Services) != 0 {
+		t.Fatal("read-only metadata expanded its inclusion or invented an endpoint", after, err)
 	}
 	mu.Lock()
 	gotMutations := append([]string(nil), mutations...)
@@ -155,7 +215,8 @@ func TestProjectRuntimePreparationRealizesOnlySelectedLocalService(t *testing.T)
 	}
 	encoded, err := json.Marshal(prepared)
 	if err != nil || bytes.Contains(encoded, []byte(token.String())) || strings.Contains(string(encoded), "trust") ||
-		strings.Contains(string(encoded), "remote.internal") || strings.Contains(string(encoded), "unrelated") {
+		strings.Contains(string(encoded), "remote.internal") || strings.Contains(string(encoded), "unrelated") ||
+		strings.Contains(string(encoded), "must-not-reach-browser") || strings.Contains(string(encoded), "target.internal") {
 		t.Fatal("preparation leaked target configuration or credentials", err)
 	}
 	snapshot, err := state.SnapshotProject(t.Context(), root)

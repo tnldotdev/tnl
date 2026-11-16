@@ -93,7 +93,7 @@ func TestManagedPublicConnectorAcceptsLoopbackHTTPAuthority(t *testing.T) {
 				client, server := connectorInnerPair(t, ctx, verification)
 				done := make(chan error, 1)
 				go func() { done <- serveConnectorInner(ctx, peer, server) }()
-				connectorControl(t, ctx, client)
+				connectorControl(t, ctx, client, peer)
 				raw, err := client.OpenStream(ctx)
 				if err != nil {
 					t.Fatal(err)
@@ -171,7 +171,7 @@ func TestPublicServiceTLSCloseEndsReturnStreamExactlyOnce(t *testing.T) {
 	metadata := publicSourceMetadata(t, p, header)
 	go func() {
 		defer server.Close()
-		done <- bound.serveBody(ctx, ref, server, header, func(context.Context) error { ended.Add(1); return nil }, nil)
+		done <- bound.serveBody(ctx, ref, server, header, func(context.Context) error { ended.Add(1); return nil }, nil, nil)
 	}()
 	if _, err := client.Write(metadata); err != nil {
 		t.Fatal(err)
@@ -225,6 +225,7 @@ func privateFixture(t *testing.T, target string) (*Prepared, *Bound, tunnelv1.Se
 	if err != nil {
 		t.Fatal(err)
 	}
+	p.sourceKey = [32]byte{1}
 	certificate, verification := managedTestCertificate(t, hostname)
 	verification.Certificates = []tls.Certificate{certificate}
 	if err := p.installManagedCertificate(certificate); err != nil {
@@ -299,7 +300,7 @@ func TestServiceStreamRejectsStaleAdmissionsBeforeTargetDial(t *testing.T) {
 			defer server.Close()
 			_ = client.SetDeadline(time.Now().Add(time.Second))
 			done := make(chan error, 1)
-			go func() { defer server.Close(); done <- bound.serveBody(t.Context(), ref, server, header, nil, nil) }()
+			go func() { defer server.Close(); done <- bound.serveBody(t.Context(), ref, server, header, nil, nil, nil) }()
 			proxy, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:25443")})
 			_, _ = client.Write(proxy)
 			secure := tls.Client(client, verification)

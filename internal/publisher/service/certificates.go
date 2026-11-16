@@ -49,6 +49,7 @@ type Certificates struct {
 	Hostname            string
 	Plan                controlv1.CertificatePlan
 	Install             func(tls.Certificate) error
+	installed           chan<- struct{}
 }
 
 func (r Certificates) Maintain(ctx context.Context) error {
@@ -113,6 +114,12 @@ func (r Certificates) Maintain(ctx context.Context) error {
 		}
 		installed = material
 		terminalRetried = false
+		// wake the run owner only after serving installation succeeds. coalesced
+		// notifications request a readiness recheck, not a grant of authority.
+		select {
+		case r.installed <- struct{}{}:
+		default:
+		}
 		if err = waitCertificateRetry(ctx, max(time.Until(material.RenewAt), time.Second)); err != nil {
 			return err
 		}

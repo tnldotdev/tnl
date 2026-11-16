@@ -1,11 +1,35 @@
 schemas:
+  ConnectorPeerPairDisposition:
+    type: string
+    description: Candidate is a preparation hint, not serving authority. Retired is an explicit durable terminal fact for this exact pair and outranks every delivery generation.
+    enum: [candidate, retired]
+    x-enum-varnames: [ConnectorPeerPairDispositionCandidate, ConnectorPeerPairDispositionRetired]
+  ConnectorPeerPairRetirementObservation:
+    type: object
+    additionalProperties: false
+    description: "Negative-only observation: retired_at <= observed_at < retained_until. retained_until is the unchanged max(expires_at, replay_fence_until), at most five minutes plus existing five-second request skew after retired_at. It is not a new serving lease, cleanup window, or proof of remote join. Repeated observations never extend retention."
+    required: [observed_at, retired_at, retained_until]
+    properties:
+      observed_at: { type: string, format: date-time }
+      retired_at: { type: string, format: date-time }
+      retained_until: { type: string, format: date-time }
   ConnectorPeerPairCandidate:
     type: object
     additionalProperties: false
-    description: A pair to reconcile, not delivery authority or permission to open an application stream.
-    required: [pair_id, delivery_generation]
+    description: "An exact pair disposition, never permission to open an application stream. Candidate requires owner_revision 1, no retirement, and optional positive owner_authority. Retired requires owner_revision 2, a retirement observation, and no owner_authority; do not prepare or revive it even for a higher delivery generation. Unknown or contradictory states are invalid. Omission, pagination, and missing positive authority never mean retired."
+    required: [pair_id, delivery_generation, disposition, owner_revision]
     properties:
       pair_id: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
+      disposition: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairDisposition" }
+      owner_revision:
+        {
+          type: string,
+          pattern: "^[12]$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "owner_revision,string" },
+        }
+      retirement:
+        $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRetirementObservation"
       delivery_generation:
         {
           type: string,

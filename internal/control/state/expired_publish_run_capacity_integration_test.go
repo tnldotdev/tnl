@@ -68,32 +68,40 @@ func TestIntegrationExpireSavedPublishRunsPublishesTombstones(t *testing.T) {
 }
 
 func TestIntegrationExpireSavedPublishRunsSkipsLockedPublicURL(t *testing.T) {
-	f := newServicePublicationFixture(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	gate, err := f.database.pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rollbackTestTransaction(t, gate)
-	if _, err := gate.Exec(ctx, `SELECT id FROM control.services WHERE id=$1 FOR UPDATE`, f.service.ID); err != nil {
-		t.Fatal(err)
-	}
-	workers := newIntegrationWorkers(t, cancel)
-	defer workers.stop()
-	done := make(chan error, 1)
-	workers.Go(func() {
-		count, err := f.database.ExpireServiceRuns(ctx, f.run.ExpiresAt)
-		if err == nil && count != 1 {
-			err = errors.New("unlocked expired service run was not closed")
-		}
-		done <- err
-	})
-	waitForPostgresBlock(t, ctx, f.database, int32(gate.Conn().PgConn().PID()), done)
-	if err := gate.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := awaitIntegrationResult(t, ctx, done); err != nil {
-		t.Fatal(err)
+	for _, boundary := range []string{"service", "run"} {
+		t.Run(boundary, func(t *testing.T) {
+			f := newServicePublicationFixture(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			gate, err := f.database.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rollbackTestTransaction(t, gate)
+			if boundary == "service" {
+				_, err = gate.Exec(ctx, `SELECT id FROM control.services WHERE id=$1 FOR UPDATE`, f.service.ID)
+			} else {
+				_, err = gate.Exec(ctx, `SELECT id FROM control.service_runs WHERE id=$1 FOR UPDATE`, f.run.RunID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := expirationProgressSnapshot(t, ctx, f.database, f.run.RunID)
+			if count, err := f.database.ExpireServiceRuns(ctx, f.run.ExpiresAt); err != nil || count != 0 {
+				t.Fatal("locked publication was not skipped within its original caller", count, err)
+			}
+			if after := expirationProgressSnapshot(t, ctx, f.database, f.run.RunID); after != before {
+				t.Fatal("skipping changed the busy run, slots, audit or recovery episode")
+			}
+			assertAssignmentTotals(t, f.database.pool, 2)
+			if err := gate.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if count, err := f.database.ExpireServiceRuns(ctx, f.run.ExpiresAt); err != nil || count != 1 {
+				t.Fatal("unlocked expired service run was not closed within the same five-second caller", count, err)
+			}
+			assertExpirationProgressClosed(t, ctx, f.database, f.run.RunID)
+			assertAssignmentTotals(t, f.database.pool, 0)
+		})
 	}
 }

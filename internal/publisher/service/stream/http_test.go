@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -27,6 +28,10 @@ func TestHTTPDecisionStatusKeepsDenialSeparateFromOutage(t *testing.T) {
 		{"stale", clientcontrol.ErrStatusConflict, http.StatusForbidden},
 		{"forbidden problem", &clientcontrol.ProblemError{Status: http.StatusForbidden}, http.StatusForbidden},
 		{"unavailable", clientcontrol.ErrUnavailable, http.StatusServiceUnavailable},
+		{"unavailable policy", visitortoken.ErrPolicy, http.StatusServiceUnavailable},
+		{"unavailable verification key", visitortoken.ErrKey, http.StatusServiceUnavailable},
+		{"denied bind", diagnostic.Wrap(diagnostic.VisitorAccessDenied, visitortoken.ErrPolicy), http.StatusForbidden},
+		{"canceled bind", diagnostic.Wrap(diagnostic.VisitorAccessDenied, context.Canceled), http.StatusForbidden},
 		{"unexpected", errors.New("fixture failure"), http.StatusServiceUnavailable},
 	} {
 		t.Run(test.name, func(t *testing.T) {

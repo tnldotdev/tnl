@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -63,6 +64,7 @@ func TestConnectorPairDenialKeepsStartupAndRetirementBoundaries(t *testing.T) {
 						},
 						Permission: f.VisitorPermission,
 						RebindPair: f.RebindConnectorPeerPair,
+						RetirePair: f.RetireConnectorPeerPair,
 						Close:      func(context.Context) error { closed.Add(1); return nil },
 					})
 					if err != nil {
@@ -83,6 +85,11 @@ func TestConnectorPairDenialKeepsStartupAndRetirementBoundaries(t *testing.T) {
 					select {
 					case <-f.finished:
 					case <-time.After(3 * time.Second):
+						// capture the blocked owner/fixture boundary before test
+						// cancellation changes the cleanup being diagnosed.
+						stacks := make([]byte, 1<<20)
+						n := runtime.Stack(stacks, true)
+						t.Logf("denied renewal join goroutines:\n%s", stacks[:n])
 						t.Fatal("denied renewal did not retire the connector")
 					}
 					_ = local.SetReadDeadline(time.Now().Add(time.Second))
@@ -124,7 +131,7 @@ func TestConnectorRefreshBlockedWriterDoesNotSpendSiblingBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer p.Close(context.WithoutCancel(t.Context()))
 	blocked, blockedPeer := net.Pipe()
 	defer blockedPeer.Close()
 	healthy, healthyPeer := net.Pipe()
@@ -187,7 +194,7 @@ func TestConnectorRefreshPreparesReplacementOpeningsBeforePublishing(t *testing.
 		return f.device.Sign(message)
 	}
 	control, err := NewControlWithConfig(ControlConfig{
-		Signer: f.ConnectorSigner, Resolve: f.ResolveService, Pair: f.PrepareConnectorPeerPair, Permission: f.VisitorPermission, RebindPair: f.RebindConnectorPeerPair,
+		Signer: f.ConnectorSigner, Resolve: f.ResolveService, Pair: f.PrepareConnectorPeerPair, Permission: f.VisitorPermission, RebindPair: f.RebindConnectorPeerPair, RetirePair: f.RetireConnectorPeerPair,
 		RenewPair: func(ctx context.Context, service string, request controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
 			renewal, err := f.RenewConnectorPeerPair(ctx, service, request)
 			if armed.Load() {
@@ -207,7 +214,7 @@ func TestConnectorRefreshPreparesReplacementOpeningsBeforePublishing(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer p.Close(context.WithoutCancel(t.Context()))
 	defer resume()
 	exchange := func(message string) {
 		t.Helper()
@@ -262,7 +269,7 @@ func TestConnectorRefreshDoesNotReselectRetainedRun(t *testing.T) {
 			}
 			return f.ResolveService(ctx, service)
 		},
-		Pair: f.PrepareConnectorPeerPair, RenewPair: f.RenewConnectorPeerPair, RebindPair: f.RebindConnectorPeerPair, Permission: f.VisitorPermission, Close: f.Close,
+		Pair: f.PrepareConnectorPeerPair, RenewPair: f.RenewConnectorPeerPair, RebindPair: f.RebindConnectorPeerPair, RetirePair: f.RetireConnectorPeerPair, Permission: f.VisitorPermission, Close: f.Close,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -275,7 +282,7 @@ func TestConnectorRefreshDoesNotReselectRetainedRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer p.Close(context.WithoutCancel(t.Context()))
 	p.mu.Lock()
 	changed, runID := p.changed, p.run.ServiceRunID
 	p.mu.Unlock()
@@ -317,7 +324,7 @@ func TestConnectorPermissionMetadataRequiresCurrentServiceRevision(t *testing.T)
 func TestConnectorRefreshReloadsChangedServiceRevision(t *testing.T) {
 	f := newConnectorFixture(t, "quic")
 	control, err := NewControlWithConfig(ControlConfig{
-		Signer: f.ConnectorSigner, Resolve: f.ResolveService, Pair: f.PrepareConnectorPeerPair, Permission: f.VisitorPermission, RebindPair: f.RebindConnectorPeerPair,
+		Signer: f.ConnectorSigner, Resolve: f.ResolveService, Pair: f.PrepareConnectorPeerPair, Permission: f.VisitorPermission, RebindPair: f.RebindConnectorPeerPair, RetirePair: f.RetireConnectorPeerPair,
 		RenewPair: func(ctx context.Context, service string, request controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
 			renewal, err := f.RenewConnectorPeerPair(ctx, service, request)
 			renewal.TrustRevision++
@@ -336,7 +343,7 @@ func TestConnectorRefreshReloadsChangedServiceRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer p.Close(context.WithoutCancel(t.Context()))
 	p.mu.Lock()
 	oldRun, oldPair, oldPermission, oldInstallation := p.run.ValidUntil, p.until, p.permission.VisitorToken, p.preparedUntil
 	p.mu.Unlock()
@@ -378,6 +385,7 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 			control, err := NewControlWithConfig(ControlConfig{
 				Signer:  f.ConnectorSigner,
 				Resolve: f.ResolveService, Pair: f.PrepareConnectorPeerPair, Permission: f.VisitorPermission,
+				RetirePair: f.RetireConnectorPeerPair,
 				RebindPair: func(ctx context.Context, _, _ string, _ controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
 					recoveringOnce.Do(func() { close(recovering) })
 					<-ctx.Done()
@@ -417,7 +425,7 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer p.Close()
+			defer p.Close(context.WithoutCancel(t.Context()))
 			defer resume()
 			p.mu.Lock()
 			oldRun, oldPair, oldPermission, oldInstallation := p.run.ValidUntil, p.until, p.permission.ExpiresAt, p.preparedUntil
@@ -476,7 +484,7 @@ func TestConnectorPreparationKeepsOriginalStartupDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer p.Close(context.WithoutCancel(t.Context()))
 	// prepare the real inner transport before starting this stream's fixed
 	// budget, so scheduling other test packages cannot spend it in fixture setup.
 	p.mu.Lock()
@@ -525,7 +533,7 @@ func TestConnectorPreparationPromotesStreamToOwnerLifetime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer p.Close(context.WithoutCancel(t.Context()))
 	if state := p.connection.ConnectionState().TLS; state.Version != tls.VersionTLS13 || state.CurveID != tls.X25519MLKEM768 {
 		t.Fatalf("inner connector connection negotiated TLS %x with %s", state.Version, state.CurveID)
 	}
@@ -570,7 +578,7 @@ func TestConnectorRevokedOwnerDoesNotCloseSiblingOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer p.Close(context.WithoutCancel(t.Context()))
 	local, revoked := net.Pipe()
 	defer revoked.Close()
 	done := make(chan error, 1)
@@ -607,7 +615,7 @@ func TestConnectorInstallationDeadlineStopsOwnerBeforePairExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer p.Close(context.WithoutCancel(t.Context()))
 	local, app := net.Pipe()
 	defer app.Close()
 	done := make(chan error, 1)

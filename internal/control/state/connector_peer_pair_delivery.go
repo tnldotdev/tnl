@@ -75,6 +75,9 @@ func (d *Database) connectorPeerPairDelivery(ctx context.Context, serviceID, run
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
+	if !connectorPeerPairUnretired(pair) {
+		return result, ErrServiceAccess
+	}
 	pair, pending, bound, err := connectorPeerBindingRevision(ctx, tx, pair, generation, clock.current())
 	if err != nil {
 		return result, err
@@ -123,9 +126,13 @@ func (d *Database) connectorPeerPairDelivery(ctx context.Context, serviceID, run
 			if !bytes.Equal(pair.PublisherProofDigest, digest[:]) {
 				provedUntil := minTime(now.Add(5*time.Second), minTime(reportUntil, pair.PublisherPreparedUntil.Time))
 				if pending {
-					_, err = tx.Exec(ctx, `UPDATE control.connector_peer_pending_bindings SET publisher_proved_until=$2,publisher_proof_digest=$3 WHERE pair_id=$1`, pairID, provedUntil, digest[:])
+					err = connectorPeerPairWrite(q.SaveConnectorPeerPendingPublisherProof(ctx, controlstatedb.SaveConnectorPeerPendingPublisherProofParams{
+						PairID: pairID, ProvedUntil: timestamptz(provedUntil), ProofDigest: digest[:],
+					}))
 				} else {
-					_, err = tx.Exec(ctx, `UPDATE control.connector_peer_pairs SET publisher_proved_until=$2,publisher_proof_digest=$3 WHERE id=$1`, pairID, provedUntil, digest[:])
+					err = connectorPeerPairWrite(q.SaveConnectorPeerPublisherProof(ctx, controlstatedb.SaveConnectorPeerPublisherProofParams{
+						PairID: pairID, ProvedUntil: timestamptz(provedUntil), ProofDigest: digest[:],
+					}))
 				}
 				if err != nil {
 					return ConnectorPeerPairDelivery{}, err
@@ -133,9 +140,14 @@ func (d *Database) connectorPeerPairDelivery(ctx context.Context, serviceID, run
 			}
 		} else {
 			if pending {
-				_, err = tx.Exec(ctx, `UPDATE control.connector_peer_pending_bindings SET publisher_prepared_until=LEAST($3,GREATEST(publisher_prepared_until,$2)) WHERE pair_id=$1`, pairID, reportUntil, result.ExpiresAt)
+				err = connectorPeerPairWrite(q.ConfirmConnectorPeerPendingPrepared(ctx, controlstatedb.ConfirmConnectorPeerPendingPreparedParams{
+					PairID: pairID, BindingExpiresAt: timestamptz(reportUntil), AuthorityExpiresAt: timestamptz(result.ExpiresAt),
+				}))
 			} else {
-				_, err = tx.Exec(ctx, `UPDATE control.connector_peer_pairs SET publisher_prepared_until=LEAST($3,GREATEST(publisher_prepared_until,$2)) WHERE id=$1`, pairID, reportUntil, result.ExpiresAt)
+				err = connectorPeerPairWrite(q.ConfirmConnectorPeerPairPrepared(ctx, controlstatedb.ConfirmConnectorPeerPairPreparedParams{
+					ID: pairID, DeliveryGeneration: pair.DeliveryGeneration, Now: timestamptz(clock.current()),
+					BindingExpiresAt: timestamptz(reportUntil), AuthorityExpiresAt: timestamptz(result.ExpiresAt),
+				}))
 			}
 			if err != nil {
 				return ConnectorPeerPairDelivery{}, err

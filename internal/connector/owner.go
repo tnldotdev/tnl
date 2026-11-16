@@ -57,6 +57,8 @@ type connectorConnectionBackend struct {
 	snapshot                                               atomic.Pointer[connectorPreparedSnapshot]
 	closed                                                 bool
 	cleanupContext                                         context.Context
+	closeOnce                                              sync.Once
+	closeErr                                               error
 	operations                                             sync.WaitGroup
 	cancel                                                 context.CancelFunc
 	workers                                                sync.WaitGroup

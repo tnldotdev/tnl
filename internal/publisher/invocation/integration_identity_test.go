@@ -1,7 +1,9 @@
 package invocation
 
 import (
+	"bytes"
 	"encoding/json"
+	"net/http"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -16,6 +18,13 @@ func TestNativeIntegrationConfigCreatesUpdatesAndReloadsWithoutTarget(t *testing
 	for _, hostname := range []string{"oauth.member.example", "hooks.member.example"} {
 		t.Run(hostname, func(t *testing.T) {
 			f := newServiceSetupFixture(t, hostname)
+			inventories := 0
+			f.before = func(r *http.Request) (*http.Response, bool) {
+				if r.Method == http.MethodGet && r.URL.Path == "/v1/services" {
+					inventories++
+				}
+				return nil, false
+			}
 			// reopen the same private state after every preparation to exercise
 			// the persisted service grant and signing key, not a native cache.
 			root := filepath.Join(t.TempDir(), "persistent")
@@ -72,10 +81,67 @@ func TestNativeIntegrationConfigCreatesUpdatesAndReloadsWithoutTarget(t *testing
 				t.Fatal("integration re-enrolled or recreated its saved service", f.creates, f.changes, f.enrollments, f.redemptions)
 			}
 			f.saved.Endpoint.Hostname = "different.member.example"
+			keys, receipts, updates, gets := len(f.createKeys), len(f.creations), f.updates, f.gets
+			declaration, err := json.Marshal(f.declaration)
+			if err != nil {
+				t.Fatal(err)
+			}
+			public := bytes.Clone(f.public)
 			_, _, err = nativeIntegrationConfig(t.Context(), f.services, hostname, nil)
-			if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid {
-				t.Fatal("integration adopted a service at a different endpoint", err)
+			if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerConflict {
+				t.Fatal("canonical reservation did not reject the conflicting endpoint", err)
+			}
+			current, marshalErr := json.Marshal(f.declaration)
+			if marshalErr != nil || !bytes.Equal(current, declaration) || !bytes.Equal(public, f.public) ||
+				f.creates != 1 || f.changes != 2 || f.enrollments != 1 || f.redemptions != 1 || inventories != 0 ||
+				f.updates != updates || f.gets != gets || len(f.creations) != receipts || len(f.createKeys) != keys+3 {
+				t.Fatal("conflicting reservation adopted or changed the service, current intent, or signing identity", err, marshalErr)
+			}
+			retries := f.createKeys[keys:]
+			if retries[0] != retries[1] || retries[0] != retries[2] {
+				t.Fatal("conflict retries changed their operation key", retries)
 			}
 		})
+	}
+}
+
+func TestNativeIntegrationConfigRejectsMismatchedReservationResponse(t *testing.T) {
+	f := newServiceSetupFixture(t, "oauth.member.example")
+	_, saved, err := nativeIntegrationConfig(t.Context(), f.services, f.services.hostname, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, receipts, updates, gets := len(f.createKeys), len(f.creations), f.updates, f.gets
+	public := bytes.Clone(f.public)
+	replies := 0
+	f.before = func(r *http.Request) (*http.Response, bool) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/services" {
+			t.Fatal("malformed reservation reply triggered another authority operation", r.Method, r.URL.Path)
+		}
+		var body controlv1.CreateServiceRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Reserve == nil || !*body.Reserve || body.TeamId != saved.TeamId || body.Name != saved.Name ||
+			body.Placement == nil || body.Placement.DomainId == nil || *body.Placement.DomainId != *saved.DomainId ||
+			body.Placement.Hostname == nil || *body.Placement.Hostname != f.services.hostname ||
+			body.Configuration == nil || r.Header.Get("Authorization") != "Bearer session" || r.Header.Get("Idempotency-Key") == "" {
+			t.Fatal("integration stopped selecting the exact authenticated reservation", body)
+		}
+		replies++
+		invalid := saved
+		endpoint := *saved.Endpoint
+		endpoint.Hostname = "different.member.example"
+		invalid.Endpoint = &endpoint
+		return serviceTestResponse(r, http.StatusOK, invalid), true
+	}
+	_, _, err = nativeIntegrationConfig(t.Context(), f.services, f.services.hostname, nil)
+	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid {
+		t.Fatal("integration adopted a mismatched successful reservation response", err)
+	}
+	if replies != 1 || f.creates != 1 || f.enrollments != 1 || f.redemptions != 1 || !bytes.Equal(public, f.public) ||
+		f.updates != updates || f.gets != gets || len(f.createKeys) != keys || len(f.creations) != receipts ||
+		f.saved.Endpoint.Hostname != f.services.hostname {
+		t.Fatal("malformed reservation reply changed the actual service or its signing identity")
 	}
 }

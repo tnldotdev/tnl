@@ -1,16 +1,20 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"net/netip"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -203,6 +207,140 @@ func TestIntegrationConnectorPeerPairCompanyDelivery(t *testing.T) {
 	}
 }
 
+func (f connectorPairCompanyFixture) foreignParentPair(t *testing.T, at time.Time) ConnectorPeerPair {
+	t.Helper()
+	d, ctx := f.database, t.Context()
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, tx)
+	if err := lockServiceAdmission(ctx, tx, f.pair.ServiceID); err != nil {
+		t.Fatal(err)
+	}
+	q := controlstatedb.New(tx)
+	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: f.run.RunID, ServiceID: f.pair.ServiceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := q.LockConnectorPeerPairForLegClaim(ctx, f.pair.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := mustOpaqueID(t, "cpp_")
+	var deliveryID [16]byte
+	if _, err := rand.Read(deliveryID[:]); err != nil || deliveryID == [16]byte{} || deliveryID == f.pair.DeliveryID {
+		t.Fatal("foreign-parent fixture did not select an independent delivery identifier", err)
+	}
+	// preserve actual key material, but authenticate each ciphertext with the new
+	// pair's own context. copying ciphertext would fail before testing authority.
+	reseal := func(scope func(string) string, keyID string, ciphertext, digest []byte) []byte {
+		t.Helper()
+		secret, _, err := d.storageKey.Open(keyID, scope(original.ID), ciphertext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer clear(secret)
+		hash := sha256.Sum256(secret)
+		if len(secret) != 32 || !bytes.Equal(hash[:], digest) {
+			t.Fatal("foreign-parent fixture lost its actual key material")
+		}
+		sealed, err := d.storageKey.Seal(scope(id), secret)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sealed
+	}
+	keyCiphertext := reseal(connectorPeerPairKeyContext, original.StorageKeyID, original.KeyCiphertext, original.KeyDigest)
+	sessionCiphertext := reseal(connectorPeerSessionKeyContext, original.SessionKeyStorageKeyID.String, original.SessionKeyCiphertext, original.SessionKeyDigest)
+	request := f.request
+	request.IdempotencyKey = id
+	message, err := request.proof().Message()
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestDigest := sha256.Sum256(message)
+	// insert the foreign parent from the beginning; never update an immutable
+	// owner or disable its trigger to manufacture the runtime authority contrast.
+	row, err := q.InsertConnectorPeerPair(ctx, controlstatedb.InsertConnectorPeerPairParams{
+		ID: id, ServiceID: original.ServiceID, ServiceRunID: original.ServiceRunID, RunNumber: original.RunNumber,
+		PublisherIdentityID: original.PublisherIdentityID, SubjectKind: original.SubjectKind, SubjectID: original.SubjectID,
+		ParentControlSessionID: text(f.owner.SessionID), OwnerKey: id, IdempotencyKey: id, OwnerPublicKey: original.OwnerPublicKey,
+		RequestDigest: requestDigest[:], KeyDigest: original.KeyDigest, KeyCiphertext: keyCiphertext,
+		DeliveryID: deliveryID[:], StorageKeyID: d.storageKey.CurrentID(), Slots: original.Slots,
+		Now: original.CreatedAt, RequestAt: original.LastRequestAt, ExpiresAt: original.ExpiresAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err = q.InitializeConnectorPeerSession(ctx, controlstatedb.InitializeConnectorPeerSessionParams{
+		ID: id, Ciphertext: sessionCiphertext, Digest: original.SessionKeyDigest,
+		StorageKeyID: text(d.storageKey.CurrentID()), TrustRevision: original.TrustRevision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := original
+	expected.ID, expected.ParentControlSessionID = id, text(f.owner.SessionID)
+	expected.OwnerKey, expected.IdempotencyKey, expected.RequestDigest = id, id, requestDigest[:]
+	expected.KeyCiphertext, expected.SessionKeyCiphertext, expected.DeliveryID = keyCiphertext, sessionCiphertext, deliveryID[:]
+	expected.StorageKeyID, expected.SessionKeyStorageKeyID = d.storageKey.CurrentID(), text(d.storageKey.CurrentID())
+	expected.DeliveryGeneration, expected.HighWaterGeneration = row.DeliveryGeneration, row.DeliveryGeneration
+	if row.DeliveryGeneration <= original.DeliveryGeneration || !reflect.DeepEqual(row, expected) {
+		t.Fatal("foreign-parent insertion changed unrelated owner, binding, or deadline facts")
+	}
+	claims, err := tx.Exec(ctx, `INSERT INTO control.connector_peer_pair_leg_claims
+	    (pair_id,connection_slot,requested_at,checked_at,confirmed_until,nonce_digest,source_ip,relay_id,relay_run_id,relay_lease_revision,delivery_generation)
+	    SELECT $2,connection_slot,requested_at,checked_at,confirmed_until,nonce_digest,source_ip,relay_id,relay_run_id,relay_lease_revision,$3
+	    FROM control.connector_peer_pair_leg_claims WHERE pair_id=$1 AND delivery_generation=$4`,
+		original.ID, id, row.DeliveryGeneration, original.DeliveryGeneration)
+	if err != nil || claims.RowsAffected() != 2 {
+		t.Fatal("foreign-parent fixture did not retain both current leg claims", err)
+	}
+	if key, err := d.connectorPeerSecret(row.StorageKeyID, connectorPeerPairKeyContext(id), row.KeyCiphertext, row.KeyDigest); err != nil || key != f.pair.Key {
+		t.Fatal("foreign-parent fixture has invalid pair ciphertext", err)
+	}
+	if key, err := d.connectorPeerSessionKey(row); err != nil || key != f.pair.SessionKey {
+		t.Fatal("foreign-parent fixture has invalid session ciphertext", err)
+	}
+	parent, err := q.GetVisitorParentSession(ctx, f.owner.SessionID)
+	if err != nil || parent.IdentityID == f.pair.Subject.IdentityID || parent.RevokedAt.Valid ||
+		!parent.AccessExpiresAt.Time.After(at) || !parent.RefreshExpiresAt.Time.After(at) {
+		t.Fatal("foreign-parent fixture did not isolate a live different identity", err)
+	}
+	var deviceIdentity string
+	if err := tx.QueryRow(ctx, `SELECT identity_id FROM control.visitor_devices WHERE id=$1 AND revoked_at IS NULL`, row.SubjectID).Scan(&deviceIdentity); err != nil ||
+		row.SubjectKind != tunnelv1.VisitorHumanDevice || deviceIdentity != f.pair.Subject.IdentityID || !bytes.Equal(row.OwnerPublicKey, f.key.Public().(ed25519.PublicKey)) {
+		t.Fatal("foreign-parent fixture lost its actual enrolled subject or key", err)
+	}
+	// change only a row copy for this read-only contrast. a current full binding
+	// proves that no run, grant, key, slot, claim, or expiry prerequisite masks the
+	// persisted foreign parent's identity mismatch.
+	matched := row
+	matched.ParentControlSessionID = original.ParentControlSessionID
+	binding, err := d.connectorPeerPairBinding(ctx, tx, run, matched, at)
+	if err != nil || !binding.claimsCurrent || binding.subject != f.pair.Subject || binding.relays != f.pair.Relays ||
+		!bytes.Equal(binding.publicKey, row.OwnerPublicKey) || binding.source != connectorPairCompanySource ||
+		!binding.expiresAt.After(at) || binding.expiresAt.After(f.pair.ExpiresAt) {
+		t.Fatal("matching-parent contrast lacks an otherwise current binding", err)
+	}
+	if _, key, _, err := connectorPeerPairSubjectKey(ctx, tx, row, at); err != ErrServiceAccess || len(key) != 0 {
+		t.Fatal("foreign parent did not hit the saved-parent identity fence", err)
+	}
+	if _, err := d.connectorPeerPairBinding(ctx, tx, run, row, at); err != ErrServiceAccess {
+		t.Fatal("foreign parent retained a current binding", err)
+	}
+	if _, err := tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	pair := f.pair
+	pair.ID, pair.DeliveryID, pair.DeliveryGeneration = id, deliveryID, row.DeliveryGeneration
+	return pair
+}
+
 func TestIntegrationConnectorPeerPairSavedParentFences(t *testing.T) {
 	for _, name := range []string{"revoked", "access expired", "refresh expired", "company proof expired", "eligibility revoked", "eligibility expired", "another identity parent", "personal sibling parent"} {
 		t.Run(name, func(t *testing.T) {
@@ -210,6 +348,8 @@ func TestIntegrationConnectorPeerPairSavedParentFences(t *testing.T) {
 			f.claimBoth(t)
 			d, ctx, at := f.database, t.Context(), f.now.Add(time.Second)
 			sibling := WithControlPrincipal(ctx, companyTestPrincipal(t, d, f.sibling, f.now))
+			originalID := f.pair.ID
+			var originalBefore []byte
 			exec := func(query string, args ...any) {
 				t.Helper()
 				if _, err := d.pool.Exec(ctx, query, args...); err != nil {
@@ -234,12 +374,25 @@ func TestIntegrationConnectorPeerPairSavedParentFences(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "another identity parent":
-				exec(`UPDATE control.connector_peer_pairs SET parent_control_session_id=$2 WHERE id=$1`, f.pair.ID, f.owner.SessionID)
+				originalBefore = connectorPairSavedAuthority(t, d, originalID)
+				_, err := d.pool.Exec(ctx, `UPDATE control.connector_peer_pairs SET parent_control_session_id=$2 WHERE id=$1`, originalID, f.owner.SessionID)
+				var constraint *pgconn.PgError
+				if !errors.As(err, &constraint) || constraint.Code != "23514" || constraint.Message != "connector pair owner scope is immutable" {
+					t.Fatal("saved parent update did not hit the immutable owner fence", err)
+				}
+				if !bytes.Equal(originalBefore, connectorPairSavedAuthority(t, d, originalID)) {
+					t.Fatal("rejected parent update changed saved authority")
+				}
+				f.pair = f.foreignParentPair(t, at)
+				if !bytes.Equal(originalBefore, connectorPairSavedAuthority(t, d, originalID)) {
+					t.Fatal("foreign-parent insertion changed the original owner")
+				}
 			case "personal sibling parent":
 				// this pair really was created under personal sign-in, before the
 				// company policy was enabled. a fresh sibling cannot lend its proof.
 				f.pair = f.personalPair
 			}
+			before := connectorPairSavedAuthority(t, d, f.pair.ID)
 			for _, callCtx := range []context.Context{ctx, sibling} {
 				// the signed request was fresh before authority changed, but arrives
 				// afterward. current state, not its signing time, governs delivery.
@@ -255,6 +408,12 @@ func TestIntegrationConnectorPeerPairSavedParentFences(t *testing.T) {
 				report := ConnectorPeerPairPrepared{Phase: "installed", DeliveryID: f.pair.DeliveryID, DeliveryGeneration: f.pair.DeliveryGeneration, BindingExpiresAt: f.pair.ExpiresAt}
 				if err := d.ConfirmConnectorPeerPairPrepared(callCtx, f.pair.ServiceID, f.run.RunID, f.pair.ID, f.run.Token, report, at); !errors.Is(err, ErrServiceAccess) {
 					t.Fatal("invalid saved parent authorized a publisher report", err)
+				}
+				if !bytes.Equal(before, connectorPairSavedAuthority(t, d, f.pair.ID)) {
+					t.Fatal("rejected saved-parent operations changed durable authority")
+				}
+				if originalBefore != nil && !bytes.Equal(originalBefore, connectorPairSavedAuthority(t, d, originalID)) {
+					t.Fatal("rejected foreign-parent operations changed the original owner")
 				}
 			}
 			var claims int

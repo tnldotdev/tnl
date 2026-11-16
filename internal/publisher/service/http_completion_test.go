@@ -161,7 +161,7 @@ func TestServiceHTTPSharedCompletionAcrossPublicConnectorAndBase(t *testing.T) {
 				<-peerDone
 				forwards.Wait()
 			}()
-			control := connectorControl(t, ctx, client)
+			control := connectorControl(t, ctx, client, peer)
 			connectorTransport := &http.Transport{ForceAttemptHTTP2: h2, TLSClientConfig: trust.Clone(), DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				raw, err := client.OpenStream(ctx)
 				if err != nil {
@@ -207,7 +207,8 @@ func TestServiceHTTPSharedCompletionAcrossPublicConnectorAndBase(t *testing.T) {
 					}
 					if path == "/connector" {
 						entry := opening("J")
-						if err := control.Complete(ctx, entry.VisitorConnectionID, entry.DeliveryGeneration); err != nil {
+						exchange, err := control.Complete(ctx, tunnelv1.ConnectorVisitorTerminalKey{VisitorConnectionID: entry.VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration})
+						if err != nil || !exchange.Matched || !exchange.ObservedWritten || exchange.Result.Outcome != tunnelv1.ConnectorTerminalAccepted {
 							t.Error("acknowledge complete connector response", err)
 						}
 					}

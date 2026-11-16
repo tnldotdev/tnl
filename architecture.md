@@ -138,11 +138,14 @@ another target.
 
 A draining service run stops new visitor work and joins admitted sessions within
 their existing authority and the original drain deadline. For connector access,
-it keeps packet carriers until the connector reports
-that both copy directions have finished. That exact visitor's completion receipt
-uses the existing authenticated control stream and grants no access or renewal.
-Unready openings close when drain starts; missing receipts remain bounded by the
-original drain and visitor-authority deadlines.
+the connector reports completion only after both copy directions and its stream
+cleanup join. The publisher returns an exact matched result after its admission
+work joins; the connector then acknowledges that result. This exchange uses the
+existing authenticated control stream and grants no access or renewal. Packet
+carriers remain until the exchange ends or the original deadline expires.
+Unready openings close when drain starts. Explicit retirement revokes one exact
+connector pair; it does not prove response delivery, result observation, or
+remote cleanup. Missing confirmations do not extend the original deadlines.
 
 A service can also have a public hostname and port, reached through ingress.
 That is **public endpoint access**, rather than **connector access**. Making an

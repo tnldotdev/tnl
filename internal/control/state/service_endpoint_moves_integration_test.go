@@ -44,11 +44,29 @@ func TestIntegrationConfigureServiceEndpointKeepsConnectorAuthority(t *testing.T
 		t.Fatal("lost-response endpoint retry advanced the binding again", err)
 	}
 	domain := deploymentCustomDomain(t, f.d, ApplyProjectConfigurationRequest{TeamID: service.TeamID, ActorID: f.request.Subject.IdentityID}, f.now)
-	private.DomainID, private.Hostname = domain.ID, "moved.custom.example.test"
+	var membership, source, slug string
+	if err := f.d.pool.QueryRow(f.visitor, `SELECT claim.membership_id,claim.local_source_key,reservation.member_slug
+	    FROM control.service_endpoints endpoint
+	    JOIN control.service_namespace_claims claim ON claim.namespace=endpoint.namespace AND claim.local_source_key=endpoint.local_source_key AND claim.domain_id=endpoint.domain_id
+	    JOIN control.team_memberships member ON member.id=claim.membership_id AND member.team_id=$2
+	    JOIN control.member_slug_reservations reservation ON reservation.id=member.slug_reservation_id
+	    WHERE endpoint.service_id=$1 AND endpoint.retired_at IS NULL AND claim.retired_at IS NULL`,
+		service.ID, service.TeamID).Scan(&membership, &source, &slug); err != nil {
+		t.Fatal("domain move lost its saved member owner", err)
+	}
+	private.DomainID, private.Hostname = domain.ID, "moved."+slug+"."+domain.CanonicalDomain
 	relocated, err := f.d.ConfigureService(f.visitor, service.ID, f.request.Subject.IdentityID, disabled.ServiceMetadata, &private, ServiceUpdateConditions{}, f.now)
 	if err != nil || relocated.DomainID != domain.ID || relocated.Endpoint.Hostname != private.Hostname ||
 		relocated.TrustRevision != disabled.TrustRevision || relocated.EndpointRevision != disabled.EndpointRevision+1 {
 		t.Fatal("domain edit replaced service identity or target trust", err)
+	}
+	var retained bool
+	if err := f.d.pool.QueryRow(f.visitor, `SELECT claim.membership_id=$2 AND claim.local_source_key=$3 AND claim.owner_team_id IS NULL
+	    FROM control.service_endpoints endpoint
+	    JOIN control.service_namespace_claims claim ON claim.namespace=endpoint.namespace AND claim.local_source_key=endpoint.local_source_key AND claim.domain_id=endpoint.domain_id
+	    WHERE endpoint.service_id=$1 AND endpoint.hostname=$4 AND endpoint.retired_at IS NULL AND claim.retired_at IS NULL`,
+		service.ID, membership, source, private.Hostname).Scan(&retained); err != nil || !retained {
+		t.Fatal("domain edit changed the saved member owner", err)
 	}
 	if !bytes.Equal(before, connectorPairSavedAuthority(t, f.d, pair.ID)) {
 		t.Fatal("domain edit retired authorized connector authority")

@@ -23,8 +23,8 @@ func TestConnectorPermissionSuspensionGatesQueuedFramesAndAcceptedACK(t *testing
 		if err := writer.Suspend(time.Now().Add(time.Second)); err != nil {
 			t.Fatal(err)
 		}
-		first := tunnelWorker(t, writer.Close, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
-		read := tunnelWorker(t, writer.Close, func() tunnelv1.ConnectorPermissionUpdate {
+		first := tunnelWorker(t, func() { _ = writer.Close() }, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
+		read := tunnelWorker(t, func() { _ = writer.Close() }, func() tunnelv1.ConnectorPermissionUpdate {
 			update, err := tunnelv1.ReadConnectorPermissionUpdate(control)
 			if err != nil {
 				t.Error(err)
@@ -66,7 +66,7 @@ func TestConnectorPermissionExpiredSuspensionRetiresControlDuringACKWait(t *test
 	synctest.Test(t, func(t *testing.T) {
 		client, server := newMemoryPair(t)
 		writer, control := permissionControlPair(t, client, server)
-		done := tunnelWorker(t, writer.Close, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
+		done := tunnelWorker(t, func() { _ = writer.Close() }, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
 		if _, err := tunnelv1.ReadConnectorPermissionUpdate(control); err != nil {
 			t.Fatal(err)
 		}
@@ -90,7 +90,7 @@ func TestConnectorPermissionSuspensionPreservesEnteredFrame(t *testing.T) {
 		for len(tracked.stream.writes) > 0 {
 			<-tracked.stream.writes
 		}
-		done := tunnelWorker(t, writer.Close, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
+		done := tunnelWorker(t, func() { _ = writer.Close() }, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
 		before := await(t, tracked.stream.deadlines)
 		await(t, tracked.stream.writes)
 		if err := writer.Suspend(time.Now().Add(4 * time.Second)); err != nil {
@@ -159,15 +159,15 @@ func TestConnectorPermissionSuspensionPreservesEnteredACKWaitPastShortBudget(t *
 			}
 			return stream
 		})
-		writer, err := OpenConnectorPermissionControl(t.Context(), setup, client)
+		writer, err := OpenConnectorPermissionControl(t.Context(), setup, client, permissionControlScope())
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(writer.Close)
+		t.Cleanup(func() { _ = writer.Close() })
 		control := await(t, accepted)
 		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 		defer cancel()
-		done := tunnelWorker(t, writer.Close, func() error { return writer.Renew(ctx, connectorPermissionFixture()) })
+		done := tunnelWorker(t, func() { _ = writer.Close() }, func() error { return writer.Renew(ctx, connectorPermissionFixture()) })
 		update, err := tunnelv1.ReadConnectorPermissionUpdate(control)
 		if err != nil {
 			t.Fatal(err)
@@ -227,7 +227,7 @@ func TestConnectorPermissionSuspensionKeepsDenialAndSessionCloseTerminal(t *test
 		t.Run(map[bool]string{false: "session close", true: "denied"}[reject], func(t *testing.T) {
 			client, server := newMemoryPair(t)
 			writer, control := permissionControlPair(t, client, server)
-			done := tunnelWorker(t, writer.Close, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
+			done := tunnelWorker(t, func() { _ = writer.Close() }, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
 			update, err := tunnelv1.ReadConnectorPermissionUpdate(control)
 			if err != nil {
 				t.Fatal(err)
@@ -265,8 +265,8 @@ func TestConnectorPermissionResponderSuspensionProtectsEnteredACK(t *testing.T) 
 		gate := &ConnectorPermissionGate{}
 		update := connectorPermissionFixture()
 		var failures atomic.Int32
-		responder := &ConnectorPermissionResponder{ctx: tunnelContext(t), stream: tracked, gate: make(chan struct{}, 1), suspension: gate, fail: func(error) { failures.Add(1) }}
-		done := tunnelWorker(t, func() { _ = server.Close() }, func() error { return responder.Respond(update, true) })
+		responder := &ConnectorPermissionResponder{ctx: tunnelContext(t), stream: tracked, gate: make(chan struct{}, 1), suspension: gate, fail: func(*ConnectorControlFailure) { failures.Add(1) }}
+		done := tunnelWorker(t, func() { _ = server.Close() }, func() error { return responder.Respond(tunnelContext(t), update, true) })
 		before := await(t, tracked.deadlines)
 		await(t, tracked.writes)
 		if err := gate.Suspend(time.Now().Add(4 * time.Second)); err != nil {

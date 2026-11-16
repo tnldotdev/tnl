@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -36,11 +37,9 @@ func TestTraceContextCanonicalAndBounded(t *testing.T) {
 func TestTraceServiceGoldenFramedWireAndUnknownFields(t *testing.T) {
 	want := publicServiceAdmissionFixture()
 	want.TraceContext = TraceContext{goldenTraceParent}
-	encoded, err := json.Marshal(want)
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload := string(encoded)
+	want.ExpiresAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	want.LeaseExpiresAt = time.Date(2026, 1, 2, 3, 5, 5, 0, time.UTC)
+	const payload = `{"trace_context":{"traceparent":"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"},"protocol_version":1,"kind":"service_forward","service_id":"svc_aaaaaaaaaaaaaaaaaaaaaa","service_run_id":"srun_aaaaaaaaaaaaaaaaaaaaaa","public_service":{"ingress_id":"ingress-a","ingress_run_id":"ir_aaaaaaaaaaaaaaaaaaaaaa","ingress_lease_revision":1,"destination_port":25443},"source_ip":"192.0.2.10","run_number":1,"visitor_connection_id":"vc_aaaaaaaaaaaaaaaaaaaaaa","publisher_connection_id":"pc_aaaaaaaaaaaaaaaaaaaaaa","connection_assignment_revision":2,"expires_at":"2026-01-02T03:04:05Z","connection_slot":0,"relay_service_id":"relay","relay_id":"relay-a","relay_run_id":"rr_aaaaaaaaaaaaaaaaaaaaaa","relay_lease_revision":1,"lease_expires_at":"2026-01-02T03:05:05Z"}`
 	var wire bytes.Buffer
 	if err := WriteServiceForwardingHeader(&wire, want); err != nil {
 		t.Fatal(err)
@@ -53,7 +52,7 @@ func TestTraceServiceGoldenFramedWireAndUnknownFields(t *testing.T) {
 	withVisitor := append(append([]byte{}, wire.Bytes()...), []byte("\x16\x03visitor")...)
 	r := bytes.NewReader(withVisitor)
 	got, err := ReadServiceForwardingHeader(r)
-	if err != nil || !bytes.Equal(wireJSON(t, got), encoded) {
+	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatal(got, err)
 	}
 	rest, _ := io.ReadAll(r)

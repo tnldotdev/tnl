@@ -40,8 +40,8 @@ func (a *ProjectRuntime) Metadata(ctx context.Context) (meta.Metadata, error) {
 	return r.Generate(ctx)
 }
 
-// PrepareLocalService allocates only the selected local service before reading
-// its endpoint metadata. publication still waits for a registered app listener.
+// prepare allocates only the selected local service and projects its returned
+// endpoint. publication still waits for a registered app listener.
 func (a *ProjectRuntime) PrepareLocalService(ctx context.Context, name string) (meta.Metadata, error) {
 	if _, found := a.project.Config.Services[name]; !found || config.SelectedDeployment(a.project.Config) != "local" {
 		return meta.Metadata{}, errors.New("preparation requires a selected local service")
@@ -55,12 +55,13 @@ func (a *ProjectRuntime) PrepareLocalService(ctx context.Context, name string) (
 	if err != nil {
 		return meta.Metadata{}, err
 	}
-	if _, err := RealizeLocalService(ctx, authenticated.Control, LocalService{
+	selected, err := RealizeLocalService(ctx, authenticated.Control, LocalService{
 		Project: a.project.Project, Team: FromTeamContext(current), Name: name, TargetResolver: a.TargetResolver,
-	}); err != nil {
+	})
+	if err != nil {
 		return meta.Metadata{}, err
 	}
-	return resolver.Generate(ctx)
+	return resolver.GenerateForLocalService(ctx, selected)
 }
 
 func valueOrEmpty(value *string) string {

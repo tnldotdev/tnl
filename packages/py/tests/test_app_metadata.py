@@ -93,6 +93,90 @@ def test_private_service_metadata_needs_no_ingress_reservation(protocol: str) ->
             _protocol._service_metadata("private", exposed)
 
 
+def private_assignment() -> dict[str, object]:
+    return {
+        "version": 1,
+        "registration_id": "reg_" + "a" * 32,
+        "service": "web",
+        "hostname": "web.member.example",
+        "public_url": "",
+        "project": {
+            "namespace": "member.example",
+            "dev": True,
+            "services": {
+                "web": {
+                    "protocol": "http",
+                    "namespace": "member.example",
+                    "hostname": "web.member.example",
+                    "port": 443,
+                    "public": False,
+                    "url": "https://web.member.example",
+                }
+            },
+        },
+    }
+
+
+def test_deferred_assignment_is_valid_only_at_acquisition() -> None:
+    value = private_assignment()
+    value["hostname"] = ""
+    value["project"] = {"namespace": "", "services": {}, "dev": True}
+    endpoint = Endpoint("http://127.0.0.1:1234", "b" * 64, "a" * 32, "app", "web")
+    assigned = _protocol.parse_assignment(value, endpoint)
+    assert assigned.hostname == "" and assigned.public_url == ""
+
+    async def scenario() -> None:
+        native = AssignmentRuntime(value)
+        prepared = tnl.PreparedService("/project", "web", None, native)
+        with pytest.raises(InvalidResponse):
+            await prepared.start()
+        assert native.operations == ["prepare"]
+        await prepared.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("public", [False, True])
+def test_selected_http_assignment_separates_hostname_from_public_url(public: bool) -> None:
+    value = private_assignment()
+    project = cast(dict[str, object], value["project"])
+    services = cast(dict[str, dict[str, object]], project["services"])
+    services["web"]["public"] = public
+    value["public_url"] = "https://web.member.example" if public else ""
+    endpoint = Endpoint("http://127.0.0.1:1234", "b" * 64, "a" * 32, "app", "web")
+    assigned = _protocol.parse_assignment(value, endpoint)
+    assert assigned.hostname == "web.member.example"
+    assert assigned.public_url == value["public_url"]
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("hostname",), ""),
+        (("hostname",), "other.member.example"),
+        (("public_url",), "https://web.member.example"),
+        (("access_token",), "private-secret"),
+        (("project", "services"), {}),
+        (("project", "services", "web", "url"), "https://other.member.example"),
+        (("project", "services", "web", "target"), "http://private-secret:3000"),
+        (("project", "services", "web", "port"), 0),
+        (("project", "services", "web", "public"), True),
+    ],
+)
+def test_rejects_mismatched_or_secret_private_assignment(
+    path: tuple[str, ...], value: object
+) -> None:
+    assignment = private_assignment()
+    item = assignment
+    for key in path[:-1]:
+        item = cast(dict[str, object], item[key])
+    item[path[-1]] = value
+    endpoint = Endpoint("http://127.0.0.1:1234", "b" * 64, "a" * 32, "app", "web")
+    with pytest.raises(InvalidResponse) as caught:
+        _protocol.parse_assignment(assignment, endpoint)
+    assert "private-secret" not in str(caught.value)
+
+
 def test_native_assignment_is_http_only_for_selected_app(
     native_app_assignment: dict[str, object],
 ) -> None:
@@ -278,14 +362,16 @@ def test_native_metadata_registration_and_cleanup(
             monkeypatch.setenv("TNL_APP_ENDPOINT", str(path))
 
             async def scenario() -> None:
+                if omit_service:
+                    with pytest.raises(InvalidResponse):
+                        await tnl.prepare(directory=tmp_path, service="web")
+                    return
                 publication = await tnl.prepare(directory=tmp_path, service="web")
                 try:
                     assert publication.service == "web"
-                    assert publication.hostname == ("" if omit_service else "web.member.example")
+                    assert publication.hostname == "web.member.example"
                     assert publication.public_url == (
-                        ""
-                        if omit_service
-                        else "https://web.member.example" + (f":{port}" if port != 443 else "")
+                        "https://web.member.example" if public else ""
                     )
                     await publication.register("http://127.0.0.1:8000")
                     native = NativeRuntime()

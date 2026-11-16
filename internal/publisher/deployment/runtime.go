@@ -52,7 +52,7 @@ type running struct {
 
 // Serve fences replaced workers before starting their replacements. losing the
 // deployment lease stops all assignments; a polling failure never extends that lease.
-func (r Runtime) Serve(ctx context.Context) error {
+func (r Runtime) Serve(ctx context.Context) (result error) {
 	if r.Control == nil || r.Publish == nil || len(r.Private) != ed25519.PrivateKeySize || r.Member.DeploymentId == "" {
 		return ErrAssignment
 	}
@@ -71,9 +71,12 @@ func (r Runtime) Serve(ctx context.Context) error {
 		finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		finish, end := observability.PublisherOperation(observability.Independent(finish), "deployment_shutdown")
-		end(owner.Stop(finish))
+		err := owner.Stop(finish)
+		end(err)
+		result = errors.Join(result, err)
 	}()
 	var mu sync.Mutex
+	var joinedErr error
 	stop := func() {
 		for _, w := range workers {
 			w.lease.Stop()
@@ -81,10 +84,14 @@ func (r Runtime) Serve(ctx context.Context) error {
 		}
 		for _, w := range workers {
 			<-w.done
+			joinedErr = errors.Join(joinedErr, w.err)
 		}
 		clear(workers)
 	}
-	defer stop()
+	defer func() {
+		stop()
+		result = errors.Join(result, joinedErr)
+	}()
 	var lease controlv1.DeploymentPublisherLease
 	var revision int64
 	var configurationHash string
@@ -175,6 +182,7 @@ func (r Runtime) Serve(ctx context.Context) error {
 						w.lease.Stop()
 						w.cancel()
 						<-w.done
+						joinedErr = errors.Join(joinedErr, w.err)
 						delete(workers, name)
 						continue
 					}
@@ -200,7 +208,9 @@ func (r Runtime) Serve(ctx context.Context) error {
 					go func() {
 						defer close(w.done)
 						w.err = r.Publish(workerCtx, service, func(healthy bool) { mu.Lock(); w.healthy = healthy; mu.Unlock() })
-						if workerCtx.Err() != nil {
+						// only the worker's actual stop can explain cancellation;
+						// a joined independent failure must survive that stop.
+						if stopped := workerCtx.Err(); stopped != nil && failure.Only(w.err, stopped) {
 							w.err = nil
 						}
 						mu.Lock()

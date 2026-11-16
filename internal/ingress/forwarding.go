@@ -123,6 +123,9 @@ type relaySession struct {
 func (f *Forwarder) session(ctx context.Context, target relayTarget) (*tunnel.Session, bool, error) {
 	key := target.key()
 	for {
+		if err := context.Cause(ctx); err != nil {
+			return nil, false, err
+		}
 		f.mu.Lock()
 		if f.closed {
 			f.mu.Unlock()
@@ -131,6 +134,10 @@ func (f *Forwarder) session(ctx context.Context, target relayTarget) (*tunnel.Se
 		entry := f.sessions[key]
 		created := false
 		if entry == nil {
+			if err := context.Cause(ctx); err != nil {
+				f.mu.Unlock()
+				return nil, false, err
+			}
 			obsolete, err := f.removeSupersededLocked(key)
 			if err != nil {
 				f.mu.Unlock()

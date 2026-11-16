@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/connectorfixture"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -15,14 +17,40 @@ import (
 func TestConnectorCompletionFollowsReturnDeliveryNotRequestFIN(t *testing.T) {
 	for _, protocol := range []string{"http", "tcp", "postgres", "mysql", "kubernetes"} {
 		for _, transport := range []string{"quic", "tls-tcp"} {
-			for _, failure := range []string{"completed", "reset", "cleanup"} {
+			for _, failure := range []string{"completed", "reset", "cleanup", "remote-cleanup"} {
 				t.Run(protocol+"/"+transport+"/"+failure, func(t *testing.T) {
 					ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 					defer cancel()
+					serving, stopServing := context.WithCancelCause(ctx)
+					defer stopServing(nil)
 					client, server := stdioTransportSessions(t, transport)
 					controlReady := make(chan struct{})
 					completed := make(chan tunnelv1.ConnectorVisitorCompletion, 1)
 					controlDone := make(chan error, 1)
+					entry := tunnelv1.ConnectorPeerVisitorEntry{VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", DeliveryGeneration: 7}
+					until, _ := ctx.Deadline()
+					var fixtureMu sync.Mutex
+					var visitor *connectorfixture.JoinedVisitor
+					terminalEntered := make(chan struct{})
+					enter := sync.OnceFunc(func() { close(terminalEntered) })
+					controlOwner := connectorfixture.NewJoinedControl(ctx, connectorTestControlScope(), func(key tunnelv1.ConnectorVisitorTerminalKey) *connectorfixture.JoinedVisitor {
+						fixtureMu.Lock()
+						defer fixtureMu.Unlock()
+						return visitor
+					})
+					controlOwner.Permission = func(tunnelv1.ConnectorPermissionUpdate, *tunnel.ConnectorPermissionResponder) {
+						t.Error("completion renewed visitor authority")
+					}
+					controlOwner.Entered = func(request tunnelv1.ConnectorVisitorTerminalRequest) {
+						if request.Purpose == tunnelv1.ConnectorTerminalCompletion {
+							completed <- tunnelv1.ConnectorVisitorCompletion{Kind: tunnelv1.ConnectorVisitorCompleted, VisitorConnectionID: request.Key.VisitorConnectionID,
+								DeliveryGeneration: request.Key.DeliveryGeneration, TerminalNumber: request.TerminalNumber}
+						}
+						if failure == "remote-cleanup" {
+							stopServing(context.Canceled)
+						}
+						enter()
+					}
 					go func() {
 						control, err := tunnel.AcceptConnectorPermissionControl(ctx, server)
 						if err != nil {
@@ -31,13 +59,10 @@ func TestConnectorCompletionFollowsReturnDeliveryNotRequestFIN(t *testing.T) {
 						}
 						close(controlReady)
 						var gate tunnel.ConnectorPermissionGate
-						controlDone <- tunnel.ServeConnectorPermissionControl(ctx, control,
-							func(tunnelv1.ConnectorPermissionUpdate, *tunnel.ConnectorPermissionResponder) {
-								t.Error("completion renewed visitor authority")
-							}, func(receipt tunnelv1.ConnectorVisitorCompletion) { completed <- receipt }, func() {}, &gate)
+						controlDone <- controlOwner.Serve(control, &gate)
 					}()
 					defer func() { cancel(); <-controlDone }()
-					writer, err := tunnel.OpenConnectorPermissionControl(ctx, ctx, client)
+					writer, err := tunnel.OpenConnectorPermissionControl(ctx, ctx, client, connectorTestControlScope())
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -45,17 +70,40 @@ func TestConnectorCompletionFollowsReturnDeliveryNotRequestFIN(t *testing.T) {
 					<-controlReady
 					application, remote := stdioTransportPair(t, transport)
 					local, input := stdioTransportPair(t, transport)
-					until, _ := ctx.Deadline()
-					prepared := &PreparedConnector{ctx: ctx, conn: application, stream: streamPrepared{},
+					fixtureMu.Lock()
+					visitor = connectorfixture.NewJoinedVisitor(ctx, entry, until, remote.Close)
+					fixtureMu.Unlock()
+					producerDone := make(chan struct{})
+					finishProducer := sync.OnceFunc(func() { close(producerDone) })
+					defer finishProducer()
+					remoteJoined := make(chan struct{})
+					go func() {
+						defer close(remoteJoined)
+						select {
+						case <-terminalEntered:
+						case <-ctx.Done():
+						}
+						select {
+						case <-producerDone:
+						case <-ctx.Done():
+						}
+						if failure == "remote-cleanup" {
+							fault := &failingStdioClose{Conn: remote, err: errors.New("independent remote physical close failure")}
+							visitor.Join(fault.Close())
+						} else {
+							visitor.Join(remote.Close())
+						}
+					}()
+					defer func() { cancel(); finishProducer(); <-remoteJoined }()
+					prepared := &PreparedConnector{ctx: serving, conn: application, stream: streamPrepared{},
 						permission: permissionUsable{}, permissionUntil: until, stop: func() bool { return true }}
 					cleanup := errors.New("independent joined permission cleanup failure")
 					if failure == "cleanup" {
 						prepared.permissionErr = cleanup
 					}
 					defer prepared.Close()
-					entry := tunnelv1.ConnectorPeerVisitorEntry{VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", DeliveryGeneration: 7}
-					use := &connectorUse{entry: entry, prepared: prepared, until: until}
-					p := &connectorConnection{ctx: ctx, permissions: writer, until: until, preparedUntil: until,
+					use := &connectorUse{entry: entry, prepared: prepared, until: until, terminalKey: connectorTerminalKey(entry), admitted: true}
+					p := &connectorConnection{ctx: serving, cancel: stopServing, packetCtx: ctx, cleanup: newConnectorCleanup(ctx, nil), permissions: writer, until: until, preparedUntil: until,
 						run: Run{ValidUntil: until}, permission: controlv1.VisitorTokenResponse{ExpiresAt: until},
 						config: Config{Protocol: protocol, MaxConnections: 1}, warm: use,
 						active: make(map[*connectorUse]struct{}), refill: make(chan struct{}, 1)}
@@ -96,6 +144,7 @@ func TestConnectorCompletionFollowsReturnDeliveryNotRequestFIN(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
+					finishProducer()
 					select {
 					case <-done:
 						if (copyErr != nil) != (failure != "completed") || failure == "cleanup" && !errors.Is(copyErr, cleanup) {
@@ -104,7 +153,18 @@ func TestConnectorCompletionFollowsReturnDeliveryNotRequestFIN(t *testing.T) {
 					case <-ctx.Done():
 						t.Fatal("raw forwarding did not join", ctx.Err())
 					}
-					if failure != "completed" {
+					if failure == "remote-cleanup" {
+						if !errors.Is(copyErr, tunnel.ErrConnectorTerminalFailed) {
+							t.Fatal("remote joined failure was hidden from the visitor", copyErr)
+						}
+						p.mu.Lock()
+						ownerErr := p.useErr
+						p.mu.Unlock()
+						if ownerErr != nil {
+							t.Fatal("observed visitor result was charged to owner cleanup", ownerErr)
+						}
+					}
+					if failure != "completed" && failure != "remote-cleanup" {
 						select {
 						case receipt := <-completed:
 							t.Fatal("failed return delivery sent a completion receipt", receipt)

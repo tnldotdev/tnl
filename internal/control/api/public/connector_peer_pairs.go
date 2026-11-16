@@ -197,8 +197,24 @@ func (h *handler) ListConnectorPeerPairs(w http.ResponseWriter, r *http.Request,
 	}
 	result := controlv1.ConnectorPeerPairCandidates{Items: make([]controlv1.ConnectorPeerPairCandidate, 0, len(page.Items))}
 	for _, item := range page.Items {
-		candidate := controlv1.ConnectorPeerPairCandidate{PairId: item.PairID, DeliveryGeneration: item.DeliveryGeneration}
-		if item.OwnerAuthority != nil {
+		candidate := controlv1.ConnectorPeerPairCandidate{PairId: item.PairID, DeliveryGeneration: item.DeliveryGeneration,
+			Disposition: controlv1.ConnectorPeerPairDispositionCandidate, OwnerRevision: item.OwnerRevision}
+		if item.Retired {
+			if item.OwnerRevision != 2 || item.Retirement == nil || item.OwnerAuthority != nil {
+				writeProblem(w, http.StatusInternalServerError, controlv1.Internal, "invalid connector pair retirement observation")
+				return
+			}
+			candidate.Disposition = controlv1.ConnectorPeerPairDispositionRetired
+			candidate.Retirement = &controlv1.ConnectorPeerPairRetirementObservation{
+				ObservedAt: item.Retirement.ObservedAt, RetiredAt: item.Retirement.RetiredAt, RetainedUntil: item.Retirement.RetainedUntil}
+			if candidate.Retirement.Validate() != nil {
+				writeProblem(w, http.StatusInternalServerError, controlv1.Internal, "invalid connector pair retirement observation")
+				return
+			}
+		} else if item.OwnerRevision != 1 || item.Retirement != nil {
+			writeProblem(w, http.StatusInternalServerError, controlv1.Internal, "invalid connector pair candidate")
+			return
+		} else if item.OwnerAuthority != nil {
 			candidate.OwnerAuthority = &controlv1.ConnectorPeerPairOwnerAuthority{ObservedAt: item.OwnerAuthority.ObservedAt, ExpiresAt: item.OwnerAuthority.ExpiresAt}
 		}
 		result.Items = append(result.Items, candidate)

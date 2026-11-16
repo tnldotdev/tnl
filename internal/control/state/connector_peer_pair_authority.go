@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"strings"
@@ -15,6 +16,9 @@ import (
 // authenticated pair creation. relay and publisher contexts are not human proof.
 // callers hold the service admission and pair locks through key delivery.
 func connectorPeerPairSubjectKey(ctx context.Context, tx pgx.Tx, pair controlstatedb.ControlConnectorPeerPair, now time.Time) (VisitorSubject, ed25519.PublicKey, time.Time, error) {
+	if !connectorPeerPairUnretired(pair) {
+		return VisitorSubject{}, nil, time.Time{}, ErrServiceAccess
+	}
 	subject := VisitorSubject{Kind: pair.SubjectKind}
 	var parentUntil time.Time
 	switch subject.Kind {
@@ -53,7 +57,7 @@ func connectorPeerPairSubjectKey(ctx context.Context, tx pgx.Tx, pair controlsta
 	if !parentUntil.IsZero() {
 		until = minTime(until, parentUntil)
 	}
-	if !until.After(now) {
+	if !until.After(now) || len(pair.OwnerPublicKey) != ed25519.PublicKeySize || !bytes.Equal(key, pair.OwnerPublicKey) {
 		return VisitorSubject{}, nil, time.Time{}, ErrServiceAccess
 	}
 	return subject, key, until, nil

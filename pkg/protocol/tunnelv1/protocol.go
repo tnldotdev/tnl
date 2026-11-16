@@ -357,6 +357,13 @@ func readFramePayload(reader io.Reader, limit int) ([]byte, error) {
 	}
 	payload := make([]byte, size)
 	if _, err := io.ReadFull(reader, payload); err != nil {
+		// a consumed nonzero header makes payload EOF a truncated frame, not
+		// the clean boundary before a next header. retain independent causes.
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		} else if errors.Is(err, io.EOF) {
+			err = errors.Join(io.ErrUnexpectedEOF, err)
+		}
 		return nil, err
 	}
 	return payload, nil

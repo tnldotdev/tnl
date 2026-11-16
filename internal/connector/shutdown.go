@@ -3,23 +3,36 @@ package connector
 import (
 	"context"
 	"errors"
+	"io"
 	"sync"
 
 	"github.com/tnldotdev/tnl/internal/connector/workload"
 )
 
 func (b *connectorConnectionBackend) Close(ctx context.Context) error {
+	// all callers join the first synchronous cleanup and retain its result.
+	// later cancellation cannot retroactively change completed cleanup.
+	b.closeOnce.Do(func() { b.closeErr = b.close(ctx) })
+	return b.closeErr
+}
+
+func (b *connectorConnectionBackend) close(ctx context.Context) error {
 	var result error
 	b.mu.Lock()
 	b.closed = true
-	b.cleanupContext = ctx
+	if b.cleanupContext == nil {
+		b.cleanupContext = ctx
+	} else {
+		ctx = b.cleanupContext
+	}
 	b.publishLocked()
 	if b.cancel != nil {
 		b.cancel()
 	}
+	var listeners []io.Closer
 	for _, owner := range b.listeners {
 		if owner.listener != nil {
-			result = errors.Join(result, owner.listener.Close())
+			listeners = append(listeners, owner.listener)
 		}
 	}
 	clients := []*workload.Client{b.workload}
@@ -52,6 +65,11 @@ func (b *connectorConnectionBackend) Close(ctx context.Context) error {
 		cleanup.Go(func() { revoke(client) })
 	}
 	cleanup.Go(func() {
+		for _, listener := range listeners {
+			add(listener.Close())
+		}
+	})
+	cleanup.Go(func() {
 		b.operations.Wait()
 		// an exchange may have committed just as shutdown canceled its request.
 		b.mu.Lock()
@@ -75,16 +93,9 @@ func (b *connectorConnectionBackend) Close(ctx context.Context) error {
 			add(b.human.Close())
 		}
 	})
-	done := make(chan struct{})
-	go func() { cleanup.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-ctx.Done():
-		resultsMu.Lock()
-		result = errors.Join(result, ctx.Err())
-		resultsMu.Unlock()
-	}
+	// cancellation bounds the operations; it does not prove they have joined.
+	cleanup.Wait()
 	resultsMu.Lock()
 	defer resultsMu.Unlock()
-	return result
+	return errors.Join(result, context.Cause(ctx))
 }

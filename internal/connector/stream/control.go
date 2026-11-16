@@ -102,6 +102,11 @@ func (c *controlAdapter) RebindConnectorPeerPair(ctx context.Context, service, p
 	return c.client.RebindDeviceConnectorPeerPair(ctx, service, pair, device.Subject.DeviceID, body)
 }
 
+// retirement uses only the already-captured exact proof, not current sign-in.
+func (c *controlAdapter) RetireConnectorPeerPair(ctx context.Context, service, pair string, body controlv1.ConnectorPeerPairRetireRequest) (controlv1.ConnectorPeerPairRetirement, error) {
+	return c.client.RetireConnectorPeerPair(ctx, service, pair, body)
+}
+
 func (c *controlAdapter) VisitorPermission(ctx context.Context, service string) (controlv1.VisitorTokenResponse, error) {
 	device, err := c.ConnectorSigner(ctx, c.identityID)
 	if err != nil {

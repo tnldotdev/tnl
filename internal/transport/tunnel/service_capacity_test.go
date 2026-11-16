@@ -43,9 +43,10 @@ func TestServiceCapacityAcknowledgesOnlyRegisteredStreamOnce(t *testing.T) {
 	}
 	defer release()
 	wrong := header
-	wrong.ConnectionAssignmentRevision++
-	if err := client.RequestServiceCapacity(tunnelContext(t), wrong); err == nil {
-		t.Fatal("capacity request accepted another assignment")
+	wrong.ConnectionAssignmentRevision--
+	var rejected *ProtocolError
+	if err := client.RequestServiceCapacity(tunnelContext(t), wrong); !errors.As(err, &rejected) || rejected.Code != tunnelv1.StaleConnectionAssignment {
+		t.Fatal("capacity request lost the exact live assignment fence", err)
 	}
 	if calls.Load() != 0 {
 		t.Fatal("another assignment consumed capacity")
@@ -59,8 +60,14 @@ func TestServiceCapacityAcknowledgesOnlyRegisteredStreamOnce(t *testing.T) {
 		t.Fatal("duplicate request reserved capacity again", calls.Load())
 	}
 	release()
-	if err := client.RequestServiceCapacity(tunnelContext(t), header); err == nil {
-		t.Fatal("closed visitor still reserved capacity")
+	for range 2 {
+		var rejected *ProtocolError
+		if err := client.RequestServiceCapacity(tunnelContext(t), header); !errors.As(err, &rejected) || rejected.Code != tunnelv1.Unavailable {
+			t.Fatal("closed visitor did not retain exact unavailable outcome", err)
+		}
+	}
+	if calls.Load() != 1 || client.Err() != nil || server.Err() != nil {
+		t.Fatal("closed visitor changed capacity or the healthy physical session", calls.Load(), client.Err(), server.Err())
 	}
 }
 

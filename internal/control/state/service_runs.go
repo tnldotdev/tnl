@@ -23,6 +23,64 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 	if _, err := checkedServiceRunBinding(service, id, number); err != nil || !servicePublisherSelectionMatches(publisher, service) {
 		return result, ErrServiceAccess
 	}
+	first, err := d.startServiceRunAttempt(ctx, service, id, number, publisher, clock)
+	// the attempt's rollback has joined before this decision. no publisher,
+	// service, placement or reservation lock crosses into system cleanup.
+	if !serviceRunCapacityOnly(err) || len(first.capacityRelays) == 0 {
+		return first.ServiceRunState, err
+	}
+	if _, cleanupErr := d.expireServiceRunCandidates(ctx, clock, first.capacityRelays); cleanupErr != nil {
+		return result, errors.Join(err, cleanupErr)
+	}
+	// retry only this preparation, with the same entry clock and issuance
+	// budget. a busy candidate can leave the original capacity denial intact.
+	retried, err := d.startServiceRunAttempt(ctx, service, id, number, publisher, clock)
+	return retried.ServiceRunState, err
+}
+
+type serviceRunStartAttempt struct {
+	ServiceRunState
+	capacityRelays []string
+}
+
+// capacity is the only retryable start outcome. a joined rollback or SQL error
+// must not gain system cleanup authority just by containing a capacity sentinel.
+func serviceRunCapacityOnly(err error) bool {
+	var insufficient, capacity int
+	var inspect func(error) bool
+	inspect = func(cause error) bool {
+		switch cause {
+		case ErrInsufficientRelayServices:
+			insufficient++
+			return true
+		case errRelayPlacementCapacity:
+			capacity++
+			return true
+		case nil:
+			return false
+		}
+		if joined, ok := cause.(interface{ Unwrap() []error }); ok {
+			children := joined.Unwrap()
+			if len(children) == 0 {
+				return false
+			}
+			for _, child := range children {
+				if !inspect(child) {
+					return false
+				}
+			}
+			return true
+		}
+		if wrapped, ok := cause.(interface{ Unwrap() error }); ok {
+			return inspect(wrapped.Unwrap())
+		}
+		return false
+	}
+	return inspect(err) && insufficient == 1 && capacity == 1
+}
+
+func (d *Database) startServiceRunAttempt(ctx context.Context, service, id string, number int64, publisher PublisherIdentity, clock authorizationClock) (result serviceRunStartAttempt, retErr error) {
+	now := clock.entered
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
@@ -46,7 +104,7 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 	if run.RunNumber != number || run.PublisherIdentityID != publisher.ID || run.PublisherGrantID != publisher.GrantID || run.PublisherKeyID != publisher.KeyID || run.ClosedAt.Valid || len(run.CertificateIdentifiers) == 0 || !run.PublisherExpiresAt.Time.After(clock.current()) {
 		return result, ErrServiceAccess
 	}
-	if run.RequirePostQuantum != endpoint.RequirePostQuantum {
+	if run.Protocol != endpoint.Protocol || run.RequirePostQuantum != endpoint.RequirePostQuantum {
 		return result, ErrServiceAccess
 	}
 	prepared := serviceRunLifecycleState(run.State) == serviceRunPrepared
@@ -86,6 +144,26 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 		}
 		placements, err := selectRelayServicePlacements(ctx, q, clock.current(), run.PreferredRegions...)
 		if err != nil {
+			if serviceRunCapacityOnly(err) {
+				// reuse placement's eligibility owner under the locks already
+				// held by this attempt; callers cannot supply these service IDs.
+				eligible, _, lookupErr := availableRelayServicePlacements(ctx, q, clock.current())
+				if lookupErr != nil {
+					return result, errors.Join(err, lookupErr)
+				}
+				for _, relay := range eligible {
+					result.capacityRelays = append(result.capacityRelays, relay.relayServiceID)
+				}
+				// a placement wait spends the original authority and issuance
+				// budgets even when no slot was available. an expired caller
+				// must not turn that capacity miss into system cleanup.
+				if _, permissionErr := serviceRunPublisherPermission(ctx, tx, run, clock.current()); permissionErr != nil {
+					return result, errors.Join(err, permissionErr)
+				}
+				if !until.After(clock.current()) {
+					return result, errors.Join(err, ErrServiceAccess)
+				}
+			}
 			return result, err
 		}
 		if err = insertServiceRunSlots(ctx, q, seed, run, placements, now); err != nil {
@@ -120,7 +198,7 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 	if !until.After(clock.current()) || !run.PublisherExpiresAt.Time.After(clock.current()) || prepared && !run.PreparationExpiresAt.Time.After(clock.current()) {
 		return result, ErrServiceAccess
 	}
-	result = ServiceRunState{ServiceID: service, RunID: id, RunNumber: number, Token: token.String(), State: run.State, ExpiresAt: until, Connections: connections}
+	result.ServiceRunState = ServiceRunState{ServiceID: service, RunID: id, RunNumber: number, Token: token.String(), State: run.State, ExpiresAt: until, Connections: connections}
 	result.VisitorSourceKey, err = visitortoken.ServiceVisitorSourceKey(digest[:], id, uint64(number))
 	if err != nil {
 		return result, err

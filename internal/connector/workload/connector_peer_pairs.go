@@ -56,3 +56,8 @@ func (c *Client) RebindConnectorPeerPair(ctx context.Context, service, pair stri
 	}
 	return c.control.RebindWorkloadConnectorPeerPair(ctx, service, pair, r.Credential, body)
 }
+
+// revocation and lease expiry do not erase the original pair's cleanup proof.
+func (c *Client) RetireConnectorPeerPair(ctx context.Context, service, pair string, body controlv1.ConnectorPeerPairRetireRequest) (controlv1.ConnectorPeerPairRetirement, error) {
+	return c.control.RetireConnectorPeerPair(ctx, service, pair, body)
+}

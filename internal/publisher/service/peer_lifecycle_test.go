@@ -126,7 +126,7 @@ func TestConnectorPeerCloseKeepsPendingChargeUntilPhysicalCloseJoins(t *testing.
 	go func() {
 		served <- serveConnectorInner(ctx, p, &heldConnectorSessionClose{Session: server, entered: entered, release: release})
 	}()
-	connectorControl(t, ctx, client)
+	connectorControl(t, ctx, client, p)
 	stream, err := client.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -291,7 +291,7 @@ func TestConnectorPeerServingOwnsFixedCarriersAndRetainedInnerSession(t *testing
 		t.Fatal(err)
 	}
 	defer inner.Close()
-	connectorControl(t, ctx, inner)
+	connectorControl(t, ctx, inner, p)
 	stream, err := inner.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)

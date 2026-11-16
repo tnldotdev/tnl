@@ -241,6 +241,9 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	}
 	if err == nil {
 		checked := checkedNow()
+		if !connectorPeerPairUnretired(row) || !bytes.Equal(row.OwnerPublicKey, key) {
+			return ConnectorPeerPair{}, ErrServiceAccess
+		}
 		var previous [2]ConnectorPeerPairRelay
 		if row.ServiceID != r.ServiceID || row.ServiceRunID != r.ServiceRunID || row.RunNumber != r.RunNumber || row.PublisherIdentityID != r.PublisherIdentityID ||
 			json.Unmarshal(row.Slots, &previous) != nil || row.SubjectKind != subject.Kind || row.SubjectID != connectorPairSubjectID(subject) {
@@ -354,7 +357,7 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 			row, err = q.InsertConnectorPeerPair(ctx, controlstatedb.InsertConnectorPeerPairParams{
 				ID: id, ServiceID: r.ServiceID, ServiceRunID: run.ID, RunNumber: run.RunNumber, PublisherIdentityID: run.PublisherIdentityID,
 				SubjectKind: string(subject.Kind), SubjectID: connectorPairSubjectID(subject), IdempotencyKey: r.IdempotencyKey,
-				ParentControlSessionID: parentSession, OwnerKey: ownerKey,
+				ParentControlSessionID: parentSession, OwnerKey: ownerKey, OwnerPublicKey: bytes.Clone(key),
 				RequestDigest: requestDigest[:], KeyDigest: digest[:], KeyCiphertext: sealed, DeliveryID: deliveryID[:], StorageKeyID: d.storageKey.CurrentID(),
 				Slots: encoded, Now: timestamptz(now), RequestAt: timestamptz(requestAt), ExpiresAt: timestamptz(deadline),
 			})

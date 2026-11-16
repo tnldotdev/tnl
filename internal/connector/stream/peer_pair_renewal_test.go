@@ -24,7 +24,7 @@ func (c renewalControl) RenewConnectorPeerPair(ctx context.Context, service stri
 func TestConnectorRefreshRenewsPinnedPairWithoutReselectionOrPermissionRPC(t *testing.T) {
 	f := newConnectorFixture(t, "quic")
 	var selections, permissions, renewals atomic.Int64
-	control, err := NewControlWithConfig(ControlConfig{Signer: f.ConnectorSigner, Pair: f.PrepareConnectorPeerPair, RebindPair: f.RebindConnectorPeerPair,
+	control, err := NewControlWithConfig(ControlConfig{Signer: f.ConnectorSigner, Pair: f.PrepareConnectorPeerPair, RebindPair: f.RebindConnectorPeerPair, RetirePair: f.RetireConnectorPeerPair,
 		Resolve: func(ctx context.Context, service string) (Run, error) {
 			if selections.Add(1) != 1 {
 				return Run{}, ErrServiceConnection
@@ -52,7 +52,7 @@ func TestConnectorRefreshRenewsPinnedPairWithoutReselectionOrPermissionRPC(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer p.Close(context.WithoutCancel(t.Context()))
 	p.mu.Lock()
 	// the same publisher report must not recover time already spent by its
 	// first observation, even when the later control reply has less transit.

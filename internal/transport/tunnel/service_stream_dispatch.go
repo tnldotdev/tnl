@@ -154,7 +154,7 @@ func (d *ServiceStreamDispatcher) release(stream muxsession.Stream, closeStream 
 // retain owned transport and physical-close failures, not malformed visitor input
 // or pure expected shutdown. one matching cause cannot hide a joined failure.
 func (d *ServiceStreamDispatcher) recordError(err error) error {
-	if err == nil || failure.Only(err, net.ErrClosed) || failure.Only(err, muxsession.ErrClosed) ||
+	if err == nil || muxsession.NormalSessionCloseOnly(err) ||
 		d.ctx.Err() != nil && (failure.Only(err, context.Cause(d.ctx)) || failure.Only(err, d.ctx.Err())) {
 		return nil
 	}
@@ -209,7 +209,15 @@ func (d *ServiceStreamDispatcher) classify(stream muxsession.Stream) {
 		return
 	}
 	n := binary.BigEndian.Uint32(prefix[:])
-	if n == 0 || n > tunnelv1.MaxServiceHeaderBytes {
+	if n == 0 {
+		if err := stream.SetWriteDeadline(time.Now().Add(serviceDispatchTimeout)); err != nil {
+			d.recordError(err)
+			return
+		}
+		d.recordError(tunnelv1.WriteReturnFrame(stream, tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnRejected, Code: tunnelv1.InvalidMessage}))
+		return
+	}
+	if n > tunnelv1.MaxServiceHeaderBytes {
 		return
 	}
 	select {

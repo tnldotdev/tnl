@@ -340,9 +340,8 @@ func (d *Database) GetDeploymentPublisherAssignments(ctx context.Context, token 
 			}
 			return result, publisherLookupError(err, ErrDeploymentPublisher)
 		}
-		// public reachability belongs to control's endpoint. changing it must
-		// not replace a publisher or an independently authorized connector.
-		configuration.Public = nil
+		// validated endpoint changes do not replace the serving worker.
+		configuration = appliedPublicationConfiguration(configuration)
 		a := DeploymentPublisherServiceAssignment{Service: s.Service, ServiceID: s.ServiceID.String, GrantID: grant, Configuration: configuration}
 		if err = tx.QueryRow(ctx, `SELECT trust_revision FROM control.services WHERE id=$1 AND enabled AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>$2)`, a.ServiceID, now).Scan(&a.TrustRevision); err != nil {
 			return result, publisherLookupError(err, ErrDeploymentPublisher)

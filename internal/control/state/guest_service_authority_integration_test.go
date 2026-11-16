@@ -427,6 +427,8 @@ func TestIntegrationGuestServiceRejectsExpiryDuringDatabaseWait(t *testing.T) {
 				continue
 			}
 			t.Run(operation+"/"+boundary, func(t *testing.T) {
+				// each case owns its database and fixed expiry.
+				t.Parallel()
 				f, guest := guestAuthorityFixture(t, false)
 				d := f.database
 				ctx, cancel := context.WithTimeout(f.ctx, 15*time.Second)

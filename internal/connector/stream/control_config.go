@@ -14,6 +14,7 @@ type ControlConfig struct {
 	Pair       func(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error)
 	RenewPair  func(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error)
 	RebindPair func(context.Context, string, string, controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error)
+	RetirePair func(context.Context, string, string, controlv1.ConnectorPeerPairRetireRequest) (controlv1.ConnectorPeerPairRetirement, error)
 	Permission func(context.Context, string) (controlv1.VisitorTokenResponse, error)
 	Close      func(context.Context) error
 }
@@ -24,7 +25,7 @@ func (ControlConfig) GoString() string { return "private connector control confi
 type configuredControl struct{ config ControlConfig }
 
 func NewControlWithConfig(config ControlConfig) (Control, error) {
-	if config.Signer == nil || config.Resolve == nil || config.Pair == nil || config.RenewPair == nil || config.RebindPair == nil || config.Permission == nil || config.Close == nil {
+	if config.Signer == nil || config.Resolve == nil || config.Pair == nil || config.RenewPair == nil || config.RebindPair == nil || config.RetirePair == nil || config.Permission == nil || config.Close == nil {
 		return nil, ErrServiceConnection
 	}
 	return &configuredControl{config}, nil
@@ -43,6 +44,9 @@ func (c *configuredControl) RenewConnectorPeerPair(ctx context.Context, id strin
 }
 func (c *configuredControl) RebindConnectorPeerPair(ctx context.Context, service, pair string, body controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
 	return c.config.RebindPair(ctx, service, pair, body)
+}
+func (c *configuredControl) RetireConnectorPeerPair(ctx context.Context, service, pair string, body controlv1.ConnectorPeerPairRetireRequest) (controlv1.ConnectorPeerPairRetirement, error) {
+	return c.config.RetirePair(ctx, service, pair, body)
 }
 func (c *configuredControl) VisitorPermission(ctx context.Context, id string) (controlv1.VisitorTokenResponse, error) {
 	return c.config.Permission(ctx, id)

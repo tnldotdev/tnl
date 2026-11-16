@@ -211,6 +211,20 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 				Endpoint:  &controlv1.ServiceEndpoint{Hostname: serviceNames[i] + ".example.test", Port: servicePorts[i]},
 				PairReady: &natives[service].Ready,
 			})
+		case strings.HasSuffix(r.URL.Path, "/retire") && strings.Contains(r.URL.Path, "/connector-peer-pairs/"):
+			parts := strings.Split(r.URL.Path, "/")
+			var body controlv1.ConnectorPeerPairRetireRequest
+			fixture := natives[parts[3]]
+			if fixture == nil || len(r.Header.Values("Authorization")) != 0 || json.NewDecoder(r.Body).Decode(&body) != nil {
+				w.WriteHeader(403)
+				return
+			}
+			receipt, err := fixture.Retire(r.Context(), parts[len(parts)-2], body)
+			if err != nil {
+				w.WriteHeader(403)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(receipt)
 		case strings.Contains(r.URL.Path, "/connector-peer-pairs"):
 			parts := strings.Split(r.URL.Path, "/")
 			var body controlv1.ConnectorPeerPairRequest

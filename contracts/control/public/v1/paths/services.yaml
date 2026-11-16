@@ -44,7 +44,7 @@ paths:
       operationId: listServices
       tags: [services]
       summary: List manageable saved services in one team
-      description: Team-owned saved services; never return target addresses or stream keys.
+      description: Administrator-only team inventory; exact member service ownership does not authorize this operation. Never returns target addresses or stream keys.
       security: [{ bearerAuth: [] }]
       parameters:
         [
@@ -66,7 +66,7 @@ paths:
       operationId: createService
       tags: [services]
       summary: Create one saved service with approved protocol and placement
-      description: Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. Creating a service does not start a service run or issue a certificate.
+      description: Save a service name, protocol, target TLS trust, and optional source-bound worktree placement. Ordinary creation requires current team administration. With reserve true, create or recover only the exact eligible standalone service in an authorized namespace, using current membership, company sign-in, domain, and stored ownership. Recovery never adopts a project, deployment, worktree, or allocated service and never replaces saved declaration or policy. Each idempotency key remains bound to its normalized request and service lifetime. Creating or recovering a service does not issue a publisher grant, start a service run, or issue a certificate.
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" }]
       requestBody:
@@ -79,6 +79,11 @@ paths:
             },
         }
       responses:
+        "200":
+          description: Exact existing standalone service recovered without changing its intent
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Service" }
         "201":
           {
             description: Saved service,

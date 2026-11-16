@@ -132,7 +132,7 @@ func TestOpenCancellationBeforeReadyStillCleansExactAllocation(t *testing.T) {
 	case setup = <-atReady:
 	case err := <-result:
 		t.Fatalf("publication stopped before readiness: %v", err)
-	case <-time.After(20 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("real publisher did not reach readiness")
 	}
 	cancel()

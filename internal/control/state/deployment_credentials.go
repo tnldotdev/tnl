@@ -62,6 +62,9 @@ func (s deploymentCredentialScope) publisherScope() PublisherScope {
 	return PublisherScope{TeamID: s.team, Kind: DeploymentCredentialGrant}
 }
 
+func (deploymentCredentialScope) protocolCapability() publisherProtocols { return nil }
+func (deploymentCredentialScope) teamOwnedDefault() bool                 { return true }
+
 // registration is manager-only. control stores the public key, not a second
 // bootstrap secret or signing engine. the original key recovers one fixed grant.
 func (d *Database) RegisterDeploymentCredential(ctx context.Context, r RegisterDeploymentCredentialRequest) (result DeploymentCredential, retErr error) {

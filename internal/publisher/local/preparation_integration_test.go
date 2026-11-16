@@ -27,6 +27,19 @@ import (
 
 func TestIntegrationAppPreparationReturnsSelectedEndpointWithoutPublication(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	for _, public := range []bool{false, true} {
+		name := "connector-only"
+		if public {
+			name = "public"
+		}
+		t.Run(name, func(t *testing.T) {
+			testAppPreparationSelectedEndpoint(t, public)
+		})
+	}
+}
+
+func testAppPreparationSelectedEndpoint(t *testing.T, public bool) {
+	t.Helper()
 	ctx := t.Context()
 	databaseURL := testutil.NewDisposablePostgresDatabaseURL(t, "app_preparation")
 	if err := controlstate.Migrate(ctx, databaseURL); err != nil {
@@ -70,7 +83,7 @@ func TestIntegrationAppPreparationReturnsSelectedEndpointWithoutPublication(t *t
 	t.Setenv("TNL_SERVER", "")
 	a, owner := testAppRuntime(t)
 	a.project.Config.Server = &remote.URL
-	a.project.Config.Services["web"] = config.Service{Public: new(true)}
+	a.project.Config.Services["web"] = config.Service{Public: new(public)}
 	a.project.Config.Services["api"] = config.Service{Target: &config.ServiceTarget{Type: "docker", Container: new("unrelated"), Port: new(443),
 		TLS: &config.TargetTLS{CA: new("system")}}}
 	if err := controltest.SaveSession(ctx, a.state, remote.URL, session); err != nil {
@@ -90,10 +103,14 @@ func TestIntegrationAppPreparationReturnsSelectedEndpointWithoutPublication(t *t
 		t.Fatal(err)
 	}
 	selected := assigned.Project.Services[web]
+	publicURL := ""
+	if public {
+		publicURL = "https://" + assigned.Hostname
+	}
 	if assigned.RegistrationID == "" || assigned.Service != web || assigned.Hostname == "" ||
-		assigned.PublicURL != "https://"+assigned.Hostname || len(assigned.Project.Services) != 1 ||
-		selected.URL != assigned.PublicURL || selected.Hostname != assigned.Hostname || !selected.Public || selected.Port != 443 {
-		t.Fatalf("app preparation lost its selected public endpoint: %+v", assigned)
+		assigned.PublicURL != publicURL || len(assigned.Project.Services) != 1 ||
+		selected.URL != "https://"+assigned.Hostname || selected.Hostname != assigned.Hostname || selected.Public != public || selected.Port != 443 {
+		t.Fatalf("app preparation lost its selected HTTP identity or exposure: %+v", assigned)
 	}
 	metadata, err := os.ReadFile(a.project.Root + "/.tnl/local/project.json")
 	if err != nil || bytes.Contains(metadata, []byte("invalid unrelated trust")) || bytes.Contains(metadata, []byte("unrelated")) {
@@ -108,17 +125,22 @@ func TestIntegrationAppPreparationReturnsSelectedEndpointWithoutPublication(t *t
 			service.Name != web && service.RegistrationID != "" {
 			t.Fatal("preparation registered or published an application", snapshot.Services)
 		}
+		if service.Name == web && service.PublicURL != publicURL {
+			t.Fatal("preparation confused a canonical URL with public reachability", service)
+		}
 	}
 	inspect, err := pgx.Connect(ctx, databaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer inspect.Close(context.Background())
-	var services, runs, publishers int
+	var services, runs, publishers, claims, publicEndpoints int
 	if err := inspect.QueryRow(ctx, `SELECT (SELECT count(*) FROM control.services),
-		(SELECT count(*) FROM control.service_runs), (SELECT count(*) FROM control.publisher_identities)`).Scan(&services, &runs, &publishers); err != nil ||
-		services != 1 || runs != 0 || publishers != 0 {
-		t.Fatalf("preparation realized unrelated work or started publication: services=%d runs=%d publishers=%d: %v", services, runs, publishers, err)
+		(SELECT count(*) FROM control.service_runs), (SELECT count(*) FROM control.publisher_identities),
+		(SELECT count(*) FROM control.service_port_claims), (SELECT count(*) FROM control.service_endpoints WHERE public)`).
+		Scan(&services, &runs, &publishers, &claims, &publicEndpoints); err != nil ||
+		services != 1 || runs != 0 || publishers != 0 || claims != 0 || publicEndpoints != map[bool]int{false: 0, true: 1}[public] {
+		t.Fatalf("preparation changed unrelated work or ingress capacity: services=%d runs=%d publishers=%d claims=%d public=%d: %v", services, runs, publishers, claims, publicEndpoints, err)
 	}
 	mu.Lock()
 	gotMutations := append([]string(nil), mutations...)

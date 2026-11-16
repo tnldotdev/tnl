@@ -2,8 +2,10 @@ package invocation
 
 import (
 	"context"
+	"errors"
 	"slices"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
@@ -20,7 +22,12 @@ func nativeIntegrationConfig(ctx context.Context, services publisherServices, ho
 	declaration := controlv1.ProjectServiceConfiguration{Target: "app",
 		Http: &controlv1.ProjectServiceHTTP{Access: access,
 			Limits: &controlv1.ProjectHTTPApplicationLimits{Concurrency: new(32)}}}
-	native, saved, err := selectNativeProjectPublisher(ctx, services, declaration)
+	native, saved, err := selectNativeProjectPublisher(ctx, services, declaration, func(_ controlv1.Service, current *controlv1.ProjectServiceConfiguration) (*controlv1.ProjectServiceConfiguration, error) {
+		if current == nil || current.Target != "app" {
+			return nil, failure.Wrap("prepare integration service", failure.ServerResponseInvalid, errors.New("saved service differs from the integration handler target"))
+		}
+		return &declaration, nil
+	})
 	if err != nil {
 		return publisherservice.RunConfig{}, controlv1.Service{}, err
 	}

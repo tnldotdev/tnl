@@ -318,7 +318,7 @@ func TestServiceHTTPAnonymousAccessKeepsPolicyAndCredentialFences(t *testing.T) 
 	}
 	apply(true, true, &ip)
 	// HTTP headers cannot replace the original source supplied by the relay.
-	request(http.Header{"X-Forwarded-For": {"203.0.113.1"}}, http.StatusServiceUnavailable)
+	request(http.Header{"X-Forwarded-For": {"203.0.113.1"}}, http.StatusForbidden)
 	apply(true, true, nil)
 	request(nil, http.StatusNoContent)
 	apply(false, true, nil)

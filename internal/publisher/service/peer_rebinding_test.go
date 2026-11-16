@@ -131,7 +131,13 @@ func TestConnectorPeerRebindingRetainsQUICApplicationTargetAndCapacity(t *testin
 		t.Fatal(err)
 	}
 	defer inner.Close()
-	control := connectorControl(t, ctx, inner)
+	control := connectorControl(t, ctx, inner, p)
+	defer func() {
+		// control owns its reader until joined, before inner session teardown.
+		if err := control.Close(); !connectorAdmissionRoutineError(err) {
+			t.Error("rebind control close", err)
+		}
+	}()
 	entry := opening("B")
 	traffic := openPermissionVisitor(t, ctx, inner, trust, entry)
 	a := permissionAdmission(t, b, p, entry.VisitorConnectionID)
@@ -263,7 +269,7 @@ func TestConnectorPeerPendingExpiryAndFailedStageRetireOnlyThatRevision(t *testi
 			if err := p.stageBinding(pending); err == nil {
 				t.Fatal("retired pending revision resumed")
 			}
-			candidate := controlv1.ConnectorPeerPairCandidate{PairId: pending.pairID, DeliveryGeneration: pending.generation}
+			candidate := controlv1.ConnectorPeerPairCandidate{PairId: pending.pairID, DeliveryGeneration: pending.generation, Disposition: controlv1.ConnectorPeerPairDispositionCandidate, OwnerRevision: 1}
 			if b.peerNeedsPreparation(candidate) {
 				t.Fatal("retired pending operation kept scheduling delivery work")
 			}

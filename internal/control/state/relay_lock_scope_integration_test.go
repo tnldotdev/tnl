@@ -127,15 +127,13 @@ func TestIntegrationRelayServiceWritersProgressDuringPublisherRetries(t *testing
 						if ctx.Err() != nil && failure.Only(err, ctx.Err()) {
 							return
 						}
-						if !ready && err == nil {
-							ready = true
-						} else if !ready || !failure.Only(err, ErrServiceAccess) {
+						if err != nil {
 							failed <- fmt.Errorf("readiness retry ready=%t: %v", ready, err)
 							return
 						}
-						// readiness is single-use in the service API. later real
-						// retries must take its guard and reject the ready slot,
-						// not silently accept an unrelated error.
+						ready = true
+						// exact readiness retries retain the same service/run/slot
+						// tuple while taking the relay service guard.
 						retries.Add(1)
 					}
 				})
@@ -168,8 +166,10 @@ func TestIntegrationRelayServiceWritersProgressDuringPublisherRetries(t *testing
 				var current bool
 				err := database.pool.QueryRow(t.Context(), `SELECT state='ready' AND session_open AND service_run_id=$2
 					AND service_id=$3 AND run_number=$4 AND connection_assignment_revision=$5
+					AND relay_service_id=$6 AND relay_id=$7 AND relay_run_id=$8 AND relay_lease_revision=$9
 					FROM control.service_connection_slots WHERE publisher_connection_id=$1`, connection.slot.PublisherConnectionID,
-					fixture.run.RunID, fixture.service.ID, fixture.run.RunNumber, connection.slot.Revision).Scan(&current)
+					fixture.run.RunID, fixture.service.ID, fixture.run.RunNumber, connection.slot.Revision,
+					connection.slot.RelayServiceID, connection.lease.RelayID, connection.lease.RelayRunID, int64(connection.lease.RelayLeaseRevision)).Scan(&current)
 				if err != nil || !current {
 					t.Fatalf("readiness retries changed the current slot: %v", err)
 				}

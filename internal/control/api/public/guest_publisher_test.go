@@ -127,7 +127,7 @@ func TestGuestEnrollmentPreservesStateAuthenticationAndAvailabilityDenials(t *te
 
 func TestPublisherGrantProjectionCarriesOnlyItsActualOwner(t *testing.T) {
 	for _, guest := range []bool{false, true} {
-		row := controlstatedb.ControlPublisherGrant{ID: "grant", Kind: "service", ServiceID: pgtype.Text{String: "service", Valid: true}}
+		row := controlstatedb.ControlPublisherGrant{ID: "grant", Kind: "service", ServiceID: pgtype.Text{String: "service", Valid: true}, Protocols: []string{"http"}}
 		owner, absent := "team_id", "guest_id"
 		if guest {
 			owner, absent = absent, owner

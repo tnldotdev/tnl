@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
@@ -81,7 +82,11 @@ func localHTTPPermission(request *http.Request, policy *visitorlease.Lease, rene
 	if !enabled {
 		return httpPermission{}, visitortoken.ErrPolicy
 	}
-	validHost := serviceendpoint.MatchesHTTPAuthority(view.Hostname, view.Port, request.Host) && request.Method != http.MethodConnect && !request.URL.IsAbs() && request.URL.Host == "" && request.TLS != nil && request.TLS.ServerName == view.Hostname
+	if request.TLS == nil {
+		return httpPermission{}, visitortoken.ErrBinding
+	}
+	hostname, nameErr := naming.CanonicalizeHostname(request.TLS.ServerName)
+	validHost := serviceendpoint.MatchesHTTPAuthority(view.Hostname, view.Port, request.Host) && request.Method != http.MethodConnect && !request.URL.IsAbs() && request.URL.Host == "" && nameErr == nil && hostname == view.Hostname
 	if !validHost {
 		return httpPermission{}, visitortoken.ErrBinding
 	}
@@ -177,6 +182,9 @@ func (p httpPermission) bind(policy *visitorlease.Lease, stop func()) (*visitorl
 func AuthorizeRequest(w http.ResponseWriter, r *http.Request, policy *visitorlease.Lease, tokens *Tokens) (Authorization, *Guard, *http.Request, error) {
 	permission, guard, guarded, err := authorizeHTTPRequest(w, r, policy, tokens)
 	if err != nil {
+		if permission.anonymous || permission.permission.Valid() {
+			err = diagnostic.Wrap(diagnostic.VisitorAccessDenied, err)
+		}
 		return Authorization{permission: permission.permission}, nil, nil, err
 	}
 	result := Authorization{permission: permission.permission}

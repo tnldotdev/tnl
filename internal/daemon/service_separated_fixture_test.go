@@ -52,6 +52,7 @@ type privateSeparatedFixture struct {
 	inspect                     *sql.DB
 	roots                       *tls.Config
 	controlConfig               daemonconfig.Config
+	serviceListeners            servicePortListeners
 	serviceHTTP                 *http.Client
 	identity                    serviceRuntimeIdentity
 	tcpAddresses, quicAddresses map[string]string
@@ -236,6 +237,7 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		f.tcpAddresses[address], f.quicAddresses[address] = f.sharedTCP, f.sharedQUIC
 		return f
 	}
+	f.serviceListeners = serviceListeners
 	for index := 0; index < 2; index++ {
 		f.startFixtureRelay(t, fmt.Sprintf("private-relay-%d", index))
 	}

@@ -268,8 +268,8 @@ func TestPrivateLifecycleDrainKeepsAdmittedStreamAndReleasesOnce(t *testing.T) {
 	if _, err := openPrivateLifecycle(ctx, c, header); !errors.Is(err, ErrDraining) {
 		t.Fatalf("draining open=%v", err)
 	}
-	if err := registry.insert(c); err == nil {
-		t.Fatal("draining registry accepted assignment")
+	if err := registry.insert(c); !errors.Is(err, ErrDraining) {
+		t.Fatalf("draining insert=%v", err)
 	}
 	if _, ok := registry.candidate(header, c.lease, time.Now()); ok {
 		t.Fatal("draining registry selected a publisher connection")

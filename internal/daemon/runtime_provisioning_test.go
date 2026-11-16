@@ -181,8 +181,8 @@ func traceRuntimeCertificateHTTP(t *testing.T, client *http.Client, start time.T
 
 // sample at 250ms while activating, logging only state transitions. this is a
 // test-only observer on the inspection connection, not a worker or metrics hook.
-// attempts/epochs retain evidence of short claims between samples. the timestamps
-// are database transition times; elapsed is the observation time.
+// attempts/epochs retain evidence of short claims between samples. order timestamps
+// are database transition times; observed_at also bounds endpoint DNS observations.
 func traceRuntimeCertificateState(t *testing.T, database *sql.DB, start time.Time) func() {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
@@ -199,10 +199,25 @@ func traceRuntimeCertificateState(t *testing.T, database *sql.DB, start time.Tim
 			}
 			sampleCtx, stop := context.WithTimeout(ctx, 2*time.Second)
 			rows, err := database.QueryContext(sampleCtx, `SELECT o.id, jsonb_build_object(
+				'service_id', s.service_id, 'run_id', s.id,
 				'hostname', s.certificate_hostname, 'state', o.state, 'created_at', o.created_at,
 				'updated_at', o.updated_at, 'available_at', o.available_at, 'attempts', o.attempts,
 				'claimed', o.work_owner IS NOT NULL, 'epoch', o.work_epoch,
 				'installed_at', o.installed_at, 'certificate_expires_at', s.certificate_expires_at, 'session_state', s.state,
+				'endpoint_revision', (SELECT endpoint_revision FROM control.services WHERE id=s.service_id),
+				'endpoint', (SELECT jsonb_build_object(
+					'hostname', endpoint.hostname, 'domain_id', endpoint.domain_id,
+					'public', endpoint.public, 'retired', endpoint.retired_at IS NOT NULL,
+					'pool_id', endpoint.ingress_pool_id,
+					'dns_state', endpoint.dns_state, 'dns_automation', endpoint.dns_automation,
+					'dns_revision', endpoint.dns_revision, 'dns_attempts', endpoint.dns_attempts,
+					'dns_available_at', endpoint.dns_available_at,
+					'dns_claimed', endpoint.dns_work_owner IS NOT NULL,
+					'dns_work_epoch', endpoint.dns_work_epoch,
+					'dns_work_expires_at', endpoint.dns_work_expires_at,
+					'dns_error_present', endpoint.dns_last_error IS NOT NULL)
+					FROM control.service_endpoints endpoint
+					WHERE endpoint.service_id=s.service_id AND endpoint.hostname=s.certificate_hostname),
 				'authorizations', (SELECT jsonb_agg(jsonb_build_object('state', a.state,
 					'updated_at', a.updated_at, 'presented_at', a.presented_at) ORDER BY a.id)
 					FROM control.acme_authorizations a WHERE a.order_id = o.id)
@@ -219,7 +234,7 @@ func traceRuntimeCertificateState(t *testing.T, database *sql.DB, start time.Tim
 						break
 					}
 					if previous[id] != state {
-						t.Logf("provision_state elapsed=%s issuance=%s current_ingresses=%d state=%s", time.Since(start), id, currentIngresses, state)
+						t.Logf("provision_state observed_at=%s elapsed=%s issuance=%s current_ingresses=%d state=%s", time.Now().UTC().Format(time.RFC3339Nano), time.Since(start), id, currentIngresses, state)
 						previous[id] = state
 					}
 				}

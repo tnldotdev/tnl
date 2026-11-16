@@ -8,12 +8,17 @@ import { assert, afterEach, expect, onTestFinished, test, vi } from "vitest";
 import * as z from "zod";
 import {
   createPreparedService,
+  parseAssignment,
   runtimeRequest,
   startRuntime,
 } from "../../dist/internal/publisher/app.js";
 import { TnlError } from "../../dist/errors.js";
 import { startTestBootstrap } from "../helpers/bootstrap.js";
-import { createProjectFixture, testPublicProject } from "../helpers/project.js";
+import {
+  createProjectFixture,
+  testPrivateAssignment,
+  testPublicProject,
+} from "../helpers/project.js";
 import { invocationIDSchema } from "../../dist/internal/values.js";
 import { parseEndpoint, type RuntimeEndpoint } from "../../dist/internal/publisher/local.js";
 import { withProcessEnvironment } from "../helpers/environment.js";
@@ -261,23 +266,124 @@ function assignment(registration = "a") {
   };
 }
 
+function deferredAssignment() {
+  return {
+    ...assignment(),
+    hostname: "",
+    public_url: "",
+    project: { namespace: "", services: {}, dev: true },
+  };
+}
+
+test("acquisition can acknowledge a registration before its selected endpoint exists", () => {
+  expect(parseAssignment(deferredAssignment())).toEqual({
+    registrationID: assignment().registration_id,
+    service: "api",
+    hostname: undefined,
+    publicURL: undefined,
+    project: { namespace: "", services: {}, dev: true },
+  });
+});
+
+test.each([
+  ["hostname without metadata", { hostname: "api.member.example" }],
+  ["public URL without hostname", { public_url: "https://api.member.example" }],
+  ["hidden selected endpoint", { project: testPrivateAssignment().project }],
+  ["secret acquisition field", { access_token: "private-secret" }],
+] as const)("rejects deferred acquisition with %s", (_name, change) => {
+  expect(() => parseAssignment({ ...deferredAssignment(), ...change })).toThrow(
+    expect.objectContaining({
+      code: "sdk.response_invalid",
+      message: expect.not.stringContaining("private-secret"),
+    }),
+  );
+});
+
 test("private HTTP preparation has no public address or browser-visible target", async () => {
+  const selected = testPrivateAssignment();
   const handle = await createPreparedService({ service: "api" }, "node", {
     start: async () => testEndpoint,
     request: async (_endpoint, operation) =>
       operation === "prepare"
         ? {
             ...assignment(),
-            hostname: "",
+            hostname: selected.hostname,
             public_url: "",
-            project: { namespace: "", services: {}, dev: true },
+            project: selected.project,
           }
         : undefined,
   });
-  expect(handle.hostname).toBeUndefined();
+  expect(handle.hostname).toBe(selected.hostname);
   expect(handle.publicURL).toBeUndefined();
-  expect(handle.services).toEqual({});
+  expect(handle.services).toEqual(selected.project.services);
+  expect(JSON.stringify(handle)).not.toMatch(
+    /target|owner|registration_id|capability|token|directory/,
+  );
   await handle.close();
+});
+
+test.each([
+  ["deferred acquisition shape at preparation", deferredAssignment()],
+  ["missing hostname", { hostname: "" }],
+  ["mismatched hostname", { hostname: "other.member.example" }],
+  ["private public URL", { public_url: "https://api.member.example" }],
+  ["secret assignment field", { access_token: "private-secret" }],
+  ["missing selected endpoint", { project: { namespace: "", services: {}, dev: true } }],
+  [
+    "mismatched metadata URL",
+    {
+      project: {
+        ...testPrivateAssignment().project,
+        services: {
+          api: {
+            ...testPrivateAssignment().project.services.api,
+            url: "https://other.member.example",
+          },
+        },
+      },
+    },
+  ],
+  [
+    "secret endpoint field",
+    {
+      project: {
+        ...testPrivateAssignment().project,
+        services: {
+          api: {
+            ...testPrivateAssignment().project.services.api,
+            target: "http://private-secret:3000",
+          },
+        },
+      },
+    },
+  ],
+  [
+    "zero HTTP port",
+    {
+      project: {
+        ...testPrivateAssignment().project,
+        services: { api: { ...testPrivateAssignment().project.services.api, port: 0 } },
+      },
+    },
+  ],
+  ["public endpoint without public URL", { project: testPublicProject(true) }],
+] as const)("rejects private preparation with %s", async (_name, change) => {
+  const selected = testPrivateAssignment();
+  await expect(
+    createPreparedService({ service: "api" }, "node", {
+      start: async () => testEndpoint,
+      request: async () => ({
+        ...assignment(),
+        hostname: selected.hostname,
+        public_url: "",
+        project: selected.project,
+        ...change,
+      }),
+    }),
+  ).rejects.toMatchObject({
+    code: "sdk.response_invalid",
+    message: expect.not.stringContaining("private-secret"),
+  });
 });
 
 test("preparation exposes only public metadata and registers an actual port-0 Node listener", async () => {

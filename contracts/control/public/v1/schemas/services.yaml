@@ -92,6 +92,10 @@ schemas:
     properties:
       team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
       name: { $ref: "../openapi.yaml#/components/schemas/ServiceName" }
+      reserve:
+        type: boolean
+        default: false
+        description: Create or recover one exact standalone service at the explicit domain and hostname, without reading team inventory. Requires a service-owned declaration and no worktree placement. Current members may reserve HTTP in their own namespace; shared names require current team administration. Recovery returns current intent without replacing it. This request flag does not select durable ownership, visitor permission, or publisher capability.
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }
       publisher_pool: { type: boolean, default: false }
@@ -258,7 +262,17 @@ schemas:
     type: object
     additionalProperties: false
     description: "Service identity, placement, and an optional run. Omits target trust, target addresses, credentials, and publisher HTTP limits."
-    required: [id, name, enabled, created_at, protocol, publisher_pool, trust_revision]
+    required:
+      [
+        id,
+        name,
+        enabled,
+        created_at,
+        protocol,
+        publisher_pool,
+        trust_revision,
+        require_post_quantum,
+      ]
     dependentRequired:
       service_run_id: [run_number]
       run_number: [service_run_id]
@@ -288,6 +302,7 @@ schemas:
         description: Current identity permission reason for the requested access path. Present in visitor inventory only; listing is not traffic authorization.
         x-go-type-skip-optional-pointer: true
       enabled: { type: boolean }
+      require_post_quantum: { type: boolean }
       endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       kubernetes_auth: { $ref: "../openapi.yaml#/components/schemas/KubernetesAuth" }

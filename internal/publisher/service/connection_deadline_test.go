@@ -70,7 +70,7 @@ func TestServiceConnectionDeadlineClosesSetupAndIdleVisitors(t *testing.T) {
 						defer close(done)
 						defer release()
 						defer server.Close()
-						_ = bound.serveBody(t.Context(), ref, server, header, nil, func(context.Context) error { return nil })
+						_ = bound.serveBody(t.Context(), ref, server, header, nil, func(context.Context) error { return nil }, nil)
 					}()
 					defer func() {
 						_ = visitor.Close()

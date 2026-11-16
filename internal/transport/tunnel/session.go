@@ -95,6 +95,9 @@ func DialConnector(ctx context.Context, transport muxsession.Session, hello tunn
 		return nil, tunnelv1.ConnectorPairLegAccepted{}, errors.New("tunnel: connector hello is required")
 	}
 	result := dial(ctx, transport, hello, expectedDeliveryID, true)
+	if result.cleanupErr != nil {
+		result.cleanupErr = &SessionCleanupError{Err: result.cleanupErr}
+	}
 	return result.session, result.receipt, errors.Join(result.err, result.cleanupErr)
 }
 
