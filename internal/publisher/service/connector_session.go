@@ -9,7 +9,6 @@ import (
 	"time"
 
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
@@ -299,6 +298,8 @@ type connectorAdmission struct {
 	audit      serviceaudit.Observation
 	completed  chan struct{}
 	complete   sync.Once
+	finishOnce sync.Once
+	finishErr  error
 }
 
 // the phase owns both capacity charges and the setup deadline's timer. retiring
@@ -372,7 +373,7 @@ func (p *PeerSession) reserve(caller context.Context, stream net.Conn) (*connect
 	if limit == 0 {
 		limit = 64
 	}
-	if caller.Err() != nil || !b.httpDrainUntil.IsZero() || !p.deliveryCurrentLocked() || b.connectorPending >= min(limit, 4096) || len(p.streams) >= maxConnectorPeerStreams {
+	if caller.Err() != nil || !b.drainUntil.IsZero() || !p.deliveryCurrentLocked() || b.connectorPending >= min(limit, 4096) || len(p.streams) >= maxConnectorPeerStreams {
 		return nil, ErrPrivateStream
 	}
 	life, cancel := context.WithCancel(p.ctx)
@@ -449,8 +450,6 @@ type connectorOwnedConn struct {
 	admission *connectorAdmission
 	prefix    *bytes.Reader
 	readMu    sync.Mutex
-	closeOnce sync.Once
-	closeErr  error
 }
 
 func (c *connectorOwnedConn) Read(p []byte) (int, error) {
@@ -463,46 +462,76 @@ func (c *connectorOwnedConn) Read(p []byte) (int, error) {
 }
 
 func (c *connectorOwnedConn) Close() error {
-	c.closeOnce.Do(func() {
-		a, b := c.admission, c.admission.peer.bound
-		b.mu.Lock()
-		until := b.httpDrainUntil
-		if until.IsZero() && b.httpDrainDuration > 0 {
-			select {
-			case <-b.prepared.serviceHTTPRequests.Completed():
-				until = time.Now().Add(b.httpDrainDuration)
-			default:
-			}
+	return c.admission.closeStream()
+}
+
+// finishDelivery runs after forwarding, sockets, and callbacks have joined,
+// before the stream owner stops admission. successful admissions retain capacity
+// and packet carriers until exact return-delivery proof, including before drain.
+func (a *connectorAdmission) finishDelivery(operation error) error {
+	a.finishOnce.Do(func() {
+		a.finishErr = a.closeStream()
+		if operation != nil || a.finishErr != nil {
+			return
 		}
-		graceful := b.prepared.managedProtocol == config.ProtocolHTTP && !until.IsZero()
-		if graceful {
-			authority, err := a.checkUseLocked(a.ctx)
-			graceful = err == nil
-			if authority.Before(until) {
-				until = authority
+		b := a.peer.bound
+		b.mu.Lock()
+		// snapshot current authority once. permission or policy renewal cannot
+		// extend a missing receipt's wait after application work has finished.
+		until, err := a.checkUseLocked(a.ctx)
+		started := b.drainStarted
+		if !b.drainUntil.IsZero() {
+			if b.drainUntil.Before(until) {
+				until = b.drainUntil
 			}
+			started = nil
 		}
 		b.mu.Unlock()
-		if graceful {
-			// a request FIN is not proof of return delivery. keep packet carriers
-			// until an explicit receipt on this exact peer's control stream, within
-			// the original drain and authority bounds. it grants no new access.
-			c.closeErr = c.CloseWrite()
-			if c.closeErr == nil {
-				timer := time.NewTimer(time.Until(until))
-				select {
-				case <-a.completed:
-				case <-a.ctx.Done():
-					c.closeErr = context.Cause(a.ctx)
-				case <-timer.C:
-					c.closeErr = context.DeadlineExceeded
+		if err != nil {
+			a.finishErr = errors.Join(err, context.Cause(a.ctx))
+			return
+		}
+		// a request FIN is not proof of return delivery. an exact receipt grants
+		// no access, renewal, or extension of this fixed completion deadline.
+		timer := time.NewTimer(time.Until(until))
+		defer timer.Stop()
+		for {
+			select {
+			case <-a.completed:
+				// receipt and drain can become ready together. enforce a published
+				// deadline even when select chooses the receipt before Started.
+				b.mu.Lock()
+				if published := b.drainUntil; !published.IsZero() && published.Before(until) {
+					until = published
 				}
-				timer.Stop()
+				b.mu.Unlock()
+				if cause := context.Cause(a.ctx); cause != nil {
+					a.finishErr = cause
+				} else if !time.Now().Before(until) {
+					a.finishErr = context.DeadlineExceeded
+				}
+				return
+			case <-a.ctx.Done():
+				a.finishErr = context.Cause(a.ctx)
+				return
+			case <-started:
+				// the run owner publishes its original deadline before this signal.
+				// late publication can only shorten the captured authority bound.
+				b.mu.Lock()
+				published := b.drainUntil
+				b.mu.Unlock()
+				if published.Before(until) {
+					until = published
+					timer.Reset(time.Until(until))
+				}
+				started = nil
+			case <-timer.C:
+				a.finishErr = context.DeadlineExceeded
+				return
 			}
 		}
-		c.closeErr = errors.Join(c.closeErr, a.closeStream())
 	})
-	return c.closeErr
+	return a.finishErr
 }
 func (c *connectorOwnedConn) CloseWrite() error {
 	if closer, ok := c.Conn.(interface{ CloseWrite() error }); ok {
@@ -661,7 +690,7 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 		return err
 	}
 	visitorCtx := observability.WithVisitor(observability.ExtractWireTrace(a.ctx, entry.TraceContext), entry.VisitorConnectionID)
-	return b.forwardManaged(visitorCtx, owned, servicestream.ConnectorVisitor{Admission: a, HTTPProof: a}, "")
+	return b.forwardManaged(visitorCtx, owned, servicestream.ConnectorVisitor{Admission: a, HTTPProof: a}, "", a.finishDelivery)
 }
 
 // dispatch never waits for policy installation or application IO. at most one

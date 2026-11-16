@@ -75,3 +75,41 @@ func TestInitialHeartbeatCancellationRetainsOnlyActualOperationAndCleanupFailure
 		})
 	}
 }
+
+func TestInitialPublisherAccessCancellationRetainsOnlyActualFailures(t *testing.T) {
+	for _, independent := range []bool{false, true} {
+		t.Run(map[bool]string{false: "canceled", true: "independent failure"}[independent], func(t *testing.T) {
+			config, state := lifecycleFixture(t)
+			entered := make(chan struct{})
+			cause := errors.New("independent access failure")
+			config.Access = func(ctx context.Context) (string, error) {
+				close(entered)
+				<-ctx.Done()
+				if independent {
+					return "", errors.Join(context.Cause(ctx), cause)
+				}
+				return "", context.Cause(ctx)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- Publish(ctx, config) }()
+			serviceHTTPAwait(t, entered)
+			cancel()
+			err := serviceHTTPAwait(t, done)
+			if !errors.Is(err, context.Canceled) || errors.Is(err, ErrPrivateStream) {
+				t.Fatal("access cancellation invented an invalid-stream failure", err)
+			}
+			if independent {
+				if !errors.Is(err, cause) {
+					t.Fatal("access cancellation hid an independent failure", err)
+				}
+			} else if !failure.Only(err, context.Canceled) {
+				t.Fatal("ordinary access cancellation acquired another failure", err)
+			}
+			if state.prepares != 0 || state.binds != 0 || state.closes != 0 {
+				t.Fatal("canceled access prepared, started, or closed a service run", state.prepares, state.binds, state.closes)
+			}
+		})
+	}
+}

@@ -21,7 +21,7 @@ import (
 
 func TestHTTPStreamDrainRejectsMismatchedFacts(t *testing.T) {
 	for _, mode := range []string{"handler", "proxy"} {
-		for _, fact := range []string{"signal_only", "deadline_only"} {
+		for _, fact := range []string{"signal_only", "deadline_only", "finish_only"} {
 			t.Run(mode+"/"+fact, func(t *testing.T) {
 				raw, visitor := net.Pipe()
 				defer raw.Close()
@@ -34,10 +34,15 @@ func TestHTTPStreamDrainRejectsMismatchedFacts(t *testing.T) {
 				drain := httpstream.Drain{}
 				if fact == "signal_only" {
 					drain.Started = make(chan struct{})
-				} else {
+				} else if fact == "deadline_only" {
 					drain.Deadline = func() time.Time {
 						deadlines.Add(1)
 						return time.Now().Add(time.Minute)
+					}
+				} else {
+					drain.Finish = func() error {
+						deadlines.Add(1)
+						return nil
 					}
 				}
 				handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { handlers.Add(1) })
@@ -167,6 +172,7 @@ func TestHTTPStreamDrainJoinsFinalFraming(t *testing.T) {
 				certificate := visitorfixture.Certificate(t, "service.example.test")
 				secured := tls.Server(wire, &tls.Config{Certificates: []tls.Certificate{certificate}, NextProtos: []string{"h2", "http/1.1"}})
 				started, returned := make(chan struct{}), make(chan struct{})
+				var deliveries atomic.Int32
 				until := time.Now().Add(time.Minute)
 				served := make(chan error, 1)
 				go func() {
@@ -181,7 +187,10 @@ func TestHTTPStreamDrainJoinsFinalFraming(t *testing.T) {
 						wire.armed.Store(true)
 						close(started)
 						close(returned)
-					}), httpstream.Drain{Started: started, Deadline: func() time.Time { return until }})
+					}), httpstream.Drain{Started: started, Deadline: func() time.Time { return until }, Finish: func() error {
+						deliveries.Add(1)
+						return nil
+					}})
 				}()
 				transport := &http.Transport{ForceAttemptHTTP2: h2,
 					TLSClientConfig: &tls.Config{RootCAs: visitorfixture.Roots(t, certificate)},
@@ -213,10 +222,17 @@ func TestHTTPStreamDrainJoinsFinalFraming(t *testing.T) {
 					t.Fatal("returned at handler completion before final framing flushed", err)
 				default:
 				}
+				if deliveries.Load() != 0 {
+					t.Fatal("delivery finishing began before final HTTP framing joined")
+				}
 				release()
 				<-replied
 				if err := <-served; err != nil {
 					t.Fatal(err)
+				}
+				synctest.Wait()
+				if deliveries.Load() != 1 {
+					t.Fatal("HTTP delivery finishing did not run exactly once", deliveries.Load())
 				}
 			})
 		})
@@ -250,6 +266,8 @@ func TestHTTPStreamDrainDeadlineAndCancellationJoinHandlers(t *testing.T) {
 					release := sync.OnceFunc(func() { close(finish) })
 					defer release()
 					started := make(chan struct{})
+					cleanup := errors.New("independent joined delivery cleanup failed")
+					var deliveries atomic.Int32
 					until := time.Now().Add(time.Second)
 					served := make(chan error, 1)
 					go func() {
@@ -258,7 +276,10 @@ func TestHTTPStreamDrainDeadlineAndCancellationJoinHandlers(t *testing.T) {
 							<-r.Context().Done()
 							close(canceled)
 							<-finish
-						}), httpstream.Drain{Started: started, Deadline: func() time.Time { return until }})
+						}), httpstream.Drain{Started: started, Deadline: func() time.Time { return until }, Finish: func() error {
+							deliveries.Add(1)
+							return cleanup
+						}})
 					}()
 					transport := &http.Transport{ForceAttemptHTTP2: h2,
 						TLSClientConfig: &tls.Config{RootCAs: visitorfixture.Roots(t, certificate)},
@@ -287,12 +308,23 @@ func TestHTTPStreamDrainDeadlineAndCancellationJoinHandlers(t *testing.T) {
 						t.Fatal("shutdown returned before canceled handler joined", err)
 					default:
 					}
+					if deliveries.Load() != 0 {
+						t.Fatal("delivery finishing raced an unjoined HTTP handler")
+					}
 					release()
 					err := <-served
 					if !revoke && !errors.Is(err, context.DeadlineExceeded) {
 						t.Fatal("bounded drain did not report its deadline", err)
 					}
+					if !errors.Is(err, cleanup) || deliveries.Load() != 1 {
+						t.Fatal("shutdown lost its joined delivery cleanup failure", err, deliveries.Load())
+					}
 					<-replied
+					cancel()
+					synctest.Wait()
+					if deliveries.Load() != 1 {
+						t.Fatal("owner cancellation restarted delivery after return")
+					}
 				})
 			})
 		}

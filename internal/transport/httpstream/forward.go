@@ -30,6 +30,9 @@ var ErrClosed = errors.New("selected HTTP upstream connection is closed")
 type Drain struct {
 	Started  <-chan struct{}
 	Deadline func() time.Time
+	// Finish joins delivery after HTTP workers and close callbacks return.
+	// it does not own net.Conn.Close or grant more serving authority.
+	Finish func() error
 }
 
 func Forward(ctx context.Context, client, upstream net.Conn, target *url.URL) error {
@@ -509,7 +512,7 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 // connection. TLS negotiation is preserved; no target socket or local listener
 // is created. completion joins HTTP/1 upgrades and concurrent HTTP/2 handlers.
 func ServeHandler(ctx context.Context, client net.Conn, handler http.Handler, drain Drain) (result error) {
-	if client == nil || handler == nil || (drain.Started == nil) != (drain.Deadline == nil) {
+	if client == nil || handler == nil || (drain.Started == nil) != (drain.Deadline == nil) || drain.Finish != nil && drain.Started == nil {
 		return ErrClosed
 	}
 	life, cancel := context.WithCancel(ctx)
@@ -525,6 +528,9 @@ func ServeHandler(ctx context.Context, client net.Conn, handler http.Handler, dr
 		// listener cleanup must unblock the connection before joining.
 		workers.Wait()
 		callbacks.Wait()
+		if drain.Finish != nil {
+			result = errors.Join(result, drain.Finish())
+		}
 	}()
 	listener := &singleListener{connection: client, done: make(chan struct{})}
 	handler = Requests(observability.PublisherHTTP(handler), RequestBodyTimeout)

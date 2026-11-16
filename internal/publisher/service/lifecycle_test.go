@@ -93,7 +93,7 @@ func (f *lifecycleControl) GetPublisherService(context.Context, string, string) 
 	if f.approved != nil {
 		return *f.approved, nil
 	}
-	return controlv1.Service{Id: f.prep.ServiceId, TeamId: f.prep.TeamId, Enabled: true, Protocol: controlv1.ServiceProtocol("tcp"), TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: f.prep.Hostname, Port: 25443}}, nil
+	return controlv1.Service{Id: f.prep.ServiceId, TeamId: f.prep.TeamId, Enabled: true, Protocol: controlv1.ServiceProtocol("tcp"), TrustRevision: 1, EndpointRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: f.prep.Hostname, Port: 25443}}, nil
 }
 
 func (f *lifecycleControl) PrepareServiceRun(_ context.Context, id, key, token string, declared controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error) {
@@ -149,8 +149,15 @@ func (f *lifecycleControl) HeartbeatServiceRun(_ context.Context, id, run string
 	if !health.Healthy && state == "ready" {
 		state = "starting"
 	}
+	endpointRevision := int64(1)
+	publicReady := false
+	if f.approved != nil {
+		endpointRevision = f.approved.EndpointRevision
+		publicReady = f.approved.Endpoint != nil && f.approved.Endpoint.Public && state == "ready"
+	}
 	return controlv1.ServiceRunState{ServiceId: id, ServiceRunId: run, RunNumber: f.prep.RunNumber,
 		Healthy: &health.Healthy, StreamCapacity: &health.StreamCapacity, ActiveStreams: &health.ActiveStreams,
+		EndpointRevision: endpointRevision, PublicEndpointReady: publicReady,
 		PublisherConnections: connections,
 		PublisherExpiresAt:   time.Now().Add(time.Minute), State: state}, nil
 }
@@ -159,7 +166,7 @@ func (f *lifecycleControl) CloseServiceRun(_ context.Context, id, run string, to
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.closes++
-	if id != f.prep.ServiceId || run != f.prep.ServiceRunId || token.String() != f.setup.RunToken {
+	if id != f.prep.ServiceId || run != f.prep.ServiceRunId || token.String() != f.prep.RunToken {
 		f.bad = errors.New("close used another run")
 	}
 	return nil
@@ -194,6 +201,7 @@ func lifecycleFixture(t *testing.T) (RunConfig, *lifecycleControl) {
 		VisitorSourceKey:     bytes.Repeat([]byte{1}, 32),
 		PublisherConnections: []controlv1.ConnectionAssignment{bound.connections[0], bound.connections[1]},
 	}}
+	f.prep.RunToken = f.setup.RunToken
 	base := RunConfig{Control: f, Access: func(context.Context) (string, error) { return "scoped-publisher-token", nil },
 		PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service, Metadata: controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocol("tcp")}, Target: "127.0.0.1:5432", HeartbeatInterval: 5 * time.Millisecond, Healthy: func(context.Context) bool { return true }}
 	database, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))

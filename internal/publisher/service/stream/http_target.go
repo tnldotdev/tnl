@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
@@ -143,28 +142,4 @@ func (target HTTPTarget) Dial(ctx context.Context) (net.Conn, error) {
 		}
 	}
 	return secured, nil
-}
-
-// targetSocket retains physical cleanup without retaining sockets already closed
-// by a completed request. half-close remains available for non-HTTP protocols.
-type targetSocket struct {
-	net.Conn
-	once   sync.Once
-	remove func()
-	err    error
-}
-
-func (c *targetSocket) Close() error {
-	c.once.Do(func() {
-		c.err = c.Conn.Close()
-		c.remove()
-	})
-	return c.err
-}
-
-func (c *targetSocket) CloseWrite() error {
-	if conn, ok := c.Conn.(interface{ CloseWrite() error }); ok {
-		return conn.CloseWrite()
-	}
-	return errors.ErrUnsupported
 }

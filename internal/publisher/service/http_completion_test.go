@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -123,6 +124,7 @@ func TestServiceHTTPSharedCompletionAcrossPublicConnectorAndBase(t *testing.T) {
 			header.PublicService.DestinationPort = 443
 			frontend := HTTP{Control: serviceHTTPControl{}, Subject: scope, RunID: header.ServiceRunID,
 				Number: int64(header.RunNumber), Token: "run-token", Hostname: update.View.Hostname, Port: 443,
+				Source: netip.AddrPortFrom(netip.MustParseAddr(header.SourceIP), 4321),
 				Header: header, Policy: policy, Requests: budget, ReserveCapacity: func(context.Context) error { return nil }}
 			certificate := b.prepared.certificate
 			// base HTTP uses certificate authorization; connector HTTP proves its
@@ -138,7 +140,7 @@ func TestServiceHTTPSharedCompletionAcrossPublicConnectorAndBase(t *testing.T) {
 					visitorConn, server := net.Pipe()
 					forwards.Go(func() {
 						defer server.Close()
-						if err := b.forwardManaged(ctx, server, visitor, b.prepared.managedHostname); err != nil {
+						if err := b.forwardManaged(ctx, server, visitor, b.prepared.managedHostname, nil); err != nil {
 							t.Error("HTTP forwarding failed", err)
 						}
 					})
@@ -226,15 +228,15 @@ func TestServiceHTTPSharedCompletionAcrossPublicConnectorAndBase(t *testing.T) {
 			}
 			releases["/connector"]()
 			serviceHTTPAwait(t, budget.Completed())
-			if err := b.startHTTPDrain(time.Now().Add(5 * time.Second)); err != nil {
+			if err := b.startDrain(time.Now().Add(5 * time.Second)); err != nil {
 				t.Fatal("HTTP drain failed to close a pending opening", err)
 			}
-			if err := b.joinHTTPDrain(); err != nil {
+			if err := b.joinDrain(); err != nil {
 				t.Fatal(err)
 			}
 			serviceHTTPAwait(t, replied)
 			// forwarding is fenced before peer or relay transports are closed.
-			if err := b.forwardManaged(ctx, nil, baseVisitor, ""); !errors.Is(err, ErrPrivateStream) {
+			if err := b.forwardManaged(ctx, nil, baseVisitor, "", nil); !errors.Is(err, ErrPrivateStream) {
 				t.Fatal("draining run admitted another visitor", err)
 			}
 			peer.Close()

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
@@ -20,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -69,12 +71,14 @@ type HTTP struct {
 	Hostname        string
 	Port            uint16
 	Header          tunnelv1.ServiceForwardingHeader
+	Source          netip.AddrPort
 	Requests        *requestlimit.HTTP
 	Policy          *visitorlease.Lease
 	ReserveCapacity func(context.Context) error
 	browser         *httpaccess.Browser
 	feedback        *feedbackRuntime
 	probes          *requestlimit.HTTP
+	preparations    chan struct{}
 }
 
 func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
@@ -104,6 +108,7 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
 	if err != nil {
 		return HTTP{}, nil, err
 	}
+	f.preparations = make(chan struct{}, 16)
 	policy, err := httpaccess.PreparePolicy(ctx, f.Control, f.Subject, f.RunID, f.Number, f.Token.String(), nil)
 	if err != nil {
 		return HTTP{}, nil, err
@@ -133,7 +138,8 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 		return servicestream.ErrEndpoint
 	}
 	source, err := netip.ParseAddr(h.SourceIP)
-	if err != nil || source.Zone() != "" {
+	if err != nil || source.Zone() != "" || !f.Source.IsValid() || f.Source.Port() == 0 ||
+		f.Source.Addr().Zone() != "" || f.Source.Addr().Unmap() != source.Unmap() {
 		return servicestream.ErrEndpoint
 	}
 	view, enabled, _ := f.Policy.Current()
@@ -172,15 +178,19 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 					SourceIP: source.Unmap().String(), EventType: "http.decision", Outcome: outcome, Reason: reason})
 			}
 			defer report()
-			if !serviceendpoint.MatchesHTTPAuthority(f.Hostname, f.Port, r.Host) || r.Method == http.MethodConnect || r.URL.IsAbs() || r.URL.Host != "" || client.ConnectionState().ServerName != f.Hostname {
+			if !serviceendpoint.MatchesHTTPAuthority(f.Hostname, f.Port, r.Host) || client.ConnectionState().ServerName != f.Hostname {
 				servicestream.DenyHTTP(w, r, http.StatusMisdirectedRequest)
 				return
 			}
-			// only the validated forwarding header supplies the visitor source.
+			// only the validated forwarding metadata supplies the visitor source.
 			// reserved feedback requests need these same TLS and source facts.
-			r.RemoteAddr = netip.AddrPortFrom(source.Unmap(), 1).String()
+			r.RemoteAddr = f.Source.String()
 			state := client.ConnectionState()
 			r.TLS = &state
+			if code := proxy.ValidateRequest(r, f.Hostname); code != "" {
+				diagnostic.WriteHTTP(w, r, code, "")
+				return
+			}
 			if f.reserved(w, r, f.authorizeFeedback) {
 				// browser preparation does not claim application access.
 				reported = true
@@ -209,6 +219,9 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 					return
 				}
 				defer release()
+				probe, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+				defer cancel()
+				r = r.WithContext(probe)
 				if err := reserveCapacity(r.Context()); err != nil {
 					servicestream.DenyHTTP(w, r, http.StatusServiceUnavailable)
 					return
@@ -310,6 +323,21 @@ func (f HTTP) reserved(w http.ResponseWriter, r *http.Request, authorize func(ht
 	if r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
 		servicestream.DenyHTTP(w, r, http.StatusForbidden)
 		return true
+	}
+	if f.browser != nil && (strings.HasPrefix(r.URL.Path, "/__tnl/team/") || httpaccess.SharePath(r.URL.Path)) {
+		select {
+		case f.preparations <- struct{}{}:
+			// cancellation requests a stop; the slot remains held through the
+			// actual return of browser/share work, including its cleanup.
+			defer func() { <-f.preparations }()
+		default:
+			w.Header().Set("Retry-After", "1")
+			diagnostic.WriteHTTP(w, r, diagnostic.RequestLimitReached, "")
+			return true
+		}
+		preparation, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		r = r.WithContext(preparation)
 	}
 	if f.browser != nil && f.browser.Handle(w, r) {
 		return true

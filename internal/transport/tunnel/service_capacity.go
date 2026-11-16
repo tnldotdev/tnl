@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -132,7 +133,8 @@ func (s *Session) ServeServiceCapacity(ctx context.Context) (result error) {
 	for {
 		stream, err := s.transport.AcceptStream(ctx)
 		if err != nil {
-			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) || errors.Is(err, muxsession.ErrClosed) {
+			if failure.Only(err, net.ErrClosed) || failure.Only(err, muxsession.ErrClosed) ||
+				ctx.Err() != nil && (failure.Only(err, context.Cause(ctx)) || failure.Only(err, ctx.Err())) {
 				return nil
 			}
 			return err

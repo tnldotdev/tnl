@@ -85,21 +85,28 @@ func TestHTTPRejectionsKeepDiagnosticAndRetryContracts(t *testing.T) {
 			if test.finish {
 				first.Finish()
 			}
-			for _, method := range []string{http.MethodGet, http.MethodHead} {
-				request := httptest.NewRequest(method, "/", nil)
-				request.Header.Set("Accept", "text/html")
-				response := httptest.NewRecorder()
-				if _, ok := limits.Reserve(response, request); ok {
-					t.Fatal("exhausted budget admitted another request")
-				}
-				if response.Code != test.status || response.Header().Get("Tnl-Error-Code") != test.code ||
-					response.Header().Get("Retry-After") != test.retry || response.Header().Get("Connection") != "close" ||
-					response.Header().Get("Cache-Control") != "no-store" {
-					t.Fatal("request rejection changed its HTTP contract", response.Code, response.Header())
-				}
-				if method == http.MethodHead && response.Body.Len() != 0 ||
-					method == http.MethodGet && !strings.Contains(response.Body.String(), "<!doctype html>") {
-					t.Fatal("request rejection lost HTML or HEAD negotiation", response.Body.String())
+			for _, version := range []int{1, 2} {
+				for _, method := range []string{http.MethodGet, http.MethodHead} {
+					request := httptest.NewRequest(method, "/", nil)
+					request.ProtoMajor = version
+					request.Header.Set("Accept", "text/html")
+					response := httptest.NewRecorder()
+					if _, ok := limits.Reserve(response, request); ok {
+						t.Fatal("exhausted budget admitted another request")
+					}
+					connection := ""
+					if version == 1 {
+						connection = "close"
+					}
+					if response.Code != test.status || response.Header().Get("Tnl-Error-Code") != test.code ||
+						response.Header().Get("Retry-After") != test.retry || response.Header().Get("Connection") != connection ||
+						response.Header().Get("Cache-Control") != "no-store" {
+						t.Fatal("request rejection changed its HTTP contract or closed HTTP/2 siblings", version, response.Code, response.Header())
+					}
+					if method == http.MethodHead && response.Body.Len() != 0 ||
+						method == http.MethodGet && !strings.Contains(response.Body.String(), "<!doctype html>") {
+						t.Fatal("request rejection lost HTML or HEAD negotiation", response.Body.String())
+					}
 				}
 			}
 		})

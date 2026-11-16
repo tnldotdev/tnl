@@ -241,25 +241,10 @@ func (d *Database) ReadyServicePublisherConnection(ctx context.Context, connecti
 	if row.RelayServiceID != lease.RelayServiceID || row.RelayID.String != lease.RelayID || row.RelayRunID.String != lease.RelayRunID || row.RelayLeaseRevision.Int64 != int64(lease.RelayLeaseRevision) || row.ServiceRunID != runID || row.RunNumber != runNumber {
 		return result, ErrServiceAccess
 	}
-	count, err := countReadyServiceConnections(ctx, tx, runID, clock.current())
+	firstReadiness := !run.ReadyAt.Valid
+	run, err = advanceServiceRunReadiness(ctx, tx, q, run, clock)
 	if err != nil {
 		return result, err
-	}
-	certificateReady := run.CertificateExpiresAt.Valid && run.CertificateExpiresAt.Time.After(clock.current())
-	firstReadiness := !run.ReadyAt.Valid
-	if run.Healthy && certificateReady && (count == 2 || run.ReadyAt.Valid && count >= 1) {
-		if serviceRunLifecycleState(run.State) == serviceRunStarting {
-			run, err = q.ReadyServiceRun(ctx, controlstatedb.ReadyServiceRunParams{ID: runID, ServiceID: serviceID, RunNumber: runNumber, Now: timestamptz(clock.current())})
-			if err != nil {
-				return result, err
-			}
-		}
-	}
-	if run.State == "ready" {
-		run, err = markGuestServiceRunReady(ctx, q, run, clock.current())
-		if err != nil {
-			return result, err
-		}
 	}
 	if _, err = tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
 		return result, err

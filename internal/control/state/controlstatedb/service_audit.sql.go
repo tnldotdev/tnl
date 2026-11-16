@@ -7,7 +7,6 @@ package controlstatedb
 
 import (
 	"context"
-	"net/netip"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -32,56 +31,45 @@ func (q *Queries) CleanupServiceAuditEvents(ctx context.Context, arg CleanupServ
 	return result.RowsAffected(), nil
 }
 
-const insertServiceAuditEvent = `-- name: InsertServiceAuditEvent :execrows
+const insertServiceAuditEvents = `-- name: InsertServiceAuditEvents :many
 INSERT INTO control.service_audit_events(id,team_id,guest_id,service_id,event_type,occurred_at,received_at,
     actor_identity_id,device_id,publisher_identity_id,run_id,visitor_connection_id,source_ip,outcome,reason,configuration_revision)
-VALUES($1,$2,
-    (SELECT service.guest_id FROM control.services service WHERE service.id=$3),
-    $3,$4,$5,$6,
-    $7,$8,$9,$10,$11,$12,$13,$14,$15)
+SELECT entry.value->>'id',NULLIF(entry.value->>'team_id',''),service.guest_id,service.id,
+    entry.value->>'event_type',(entry.value->>'occurred_at')::timestamptz,$1,
+    NULLIF(entry.value->>'actor_identity_id',''),NULLIF(entry.value->>'device_id',''),
+    NULLIF(entry.value->>'publisher_identity_id',''),NULLIF(entry.value->>'run_id',''),
+    NULLIF(entry.value->>'visitor_connection_id',''),NULLIF(entry.value->>'source_ip','')::inet,
+    NULLIF(entry.value->>'outcome',''),NULLIF(entry.value->>'reason',''),NULLIF((entry.value->>'configuration_revision')::bigint,0)
+FROM jsonb_array_elements(convert_from($2::bytea,'UTF8')::jsonb) WITH ORDINALITY AS entry(value,position)
+JOIN control.services service ON service.id=(entry.value->>'service_id')
+ORDER BY entry.position
 ON CONFLICT(id) DO NOTHING
+RETURNING id
 `
 
-type InsertServiceAuditEventParams struct {
-	ID                    string
-	TeamID                pgtype.Text
-	ServiceID             string
-	EventType             string
-	OccurredAt            pgtype.Timestamptz
-	ReceivedAt            pgtype.Timestamptz
-	ActorIdentityID       pgtype.Text
-	DeviceID              pgtype.Text
-	PublisherIdentityID   pgtype.Text
-	RunID                 pgtype.Text
-	VisitorConnectionID   pgtype.Text
-	SourceIp              *netip.Addr
-	Outcome               pgtype.Text
-	Reason                pgtype.Text
-	ConfigurationRevision pgtype.Int8
+type InsertServiceAuditEventsParams struct {
+	ReceivedAt pgtype.Timestamptz
+	Events     []byte
 }
 
-func (q *Queries) InsertServiceAuditEvent(ctx context.Context, arg InsertServiceAuditEventParams) (int64, error) {
-	result, err := q.db.Exec(ctx, insertServiceAuditEvent,
-		arg.ID,
-		arg.TeamID,
-		arg.ServiceID,
-		arg.EventType,
-		arg.OccurredAt,
-		arg.ReceivedAt,
-		arg.ActorIdentityID,
-		arg.DeviceID,
-		arg.PublisherIdentityID,
-		arg.RunID,
-		arg.VisitorConnectionID,
-		arg.SourceIp,
-		arg.Outcome,
-		arg.Reason,
-		arg.ConfigurationRevision,
-	)
+func (q *Queries) InsertServiceAuditEvents(ctx context.Context, arg InsertServiceAuditEventsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, insertServiceAuditEvents, arg.ReceivedAt, arg.Events)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listServiceAuditEvents = `-- name: ListServiceAuditEvents :many
@@ -137,6 +125,80 @@ func (q *Queries) ListServiceAuditEvents(ctx context.Context, arg ListServiceAud
 			&i.Reason,
 			&i.ConfigurationRevision,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listServiceAuditEventsByID = `-- name: ListServiceAuditEventsByID :many
+SELECT cursor, id, team_id, guest_id, service_id, event_type, occurred_at, received_at, actor_identity_id, device_id, publisher_identity_id, run_id, visitor_connection_id, source_ip, outcome, reason, configuration_revision FROM control.service_audit_events WHERE id=ANY($1::text[])
+`
+
+func (q *Queries) ListServiceAuditEventsByID(ctx context.Context, eventIds []string) ([]ControlServiceAuditEvent, error) {
+	rows, err := q.db.Query(ctx, listServiceAuditEventsByID, eventIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlServiceAuditEvent
+	for rows.Next() {
+		var i ControlServiceAuditEvent
+		if err := rows.Scan(
+			&i.Cursor,
+			&i.ID,
+			&i.TeamID,
+			&i.GuestID,
+			&i.ServiceID,
+			&i.EventType,
+			&i.OccurredAt,
+			&i.ReceivedAt,
+			&i.ActorIdentityID,
+			&i.DeviceID,
+			&i.PublisherIdentityID,
+			&i.RunID,
+			&i.VisitorConnectionID,
+			&i.SourceIp,
+			&i.Outcome,
+			&i.Reason,
+			&i.ConfigurationRevision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listServiceAuditOwners = `-- name: ListServiceAuditOwners :many
+SELECT id,team_id,guest_id FROM control.services
+WHERE id=ANY($1::text[])
+ORDER BY COALESCE(team_id,'guest/'||guest_id) COLLATE "C",id COLLATE "C"
+`
+
+type ListServiceAuditOwnersRow struct {
+	ID      string
+	TeamID  pgtype.Text
+	GuestID pgtype.Text
+}
+
+func (q *Queries) ListServiceAuditOwners(ctx context.Context, serviceIds []string) ([]ListServiceAuditOwnersRow, error) {
+	rows, err := q.db.Query(ctx, listServiceAuditOwners, serviceIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListServiceAuditOwnersRow
+	for rows.Next() {
+		var i ListServiceAuditOwnersRow
+		if err := rows.Scan(&i.ID, &i.TeamID, &i.GuestID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

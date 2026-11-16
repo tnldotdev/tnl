@@ -41,6 +41,9 @@ func TestServiceRunPassesOpaqueTokenToControlAndCloses(t *testing.T) {
 				}
 				control.approved = &approved
 				config.Metadata.Protocol = protocol
+				if token != "" {
+					control.prep.RunToken = token
+				}
 				control.setup.RunToken = token
 				boundary := errors.New("heartbeat boundary")
 				opaque := &opaqueTokenControl{lifecycleControl: control, heartbeatErr: boundary}

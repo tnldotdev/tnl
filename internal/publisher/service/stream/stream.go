@@ -54,6 +54,9 @@ type Stream struct {
 	TLS               *tls.Config
 	TargetTLS         *tls.Config
 	Visitor           Authentication
+	// FinishVisitor joins delivery after entered work, socket cleanup, and
+	// callbacks have joined, before connector admission is stopped.
+	FinishVisitor func(error) error
 }
 
 func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
@@ -89,6 +92,28 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	if _, ok := s.Visitor.(HTTPVisitor); ok && s.Protocol != config.ProtocolHTTP {
 		return ErrEndpoint
 	}
+	var cleanupMu sync.Mutex
+	var cleanupErr error
+	recordClose := func(err error) {
+		if err != nil && !failure.Only(err, net.ErrClosed) {
+			cleanupMu.Lock()
+			cleanupErr = errors.Join(cleanupErr, err)
+			cleanupMu.Unlock()
+		}
+	}
+	visitor = &streamSocket{Conn: visitor, closed: recordClose}
+	defer func() {
+		if connector != nil {
+			defer connector.Stop()
+		}
+		_ = visitor.Close()
+		cleanupMu.Lock()
+		result = errors.Join(result, cleanupErr)
+		cleanupMu.Unlock()
+		if s.FinishVisitor != nil {
+			result = errors.Join(result, s.FinishVisitor(result))
+		}
+	}()
 	if connector != nil {
 		if err := connectorCheck(ctx, connector); err != nil {
 			return err
@@ -117,12 +142,12 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	// keep raw target sockets separately from TLS wrappers. cancellation may
 	// race with dialing or block in a connector read that does not accept a context.
 	var socketsMu sync.Mutex
-	targetSockets := make(map[*targetSocket]struct{})
+	targetSockets := make(map[*streamSocket]struct{})
 	socketsClosed := false
 	closeSockets := func() {
 		socketsMu.Lock()
 		socketsClosed = true
-		targets := make([]*targetSocket, 0, len(targetSockets))
+		targets := make([]*streamSocket, 0, len(targetSockets))
 		for target := range targetSockets {
 			targets = append(targets, target)
 		}
@@ -147,8 +172,9 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		}
 	}()
 	trackTarget := func(conn net.Conn) net.Conn {
-		tracked := &targetSocket{Conn: conn}
-		tracked.remove = func() {
+		tracked := &streamSocket{Conn: conn}
+		tracked.closed = func(err error) {
+			recordClose(err)
 			socketsMu.Lock()
 			delete(targetSockets, tracked)
 			socketsMu.Unlock()
@@ -163,9 +189,6 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		return tracked
 	}
 	defer func() {
-		if connector != nil {
-			connector.Stop()
-		}
 		targetWorkMu.Lock()
 		acceptTargetWork = false
 		targetWorkMu.Unlock()

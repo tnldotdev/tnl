@@ -406,13 +406,24 @@ func TestPublicServiceFailedOpenKeepsLifetimeDebitAndDoesNotReselect(t *testing.
 			}
 			_ = first.Close()
 			outcome := ingressAwait(t, metrics.visitorOutcomes)
-			server.active.Wait()
 			if outcome != "open_failed" && committed == 0 || outcome != "committed_failed" && committed != 0 {
 				t.Fatal("failed opening changed its byte commitment", outcome)
 			}
 			key := selectionRunKey(control.runs[0])
-			run := server.traffic.runs[key]
-			if len(control.claims) != 0 || sibling.opens.Load() != 0 || failed.opens.Load() != 1 || run == nil || run.active != 0 || run.connections != 1 {
+			snapshot := func() (runTraffic, bool) {
+				server.traffic.mu.Lock()
+				defer server.traffic.mu.Unlock()
+				run := server.traffic.runs[key]
+				if run == nil {
+					return runTraffic{}, false
+				}
+				return *run, true
+			}
+			// the outcome follows admission cleanup. snapshot its counters under
+			// their owner lock rather than joining a reusable worker group while
+			// the listener still accepts the next physical visitor.
+			run, found := snapshot()
+			if len(control.claims) != 0 || sibling.opens.Load() != 0 || failed.opens.Load() != 1 || !found || run.active != 0 || run.connections != 1 {
 				t.Fatal("failed open reselected a sibling or refunded its lifetime debit", control.claims, run, sibling.opens.Load())
 			}
 			server.nextServiceRun.Store(0)
@@ -422,9 +433,9 @@ func TestPublicServiceFailedOpenKeepsLifetimeDebitAndDoesNotReselect(t *testing.
 				t.Fatal("new physical visitor could not use the healthy sibling", result)
 			}
 			ingressAwait(t, metrics.visitorOutcomes)
-			server.active.Wait()
+			run, found = snapshot()
 			if failed.opens.Load() != 1 || sibling.opens.Load() != 1 || len(control.claims) != 0 || run.connections != 1 ||
-				metrics.visitorOpenFailures.Load() != 1 || metrics.visitorOpenSuccesses.Load() != 1 {
+				!found || run.active != 0 || metrics.visitorOpenFailures.Load() != 1 || metrics.visitorOpenSuccesses.Load() != 1 {
 				t.Fatal("new visitor reopened the exhausted run or duplicated an opening charge")
 			}
 			if len(forwarder.observed) != 2 || forwarder.observed[0].ServiceRunID != control.runs[0].ServiceRunId ||

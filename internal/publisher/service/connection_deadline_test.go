@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"testing"
 	"testing/synctest"
@@ -50,10 +51,10 @@ func TestServiceConnectionDeadlineClosesSetupAndIdleVisitors(t *testing.T) {
 					prepared.policy = policy
 					events := make(chan serviceaudit.Observation, 4)
 					bound.audit = connectorAuditSink(func(event serviceaudit.Observation) bool { events <- event; return true })
-					prepared.managedVisitor = func(header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) servicestream.Authentication {
+					prepared.managedVisitor = func(header tunnelv1.ServiceForwardingHeader, source netip.AddrPort, reserveCapacity func(context.Context) error) servicestream.Authentication {
 						return servicestream.HTTPVisitor{Frontend: HTTP{Control: serviceHTTPControl{}, Subject: scope,
 							RunID: header.ServiceRunID, Number: int64(header.RunNumber), Token: "run-token",
-							Hostname: prepared.managedHostname, Port: 443, Header: header,
+							Hostname: prepared.managedHostname, Port: 443, Header: header, Source: source,
 							Policy: policy, Requests: prepared.serviceHTTPRequests, ReserveCapacity: reserveCapacity}}
 					}
 					header := privateHeader(t, ref)

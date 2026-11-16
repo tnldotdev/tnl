@@ -21,7 +21,7 @@ func TestServiceHTTPInlineApplicationKeepsPolicyAndReservedPaths(t *testing.T) {
 			calls := make(chan struct{}, 8)
 			client, _, _, token := serviceHTTPApplicationFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls <- struct{}{}
-				if r.Host != "preview.example.test" || r.TLS == nil || r.TLS.ServerName != r.Host || r.RemoteAddr != "192.0.2.1:1" ||
+				if r.Host != "preview.example.test" || r.TLS == nil || r.TLS.ServerName != r.Host || r.RemoteAddr != "192.0.2.1:1234" ||
 					r.Header.Get(httpaccess.VisitorTokenHeader) != "" || r.Header.Get("Authorization") != "application-secret" {
 					t.Error("inline application lost admitted request facts or received visitor credentials")
 				}

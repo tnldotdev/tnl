@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	"net/netip"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -56,7 +57,7 @@ func TestDirectAuthorizationWaitsForAdmissionAndPreservesInfrastructureCause(t *
 				}
 			}()
 			var capacity atomic.Int32
-			visitor := prepared.managedVisitor(tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{PublicService: &tunnelv1.PublicServiceAdmission{}}}, func(context.Context) error {
+			visitor := prepared.managedVisitor(tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{PublicService: &tunnelv1.PublicServiceAdmission{}}}, netip.MustParseAddrPort("192.0.2.10:40000"), func(context.Context) error {
 				if c.calls.Load() != 1 {
 					t.Error("capacity was reserved before checking certificate access")
 				}

@@ -3,7 +3,6 @@ package state
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -193,13 +192,13 @@ func TestLoadShutdown(t *testing.T) {
 		}
 	}
 	assertAssignmentTotals(t, f.database.pool, 0)
-	// a late close rejects the old run instead of releasing capacity twice.
+	// an exact late close confirms the old run without releasing capacity twice.
 	var before, after time.Time
 	if err := f.database.pool.QueryRow(ctx, `SELECT closed_at FROM control.service_runs WHERE id=$1`, sessions[0].run.RunID).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.controls[0].CloseServiceRun(ctx, sessions[0].service.ID, sessions[0].run.RunID, sessions[0].run.Token, f.now.Add(2*time.Second)); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("a repeated close did not reject the terminal run", err)
+	if err := f.controls[0].CloseServiceRun(ctx, sessions[0].service.ID, sessions[0].run.RunID, sessions[0].run.Token, f.now.Add(2*time.Second)); err != nil {
+		t.Fatal("a repeated exact close did not confirm the terminal run", err)
 	}
 	if err := f.database.pool.QueryRow(ctx, `SELECT closed_at FROM control.service_runs WHERE id=$1`, sessions[0].run.RunID).Scan(&after); err != nil || !before.Equal(after) {
 		t.Fatal("repeated close changed terminal state", err)

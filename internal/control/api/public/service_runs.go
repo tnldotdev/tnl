@@ -111,7 +111,7 @@ func (h *handler) PrepareServiceRun(w http.ResponseWriter, r *http.Request, serv
 	}
 	response := controlv1.ServiceRunPreparation{
 		TeamId: prepared.TeamID, GuestId: prepared.GuestID, ServiceId: prepared.ServiceID,
-		ServiceRunId: prepared.RunID, RunNumber: prepared.RunNumber,
+		ServiceRunId: prepared.RunID, RunNumber: prepared.RunNumber, RunToken: prepared.Token,
 		PublisherIdentityId: prepared.PublisherIdentityID, PublisherGrantId: prepared.PublisherGrantID,
 		PublisherKeyId: prepared.PublisherKeyID, IdempotencyKey: prepared.IdempotencyKey,
 		ExpiresAt: prepared.ExpiresAt,
@@ -176,6 +176,7 @@ func (h *handler) RenewServiceRun(w http.ResponseWriter, r *http.Request, servic
 	writeJSON(w, 200, controlv1.ServiceRunState{
 		ServiceId: state.ServiceID, ServiceRunId: state.RunID, RunNumber: state.RunNumber,
 		State: controlv1.ServiceRunStateState(state.State), PublisherExpiresAt: state.ExpiresAt,
+		EndpointRevision: state.EndpointRevision, PublicEndpointReady: state.PublicEndpointReady,
 		Healthy: &state.Healthy, StreamCapacity: &state.StreamCapacity, ActiveStreams: &state.ReportedStreams,
 		PublisherConnections: serviceRunConnections(state.Connections),
 	})

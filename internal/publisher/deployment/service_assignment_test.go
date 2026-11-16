@@ -111,6 +111,7 @@ func (f *assignmentServiceControl) HeartbeatServiceRun(ctx context.Context, id, 
 		return controlv1.ServiceRunState{}, ctx.Err()
 	}
 	return controlv1.ServiceRunState{ServiceId: id, ServiceRunId: run, RunNumber: f.setup.RunNumber, State: controlv1.ServiceRunStateStateReady,
+		EndpointRevision: f.service.EndpointRevision, PublicEndpointReady: f.service.Endpoint.Public,
 		PublisherExpiresAt: time.Now().Add(time.Minute), PublisherConnections: f.setup.PublisherConnections}, nil
 }
 
@@ -128,6 +129,7 @@ func (f *assignmentServiceControl) CreateServiceCertificateIssuance(_ context.Co
 	chain := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.ca.Raw})...)
 	return controlv1.ServiceCertificateIssuance{Id: opaqueid.IssuancePrefix + "0000000000000000000001",
 		ServiceId: service, ServiceRunId: run, RunNumber: number, PublisherIdentityId: f.preparation.PublisherIdentityId,
+		State:           controlv1.CertificateIssuanceStateWaitingForInstall,
 		CertificatePlan: *f.preparation.CertificatePlan, CertificatePem: new(string(chain)), NotBefore: &leaf.NotBefore, NotAfter: &leaf.NotAfter}, nil
 }
 
@@ -207,7 +209,7 @@ func TestHTTPAssignmentUsesExistingSignedServiceRunAndRetainsSavedService(t *tes
 		service: controlv1.Service{Id: serviceID, TeamId: member.TeamId, Name: "web", Protocol: controlv1.ServiceProtocolHTTP, Enabled: true,
 			TrustRevision: 1, EndpointRevision: 1, RequirePostQuantum: true, HttpLimits: &controlv1.ProjectHTTPApplicationLimits{Total: new(1)},
 			Endpoint: &controlv1.ServiceEndpoint{Hostname: hostname, Port: 443, Public: true}},
-		preparation: controlv1.ServiceRunPreparation{ServiceId: serviceID, ServiceRunId: runID, RunNumber: 1, TeamId: member.TeamId,
+		preparation: controlv1.ServiceRunPreparation{ServiceId: serviceID, ServiceRunId: runID, RunNumber: 1, RunToken: "service-run-token", TeamId: member.TeamId,
 			PublisherIdentityId: member.PublisherIdentityId, PublisherGrantId: grantID, PublisherKeyId: member.KeyId,
 			Hostname: hostname, DomainId: id(opaqueid.DomainPrefix), ExpiresAt: time.Now().Add(time.Minute), RequirePostQuantum: true,
 			CertificatePlan: &controlv1.CertificatePlan{CacheKey: "deployment-service", Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: controlv1.Dns01},

@@ -236,8 +236,25 @@ func TestIntegrationServiceReadinessStartsGuestClockAndMetricTogether(t *testing
 	if strings.Contains(metricText(), "tnl_control_service_runs_ready_total ") {
 		t.Fatal("preparation emitted ready metric")
 	}
+	registerTestIngress(t, d, now)
+	setEndpointReadinessDNS(t, servicePublicationFixture{database: d, service: f.service, now: now}, true, ServiceEndpointDNSPending)
+	f.preparePublisher(t, now.Add(2*time.Second))
+	assertGuestWaitingForDNS(t, f, metricText, now.Add(2*time.Second))
+	work, found, err := d.ClaimServiceEndpointDNSWork(f.ctx, "guest-clock", now.Add(2*time.Second), time.Minute)
+	if err != nil || !found {
+		t.Fatal("prepared guest blocked DNS work", found, err)
+	}
+	if err := d.ValidateServiceEndpointDNSWork(f.ctx, work, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	work.State, work.AvailableAt = ServiceEndpointDNSFailed, time.Time{}
+	if _, err := d.SaveServiceEndpointDNSWork(f.ctx, work, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	assertGuestWaitingForDNS(t, f, metricText, now.Add(2*time.Second))
+	setEndpointReadinessDNS(t, servicePublicationFixture{database: d, service: f.service, now: now}, true, ServiceEndpointDNSPending)
 	final := now.Add(3 * time.Second)
-	f.ready(t, final)
+	f.finishReadiness(t, final)
 	var together bool
 	if err := d.pool.QueryRow(t.Context(), `SELECT run.ready_at IS NOT NULL AND run.ready_at=guest.active_ready_at
 	    AND run.ready_at=guest.first_ready_at AND run.ready_at>=$3 AND guest.used_ready_ns=0

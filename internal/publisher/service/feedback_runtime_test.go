@@ -522,7 +522,7 @@ func TestFeedbackRunCompositionKeepsDirectServiceFacts(t *testing.T) {
 			t.Error("close configured run", err)
 		}
 	}()
-	visitor := prepared.managedVisitor(tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{PublicService: &tunnelv1.PublicServiceAdmission{DestinationPort: 443}}}, func(context.Context) error { return nil })
+	visitor := prepared.managedVisitor(tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{PublicService: &tunnelv1.PublicServiceAdmission{DestinationPort: 443}}}, netip.MustParseAddrPort("192.0.2.10:40000"), func(context.Context) error { return nil })
 	httpVisitor, ok := visitor.(servicestream.HTTPVisitor)
 	if !ok {
 		t.Fatal("HTTP service did not compose its existing HTTP frontend")
