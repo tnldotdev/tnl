@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"net/netip"
 	"slices"
 	"time"
 
@@ -40,6 +41,9 @@ type ManagedControl interface {
 }
 
 func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved controlv1.Service, cfg RunConfig) (*Prepared, error) {
+	if preparation.RunToken == "" {
+		return nil, ErrPrivateStream
+	}
 	if (len(cfg.Mounts) != 0 || cfg.ResolveHTTPTarget != nil) &&
 		(approved.Protocol != controlv1.ServiceProtocolHTTP || cfg.Handler != nil || cfg.TargetResolver != nil) {
 		return nil, ErrPrivateStream
@@ -206,11 +210,12 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 		}
 		return servicestream.Decision{Allowed: result.Allowed, ValidUntil: result.ValidUntil}, err
 	}
-	prepared.managedVisitor = func(header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) servicestream.Authentication {
+	prepared.managedVisitor = func(header tunnelv1.ServiceForwardingHeader, source netip.AddrPort, reserveCapacity func(context.Context) error) servicestream.Authentication {
 		if header.PublicService != nil {
 			if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
 				frontend := httpFrontend
 				frontend.Header = header
+				frontend.Source = source
 				frontend.ReserveCapacity = reserveCapacity
 				return servicestream.HTTPVisitor{Frontend: frontend}
 			}

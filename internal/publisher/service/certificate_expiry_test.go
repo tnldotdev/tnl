@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -141,5 +143,115 @@ func TestServiceCertificateCurrentMaterialDoesNotWaitForIssuanceLock(t *testing.
 	material, err := certificates.advance(ctx, true)
 	if err != nil || material.IssuanceID != initial.IssuanceID {
 		t.Fatal("current acknowledged material waited for another renewal's issuance lock", err)
+	}
+}
+
+func TestServiceCertificateRenewalReplacesTheServingExpiry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		certificates, control, prepared := certificateRecoveryFixture(t)
+		control.create = func(csr []byte, key string) (controlv1.ServiceCertificateIssuance, error) {
+			issued, err := certificateFixtureIssuance(control.lifecycleControl, csr, nil)
+			issued.Id = "renewal-" + key
+			return issued, err
+		}
+		installed := make(chan tls.Certificate, 2)
+		certificates.Install = func(certificate tls.Certificate) error {
+			if err := prepared.installManagedCertificate(certificate); err != nil {
+				return err
+			}
+			installed <- certificate
+			return nil
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		joined, done := make(chan struct{}), make(chan error, 1)
+		go func() { defer close(joined); done <- certificates.Maintain(ctx) }()
+		defer func() {
+			cancel()
+			<-joined
+			if err := <-done; !errors.Is(err, context.Canceled) {
+				t.Error("certificate renewal lost its owner cancellation", err)
+			}
+		}()
+		first := <-installed
+		current, found, err := certificates.Cache.Current(t.Context(), certificates.Hostname)
+		if err != nil || !found {
+			t.Fatal("initial certificate did not become durable current material", found, err)
+		}
+		time.Sleep(time.Until(current.RenewAt))
+		second := <-installed
+		if !second.Leaf.NotAfter.After(first.Leaf.NotAfter) ||
+			bytes.Equal(second.Leaf.RawSubjectPublicKeyInfo, first.Leaf.RawSubjectPublicKeyInfo) {
+			t.Fatal("renewal failed to replace the certificate key and expiry")
+		}
+		time.Sleep(time.Until(first.Leaf.NotAfter) + time.Second)
+		synctest.Wait()
+		select {
+		case <-joined:
+			t.Fatal("the replaced certificate's old expiry stopped renewal")
+		default:
+		}
+		serving, err := prepared.currentCertificate()
+		if err != nil || !bytes.Equal(serving.Certificate[0], second.Certificate[0]) {
+			t.Fatal("the replaced certificate's old expiry retired its successor", err)
+		}
+	})
+}
+
+func TestServiceCertificateRenewalRechecksExpiryAfterCacheLock(t *testing.T) {
+	for _, expired := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before_expiry", true: "at_expiry"}[expired], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				certificates, control, prepared := certificateRecoveryFixture(t)
+				control.create = func(csr []byte, _ string) (controlv1.ServiceCertificateIssuance, error) {
+					return certificateFixtureIssuance(control.lifecycleControl, csr, nil)
+				}
+				initial, err := certificates.advance(t.Context(), true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				lock, err := certificates.Cache.Lock(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer lock.Close()
+				installed := make(chan struct{}, 1)
+				certificates.Install = func(certificate tls.Certificate) error {
+					if err := prepared.installManagedCertificate(certificate); err != nil {
+						return err
+					}
+					installed <- struct{}{}
+					return nil
+				}
+				creates := 0
+				control.create = func([]byte, string) (controlv1.ServiceCertificateIssuance, error) {
+					creates++
+					return controlv1.ServiceCertificateIssuance{}, clientcontrol.ErrStatusConflict
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+				defer cancel()
+				done, joined := make(chan error, 1), make(chan struct{})
+				go func() { defer close(joined); done <- certificates.Maintain(ctx) }()
+				defer func() { cancel(); <-joined }()
+				// an initial cache acknowledgment bypasses the held issuance lock.
+				<-installed
+				time.Sleep(time.Until(initial.RenewAt))
+				synctest.Wait()
+				if expired {
+					time.Sleep(time.Until(initial.Certificate.Leaf.NotAfter))
+					synctest.Wait()
+				}
+				if err := lock.Close(); err != nil {
+					t.Fatal(err)
+				}
+				err = <-done
+				if expired {
+					if creates != 0 || !errors.Is(err, errCertificateExpired) {
+						t.Fatal("expired renewal crossed its cache lock", creates, err)
+					}
+				} else if creates != 1 || !errors.Is(err, clientcontrol.ErrStatusConflict) {
+					t.Fatal("valid renewal failed to advance after its cache lock", creates, err)
+				}
+			})
+		})
 	}
 }

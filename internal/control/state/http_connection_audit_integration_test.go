@@ -48,6 +48,20 @@ func TestIntegrationHTTPConnectionAuditUsesExactPublisherRunAndOriginalDeadline(
 	if found != 2 {
 		t.Fatal("HTTP connection history is missing", found)
 	}
+	// a committed conflicting ID must roll back its fresh neighbor too, after
+	// authorization has accepted every event and the bulk insert has run.
+	neighbor, conflict := opened, opened
+	neighbor.EventID = serviceaudit.NewID()
+	conflict.SourceIP = "192.0.2.11"
+	result, err := d.IngestServiceRunObservations(t.Context(), service.ID, run.RunID, run.Token, run.RunNumber,
+		serviceaudit.Batch{Events: []serviceaudit.Observation{neighbor, conflict}}, now.Add(30*time.Second))
+	if !errors.Is(err, ErrServiceAuditAccess) || result != (ServiceObservationResult{}) {
+		t.Fatal("conflicting retry acknowledged a partially accepted batch", result, err)
+	}
+	var retained int
+	if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.service_audit_events WHERE id=$1`, neighbor.EventID).Scan(&retained); err != nil || retained != 0 {
+		t.Fatal("conflicting retry committed its fresh neighbor", retained, err)
+	}
 	for _, test := range []struct {
 		name   string
 		change func(*serviceaudit.Observation)

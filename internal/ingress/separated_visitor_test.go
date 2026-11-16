@@ -137,6 +137,7 @@ func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 				defer secured.Close()
 				connectionHTTP := frontend
 				connectionHTTP.Header = header
+				connectionHTTP.Source = metadata.Source
 				connectionHTTP.ReserveCapacity = func(call context.Context) error {
 					return transport.publisher.RequestServiceCapacity(call, header)
 				}

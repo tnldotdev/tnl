@@ -74,7 +74,7 @@ func (f *auditCompositionTarget) open(header tunnelv1.ServiceForwardingHeader, r
 		defer f.workers.Done()
 		defer back.Close()
 		_ = back.SetDeadline(time.Now().Add(10 * time.Second))
-		_, reader, err := proxyproto.Decode(back)
+		metadata, reader, err := proxyproto.Decode(back)
 		if err != nil {
 			return
 		}
@@ -85,6 +85,7 @@ func (f *auditCompositionTarget) open(header tunnelv1.ServiceForwardingHeader, r
 		}
 		frontend := f.frontend
 		frontend.Header = header
+		frontend.Source = metadata.Source
 		frontend.ReserveCapacity = reserveCapacity
 		_ = frontend.Forward(f.ctx, secure, servicestream.HTTPTarget{Handler: f.application})
 	}()

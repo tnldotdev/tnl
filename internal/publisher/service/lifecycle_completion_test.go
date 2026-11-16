@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -16,6 +17,109 @@ import (
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+func TestServiceTCPDrainKeepsHalfClosedVisitorThroughFinalTargetBytes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	entered, requestFIN := make(chan struct{}), make(chan struct{})
+	finish := make(chan struct{})
+	release := sync.OnceFunc(func() { close(finish) })
+	defer release()
+	payload := bytes.Repeat([]byte("final native response\n"), 32768)
+	targetDone := make(chan error, 1)
+	targetJoined := make(chan struct{})
+	go func() {
+		defer close(targetJoined)
+		conn, err := target.Accept()
+		if err != nil {
+			targetDone <- err
+			return
+		}
+		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		request := make([]byte, len("request"))
+		if _, err := io.ReadFull(conn, request); err != nil || string(request) != "request" {
+			targetDone <- errors.Join(err, errors.New("native request changed"))
+			return
+		}
+		close(entered)
+		trailing, err := io.ReadAll(conn)
+		if err != nil || len(trailing) != 0 {
+			targetDone <- errors.Join(err, errors.New("request half-close changed the target session"))
+			return
+		}
+		close(requestFIN)
+		select {
+		case <-finish:
+		case <-ctx.Done():
+			targetDone <- ctx.Err()
+			return
+		}
+		_, err = conn.Write(payload)
+		targetDone <- err
+	}()
+	_, bound, _, verification := privateFixture(t, target.Addr().String())
+	raw, visitor := net.Pipe()
+	defer raw.Close()
+	defer visitor.Close()
+	auth := servicestream.CertificateVisitor{Check: func(context.Context, *x509.Certificate) (servicestream.Decision, error) {
+		return servicestream.Decision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
+	}}
+	forwarded := make(chan error, 1)
+	forwardJoined := make(chan struct{})
+	go func() { defer close(forwardJoined); forwarded <- bound.forwardManaged(ctx, raw, auth, "", nil) }()
+	defer func() {
+		cancel()
+		release()
+		_ = raw.Close()
+		_ = visitor.Close()
+		_ = target.Close()
+		<-forwardJoined
+		<-targetJoined
+	}()
+	secured := tls.Client(visitor, verification)
+	defer secured.Close()
+	if err := secured.HandshakeContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(secured, "request"); err != nil {
+		t.Fatal(err)
+	}
+	serviceHTTPAwait(t, entered)
+	if err := bound.startDrain(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	joined := make(chan error, 1)
+	go func() { joined <- bound.joinDrain() }()
+	if err := secured.CloseWrite(); err != nil {
+		t.Fatal("drain lost the visitor's request half-close", err)
+	}
+	serviceHTTPAwait(t, requestFIN)
+	select {
+	case err := <-joined:
+		t.Fatal("drain finished before the half-closed target returned its final bytes", err)
+	default:
+	}
+	release()
+	body, err := io.ReadAll(secured)
+	if err != nil || !bytes.Equal(body, payload) {
+		t.Fatal("native drain lost final response bytes", len(body), len(payload), err)
+	}
+	if err := serviceHTTPAwait(t, forwarded); err != nil {
+		t.Fatal("native forwarding did not join cleanly", err)
+	}
+	if err := serviceHTTPAwait(t, joined); err != nil {
+		t.Fatal("native drain did not join before its fixed bound", err)
+	}
+	if err := serviceHTTPAwait(t, targetDone); err != nil {
+		t.Fatal("native target failed", err)
+	}
+}
 
 type completionWriteConn struct {
 	net.Conn
@@ -70,9 +174,10 @@ func TestServiceRunCompletesHTTPBudgetAfterFinalResponseAndJoinedCleanup(t *test
 				wire := &completionWriteConn{Conn: raw, blocked: make(chan struct{}), release: unblock}
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
+				payload := bytes.Repeat([]byte("complete visitor response\n"), 32768)
 				cfg.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					w.Header().Set("Trailer", "X-Final")
-					_, _ = io.WriteString(w, "final")
+					_, _ = w.Write(payload)
 					w.Header().Set("X-Final", "complete")
 					wire.armed.Store(true)
 					if mode == "process" {
@@ -109,7 +214,7 @@ func TestServiceRunCompletesHTTPBudgetAfterFinalResponseAndJoinedCleanup(t *test
 				}}
 				forwarded := make(chan error, 1)
 				// the visitor lifetime is run-owned, not the canceled process input.
-				go func() { forwarded <- bound.forwardManaged(t.Context(), wire, auth, "") }()
+				go func() { forwarded <- bound.forwardManaged(t.Context(), wire, auth, "", nil) }()
 				transport := &http.Transport{ForceAttemptHTTP2: h2, TLSClientConfig: trust,
 					DialContext: func(context.Context, string, string) (net.Conn, error) { return visitor, nil }}
 				defer transport.CloseIdleConnections()
@@ -132,8 +237,8 @@ func TestServiceRunCompletesHTTPBudgetAfterFinalResponseAndJoinedCleanup(t *test
 					if h2 {
 						protocol = 2
 					}
-					if err != nil || string(body) != "final" || response.Trailer.Get("X-Final") != "complete" || response.ProtoMajor != protocol {
-						t.Error("service completion lost its final response", string(body), response.Trailer, response.Proto, err)
+					if err != nil || !bytes.Equal(body, payload) || response.Trailer.Get("X-Final") != "complete" || response.ProtoMajor != protocol {
+						t.Error("service completion lost its final response", len(body), len(payload), response.Trailer, response.Proto, err)
 					}
 				}()
 				serviceHTTPAwait(t, wire.blocked)

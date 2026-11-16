@@ -178,9 +178,13 @@ func (r Certificates) advance(ctx context.Context, initial bool) (_ clientstate.
 	if err != nil {
 		return current, err
 	}
+	selectedIssuance := issuance.Id
 	for {
-		if issuance.PublisherIdentityId != r.PublisherIdentityID || !opaqueid.Valid(issuance.ServiceId, opaqueid.ServicePrefix) || !opaqueid.Valid(issuance.ServiceRunId, opaqueid.ServiceRunPrefix) || issuance.RunNumber < 1 || !certificateidentity.SamePlan(issuance.CertificatePlan, r.Plan) {
-			return current, servicestream.ErrEndpoint
+		if err := context.Cause(ctx); err != nil {
+			return current, err
+		}
+		if err := r.validateIssuance(issuance, selectedIssuance); err != nil {
+			return current, err
 		}
 		if issuance.CertificatePem != nil {
 			if issuance.NotBefore == nil || issuance.NotAfter == nil || !issuance.NotAfter.After(time.Now()) {
@@ -200,9 +204,6 @@ func (r Certificates) advance(ctx context.Context, initial bool) (_ clientstate.
 			}
 			return r.promote(ctx, staged)
 		}
-		if issuance.State == controlv1.CertificateIssuanceStateFailed || issuance.State == controlv1.CertificateIssuanceStateCanceled {
-			return current, errManagedIssuanceFailed
-		}
 		delay := time.Second
 		if issuance.RetryAt != nil {
 			delay = max(100*time.Millisecond, min(5*time.Second, time.Until(*issuance.RetryAt)))
@@ -215,6 +216,27 @@ func (r Certificates) advance(ctx context.Context, initial bool) (_ clientstate.
 			return current, err
 		}
 	}
+}
+
+// a shared order may originate in another run with the same publisher and plan.
+// polling must retain that selected order, and only installable states can carry
+// material. reject inconsistent responses before staging or acknowledging them.
+func (r Certificates) validateIssuance(issuance controlv1.ServiceCertificateIssuance, selected string) error {
+	if selected == "" || issuance.Id != selected || issuance.PublisherIdentityId != r.PublisherIdentityID ||
+		!opaqueid.Valid(issuance.ServiceId, opaqueid.ServicePrefix) ||
+		!opaqueid.Valid(issuance.ServiceRunId, opaqueid.ServiceRunPrefix) || issuance.RunNumber < 1 ||
+		!certificateidentity.SamePlan(issuance.CertificatePlan, r.Plan) || !issuance.State.Valid() {
+		return servicestream.ErrEndpoint
+	}
+	installable := issuance.State == controlv1.CertificateIssuanceStateWaitingForInstall ||
+		issuance.State == controlv1.CertificateIssuanceStateInstalled
+	if (issuance.CertificatePem != nil) != installable {
+		return servicestream.ErrEndpoint
+	}
+	if issuance.State == controlv1.CertificateIssuanceStateFailed || issuance.State == controlv1.CertificateIssuanceStateCanceled {
+		return errManagedIssuanceFailed
+	}
+	return nil
 }
 
 func (r Certificates) promote(ctx context.Context, staged clientstate.Material) (clientstate.Material, error) {
@@ -234,6 +256,6 @@ func waitCertificateRetry(ctx context.Context, delay time.Duration) error {
 	case <-ctx.Done():
 		return context.Cause(ctx)
 	case <-timer.C:
-		return nil
+		return context.Cause(ctx)
 	}
 }

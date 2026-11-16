@@ -3893,9 +3893,12 @@ type ServiceRunPreparation struct {
 	PublisherKeyId      ResourceID       `json:"publisher_key_id"`
 	RequirePostQuantum  bool             `json:"require_post_quantum"`
 	RunNumber           int64            `json:"run_number,string"`
-	ServiceId           ServiceID        `json:"service_id"`
-	ServiceRunId        ServiceRunID     `json:"service_run_id"`
-	TeamId              TeamID           `json:"team_id,omitempty"`
+
+	// RunToken Stable exact-run credential. Before Start, this credential permits only closing the preparation; it grants no serving authority.
+	RunToken     string       `json:"run_token"`
+	ServiceId    ServiceID    `json:"service_id"`
+	ServiceRunId ServiceRunID `json:"service_run_id"`
+	TeamId       TeamID       `json:"team_id,omitempty"`
 
 	// Traffic Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
 	Traffic TrafficLimits `json:"traffic"`
@@ -3920,8 +3923,12 @@ type ServiceRunSetup struct {
 
 // ServiceRunState defines model for ServiceRunState.
 type ServiceRunState struct {
-	ActiveStreams        *int32                 `json:"active_streams,omitempty"`
-	Healthy              *bool                  `json:"healthy,omitempty"`
+	ActiveStreams    *int32 `json:"active_streams,omitempty"`
+	EndpointRevision int64  `json:"endpoint_revision"`
+	Healthy          *bool  `json:"healthy,omitempty"`
+
+	// PublicEndpointReady The current public endpoint has compatible ingress and published or explicitly unmanaged DNS for this run. This fact does not grant access, extend authority, or affect connector readiness.
+	PublicEndpointReady  bool                   `json:"public_endpoint_ready"`
 	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
 	PublisherExpiresAt   time.Time              `json:"publisher_expires_at"`
 	RunNumber            int64                  `json:"run_number,string"`

@@ -403,6 +403,7 @@ schemas:
         service_id,
         service_run_id,
         run_number,
+        run_token,
         publisher_identity_id,
         publisher_grant_id,
         publisher_key_id,
@@ -433,6 +434,11 @@ schemas:
           x-go-type: int64,
           x-oapi-codegen-extra-tags: { json: "run_number,string" },
         }
+      run_token:
+        type: string
+        minLength: 1
+        maxLength: 4096
+        description: Stable exact-run credential. Before Start, this credential permits only closing the preparation; it grants no serving authority.
       publisher_identity_id: { $ref: "../openapi.yaml#/components/schemas/ResourceID" }
       publisher_grant_id: { $ref: "../openapi.yaml#/components/schemas/ResourceID" }
       publisher_key_id: { $ref: "../openapi.yaml#/components/schemas/ResourceID" }
@@ -483,7 +489,16 @@ schemas:
     type: object
     additionalProperties: false
     required:
-      [service_id, service_run_id, run_number, state, publisher_expires_at, publisher_connections]
+      [
+        service_id,
+        service_run_id,
+        run_number,
+        state,
+        publisher_expires_at,
+        publisher_connections,
+        endpoint_revision,
+        public_endpoint_ready,
+      ]
     properties:
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
@@ -495,6 +510,10 @@ schemas:
           x-oapi-codegen-extra-tags: { json: "run_number,string" },
         }
       state: { type: string, enum: [starting, ready, closed] }
+      endpoint_revision: { type: integer, format: int64, minimum: 1 }
+      public_endpoint_ready:
+        type: boolean
+        description: The current public endpoint has compatible ingress and published or explicitly unmanaged DNS for this run. This fact does not grant access, extend authority, or affect connector readiness.
       publisher_expires_at: { type: string, format: date-time }
       healthy: { type: boolean }
       stream_capacity: { type: integer, format: int32, minimum: 1, maximum: 1048576 }

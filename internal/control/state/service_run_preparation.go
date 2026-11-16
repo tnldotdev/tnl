@@ -21,6 +21,7 @@ import (
 
 type ServiceRunPreparation struct {
 	ServiceID, TeamID, GuestID, RunID, PublisherIdentityID, PublisherGrantID, PublisherKeyID, IdempotencyKey string
+	Token                                                                                                    string
 	RunNumber                                                                                                int64
 	ExpiresAt                                                                                                time.Time
 	CertificatePlan                                                                                          CertificatePlan
@@ -47,6 +48,8 @@ type ServiceRunAssignment struct {
 type ServiceRunState struct {
 	ServiceID, RunID, Token, State  string
 	RunNumber                       int64
+	EndpointRevision                int64
+	PublicEndpointReady             bool
 	ExpiresAt                       time.Time
 	Connections                     []ServiceRunAssignment
 	VisitorSourceKey                [32]byte
@@ -74,6 +77,20 @@ func serviceRunPreparation(r controlstatedb.ControlServiceRun) (ServiceRunPrepar
 		Traffic:            traffic,
 		RequirePostQuantum: r.RequirePostQuantum,
 		CertificatePlan:    CertificatePlan{CacheKey: r.CertificateCacheKey, Scope: r.CertificateScope, Identifiers: slices.Clone(r.CertificateIdentifiers), ChallengeMethod: certificateidentity.ChallengeDNS01}}, nil
+}
+
+func (d *Database) serviceRunPreparation(run controlstatedb.ControlServiceRun) (ServiceRunPreparation, error) {
+	preparation, err := serviceRunPreparation(run)
+	if err != nil {
+		return ServiceRunPreparation{}, err
+	}
+	seed, err := d.serviceAssignmentSeed(run)
+	if err != nil {
+		return ServiceRunPreparation{}, err
+	}
+	token, _ := serviceRunCredential(seed, run.ID)
+	preparation.Token = token.String()
+	return preparation, nil
 }
 
 func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p PublisherIdentity, key string, now time.Time, request ServiceRunRequest) (result ServiceRunPreparation, retErr error) {
@@ -166,7 +183,7 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		if serviceRunLifecycleState(run.State) != serviceRunPrepared || run.ClosedAt.Valid || !run.PreparationExpiresAt.Time.After(clock.current()) || !bytes.Equal(run.RequestDigest, digest[:]) || run.PublisherIdentityID != p.ID || run.PublisherGrantID != p.GrantID || run.PublisherKeyID != p.KeyID {
 			return result, ErrServiceConflict
 		}
-		result, err = serviceRunPreparation(run)
+		result, err = d.serviceRunPreparation(run)
 		if err != nil {
 			return result, err
 		}
@@ -278,7 +295,7 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 			return result, err
 		}
 	}
-	result, err = serviceRunPreparation(run)
+	result, err = d.serviceRunPreparation(run)
 	if err != nil {
 		return result, err
 	}
@@ -646,11 +663,7 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	}
 	// renewal changes the run, not the saved service's identity. serialize
 	// authority changes without blocking transactions retaining an identity FK.
-	var enabledService string
-	err = tx.QueryRow(ctx, `SELECT id FROM control.services WHERE id=$1 AND enabled AND deleted_at IS NULL FOR NO KEY UPDATE`, serviceID).Scan(&enabledService)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return result, ErrServiceAccess
-	}
+	endpoint, err := lockServiceRunEndpoint(ctx, tx, serviceID)
 	if err != nil {
 		return result, err
 	}
@@ -710,24 +723,7 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 			return result, err
 		}
 	}
-	if run.Healthy && certificateReady && ready > 0 && (ready == 2 || run.ReadyAt.Valid) {
-		if serviceRunLifecycleState(run.State) == serviceRunStarting {
-			run, err = q.ReadyServiceRun(ctx, controlstatedb.ReadyServiceRunParams{
-				ID: runID, ServiceID: serviceID, RunNumber: run.RunNumber, Now: timestamptz(clock.current()),
-			})
-			if errors.Is(err, pgx.ErrNoRows) {
-				return result, ErrServiceAccess
-			}
-			if err != nil {
-				return result, err
-			}
-		}
-	}
-	if run.State == "ready" {
-		run, err = markGuestServiceRunReady(ctx, q, run, clock.current())
-	} else {
-		run, err = boundGuestServingAuthority(ctx, q, run, clock.current())
-	}
+	run, err = advanceServiceRunReadiness(ctx, tx, q, run, clock)
 	if err != nil {
 		return result, err
 	}
@@ -742,6 +738,10 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 		return result, err
 	}
 	if err = d.guestServiceSource(ctx, q, run.GuestID.String, publisherRequestSource(ctx), clock.current()); err != nil {
+		return result, err
+	}
+	endpointReady, err := serviceRunPublicEndpointReady(ctx, tx, endpoint, run, clock.current())
+	if err != nil {
 		return result, err
 	}
 	if !previousExpiration.After(clock.current()) || !run.PublisherExpiresAt.Time.After(clock.current()) {
@@ -768,6 +768,7 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 		}
 	}
 	return ServiceRunState{ServiceID: serviceID, RunID: runID, RunNumber: run.RunNumber,
+		EndpointRevision: endpoint.revision, PublicEndpointReady: endpointReady,
 		Healthy: run.Healthy, StreamCapacity: run.StreamCapacity, ReportedStreams: run.ReportedStreams,
 		State: run.State, ExpiresAt: run.PublisherExpiresAt.Time,
 		Connections: connections}, nil
@@ -799,7 +800,19 @@ func (d *Database) CloseServiceRun(ctx context.Context, serviceID, runID, token 
 	if _, err = checkedServiceRunBinding(serviceID, runID, run.RunNumber); err != nil {
 		return err
 	}
-	if !bytes.Equal(digest[:], run.RunTokenDigest) || run.ClosedAt.Valid || !serviceRunLifecycleState(run.State).active() {
+	expected := run.RunTokenDigest
+	if !run.StartedAt.Valid {
+		// a never-started run has no stored serving credential. derive the
+		// preparation's cleanup token even after revocation has closed it.
+		seed, err := d.serviceAssignmentSeed(run)
+		if err != nil {
+			return err
+		}
+		_, preparedDigest := serviceRunCredential(seed, run.ID)
+		expected = preparedDigest[:]
+	}
+	state := serviceRunLifecycleState(run.State)
+	if !bytes.Equal(digest[:], expected) || !state.valid() || run.ClosedAt.Valid != (state == serviceRunClosed) {
 		return ErrServiceAccess
 	}
 	if run.GuestID.Valid {
@@ -810,6 +823,11 @@ func (d *Database) CloseServiceRun(ctx context.Context, serviceID, runID, token 
 		if err = d.guestSourceAddress(trial, publisherRequestSource(ctx)); err != nil {
 			return err
 		}
+	}
+	if run.ClosedAt.Valid {
+		// exact-token retries confirm only this run's terminal state. they
+		// cannot change a replacement or recreate any serving authority.
+		return tx.Commit(ctx)
 	}
 	count, err := closeServiceRun(ctx, q, run, now)
 	if err != nil {

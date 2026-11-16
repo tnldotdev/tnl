@@ -98,7 +98,9 @@ func (l *HTTP) Reserve(w http.ResponseWriter, r *http.Request) (*Reservation, bo
 		if retry > 0 {
 			w.Header().Set("Retry-After", fmt.Sprint(RetryAfterSeconds(retry)))
 		}
-		w.Header().Set("Connection", "close")
+		if r.ProtoMajor == 1 {
+			w.Header().Set("Connection", "close")
+		}
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second))
 		switch {
 		case status == http.StatusTooManyRequests:

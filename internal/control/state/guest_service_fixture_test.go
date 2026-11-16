@@ -72,6 +72,7 @@ type guestServiceFixture struct {
 	private    ed25519.PrivateKey
 	prep       ServiceRunPreparation
 	run        ServiceRunState
+	ingress    IngressLease
 	leases     map[string]RelayLease
 }
 
@@ -137,6 +138,57 @@ func (f *guestServiceFixture) prepareAndStart(t *testing.T, key string, at time.
 
 func (f *guestServiceFixture) ready(t *testing.T, at time.Time) {
 	t.Helper()
+	if f.ingress.IngressID == "" {
+		f.ingress = registerTestIngress(t, f.database, at)
+	}
+	setEndpointReadinessDNS(t, servicePublicationFixture{database: f.database, service: f.service, now: at}, true, ServiceEndpointDNSPending)
+	f.preparePublisher(t, at)
+	f.finishReadiness(t, at)
+}
+
+func (f *guestServiceFixture) finishReadiness(t *testing.T, at time.Time) {
+	t.Helper()
+	if _, err := f.heartbeat(at); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		work, found, err := f.database.ClaimServiceEndpointDNSWork(f.ctx, "guest-ready", at, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !found {
+			break
+		}
+		if err := f.database.ValidateServiceEndpointDNSWork(f.ctx, work, at); err != nil {
+			t.Fatal(err)
+		}
+		if work.State == ServiceEndpointDNSRemoving {
+			// replacement leaves the previous endpoint's removal with DNS work.
+			work.State = ServiceEndpointDNSRemoved
+		} else {
+			if work.ServiceID != f.service.ID || work.State != ServiceEndpointDNSPending {
+				t.Fatal("guest fixture claimed another service's publication", work.ServiceID, work.State)
+			}
+			work.State = ServiceEndpointDNSPublished
+		}
+		work.AvailableAt = time.Time{}
+		if _, err := f.database.SaveServiceEndpointDNSWork(f.ctx, work, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	token := f.run.Token
+	sourceKey := f.run.VisitorSourceKey
+	var err error
+	f.run, err = f.heartbeat(at)
+	f.run.Token = token
+	f.run.VisitorSourceKey = sourceKey
+	if err != nil || f.run.State != "ready" || !f.run.PublicEndpointReady {
+		t.Fatal("guest did not become publicly ready", f.run.State, f.run.PublicEndpointReady, err)
+	}
+}
+
+func (f *guestServiceFixture) preparePublisher(t *testing.T, at time.Time) {
+	t.Helper()
 	work := createPlanIssuanceWork(t, f.database, at, f.run, f.prep.CertificatePlan, true, nil,
 		planIssuanceOptions{publisherSource: f.guest.SourceIP, lifetime: time.Hour})
 	if err := f.database.MarkServiceCertificateInstalled(f.ctx, f.service.ID, f.run.RunID, f.run.Token,
@@ -152,15 +204,6 @@ func (f *guestServiceFixture) ready(t *testing.T, at time.Time) {
 		if _, err := f.database.ReadyServicePublisherConnection(f.ctx, slot.PublisherConnectionID, f.run.RunID, f.run.RunNumber, slot.Revision, lease, at); err != nil {
 			t.Fatal(err)
 		}
-	}
-	var err error
-	token := f.run.Token
-	sourceKey := f.run.VisitorSourceKey
-	f.run, err = f.heartbeat(at)
-	f.run.Token = token
-	f.run.VisitorSourceKey = sourceKey
-	if err != nil || f.run.State != "ready" {
-		t.Fatalf("guest did not become ready: %+v, %v", f.run, err)
 	}
 }
 

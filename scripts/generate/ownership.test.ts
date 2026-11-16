@@ -48,6 +48,7 @@ it("validates exclusive team/trial ownership without generating union models", a
         service_id: service,
         service_run_id: `srun_${"r".repeat(22)}`,
         run_number: "1",
+        run_token: "opaque-run-token",
         publisher_identity_id: "publisher",
         publisher_grant_id: "grant",
         publisher_key_id: "key",

@@ -27,6 +27,12 @@ permission, a certificate, and connections to its assigned relays. Public
 reachability is a separate endpoint setting. Certificate and relay setup are
 omitted from this diagram.
 
+A run can become ready for connector access before public DNS is published.
+The publisher announces a public endpoint as ready only after control confirms compatible
+ingress and published or explicitly unmanaged DNS at the captured endpoint
+revision. This separate readiness fact does not change the run's authority or
+stop its heartbeats while DNS is pending.
+
 The SDK renews the registration while the app is running. `publisher/app` manages
 registrations and stops the old publication before replacing it.
 `publisher/local` runs that manager and the local API.
@@ -130,7 +136,9 @@ do not send duplicate application requests. Relay delivery remains available
 when direct UDP is not. Changing paths does not replay a failed stream against
 another target.
 
-A draining HTTP run keeps connector packet carriers until the connector reports
+A draining service run stops new visitor work and joins admitted sessions within
+their existing authority and the original drain deadline. For connector access,
+it keeps packet carriers until the connector reports
 that both copy directions have finished. That exact visitor's completion receipt
 uses the existing authenticated control stream and grants no access or renewal.
 Unready openings close when drain starts; missing receipts remain bounded by the

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -39,7 +40,7 @@ func serviceHTTPSessionFixture(t *testing.T, control *visitorfixture.HTTPControl
 		RelayID: "relay", RelayServiceID: "relay-service", RelayRunID: "rr_" + strings.Repeat("R", 22), RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}
 	backend := &serviceBrowserControl{HTTPControl: serviceHTTPControl{}, origin: "https://control.example.test", policy: control, tokens: control}
 	frontend, closeHTTP, err := PrepareHTTP(t.Context(), HTTP{Control: backend, Subject: scope, RunID: header.ServiceRunID,
-		Number: 1, Token: credentials.ServiceRunToken("run-secret"), Hostname: "route.example", Port: 443, Header: header, ReserveCapacity: func(context.Context) error { return nil }})
+		Number: 1, Token: credentials.ServiceRunToken("run-secret"), Hostname: "route.example", Port: 443, Header: header, Source: netip.MustParseAddrPort("192.0.2.1:1234"), ReserveCapacity: func(context.Context) error { return nil }})
 	if err != nil {
 		t.Fatal(err)
 	}

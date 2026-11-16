@@ -113,36 +113,15 @@ func (d *Database) SaveServiceEndpointDNSWork(ctx context.Context, work ServiceE
 }
 
 func (d *Database) ValidateServiceEndpointDNSWork(ctx context.Context, work ServiceEndpointDNSWork, now time.Time) error {
-	var current bool
-	err := d.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.service_endpoints WHERE hostname=$1 AND service_id=$2 AND dns_revision=$3 AND dns_work_owner=$4 AND dns_work_epoch=$5 AND dns_work_expires_at>$6)`, work.Hostname, work.ServiceID, work.Revision, work.Worker, work.Epoch, now).Scan(&current)
+	current, err := controlstatedb.New(d.pool).ValidateServiceEndpointDNSWork(ctx, controlstatedb.ValidateServiceEndpointDNSWorkParams{
+		Hostname: work.Hostname, ServiceID: work.ServiceID, Revision: work.Revision,
+		Worker: work.Worker, Epoch: work.Epoch, Now: timestamptz(now),
+	})
 	if err != nil {
 		return err
 	}
 	if !current {
 		return ErrServiceEndpointDNSWorkStale
-	}
-	if work.Public && work.State != ServiceEndpointDNSRemoving {
-		if err := d.pool.QueryRow(ctx, `SELECT EXISTS(
-		    SELECT 1 FROM control.services service JOIN control.service_runs run ON run.service_id=service.id
-		    WHERE service.id=$1 AND service.public AND service.enabled AND service.deleted_at IS NULL
-		      AND service.certificate_hostname=$3 AND service.domain_id=$4
-		      AND run.certificate_hostname=$3 AND run.certificate_domain_id=$4
-		      AND run.state='ready' AND run.healthy AND run.closed_at IS NULL AND run.publisher_expires_at>$2 AND run.certificate_expires_at>$2
-		      AND EXISTS(SELECT 1 FROM control.service_connection_slots slot
-		        JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
-		          AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
-		        WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open AND NOT relay.draining AND relay.lease_expires_at>$2)
-		      AND EXISTS(SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=service.ingress_pool_id
-		        AND (CASE WHEN service.protocol='http' THEN ingress.https ELSE service.service_port=ANY(ingress.service_ports) END)
-		        AND NOT ingress.draining AND ingress.lease_expires_at>$2)
-		      AND NOT EXISTS(SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=service.ingress_pool_id
-		        AND NOT (CASE WHEN service.protocol='http' THEN ingress.https ELSE service.service_port=ANY(ingress.service_ports) END)
-		        AND NOT ingress.draining AND ingress.lease_expires_at>$2))`, work.ServiceID, now, work.Hostname, work.DomainID).Scan(&current); err != nil {
-			return err
-		}
-		if !current {
-			return ErrServiceEndpointDNSWorkStale
-		}
 	}
 	return nil
 }

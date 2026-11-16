@@ -96,6 +96,7 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 	if err := tx.QueryRow(ctx, `SELECT protocol FROM control.services WHERE id=$1`, serviceID).Scan(&protocol); err != nil {
 		return result, err
 	}
+	events := make([]serviceaudit.Event, 0, len(batch.Events))
 	for _, o := range batch.Events {
 		if o.ServiceKind != "service" || o.ServiceID != serviceID || o.RunID != runID || o.RunNumber != number {
 			return ServiceObservationResult{}, ErrServiceAuditAccess
@@ -112,12 +113,7 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 			if o.DeliveryGeneration != 0 || o.OccurredAt.Before(run.CreatedAt.Time.Add(-time.Second)) || o.OccurredAt.After(deadline) {
 				return ServiceObservationResult{}, ErrServiceAuditAccess
 			}
-			n, err := insertServiceAuditCount(ctx, tx, e, now)
-			if err != nil {
-				return ServiceObservationResult{}, err
-			}
-			result.Accepted += int(n)
-			result.Duplicates += 1 - int(n)
+			events = append(events, e)
 			continue
 		}
 		if o.EventType == "http.decision" {
@@ -157,12 +153,11 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 		if o.OccurredAt.Before(created.Add(-time.Second)) || o.OccurredAt.After(deadline) {
 			return ServiceObservationResult{}, ErrServiceAuditAccess
 		}
-		n, err := insertServiceAuditCount(ctx, tx, e, now)
-		if err != nil {
-			return ServiceObservationResult{}, err
-		}
-		result.Accepted += int(n)
-		result.Duplicates += 1 - int(n)
+		events = append(events, e)
+	}
+	result, err = insertServiceAuditBatch(ctx, tx, events, now)
+	if err != nil {
+		return ServiceObservationResult{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return ServiceObservationResult{}, err

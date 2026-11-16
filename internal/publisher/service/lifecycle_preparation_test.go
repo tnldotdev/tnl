@@ -51,8 +51,13 @@ func TestServicePreparationIsValidatedBeforeLocalObservation(t *testing.T) {
 			}}
 			observed := false
 			cfg.Prepared = func(controlv1.ServiceRunPreparation) error { observed = true; return nil }
-			if err := Publish(t.Context(), cfg); err == nil || observed || control.binds != 0 || control.closes != 0 {
-				t.Fatal("unvalidated preparation reached local observation or run start", boundary, err, observed)
+			closes := 0
+			switch boundary {
+			case "hostname", "expired", "traffic-missing", "traffic-invalid":
+				closes = 1
+			}
+			if err := Publish(t.Context(), cfg); err == nil || observed || control.binds != 0 || control.closes != closes {
+				t.Fatal("unvalidated preparation reached local observation or run start, or lost exact cleanup", boundary, err, observed, control.binds, control.closes)
 			}
 		})
 	}
@@ -67,8 +72,8 @@ func TestServicePreparationObserverFailureStopsBeforeRunStart(t *testing.T) {
 		}
 		return failure
 	}
-	if err := Publish(t.Context(), cfg); !errors.Is(err, failure) || control.prepares != 1 || control.binds != 0 || control.closes != 0 {
-		t.Fatal("failed local observation started a run or lost its cause", err)
+	if err := Publish(t.Context(), cfg); !errors.Is(err, failure) || control.prepares != 1 || control.binds != 0 || control.closes != 1 {
+		t.Fatal("failed local observation started a run, lost cleanup, or lost its cause", err)
 	}
 }
 

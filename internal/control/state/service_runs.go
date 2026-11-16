@@ -65,15 +65,7 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 	if err != nil {
 		return result, err
 	}
-	// recover the same run credential after a lost start response. the run's
-	// protected seed already persists; a separate context keeps this secret
-	// independent from every publisher connection credential.
-	mac := hmac.New(sha256.New, []byte(seed))
-	_, _ = mac.Write([]byte("service-run-token/" + run.ID))
-	secret := mac.Sum(nil)
-	token := credentials.ServiceRunToken(base64.RawURLEncoding.EncodeToString(secret))
-	digest := sha256.Sum256(secret)
-	clear(secret)
+	token, digest := serviceRunCredential(seed, run.ID)
 	until := now.Add(45 * time.Second)
 	if !prepared && run.PublisherExpiresAt.Time.After(until) {
 		until = run.PublisherExpiresAt.Time
@@ -140,6 +132,18 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 		d.activity.metrics.Load().ObservePlacement("create", observability.PlacementPlaced)
 	}
 	return result, nil
+}
+
+// preparation and start return the same exact-run credential. only start stores
+// its digest and admits active-run operations; preparation permits cleanup only.
+func serviceRunCredential(seed credentials.AssignmentSeed, runID string) (credentials.ServiceRunToken, [32]byte) {
+	mac := hmac.New(sha256.New, []byte(seed))
+	_, _ = mac.Write([]byte("service-run-token/" + runID))
+	secret := mac.Sum(nil)
+	token := credentials.ServiceRunToken(base64.RawURLEncoding.EncodeToString(secret))
+	digest := sha256.Sum256(secret)
+	clear(secret)
+	return token, digest
 }
 
 func insertServiceRunSlots(ctx context.Context, q *controlstatedb.Queries, seed credentials.AssignmentSeed, run controlstatedb.ControlServiceRun, placements [2]relayServicePlacement, now time.Time) error {

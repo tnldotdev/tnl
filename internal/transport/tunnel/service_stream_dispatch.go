@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -33,21 +34,22 @@ type PeerStreamIntroduction interface {
 // authenticated TLS/yamux session. it borrows the session and never grants
 // permission to forward a visitor or to register a peer pair.
 type ServiceStreamDispatcher struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	owner    *Session
-	outer    muxsession.Session
-	peer     PeerStreamIntroduction
-	queue    chan *queuedForward
-	reads    chan struct{}
-	peers    chan struct{}
-	forwards chan struct{}
-	mu       sync.Mutex
-	active   map[muxsession.Stream]struct{}
-	reading  []muxsession.Stream
-	wait     sync.WaitGroup
-	once     sync.Once
-	closeErr error
+	ctx       context.Context
+	cancel    context.CancelFunc
+	owner     *Session
+	outer     muxsession.Session
+	peer      PeerStreamIntroduction
+	queue     chan *queuedForward
+	reads     chan struct{}
+	peers     chan struct{}
+	forwards  chan struct{}
+	mu        sync.Mutex
+	active    map[muxsession.Stream]struct{}
+	reading   []muxsession.Stream
+	wait      sync.WaitGroup
+	once      sync.Once
+	acceptErr error
+	closeErr  error
 }
 
 type queuedForward struct {
@@ -84,13 +86,17 @@ func (d *ServiceStreamDispatcher) acceptLoop() {
 	for d.ctx.Err() == nil {
 		stream, err := d.outer.AcceptStream(d.ctx)
 		if err != nil {
+			err = d.recordError(err)
+			d.mu.Lock()
+			d.acceptErr = err
+			d.mu.Unlock()
 			d.cancel()
 			return
 		}
 		d.mu.Lock()
 		if d.ctx.Err() != nil {
 			d.mu.Unlock()
-			_ = stream.Close()
+			d.closeStream(stream)
 			return
 		}
 		d.active[stream] = struct{}{}
@@ -141,8 +147,31 @@ func (d *ServiceStreamDispatcher) release(stream muxsession.Stream, closeStream 
 	delete(d.active, stream)
 	d.mu.Unlock()
 	if closeStream {
-		_ = stream.Close()
+		d.closeStream(stream)
 	}
+}
+
+// retain owned transport and physical-close failures, not malformed visitor input
+// or pure expected shutdown. one matching cause cannot hide a joined failure.
+func (d *ServiceStreamDispatcher) recordError(err error) error {
+	if err == nil || failure.Only(err, net.ErrClosed) || failure.Only(err, muxsession.ErrClosed) ||
+		d.ctx.Err() != nil && (failure.Only(err, context.Cause(d.ctx)) || failure.Only(err, d.ctx.Err())) {
+		return nil
+	}
+	d.mu.Lock()
+	d.closeErr = errors.Join(d.closeErr, err)
+	d.mu.Unlock()
+	return err
+}
+
+func (d *ServiceStreamDispatcher) closeStream(stream muxsession.Stream) {
+	d.recordError(stream.Close())
+}
+
+func (d *ServiceStreamDispatcher) terminalAcceptError() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.acceptErr
 }
 
 func (d *ServiceStreamDispatcher) classify(stream muxsession.Stream) {
@@ -213,9 +242,7 @@ func (d *ServiceStreamDispatcher) readForwardingHeader(stream muxsession.Stream,
 	if kind.Kind == tunnelv1.ServiceCapacityStream {
 		keep = true
 		err := d.owner.answerServiceCapacity(d.ctx, &prefixedStream{Stream: stream, prefix: bytes.NewReader(frame)})
-		d.mu.Lock()
-		d.closeErr = errors.Join(d.closeErr, err)
-		d.mu.Unlock()
+		d.recordError(err)
 		return
 	}
 	if _, err := tunnelv1.ReadServiceForwardingHeader(bytes.NewReader(frame)); err != nil {
@@ -226,7 +253,7 @@ func (d *ServiceStreamDispatcher) readForwardingHeader(stream muxsession.Stream,
 	}
 	forward := &prefixedStream{Stream: stream, prefix: bytes.NewReader(frame)}
 	q := &queuedForward{stream: forward, done: make(chan struct{})}
-	q.timer = time.AfterFunc(handshakeTimeout, func() { _ = stream.Close(); close(q.done) })
+	q.timer = time.AfterFunc(handshakeTimeout, func() { d.closeStream(stream); close(q.done) })
 	select {
 	case d.queue <- q:
 		keep = true
@@ -253,9 +280,9 @@ func (d *ServiceStreamDispatcher) AcceptForwardingStream(ctx context.Context) (m
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, errors.Join(ctx.Err(), d.terminalAcceptError())
 		case <-d.ctx.Done():
-			return nil, net.ErrClosed
+			return nil, errors.Join(net.ErrClosed, d.terminalAcceptError())
 		case q := <-d.queue:
 			if !q.stop() {
 				// an unclaimed opening expired, not the dispatcher or its
@@ -263,8 +290,8 @@ func (d *ServiceStreamDispatcher) AcceptForwardingStream(ctx context.Context) (m
 				continue
 			}
 			if d.ctx.Err() != nil || ctx.Err() != nil {
-				_ = q.stream.Close()
-				return nil, net.ErrClosed
+				d.closeStream(q.stream)
+				return nil, errors.Join(net.ErrClosed, d.terminalAcceptError())
 			}
 			return q.stream, nil
 		}
@@ -286,11 +313,13 @@ func (d *ServiceStreamDispatcher) Close() error {
 			select {
 			case q := <-d.queue:
 				q.stop()
-				_ = q.stream.Close()
+				d.closeStream(q.stream)
 			default:
 				return
 			}
 		}
 	})
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	return d.closeErr
 }

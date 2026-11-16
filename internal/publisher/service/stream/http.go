@@ -33,7 +33,9 @@ func admitRequest(limits RequestLimits, w http.ResponseWriter, r *http.Request) 
 }
 
 func DenyHTTP(w http.ResponseWriter, r *http.Request, status int) {
-	w.Header().Set("Connection", "close")
+	if r.ProtoMajor == 1 {
+		w.Header().Set("Connection", "close")
+	}
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second))
 	switch status {
 	case http.StatusForbidden:

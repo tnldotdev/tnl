@@ -70,7 +70,7 @@ func TestServiceVisitorTLSNegotiatesTheCapturedPostQuantumPolicy(t *testing.T) {
 			go func() {
 				defer close(joined)
 				defer server.Close()
-				handled <- bound.forwardManaged(ctx, server, auth, "")
+				handled <- bound.forwardManaged(ctx, server, auth, "", nil)
 			}()
 			t.Cleanup(func() {
 				cancel()

@@ -907,9 +907,9 @@ func (p *connectorConnection) Forward(ctx context.Context, local net.Conn) (resu
 			return err
 		}
 	}
-	defer func() { result = errors.Join(result, use.prepared.Close()) }()
 	result = use.prepared.Forward(ctx, local)
-	if result == nil && p.config.Protocol == "http" {
+	result = errors.Join(result, use.prepared.Close())
+	if result == nil {
 		// both raw copy directions joined, including a return FIN after a
 		// request-side half-close. this receipt grants no serving authority.
 		finish, cancel := context.WithTimeout(ctx, 5*time.Second)

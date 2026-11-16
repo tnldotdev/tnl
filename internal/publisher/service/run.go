@@ -9,12 +9,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
@@ -22,6 +24,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
@@ -57,7 +60,7 @@ type Prepared struct {
 	managedProtocol     config.ProtocolName
 	managedTargetTLS    *tls.Config
 	visitorTLS          *tls.Config
-	managedVisitor      func(tunnelv1.ServiceForwardingHeader, func(context.Context) error) servicestream.Authentication
+	managedVisitor      func(tunnelv1.ServiceForwardingHeader, netip.AddrPort, func(context.Context) error) servicestream.Authentication
 	sourceKey           [32]byte
 	servicePort         uint16
 	managedPublic       bool
@@ -99,6 +102,16 @@ func (p *Prepared) currentCertificate() (*tls.Certificate, error) {
 	return &certificate, nil
 }
 
+func (p *Prepared) currentPolicy() bool {
+	if p.policy == nil {
+		return false
+	}
+	view, enabled, _ := p.policy.Current()
+	return enabled && view.Scope == (visitorscope.Scope{Kind: visitorscope.Service, ID: p.Preparation.ServiceId}) &&
+		view.Hostname == p.managedHostname && view.MetadataRevision == p.metadataRevision &&
+		view.Port == serviceendpoint.PermissionPort(string(p.managedProtocol))
+}
+
 // Bound accepts only the exact control-approved run and two different assigned
 // relay services. neither the run token nor cached TLS key enters any log.
 type Bound struct {
@@ -112,20 +125,19 @@ type Bound struct {
 }
 
 type boundState struct {
-	connections       [2]controlv1.ConnectionAssignment
-	mu                sync.Mutex
-	active            map[net.Conn]struct{}
-	closed            bool
-	reservedStreams   int
-	connectorPending  int
-	connectorPeers    map[string]*PeerSession
-	packetSlots       [2]*Claimed
-	closePolicy       func()
-	httpDrain         chan struct{}
-	httpDrainUntil    time.Time
-	httpDrainDuration time.Duration
-	httpWorkers       sync.WaitGroup
-	sourceProofs      sourceProofHistory
+	connections      [2]controlv1.ConnectionAssignment
+	mu               sync.Mutex
+	active           map[net.Conn]struct{}
+	closed           bool
+	reservedStreams  int
+	connectorPending int
+	connectorPeers   map[string]*PeerSession
+	packetSlots      [2]*Claimed
+	closePolicy      func()
+	drainStarted     chan struct{}
+	drainUntil       time.Time
+	visitorWorkers   sync.WaitGroup
+	sourceProofs     sourceProofHistory
 }
 
 func (Bound) String() string   { return "private publisher run" }
@@ -134,7 +146,7 @@ func (Bound) GoString() string { return "private publisher run" }
 func (p *Prepared) Activate(setup controlv1.ServiceRunSetup) (*Bound, error) {
 	if p == nil || setup.ServiceId != p.Preparation.ServiceId ||
 		setup.ServiceRunId != p.Preparation.ServiceRunId || setup.RunNumber != p.Preparation.RunNumber ||
-		setup.RunToken == "" ||
+		setup.RunToken == "" || setup.RunToken != p.Preparation.RunToken ||
 		!p.Preparation.ExpiresAt.After(time.Now()) ||
 		len(setup.PublisherConnections) != 2 {
 		return nil, ErrPrivateStream
@@ -283,7 +295,7 @@ func (b *Bound) reserveStream(ref tunnelv1.ServicePublisherConnectionRef) (func(
 	if limit == 0 {
 		limit = 64
 	}
-	if !b.currentLocked(ref) || b.reservedStreams >= limit {
+	if !b.currentLocked(ref) || !b.drainUntil.IsZero() || b.reservedStreams >= limit {
 		return nil, false
 	}
 	b.reservedStreams++
@@ -323,7 +335,9 @@ func (b *Bound) ConnectSlot(ctx context.Context, slot uint8, options ConnectOpti
 		return nil, err
 	}
 	if !b.current(*hello.ServiceConnection) {
-		_ = session.Close()
+		if err := session.Close(); err != nil {
+			return nil, errors.Join(ErrPrivateStream, &tunnel.SessionCleanupError{Err: err})
+		}
 		return nil, ErrPrivateStream
 	}
 	outer, err := session.BorrowServicePublisherTransport()
@@ -442,9 +456,28 @@ func (c *Claimed) Serve(ctx context.Context) (result error) {
 		}
 	}()
 	ctx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(ctx, func() { _ = c.session.Close() })
+	closed := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { defer close(closed); _ = c.session.Close() })
 	var workers sync.WaitGroup
-	defer func() { cancel(); _ = c.session.Close(); workers.Wait(); stop() }()
+	defer func() {
+		cancel()
+		_ = c.session.Close()
+		workers.Wait()
+		if !stop() {
+			<-closed
+		}
+		// retain the session's once-owned result and join the accept owner.
+		// the caller still closes packets and removes the claimed slot; doing
+		// that here would report an expected close before the result observer.
+		err := c.session.Close()
+		if c.dispatcher != nil {
+			err = errors.Join(err, c.dispatcher.Close())
+		}
+		if !failure.Only(err, net.ErrClosed) && !failure.Only(err, muxsession.ErrClosed) &&
+			!failure.Only(err, context.Cause(ctx)) && !failure.Only(err, ctx.Err()) {
+			result = errors.Join(result, err)
+		}
+	}()
 	for {
 		incoming, err := c.session.AcceptDispatchedServiceForwardingStream(ctx, c.dispatcher)
 		if err != nil {
@@ -452,7 +485,8 @@ func (c *Claimed) Serve(ctx context.Context) (result error) {
 			if errors.As(err, &invalid) {
 				continue
 			}
-			if ctx.Err() != nil || errors.Is(err, muxsession.ErrClosed) {
+			if failure.Only(err, net.ErrClosed) || failure.Only(err, muxsession.ErrClosed) ||
+				ctx.Err() != nil && (failure.Only(err, context.Cause(ctx)) || failure.Only(err, ctx.Err())) {
 				return nil
 			}
 			return err
@@ -631,7 +665,7 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	if endStream != nil {
 		connection.endStream = func() error { return endStream(ctx) }
 	}
-	return b.forwardManaged(ctx, connection, b.prepared.managedVisitor(header, reserveCapacity), authority)
+	return b.forwardManaged(ctx, connection, b.prepared.managedVisitor(header, metadata.Source, reserveCapacity), authority, nil)
 }
 
 func (b *Bound) checkVisitorSource(ctx context.Context, header tunnelv1.ServiceForwardingHeader, metadata proxyproto.Header, proof tunnelv1.VisitorSourceProof) error {
@@ -674,53 +708,48 @@ func (b *Bound) checkVisitorSource(ctx context.Context, header tunnelv1.ServiceF
 	return b.sourceProofs.remember(proof, now)
 }
 
-func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor servicestream.Authentication, authority string) error {
+func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor servicestream.Authentication, authority string, finishDelivery func(error) error) error {
 	b.mu.Lock()
-	if b.closed || !b.httpDrainUntil.IsZero() {
+	if b.closed || !b.drainUntil.IsZero() {
 		b.mu.Unlock()
 		return ErrPrivateStream
 	}
-	if b.httpDrain == nil {
-		b.httpDrain = make(chan struct{})
+	if b.drainStarted == nil {
+		b.drainStarted = make(chan struct{})
 	}
-	drain := httpstream.Drain{Started: b.httpDrain, Deadline: func() time.Time {
+	drain := httpstream.Drain{Started: b.drainStarted, Deadline: func() time.Time {
 		b.mu.Lock()
 		defer b.mu.Unlock()
-		return b.httpDrainUntil
+		return b.drainUntil
 	}}
-	http := b.prepared.managedProtocol == config.ProtocolHTTP || b.prepared.managedProtocol == config.ProtocolKubernetes
-	if http {
-		b.httpWorkers.Add(1)
-	}
+	b.visitorWorkers.Add(1)
 	b.mu.Unlock()
-	if http {
-		// cover target resolution and visitor TLS as well as the HTTP server.
-		// the run's fixed fence closes stalled setup without canceling responses
-		// when graceful drain starts.
-		life, cancel := context.WithCancel(ctx)
-		fenced := make(chan struct{})
-		go func() {
-			defer close(fenced)
-			select {
-			case <-life.Done():
-				return
-			case <-drain.Started:
-			}
-			timer := time.NewTimer(time.Until(drain.Deadline()))
-			defer timer.Stop()
-			select {
-			case <-life.Done():
-			case <-timer.C:
-				cancel()
-			}
-		}()
-		ctx = life
-		defer func() {
+	// cover target resolution, visitor TLS, HTTP responses, and native sessions.
+	// the run's fixed fence leaves admitted work and half-closes live when drain
+	// starts, without extending its existing authority or original drain bound.
+	life, cancel := context.WithCancel(ctx)
+	fenced := make(chan struct{})
+	go func() {
+		defer close(fenced)
+		select {
+		case <-life.Done():
+			return
+		case <-drain.Started:
+		}
+		timer := time.NewTimer(time.Until(drain.Deadline()))
+		defer timer.Stop()
+		select {
+		case <-life.Done():
+		case <-timer.C:
 			cancel()
-			<-fenced
-			b.httpWorkers.Done()
-		}()
-	}
+		}
+	}()
+	ctx = life
+	defer func() {
+		cancel()
+		<-fenced
+		b.visitorWorkers.Done()
+	}()
 	check := func() error {
 		if native, ok := visitor.(servicestream.ConnectorVisitor); ok {
 			_, err := native.Admission.CheckUse(ctx)
@@ -758,24 +787,24 @@ func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor ser
 		Mounts: b.prepared.mounts, ResolveHTTPTarget: b.prepared.resolveHTTPTarget,
 		InspectionMode: b.prepared.inspectionMode, ObserveSummary: b.prepared.observeSummary,
 		AdmitRequest: b.prepared.admitRequest, HTTPResponseHooks: b.prepared.httpResponseHooks, HTTPDrain: drain,
-		ConnectorHTTP: b.prepared.connectorHTTP,
-		HTTPProxy:     b.prepared.httpProxy,
-		Authority:     authority,
-		TLS:           b.prepared.visitorTLS, TargetTLS: targetTLS, Visitor: visitor}
+		ConnectorHTTP: b.prepared.connectorHTTP, FinishVisitor: finishDelivery,
+		HTTPProxy: b.prepared.httpProxy,
+		Authority: authority,
+		TLS:       b.prepared.visitorTLS, TargetTLS: targetTLS, Visitor: visitor}
 	return managed.Forward(ctx, stream)
 }
 
-// startHTTPDrain fences new forwarding under the same lock as worker entry.
-// existing public, connector, and base HTTP work retains its authority checks.
-func (b *Bound) startHTTPDrain(until time.Time) error {
+// startDrain fences new forwarding under the same lock as worker entry.
+// existing public, connector, and base work retains its authority checks.
+func (b *Bound) startDrain(until time.Time) error {
 	b.mu.Lock()
-	if b.httpDrain == nil {
-		b.httpDrain = make(chan struct{})
+	if b.drainStarted == nil {
+		b.drainStarted = make(chan struct{})
 	}
 	var pending []*connectorAdmission
-	if b.httpDrainUntil.IsZero() {
-		b.httpDrainUntil = until
-		close(b.httpDrain)
+	if b.drainUntil.IsZero() {
+		b.drainUntil = until
+		close(b.drainStarted)
 		for _, peer := range b.connectorPeers {
 			for admission := range peer.streams {
 				if !admission.readyLocked() {
@@ -797,11 +826,11 @@ func (b *Bound) startHTTPDrain(until time.Time) error {
 	return result
 }
 
-func (b *Bound) joinHTTPDrain() error {
-	b.httpWorkers.Wait()
+func (b *Bound) joinDrain() error {
+	b.visitorWorkers.Wait()
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if !time.Now().Before(b.httpDrainUntil) {
+	if !time.Now().Before(b.drainUntil) {
 		return context.DeadlineExceeded
 	}
 	return nil

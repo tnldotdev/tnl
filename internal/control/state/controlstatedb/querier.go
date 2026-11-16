@@ -242,7 +242,7 @@ type Querier interface {
 	InsertPublisherKey(ctx context.Context, arg InsertPublisherKeyParams) error
 	InsertRelayCertificateOrder(ctx context.Context, arg InsertRelayCertificateOrderParams) (ControlRelayCertificateOrder, error)
 	InsertService(ctx context.Context, arg InsertServiceParams) (ControlService, error)
-	InsertServiceAuditEvent(ctx context.Context, arg InsertServiceAuditEventParams) (int64, error)
+	InsertServiceAuditEvents(ctx context.Context, arg InsertServiceAuditEventsParams) ([]string, error)
 	InsertServiceCertificateOrder(ctx context.Context, arg InsertServiceCertificateOrderParams) (ControlAcmeOrder, error)
 	InsertServiceCertificateRequest(ctx context.Context, arg InsertServiceCertificateRequestParams) error
 	InsertServiceConnectionSlot(ctx context.Context, arg InsertServiceConnectionSlotParams) (ControlServiceConnectionSlot, error)
@@ -308,6 +308,8 @@ type Querier interface {
 	ListRelayDNSChallengePresentations(ctx context.Context, tlsServerName string) ([]ListRelayDNSChallengePresentationsRow, error)
 	ListRelayServiceAssignmentTotals(ctx context.Context) ([]ListRelayServiceAssignmentTotalsRow, error)
 	ListServiceAuditEvents(ctx context.Context, arg ListServiceAuditEventsParams) ([]ControlServiceAuditEvent, error)
+	ListServiceAuditEventsByID(ctx context.Context, eventIds []string) ([]ControlServiceAuditEvent, error)
+	ListServiceAuditOwners(ctx context.Context, serviceIds []string) ([]ListServiceAuditOwnersRow, error)
 	ListServiceConfigurations(ctx context.Context, serviceIds []string) ([]ListServiceConfigurationsRow, error)
 	ListServiceConnectionSlots(ctx context.Context, serviceRunID string) ([]ControlServiceConnectionSlot, error)
 	// replace expired never-ready claims even with a live relay lease.
@@ -379,6 +381,8 @@ type Querier interface {
 	LockServiceHTTPBrowserSession(ctx context.Context, arg LockServiceHTTPBrowserSessionParams) (LockServiceHTTPBrowserSessionRow, error)
 	LockServiceRecoveryEpisode(ctx context.Context, id int64) (ControlServiceRecoveryEpisode, error)
 	LockServiceRun(ctx context.Context, arg LockServiceRunParams) (ControlServiceRun, error)
+	// guest first readiness retains DNS publication through the clock transition.
+	LockServiceRunFirstReadyEndpoint(ctx context.Context, arg LockServiceRunFirstReadyEndpointParams) (string, error)
 	LockServiceRunsForClose(ctx context.Context, serviceID string) ([]ControlServiceRun, error)
 	LockTeamActorContext(ctx context.Context, arg LockTeamActorContextParams) (LockTeamActorContextRow, error)
 	LockTeamDomain(ctx context.Context, arg LockTeamDomainParams) (LockTeamDomainRow, error)
@@ -501,6 +505,9 @@ type Querier interface {
 	ServiceNamespaceOwnsHostname(ctx context.Context, hostname string) (bool, error)
 	ServicePortPoolCapacity(ctx context.Context) ([]ServicePortPoolCapacityRow, error)
 	ServicePublicEndpointBinding(ctx context.Context, visitorConnectionID string) (ServicePublicEndpointBindingRow, error)
+	// the caller holds the service lock and validates the run's preparation facts.
+	// use current DNS, relay, and ingress facts without authorizing visitor access.
+	ServiceRunPublicEndpointReady(ctx context.Context, arg ServiceRunPublicEndpointReadyParams) (bool, error)
 	SetDNSReadyDomainDefault(ctx context.Context, arg SetDNSReadyDomainDefaultParams) (int64, error)
 	SetDomainAuthorityRevision(ctx context.Context, arg SetDomainAuthorityRevisionParams) error
 	SetIdentityInitialTeam(ctx context.Context, arg SetIdentityInitialTeamParams) error
@@ -528,6 +535,8 @@ type Querier interface {
 	UpdateOIDCIdentity(ctx context.Context, arg UpdateOIDCIdentityParams) (ControlIdentity, error)
 	UpdateServiceRecoveryHistogram(ctx context.Context, arg UpdateServiceRecoveryHistogramParams) error
 	UpsertDNSChallengeChange(ctx context.Context, arg UpsertDNSChallengeChangeParams) error
+	// use the same publication candidate as claim, including first-ready guests.
+	ValidateServiceEndpointDNSWork(ctx context.Context, arg ValidateServiceEndpointDNSWorkParams) (bool, error)
 	ValidateVerifiedCompanyProof(ctx context.Context, arg ValidateVerifiedCompanyProofParams) (bool, error)
 	VisitorCurrentMembership(ctx context.Context, arg VisitorCurrentMembershipParams) (string, error)
 	VisitorFeedbackPolicy(ctx context.Context, id string) (string, error)

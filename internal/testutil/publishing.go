@@ -509,7 +509,8 @@ func (f *PublishingFixture) prepare(w http.ResponseWriter, r *http.Request, serv
 	if limits.TotalDownloadBytes != 0 {
 		traffic.TotalDownloadBytes = &limits.TotalDownloadBytes
 	}
-	p := controlv1.ServiceRunPreparation{ServiceId: service, ServiceRunId: runID, TeamId: saved.TeamId,
+	p := controlv1.ServiceRunPreparation{ServiceId: service, ServiceRunId: runID, TeamId: saved.TeamId, GuestId: saved.GuestId,
+		RunToken:            token.String(),
 		PublisherIdentityId: identity.ClientId, PublisherGrantId: identity.GrantId, PublisherKeyId: identity.KeyId,
 		RunNumber: number, Hostname: saved.Endpoint.Hostname, DomainId: *saved.DomainId, ExpiresAt: time.Now().Add(time.Hour),
 		IdempotencyKey: r.Header.Get("Idempotency-Key"), RequirePostQuantum: saved.RequirePostQuantum,
@@ -608,6 +609,7 @@ func (f *PublishingFixture) runOperation(w http.ResponseWriter, r *http.Request,
 		chain := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.ca.Raw})...)
 		issuance := controlv1.ServiceCertificateIssuance{Id: publishingID(f.t, opaqueid.IssuancePrefix), ServiceId: service, ServiceRunId: id,
 			RunNumber: snapshot.Setup.RunNumber, PublisherIdentityId: snapshot.Preparation.PublisherIdentityId,
+			State:           controlv1.CertificateIssuanceStateWaitingForInstall,
 			CertificatePlan: *snapshot.Preparation.CertificatePlan, CertificatePem: new(string(chain)), NotBefore: &leaf.NotBefore, NotAfter: &leaf.NotAfter}
 		f.mu.Lock()
 		run.issuance, run.issuanceKey, run.csr = &issuance, r.Header.Get("Idempotency-Key"), append([]byte(nil), body.Csr...)
@@ -668,6 +670,7 @@ func (f *PublishingFixture) runOperation(w http.ResponseWriter, r *http.Request,
 			deadline = *current.ExpiresAt
 		}
 		publishingWrite(w, 200, controlv1.ServiceRunState{ServiceId: service, ServiceRunId: id, RunNumber: snapshot.Setup.RunNumber,
+			EndpointRevision: current.EndpointRevision, PublicEndpointReady: ready && current.Endpoint.Public,
 			State: state, Healthy: &body.Healthy, PublisherExpiresAt: deadline, PublisherConnections: snapshot.Setup.PublisherConnections})
 	case operation == "connector-peer-pairs" && r.Method == http.MethodGet:
 		publishingWrite(w, 200, controlv1.ConnectorPeerPairCandidates{Items: []controlv1.ConnectorPeerPairCandidate{}})

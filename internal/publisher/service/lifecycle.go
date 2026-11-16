@@ -178,14 +178,17 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		return err
 	}
 	access, err := config.Access(ctx)
-	if err != nil || access == "" {
-		return errors.Join(ErrPrivateStream, err)
+	if err != nil {
+		return err
+	}
+	if access == "" {
+		return ErrPrivateStream
 	}
 	approved, err := config.Control.GetPublisherService(ctx, config.ServiceID, access)
 	if err != nil {
 		return err
 	}
-	if approved.Endpoint == nil || approved.Id != config.ServiceID || !approved.Enabled || approved.TrustRevision < 1 ||
+	if approved.Endpoint == nil || approved.Id != config.ServiceID || !approved.Enabled || approved.TrustRevision < 1 || approved.EndpointRevision < 1 ||
 		approved.Protocol != config.Metadata.Protocol || !samePrivateTrust(approved.TargetTls, config.Metadata.TargetTls) ||
 		config.Metadata.TrustRevision != 0 && config.Metadata.TrustRevision != approved.TrustRevision {
 		return ErrPrivateStream
@@ -250,23 +253,11 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			return current.Preflight(probe, target) == nil
 		}
 	}
-	var preparation controlv1.ServiceRunPreparation
-	err = recoverControlResponse(ctx, time.Time{}, func(attempt context.Context) error {
-		access, err := config.Access(attempt)
-		if err != nil {
-			return err
-		}
-		if access == "" {
-			return ErrPrivateStream
-		}
-		preparation, err = config.Control.PrepareServiceRun(attempt, config.ServiceID, key, access, declaration)
-		return err
-	})
+	reservation := runPreparation{config: config, approved: approved, key: key, declaration: declaration}
+	defer func() { result = errors.Join(result, reservation.close(ctx)) }()
+	preparation, err := reservation.prepare(ctx)
 	if err != nil {
 		return err
-	}
-	if preparation.IdempotencyKey != key {
-		return ErrPrivateStream
 	}
 	var prepared *Prepared
 	managedControl := config.Control
@@ -295,12 +286,10 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if err != nil {
 		return err
 	}
-	runToken := credentials.ServiceRunToken(setup.RunToken)
-	defer func() {
-		finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		defer cancel()
-		result = errors.Join(result, config.Control.CloseServiceRun(finish, config.ServiceID, setup.ServiceRunId, runToken))
-	}()
+	if setup.RunToken != preparation.RunToken {
+		return ErrPrivateStream
+	}
+	runToken := credentials.ServiceRunToken(preparation.RunToken)
 	// control owns the opaque token's encoding and authorization. Activate
 	// requires a nonempty value and binds the setup to this prepared run.
 	bound, err := prepared.Activate(setup)
@@ -350,7 +339,6 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		result = errors.Join(result, audit.Close(flush))
 	}()
 	bound.streamCapacity = int(config.StreamCapacity)
-	bound.httpDrainDuration = config.DrainTime
 	var certificateDone <-chan error
 	{
 		maintain, cancel, err := configureServiceRun(runCtx, config, prepared, setup, managedControl, config.State, audit)
@@ -438,21 +426,21 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			}
 			finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), until)
 			defer cancel()
-			result = errors.Join(result, bound.startHTTPDrain(until))
+			result = errors.Join(result, bound.startDrain(until))
 			status.Ready, status.Draining = false, true
 			status.LastCheck = time.Now()
 			report()
 			drained := make(chan error, 1)
-			httpJoined := make(chan struct{})
+			visitorsJoined := make(chan struct{})
 			go func() {
 				// relay drain retires connector packet carriers. keep those
-				// carriers until HTTP closes join their exact completion receipts,
+				// carriers until admitted visitors and HTTP delivery receipts join,
 				// then retire peers and drain the public paths under the original
-				// deadline. startHTTPDrain already fences new publisher work.
-				httpErr := bound.joinHTTPDrain()
-				close(httpJoined)
+				// deadline. startDrain already fences new publisher work.
+				visitorErr := bound.joinDrain()
+				close(visitorsJoined)
 				stopPeers()
-				drained <- errors.Join(httpErr, paths.StopAdmissions(finish))
+				drained <- errors.Join(visitorErr, paths.StopAdmissions(finish))
 			}()
 		drain:
 			for {
@@ -470,8 +458,8 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 					peersDone = nil
 					result = errors.Join(result, serviceWorkerError(err, context.Canceled))
 					select {
-					case <-httpJoined:
-						// expected peer retirement after the final HTTP bytes.
+					case <-visitorsJoined:
+						// expected peer retirement after admitted visitors join.
 					default:
 						cancel()
 						stopRun()
@@ -494,6 +482,19 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	defer ticker.Stop()
 	ready := false
 	heartbeatOK := true
+	currentReadiness := func(connected [2]SlotSession, now time.Time) bool {
+		// native policies use their own permission port (zero), not an HTTP
+		// endpoint shape. every protocol still needs its exact current policy.
+		connectionsReady := connected[0] != nil && connected[1] != nil || ready && (connected[0] != nil || connected[1] != nil)
+		_, certificateErr := prepared.currentCertificate()
+		bound.mu.Lock()
+		current := !bound.closed
+		bound.mu.Unlock()
+		endpointReady := !approved.Endpoint.Public || state.PublicEndpointReady && state.EndpointRevision == approved.EndpointRevision
+		return ctx.Err() == nil && current && endpointReady && prepared.currentPolicy() && certificateErr == nil && heartbeatOK &&
+			status.ConfigurationCurrent && status.TargetHealthy && state.PublisherExpiresAt.After(now) &&
+			state.State == controlv1.ServiceRunStateState("ready") && (state.Healthy == nil || *state.Healthy) && connectionsReady
+	}
 	for {
 		connected, changed := paths.Snapshot()
 		status.LastCheck = time.Now()
@@ -507,21 +508,27 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		}
 		// initial readiness needs both slots; an established run can serve on one
 		// while replacing the other, without repeating its one-time notification.
-		connectionsReady := status.Connected[0] && status.Connected[1] || ready && (status.Connected[0] || status.Connected[1])
-		_, certificateErr := prepared.currentCertificate()
-		status.Ready = certificateErr == nil && heartbeatOK && status.ConfigurationCurrent && status.TargetHealthy && state.PublisherExpiresAt.After(status.LastCheck) && state.State == controlv1.ServiceRunStateState("ready") && (state.Healthy == nil || *state.Healthy) && connectionsReady
+		status.Ready = currentReadiness(connected, status.LastCheck)
 		if status.Ready {
 			status.LastSuccess = status.LastCheck
 		}
 		report()
 		if status.Ready && !ready {
-			if config.Ready != nil {
-				if err := config.Ready(); err != nil {
-					return err
+			// reporting calls user code. it can outlive a deadline or revoke
+			// policy, so recheck authority and connected slots before notification.
+			current, _ := paths.Snapshot()
+			if !currentReadiness(current, time.Now()) {
+				status.Ready, status.LastCheck = false, time.Now()
+				report()
+			} else {
+				if config.Ready != nil {
+					if err := config.Ready(); err != nil {
+						return err
+					}
 				}
+				ready = true
+				startup(nil)
 			}
-			ready = true
-			startup(nil)
 		}
 		expires := time.NewTimer(time.Until(state.PublisherExpiresAt))
 		select {
@@ -640,11 +647,20 @@ func recoverControlResponse(ctx context.Context, expires time.Time, operation fu
 		defer cancel()
 	}
 	delay := 100 * time.Millisecond
+	var last error
+	canceled := func() error {
+		cause := context.Cause(ctx)
+		if last == nil || failure.Only(last, ctx.Err()) || failure.Only(last, cause) {
+			return cause
+		}
+		return errors.Join(cause, last)
+	}
 	for {
 		if ctx.Err() != nil {
-			return context.Cause(ctx)
+			return canceled()
 		}
 		err := operation(ctx)
+		last = err
 		if err == nil || !transientControlError(err) {
 			return err
 		}
@@ -652,7 +668,7 @@ func recoverControlResponse(ctx context.Context, expires time.Time, operation fu
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return context.Cause(ctx)
+			return canceled()
 		case <-timer.C:
 		}
 		delay = min(2*delay, 2*time.Second)

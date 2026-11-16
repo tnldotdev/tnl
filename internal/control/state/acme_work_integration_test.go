@@ -264,8 +264,15 @@ func TestIntegrationClosingSessionCleansDNSAuthorizations(t *testing.T) {
 	if _, err := database.SaveACMEOrderWork(t.Context(), cleanup, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.CloseServiceRun(t.Context(), authentication.ServiceID, authentication.RunID, authentication.Token, now); !errors.Is(err, ErrServiceAccess) {
+	if err := database.CloseServiceRun(t.Context(), authentication.ServiceID, authentication.RunID, authentication.Token, now); err != nil {
+		t.Fatalf("exact close retry did not confirm the terminal run: %v", err)
+	}
+	if _, err := database.HeartbeatServiceRun(t.Context(), authentication.ServiceID, authentication.RunID, authentication.Token, now,
+		ServiceRunHealth{Healthy: true, StreamCapacity: 1}); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("closed run regained publication authority: %v", err)
+	}
+	if err := database.CloseServiceRun(t.Context(), authentication.ServiceID, authentication.RunID, wrong.String(), now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatalf("terminal close accepted another credential: %v", err)
 	}
 	if _, found, err := database.ClaimACMEOrderWork(t.Context(), "completed", now.Add(time.Second), time.Minute); err != nil || found {
 		t.Fatalf("completed cleanup still claimable = %t, %v", found, err)

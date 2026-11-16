@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	processidentity "github.com/tnldotdev/tnl/internal/publisher/processidentity"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -49,6 +50,12 @@ type jobControl struct {
 	onPrepare       func()
 	runtimeMu       sync.Mutex
 	runtimeRequests []controlv1.PublisherRuntimeRequest
+	preparationMu   sync.Mutex
+	preparation     controlv1.ServiceRunPreparation
+	prepareKeys     []string
+	closedRuns      []string
+	closed          bool
+	serviceStarts   int
 }
 
 func (*jobControl) ControlURL() string { return "https://control.example" }
@@ -89,6 +96,48 @@ func (c *jobControl) PrepareServiceRun(ctx context.Context, service, key, access
 	if service != c.service.Id || access != "test-access-never-log" || declaration.Protocol != c.service.Protocol || declaration.TrustRevision != c.service.TrustRevision {
 		return controlv1.ServiceRunPreparation{}, publisheridentity.ErrScope
 	}
+	c.preparationMu.Lock()
+	c.prepareKeys = append(c.prepareKeys, key)
+	if c.runError != nil {
+		c.preparationMu.Unlock()
+		select {
+		case c.runs <- key:
+		default:
+		}
+		if c.onPrepare != nil {
+			c.onPrepare()
+		}
+		return controlv1.ServiceRunPreparation{}, c.runError
+	}
+	if c.preparation.IdempotencyKey == key {
+		prepared, closed := c.preparation, c.closed
+		c.preparationMu.Unlock()
+		if closed {
+			return controlv1.ServiceRunPreparation{}, clientcontrol.ErrStatusConflict
+		}
+		return prepared, nil
+	}
+	if c.preparation.ServiceRunId != "" && !c.closed {
+		c.preparationMu.Unlock()
+		return controlv1.ServiceRunPreparation{}, clientcontrol.ErrStatusConflict
+	}
+	run, err := opaqueid.New(opaqueid.ServiceRunPrefix)
+	if err != nil {
+		c.preparationMu.Unlock()
+		return controlv1.ServiceRunPreparation{}, err
+	}
+	token, _, err := credentials.NewServiceRunToken()
+	if err != nil {
+		c.preparationMu.Unlock()
+		return controlv1.ServiceRunPreparation{}, err
+	}
+	c.preparation.ServiceRunId, c.preparation.IdempotencyKey = run, key
+	c.preparation.RunToken, c.preparation.ExpiresAt = token.String(), time.Now().Add(2*time.Minute)
+	c.preparation.RunNumber++
+	c.closed = false
+	c.preparationMu.Unlock()
+	// commit before notifying the caller. the original response is lost on
+	// cancellation; detached recovery returns this exact preparation and token.
 	select {
 	case c.runs <- key:
 	default:
@@ -96,19 +145,41 @@ func (c *jobControl) PrepareServiceRun(ctx context.Context, service, key, access
 	if c.onPrepare != nil {
 		c.onPrepare()
 	}
-	if c.runError != nil {
-		return controlv1.ServiceRunPreparation{}, c.runError
-	}
-	// bound the real service owner after its signed preparation. no synthetic
-	// ready callback replaces service certificates or claimed relay connections.
 	<-ctx.Done()
-	return controlv1.ServiceRunPreparation{}, ctx.Err()
+	return controlv1.ServiceRunPreparation{}, context.Cause(ctx)
+}
+
+func (c *jobControl) StartServiceRun(context.Context, string, string, string, int64) (controlv1.ServiceRunSetup, error) {
+	c.preparationMu.Lock()
+	defer c.preparationMu.Unlock()
+	c.serviceStarts++
+	return controlv1.ServiceRunSetup{}, errors.New("unexpected service run Start during preparation cleanup")
+}
+
+func (c *jobControl) CloseServiceRun(ctx context.Context, service, run string, token credentials.ServiceRunToken) error {
+	c.preparationMu.Lock()
+	defer c.preparationMu.Unlock()
+	if ctx.Err() != nil {
+		return context.Cause(ctx)
+	}
+	if service != c.preparation.ServiceId || run != c.preparation.ServiceRunId || token.String() != c.preparation.RunToken {
+		return publisheridentity.ErrScope
+	}
+	c.closedRuns = append(c.closedRuns, run)
+	c.closed = true
+	return nil
 }
 
 func jobBoundary(job Job, identity authorityv1.PublisherEnrollmentResult, key ed25519.PrivateKey) (*jobControl, *jobAuthority) {
+	hostname := job.ID + ".example"
 	return &jobControl{service: controlv1.Service{Id: job.ServiceID, TeamId: identity.TeamId, Name: job.ID, Protocol: controlv1.ServiceProtocol(job.Protocol),
-		Enabled: true, TrustRevision: job.TrustRevision, PublisherPool: job.PublisherPool,
-		TargetTls: publisheridentity.ServiceTargetTLS(job.Trust), Endpoint: &controlv1.ServiceEndpoint{Hostname: job.ID + ".example", Port: 443}},
+		Enabled: true, TrustRevision: job.TrustRevision, EndpointRevision: 1, PublisherPool: job.PublisherPool,
+		TargetTls: publisheridentity.ServiceTargetTLS(job.Trust), Endpoint: &controlv1.ServiceEndpoint{Hostname: hostname, Port: 443}},
+		preparation: controlv1.ServiceRunPreparation{ServiceId: job.ServiceID, TeamId: identity.TeamId,
+			PublisherIdentityId: identity.ClientId, PublisherGrantId: identity.GrantId, PublisherKeyId: identity.KeyId,
+			Hostname: hostname, DomainId: opaqueid.DomainPrefix + "1234567890123456789012",
+			CertificatePlan: &controlv1.CertificatePlan{CacheKey: "installed-job-test", Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: controlv1.Dns01},
+			Traffic:         controlv1.TrafficLimits{Connections: 64, Rate: 64, RatePerNs: int64(time.Second), Burst: 64, UploadBytes: 1 << 20, DownloadBytes: 1 << 20}},
 		public: key.Public().(ed25519.PublicKey), runs: make(chan string, 32)}, &jobAuthority{identity: identity, public: key.Public().(ed25519.PublicKey)}
 }
 
@@ -281,8 +352,10 @@ func TestRealNativeRunSignsWithTheSameKeyAfterBoot(t *testing.T) {
 	job.Target = target.URL
 	control, authority := jobBoundary(job, identity, private)
 	previousRun := ""
+	previousServiceRun := ""
 	for boot := range 2 {
 		control.runtimeRequests, control.runs = nil, make(chan string, 32)
+		control.prepareKeys, control.closedRuns = nil, nil
 		r, err := Open(t.Context(), options)
 		if err != nil {
 			t.Fatal(err)
@@ -297,12 +370,23 @@ func TestRealNativeRunSignsWithTheSameKeyAfterBoot(t *testing.T) {
 				return jobClients(control), authority, nil
 			}}
 		cancel, done := startEngine(t, engine)
+		var preparationKey string
 		select {
-		case <-control.runs:
+		case preparationKey = <-control.runs:
 		case <-time.After(5 * time.Second):
 			t.Fatal("native publisher did not prepare its run")
 		}
 		joinEngine(t, cancel, done)
+		if len(control.prepareKeys) != 2 || control.prepareKeys[0] != preparationKey || control.prepareKeys[1] != preparationKey ||
+			len(control.closedRuns) != 1 || control.closedRuns[0] != control.preparation.ServiceRunId || !control.closed || control.serviceStarts != 0 {
+			t.Fatal("boot cancellation did not recover and close only its exact original preparation")
+		}
+		if control.preparation.ServiceRunId == previousServiceRun || control.preparation.RunToken == "" ||
+			control.preparation.PublisherIdentityId != identity.ClientId || control.preparation.PublisherGrantId != identity.GrantId ||
+			control.preparation.PublisherKeyId != identity.KeyId || control.preparation.RunNumber != int64(boot+1) {
+			t.Fatal("boot preparation changed its captured identity or reused a previous run")
+		}
+		previousServiceRun = control.preparation.ServiceRunId
 		requests := control.runtimeRequests
 		if len(requests) < 3 || requests[0].Action != controlv1.RuntimeInspect || requests[1].Action != controlv1.RuntimeStart || requests[len(requests)-1].Action != controlv1.RuntimeStop {
 			t.Fatal("installed engine missed runtime start/stop")

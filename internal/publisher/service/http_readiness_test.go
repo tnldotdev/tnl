@@ -1,7 +1,9 @@
 package service
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -16,6 +18,121 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+func TestServiceHTTPReadinessDeadlineReleasesOnlyItsProbe(t *testing.T) {
+	for _, h2 := range []bool{false, true} {
+		t.Run(map[bool]string{false: "http1", true: "http2"}[h2], func(t *testing.T) {
+			t.Parallel()
+			type work struct {
+				deadline time.Time
+				started  time.Time
+				err      error
+			}
+			entered, stopped := make(chan work, 4), make(chan work, 4)
+			siblingStarted, siblingFinish := make(chan struct{}), make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(siblingFinish) })
+			defer unblock()
+			var proof *httpaccess.ReadinessProof
+			var budget *requestlimit.HTTP
+			var first atomic.Bool
+			first.Store(true)
+			client, _, _, token := serviceHTTPConfiguredFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if httpstream.IsReadinessProbe(r) && first.Swap(false) {
+					start := time.Now()
+					deadline, _ := r.Context().Deadline()
+					entered <- work{deadline: deadline, started: start}
+					<-r.Context().Done()
+					stopped <- work{deadline: deadline, started: start, err: r.Context().Err()}
+				} else if r.URL.Path == "/sibling" {
+					close(siblingStarted)
+					select {
+					case <-siblingFinish:
+					case <-r.Context().Done():
+						t.Error("probe deadline canceled an ordinary sibling", r.Context().Err())
+					}
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}), h2, true, func(f *HTTP) {
+				var err error
+				proof, err = httpaccess.NewReadinessProof(httpaccess.ReadinessRun{Subject: f.Subject, ID: f.RunID, Number: uint64(f.Number), Hostname: f.Hostname}, "/health")
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.ReadinessProof = proof
+				f.probes, err = requestlimit.NewHTTP(&controlv1.ProjectHTTPApplicationLimits{Concurrency: new(1)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.Requests, err = requestlimit.NewHTTP(&controlv1.ProjectHTTPApplicationLimits{
+					Total: new(1), Concurrency: new(1), Rate: &controlv1.ProjectApplicationRate{Count: 1, Per: "1h"},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				budget = f.Requests
+			})
+			client.Timeout = 9 * time.Second
+			request := func(path, secret, credential string) error {
+				r, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://preview.example.test"+path, nil)
+				if err != nil {
+					return err
+				}
+				r.Header.Set(httpstream.ReadinessProbeHeader, secret)
+				if credential != "" {
+					r.Header.Set(httpaccess.VisitorTokenHeader, credential)
+				}
+				response, err := client.Do(r)
+				if err != nil {
+					return err
+				}
+				defer response.Body.Close()
+				_, err = io.Copy(io.Discard, response.Body)
+				if err == nil && (response.StatusCode != http.StatusNoContent || h2 && response.ProtoMajor != 2) {
+					err = fmt.Errorf("unexpected response: %s %s", response.Proto, response.Status)
+				}
+				return err
+			}
+			probeDone, siblingDone := make(chan error, 1), make(chan error, 1)
+			go func() { probeDone <- request("/health", proof.HeaderValue(), "") }()
+			workStarted := serviceHTTPAwait(t, entered)
+			if remaining := workStarted.deadline.Sub(workStarted.started); remaining < 4*time.Second || remaining > 5*time.Second {
+				t.Fatalf("owner target work has no five-second deadline: %v", remaining)
+			}
+			go func() { siblingDone <- request("/sibling", "", token.Reveal()) }()
+			serviceHTTPAwait(t, siblingStarted)
+			select {
+			case workStopped := <-stopped:
+				if !errors.Is(workStopped.err, context.DeadlineExceeded) || time.Since(workStopped.started) < 4*time.Second {
+					t.Fatal("owner probe stopped for something other than its target-work deadline", workStopped.err)
+				}
+			case <-time.After(7 * time.Second):
+				t.Fatal("owner target work did not stop at its five-second deadline")
+			}
+			if err := serviceHTTPAwait(t, probeDone); err != nil {
+				t.Fatal("timed-out inline probe did not finish", err)
+			}
+			select {
+			case <-budget.Completed():
+				t.Fatal("probe deadline spent or released ordinary sibling budget")
+			case err := <-siblingDone:
+				t.Fatal("probe deadline ended the ordinary sibling", err)
+			default:
+			}
+			secret, err := proof.Renew()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := request("/health", secret, ""); err != nil {
+				t.Fatal("deadline did not release its probe slot", err)
+			}
+			unblock()
+			if err := serviceHTTPAwait(t, siblingDone); err != nil {
+				t.Fatal("ordinary sibling could not finish after probe expiry", err)
+			}
+			serviceHTTPAwait(t, budget.Completed())
+		})
+	}
+}
 
 func TestServiceHTTPReadinessHasIndependentBoundedCapacity(t *testing.T) {
 	for _, h2 := range []bool{false, true} {

@@ -2,8 +2,8 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"net/netip"
 	"sort"
 	"strconv"
 	"time"
@@ -117,47 +117,114 @@ func RecordServiceAudit(ctx context.Context, tx pgx.Tx, event serviceaudit.Event
 }
 
 func insertServiceAudit(ctx context.Context, tx pgx.Tx, e serviceaudit.Event, now time.Time) error {
-	_, err := insertServiceAuditCount(ctx, tx, e, now)
+	_, err := insertServiceAuditBatch(ctx, tx, []serviceaudit.Event{e}, now)
 	return err
 }
 
-func insertServiceAuditCount(ctx context.Context, tx pgx.Tx, e serviceaudit.Event, now time.Time) (int64, error) {
-	// serialize cursor allocation with commits for this team. sequence order
-	// alone would lose a slow transaction behind a pagination cursor.
-	q := controlstatedb.New(tx)
-	var guest pgtype.Text
-	if err := tx.QueryRow(ctx, `SELECT guest_id FROM control.services WHERE id=$1`, e.ServiceID).Scan(&guest); err != nil {
-		return 0, err
+func insertServiceAuditBatch(ctx context.Context, tx pgx.Tx, events []serviceaudit.Event, now time.Time) (ServiceObservationResult, error) {
+	if len(events) == 0 || len(events) > serviceaudit.MaxBatch {
+		return ServiceObservationResult{}, serviceaudit.ErrInvalid
 	}
-	if err := q.LockServiceAuditClock(ctx, controlstatedb.LockServiceAuditClockParams{TeamID: nullableText(e.TeamID), GuestID: guest}); err != nil {
-		return 0, err
-	}
-	var ip *netip.Addr
-	if e.SourceIP != "" {
-		addr, err := netip.ParseAddr(e.SourceIP)
-		if err != nil {
-			return 0, serviceaudit.ErrInvalid
+	// validation and duplicate comparisons use PostgreSQL's timestamp precision,
+	// just as single-event pgx parameters do. never change the caller's slice.
+	unique := make([]serviceaudit.Event, 0, len(events))
+	byID := make(map[string]serviceaudit.Event, len(events))
+	services := make(map[string]struct{})
+	var serviceIDs []string
+	for _, event := range events {
+		event.OccurredAt = event.OccurredAt.Truncate(time.Microsecond)
+		if previous, found := byID[event.ID]; found {
+			if !sameServiceAuditEvent(previous, event) {
+				return ServiceObservationResult{}, ErrServiceAuditAccess
+			}
+			continue
 		}
-		ip = &addr
+		unique = append(unique, event)
+		byID[event.ID] = event
+		if _, found := services[event.ServiceID]; !found {
+			services[event.ServiceID] = struct{}{}
+			serviceIDs = append(serviceIDs, event.ServiceID)
+		}
 	}
-	n, err := q.InsertServiceAuditEvent(ctx, controlstatedb.InsertServiceAuditEventParams{ID: e.ID, TeamID: nullableText(e.TeamID), ServiceID: e.ServiceID, EventType: e.EventType, OccurredAt: timestamptz(e.OccurredAt), ReceivedAt: timestamptz(now), ActorIdentityID: nullableText(e.ActorIdentityID), DeviceID: nullableText(e.DeviceID), PublisherIdentityID: nullableText(e.PublisherIdentityID), RunID: nullableText(e.RunID), VisitorConnectionID: nullableText(e.VisitorConnectionID), SourceIp: ip, Outcome: nullableText(e.Outcome), Reason: nullableText(e.Reason), ConfigurationRevision: pgtype.Int8{Int64: e.ConfigurationRevision, Valid: e.ConfigurationRevision > 0}})
-	if err != nil || n != 0 {
-		return n, err
-	}
-	var same bool
-	err = tx.QueryRow(ctx, `SELECT team_id IS NOT DISTINCT FROM $2::text AND service_id=$3 AND event_type=$4
-		AND guest_id IS NOT DISTINCT FROM $11::text
-		AND COALESCE(run_id,'')=$5 AND COALESCE(visitor_connection_id,'')=$6
-		AND (event_type NOT IN ('connection.open','connection.close','http.decision') OR
-		(COALESCE(host(source_ip),'')=$7 AND COALESCE(outcome,'')=$8 AND COALESCE(reason,'')=$9 AND occurred_at=$10))
-		FROM control.service_audit_events WHERE id=$1`, e.ID, nullableText(e.TeamID), e.ServiceID, e.EventType, e.RunID, e.VisitorConnectionID, e.SourceIP, e.Outcome, e.Reason, e.OccurredAt, guest).Scan(&same)
+	q := controlstatedb.New(tx)
+	owners, err := q.ListServiceAuditOwners(ctx, serviceIDs)
 	if err != nil {
-		return 0, err
+		return ServiceObservationResult{}, err
 	}
-	if !same {
-		return 0, ErrServiceAuditAccess
+	if len(owners) != len(serviceIDs) {
+		return ServiceObservationResult{}, ErrServiceAuditAccess
 	}
-	return 0, nil
+	guests := make(map[string]pgtype.Text, len(owners))
+	teams := make(map[string]pgtype.Text, len(owners))
+	// serialize cursor allocation with commits once per owner, in the same
+	// owner order as parent locking. sequence order alone can skip a slow commit.
+	var locked controlstatedb.LockServiceAuditClockParams
+	for _, owner := range owners {
+		scope := controlstatedb.LockServiceAuditClockParams{TeamID: owner.TeamID, GuestID: owner.GuestID}
+		if scope != locked {
+			if err := q.LockServiceAuditClock(ctx, scope); err != nil {
+				return ServiceObservationResult{}, err
+			}
+			locked = scope
+		}
+		guests[owner.ID], teams[owner.ID] = owner.GuestID, owner.TeamID
+	}
+	for _, event := range unique {
+		if teams[event.ServiceID].String != event.TeamID {
+			return ServiceObservationResult{}, ErrServiceAuditAccess
+		}
+	}
+	payload, err := json.Marshal(unique)
+	if err != nil {
+		return ServiceObservationResult{}, err
+	}
+	inserted, err := q.InsertServiceAuditEvents(ctx, controlstatedb.InsertServiceAuditEventsParams{Events: payload, ReceivedAt: timestamptz(now)})
+	if err != nil {
+		return ServiceObservationResult{}, err
+	}
+	for _, id := range inserted {
+		delete(byID, id)
+	}
+	if len(byID) != 0 {
+		ids := make([]string, 0, len(byID))
+		for id := range byID {
+			ids = append(ids, id)
+		}
+		// use a new statement snapshot after ON CONFLICT has joined any
+		// concurrent insertion, including a conflicting ID from another owner.
+		saved, err := q.ListServiceAuditEventsByID(ctx, ids)
+		if err != nil {
+			return ServiceObservationResult{}, err
+		}
+		if len(saved) != len(ids) {
+			return ServiceObservationResult{}, ErrServiceAuditAccess
+		}
+		for _, row := range saved {
+			event := serviceaudit.Event{TeamID: row.TeamID.String, ServiceID: row.ServiceID, EventType: row.EventType,
+				RunID: row.RunID.String, VisitorConnectionID: row.VisitorConnectionID.String,
+				Outcome: row.Outcome.String, Reason: row.Reason.String, OccurredAt: row.OccurredAt.Time}
+			if row.SourceIp != nil {
+				event.SourceIP = row.SourceIp.String()
+			}
+			if row.GuestID != guests[row.ServiceID] || !sameServiceAuditEvent(byID[row.ID], event) {
+				return ServiceObservationResult{}, ErrServiceAuditAccess
+			}
+		}
+	}
+	return ServiceObservationResult{Accepted: len(inserted), Duplicates: len(events) - len(inserted)}, nil
+}
+
+func sameServiceAuditEvent(a, b serviceaudit.Event) bool {
+	if a.TeamID != b.TeamID || a.ServiceID != b.ServiceID || a.EventType != b.EventType ||
+		a.RunID != b.RunID || a.VisitorConnectionID != b.VisitorConnectionID {
+		return false
+	}
+	switch a.EventType {
+	case "connection.open", "connection.close", "http.decision":
+		return a.SourceIP == b.SourceIP && a.Outcome == b.Outcome && a.Reason == b.Reason && a.OccurredAt.Equal(b.OccurredAt)
+	default:
+		return true
+	}
 }
 
 func auditPrivateMutation(ctx context.Context, tx pgx.Tx, service, actor, operation, request string, now time.Time) error {
@@ -372,13 +439,9 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 	if _, err = lockCurrentIngressLease(ctx, q, lease, now); err != nil {
 		return result, err
 	}
-	for _, e := range events {
-		n, err := insertServiceAuditCount(ctx, tx, e, now)
-		if err != nil {
-			return ServiceObservationResult{}, err
-		}
-		result.Accepted += int(n)
-		result.Duplicates += 1 - int(n)
+	result, err = insertServiceAuditBatch(ctx, tx, events, now)
+	if err != nil {
+		return ServiceObservationResult{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return ServiceObservationResult{}, err

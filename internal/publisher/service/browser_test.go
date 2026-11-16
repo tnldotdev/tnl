@@ -154,7 +154,7 @@ func TestServiceBrowserAccessRequiresHTTPOwnerAndClient(t *testing.T) {
 		}
 	}()
 	header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{PublicService: &tunnelv1.PublicServiceAdmission{DestinationPort: 25443}}}
-	if _, certificateOnly := prepared.managedVisitor(header, func(context.Context) error { return nil }).(servicestream.CertificateVisitor); !certificateOnly {
+	if _, certificateOnly := prepared.managedVisitor(header, netip.MustParseAddrPort("192.0.2.10:40000"), func(context.Context) error { return nil }).(servicestream.CertificateVisitor); !certificateOnly {
 		t.Fatal("TCP service enabled the HTTP browser frontend")
 	}
 }
