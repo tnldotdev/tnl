@@ -241,6 +241,58 @@ func TestIntegrationServiceManagementRemovedAndReplacedMembership(t *testing.T) 
 	check()
 }
 
+func TestIntegrationServiceReadsRecheckMembershipAfterPrincipalAuthentication(t *testing.T) {
+	d, now, owner, team := newAuthorityTeam(t)
+	session, member := allocationVisitorMember(t, d, team.ID, owner, "read-revoked", TeamRoleAdmin, now)
+	service, err := d.CreateServiceAt(t.Context(), team.ID, member.IdentityID, "private-settings", "private-settings",
+		ServicePlacement{}, now, ServiceMetadata{Protocol: "http"},
+		&ProjectServiceConfiguration{Target: "private-settings.internal:3000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.SetMembershipRole(t.Context(), owner, team.ID, member.ID, TeamRoleMember, now); err != nil {
+		t.Fatal(err)
+	}
+	principal := companyTestPrincipal(t, d, session, now)
+	ctx := WithControlPrincipal(t.Context(), principal)
+	identity, err := d.IdentityContext(ctx, principal.IdentityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, membership := range identity.Memberships {
+		found = found || membership.ID == member.ID
+	}
+	if !found || principal.Administrator {
+		t.Fatal("read principal did not capture the ordinary member's current authority")
+	}
+	if _, err := d.GetService(ctx, service.ID, principal.IdentityID); err != nil {
+		t.Fatal("current member owner could not read its service", err)
+	}
+	if configuration, _, err := d.GetServiceConfiguration(ctx, service.ID, principal.IdentityID); err != nil || configuration == nil {
+		t.Fatal("current member owner could not read its protected settings", err)
+	}
+	// the HTTP read authorizer has already authenticated this principal and
+	// observed membership. revoke it before the saved-service read begins.
+	if err := d.RemoveMembership(t.Context(), owner, team.ID, member.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.AuthenticateAccessToken(t.Context(), credentials.AccessToken(session.AccessToken), now); err != nil {
+		t.Fatal("membership removal revoked identity instead of narrowing its team access", err)
+	}
+	record, err := d.GetService(ctx, service.ID, principal.IdentityID)
+	if !errors.Is(err, ErrServiceAccess) || record.ID != "" {
+		t.Fatal("previously authenticated principal read a service after membership removal", err)
+	}
+	configuration, digest, err := d.GetServiceConfiguration(ctx, service.ID, principal.IdentityID)
+	if !errors.Is(err, ErrServiceAccess) || configuration != nil || digest != "" {
+		t.Fatal("previously authenticated principal exposed protected configuration after removal", err)
+	}
+	if retained, err := d.GetService(t.Context(), service.ID, owner); err != nil || retained.ID != service.ID {
+		t.Fatal("denied member reads changed the owner's service", err)
+	}
+}
+
 func TestIntegrationServiceManagementNamedAndSharedRemainAdminOnly(t *testing.T) {
 	d, now, owner, team := newAuthorityTeam(t)
 	member := addAuthorityMember(t, d, now, owner, team.ID, "deployment-creator", TeamRoleAdmin)
