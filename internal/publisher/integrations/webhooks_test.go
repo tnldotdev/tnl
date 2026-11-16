@@ -23,12 +23,16 @@ func TestWebhookFanoutRequiresAllReceiversAndPreservesSignatureInputs(t *testing
 	const body = "{\"event\":\"paid\", \"amount\":300}\n"
 	var failed atomic.Bool
 	var calls atomic.Int32
+	perReceiver := map[string]*atomic.Int32{}
+	var failedReceiver string
 	definition := config.Webhook{Service: "api", Path: "/api/webhooks/stripe", Provider: "stripe", SourceIPs: []string{"192.0.2.0/24"}}
 	encoded, _, err := DefinitionBytes(definition)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, hostname := range []string{"main.example.test", "feature.example.test"} {
+		count := new(atomic.Int32)
+		perReceiver[hostname] = count
 		server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 			data, err := io.ReadAll(request.Body)
 			mac := hmac.New(sha256.New, []byte("test-key"))
@@ -42,6 +46,7 @@ func TestWebhookFanoutRequiresAllReceiversAndPreservesSignatureInputs(t *testing
 				return
 			}
 			calls.Add(1)
+			count.Add(1)
 			if failed.Load() && hostname == "feature.example.test" {
 				response.WriteHeader(http.StatusInternalServerError)
 			} else {
@@ -50,11 +55,22 @@ func TestWebhookFanoutRequiresAllReceiversAndPreservesSignatureInputs(t *testing
 		}))
 		t.Cleanup(server.Close)
 		tunnel, _ := readyTunnel(t, state, server.URL, hostname)
+		if hostname == "feature.example.test" {
+			failedReceiver = tunnel.ID()
+		}
 		if err := tunnel.RegisterWebhookEndpoint(t.Context(), "stripe", encoded); err != nil {
 			t.Fatal(err)
 		}
 	}
-	handler, _, err := NewWebhooks(t.Context(), state, testServer, testIntegrationScope, "hooks.project.example.test", map[string]config.Webhook{"stripe": definition}, nil)
+	type report struct{ endpoint, receiver, reason string }
+	reports := make(chan report, 8)
+	handler, _, err := NewWebhooks(t.Context(), state, testServer, testIntegrationScope, "hooks.project.example.test", map[string]config.Webhook{"stripe": definition}, func(endpoint, receiver, reason string) {
+		select {
+		case reports <- report{endpoint, receiver, reason}:
+		default:
+			t.Error("webhook delivery emitted unbounded failure reports")
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +112,27 @@ func TestWebhookFanoutRequiresAllReceiversAndPreservesSignatureInputs(t *testing
 	send("192.0.2.1", http.MethodPost, "/api/webhooks/stripe?value=a%2Fb&value=a+b", http.StatusBadGateway)
 	if calls.Load() != 4 || received.Load() != 4 {
 		t.Fatalf("failure skipped another receiver: %d calls, %d responses", calls.Load(), received.Load())
+	}
+	// provider retries are new incoming requests, including for a worktree
+	// that acknowledged the previous delivery. tnl remembers no successes.
+	send("192.0.2.1", http.MethodPost, "/api/webhooks/stripe?value=a%2Fb&value=a+b", http.StatusBadGateway)
+	failed.Store(false)
+	send("192.0.2.1", http.MethodPost, "/api/webhooks/stripe?value=a%2Fb&value=a+b", http.StatusOK)
+	for hostname, count := range perReceiver {
+		if count.Load() != 4 {
+			t.Errorf("%s received %d deliveries for four incoming requests", hostname, count.Load())
+		}
+	}
+	if calls.Load() != 8 || received.Load() != 8 {
+		t.Fatalf("provider retries skipped or repeated a delivery: %d calls, %d responses", calls.Load(), received.Load())
+	}
+	if len(reports) != 2 {
+		t.Fatalf("two failed deliveries produced %d reports", len(reports))
+	}
+	for range 2 {
+		if got := <-reports; got != (report{"stripe", failedReceiver, "HTTP 500"}) {
+			t.Errorf("delivery failure lost its endpoint/worktree or included request data: %+v", got)
+		}
 	}
 }
 
