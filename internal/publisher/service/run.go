@@ -616,7 +616,7 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 		ctx = life
 	}
 	deadline := time.Now().Add(10 * time.Second)
-	for _, until := range []time.Time{header.ExpiresAt, header.LeaseExpiresAt} {
+	for _, until := range []time.Time{header.ExpiresAt, header.ServingUntil} {
 		if until.Before(deadline) {
 			deadline = until
 		}
@@ -949,7 +949,7 @@ func headerMatches(ref tunnelv1.ServicePublisherConnectionRef, h tunnelv1.Servic
 	return h.Validate() == nil && h.ServiceID == ref.ServiceID && h.ServiceRunID == ref.ServiceRunID &&
 		h.RunNumber == ref.RunNumber && h.PublisherConnectionID == ref.PublisherConnectionID &&
 		h.ConnectionSlot == ref.ConnectionSlot && h.ConnectionAssignmentRevision == ref.ConnectionAssignmentRevision &&
-		h.RelayServiceID == ref.RelayServiceID && h.LeaseExpiresAt.After(now) && h.ExpiresAt.After(now) &&
+		h.RelayServiceID == ref.RelayServiceID && h.ServingUntil.After(now) && h.ExpiresAt.After(now) &&
 		opaqueid.Valid(h.RelayRunID, opaqueid.RelayRunPrefix)
 }
 

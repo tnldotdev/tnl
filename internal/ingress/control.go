@@ -129,7 +129,7 @@ func (c *Controller) watchLease(ctx context.Context) error {
 		c.mu.Lock()
 		delay := c.retryInterval
 		if c.lease.IngressLeaseRevision != 0 {
-			delay = c.lease.LeaseExpiresAt.Sub(c.now())
+			delay = c.lease.ServingUntil.Sub(c.now())
 			if delay <= 0 {
 				c.leaseLost = true
 			}
@@ -190,7 +190,7 @@ func (c *Controller) register(ctx context.Context) (retErr error) {
 	started := time.Now()
 	requestStarted := c.now()
 	defer func() { c.observeOperation(ctx, observability.OpIngressRegister, retErr, started) }()
-	if lease := c.Lease(); lease.IngressLeaseRevision != 0 && !lease.LeaseExpiresAt.After(c.now()) {
+	if lease := c.Lease(); lease.IngressLeaseRevision != 0 && !lease.ServingUntil.After(c.now()) {
 		return ErrIngressLeaseLost
 	}
 	lease, err := c.client.RegisterIngress(ctx, c.registration)
@@ -245,7 +245,7 @@ func (c *Controller) Ready(now time.Time) bool {
 	lease := c.lease
 	lost := c.leaseLost
 	c.mu.RUnlock()
-	return !lost && lease.IngressLeaseRevision > 0 && !lease.Draining && lease.LeaseExpiresAt.After(now)
+	return !lost && lease.IngressLeaseRevision > 0 && !lease.Draining && lease.ServingUntil.After(now)
 }
 
 func (c *Controller) Lease() ingressv1.IngressLease {
@@ -286,7 +286,7 @@ func (c *Controller) ObserveRecovery(
 		return ingressv1.ServiceRecoveryObservation{}, errors.New("ingress: service recovery observation is invalid")
 	}
 	lease := c.Lease()
-	if lease.IngressLeaseRevision <= 0 || !lease.LeaseExpiresAt.After(c.now()) {
+	if lease.IngressLeaseRevision <= 0 || !lease.ServingUntil.After(c.now()) {
 		return ingressv1.ServiceRecoveryObservation{}, errors.New("ingress: control lease is unavailable")
 	}
 	observation, err := c.client.ObserveServiceRecovery(
@@ -310,11 +310,11 @@ func (c *Controller) ObserveRecovery(
 func (c *Controller) confirmLease(started time.Time, lease ingressv1.IngressLease) error {
 	c.confirmationMu.Lock()
 	defer c.confirmationMu.Unlock()
-	next, err := c.confirmation.Confirm(started, lease.RenewedAt, lease.LeaseExpiresAt, c.now())
+	next, err := c.confirmation.Confirm(started, lease.RenewedAt, lease.ServingUntil, c.now())
 	if err != nil {
 		return ErrIngressLeaseLost
 	}
-	lease.LeaseExpiresAt = next.Deadline
+	lease.ServingUntil = next.Deadline
 	if err := c.setLease(lease); err != nil {
 		return err
 	}
@@ -324,7 +324,7 @@ func (c *Controller) confirmLease(started time.Time, lease ingressv1.IngressLeas
 
 func (c *Controller) setLease(lease ingressv1.IngressLease) error {
 	now := c.now()
-	if !lease.LeaseExpiresAt.After(now) {
+	if !lease.ServingUntil.After(now) {
 		return ErrIngressLeaseLost
 	}
 	if err := validateIngressLease(c.registration, lease, now); err != nil {
@@ -333,7 +333,7 @@ func (c *Controller) setLease(lease ingressv1.IngressLease) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now = c.now()
-	if c.leaseLost || !lease.LeaseExpiresAt.After(now) || c.lease.IngressLeaseRevision != 0 && !c.lease.LeaseExpiresAt.After(now) {
+	if c.leaseLost || !lease.ServingUntil.After(now) || c.lease.IngressLeaseRevision != 0 && !c.lease.ServingUntil.After(now) {
 		c.leaseLost = true
 		return ErrIngressLeaseLost
 	}
@@ -456,7 +456,7 @@ func validateIngressLease(
 		return errors.New("ingress: control lease does not match registration")
 	}
 	if lease.IngressLeaseRevision <= 0 || lease.RegisteredAt.IsZero() ||
-		lease.RenewedAt.Before(lease.RegisteredAt) || !lease.LeaseExpiresAt.After(now) ||
+		lease.RenewedAt.Before(lease.RegisteredAt) || !lease.ServingUntil.After(now) ||
 		lease.Draining != (lease.DrainDeadline != nil) {
 		return errors.New("ingress: control returned an invalid ingress lease")
 	}

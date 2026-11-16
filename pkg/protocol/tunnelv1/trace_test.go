@@ -38,8 +38,8 @@ func TestTraceServiceGoldenFramedWireAndUnknownFields(t *testing.T) {
 	want := publicServiceAdmissionFixture()
 	want.TraceContext = TraceContext{goldenTraceParent}
 	want.ExpiresAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	want.LeaseExpiresAt = time.Date(2026, 1, 2, 3, 5, 5, 0, time.UTC)
-	const payload = `{"trace_context":{"traceparent":"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"},"protocol_version":1,"kind":"service_forward","service_id":"svc_aaaaaaaaaaaaaaaaaaaaaa","service_run_id":"srun_aaaaaaaaaaaaaaaaaaaaaa","public_service":{"ingress_id":"ingress-a","ingress_run_id":"ir_aaaaaaaaaaaaaaaaaaaaaa","ingress_lease_revision":1,"destination_port":25443},"source_ip":"192.0.2.10","run_number":1,"visitor_connection_id":"vc_aaaaaaaaaaaaaaaaaaaaaa","publisher_connection_id":"pc_aaaaaaaaaaaaaaaaaaaaaa","connection_assignment_revision":2,"expires_at":"2026-01-02T03:04:05Z","connection_slot":0,"relay_service_id":"relay","relay_id":"relay-a","relay_run_id":"rr_aaaaaaaaaaaaaaaaaaaaaa","relay_lease_revision":1,"lease_expires_at":"2026-01-02T03:05:05Z"}`
+	want.ServingUntil = time.Date(2026, 1, 2, 3, 5, 5, 0, time.UTC)
+	const payload = `{"trace_context":{"traceparent":"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"},"protocol_version":1,"kind":"service_forward","service_id":"svc_aaaaaaaaaaaaaaaaaaaaaa","service_run_id":"srun_aaaaaaaaaaaaaaaaaaaaaa","public_service":{"ingress_id":"ingress-a","ingress_run_id":"ir_aaaaaaaaaaaaaaaaaaaaaa","ingress_lease_revision":1,"destination_port":25443},"source_ip":"192.0.2.10","run_number":1,"visitor_connection_id":"vc_aaaaaaaaaaaaaaaaaaaaaa","publisher_connection_id":"pc_aaaaaaaaaaaaaaaaaaaaaa","connection_assignment_revision":2,"expires_at":"2026-01-02T03:04:05Z","connection_slot":0,"relay_service_id":"relay","relay_id":"relay-a","relay_run_id":"rr_aaaaaaaaaaaaaaaaaaaaaa","relay_lease_revision":1,"serving_until":"2026-01-02T03:05:05Z"}`
 	var wire bytes.Buffer
 	if err := WriteServiceForwardingHeader(&wire, want); err != nil {
 		t.Fatal(err)
@@ -145,7 +145,7 @@ func TestTracePrivateMaximumFieldsFitFrameCap(t *testing.T) {
 		ServiceID: testOpaqueID(opaqueid.ServicePrefix), ServiceRunID: testOpaqueID(opaqueid.ServiceRunPrefix), RunNumber: math.MaxUint64,
 		SourceIP: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", VisitorConnectionID: testOpaqueID(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: testOpaqueID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: math.MaxUint64, ExpiresAt: now,
 		PublicService: &PublicServiceAdmission{IngressID: strings.Repeat("\x01", 256), IngressRunID: testOpaqueID(opaqueid.IngressRunPrefix), IngressLeaseRevision: math.MaxUint64, DestinationPort: math.MaxUint16}},
-		ConnectionSlot: 1, RelayServiceID: strings.Repeat("\x01", 256), RelayID: strings.Repeat("\x01", 256), RelayRunID: testOpaqueID(opaqueid.RelayRunPrefix), RelayLeaseRevision: math.MaxUint64, LeaseExpiresAt: now}
+		ConnectionSlot: 1, RelayServiceID: strings.Repeat("\x01", 256), RelayID: strings.Repeat("\x01", 256), RelayRunID: testOpaqueID(opaqueid.RelayRunPrefix), RelayLeaseRevision: math.MaxUint64, ServingUntil: now}
 	{
 		var wire bytes.Buffer
 		if err := WriteServiceForwardingHeader(&wire, h); err != nil {
@@ -179,7 +179,7 @@ func TestServiceHeaderCapAndUnknownFields(t *testing.T) {
 		ServiceID: testOpaqueID(opaqueid.ServicePrefix), ServiceRunID: testOpaqueID(opaqueid.ServiceRunPrefix), RunNumber: 1, SourceIP: "192.0.2.1",
 		VisitorConnectionID: testOpaqueID(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: testOpaqueID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 1, ExpiresAt: time.Now(),
 		PublicService: &PublicServiceAdmission{IngressID: "i", IngressRunID: testOpaqueID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 1024}},
-		RelayServiceID: "s", RelayID: "i", RelayRunID: testOpaqueID(opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, LeaseExpiresAt: time.Now()}
+		RelayServiceID: "s", RelayID: "i", RelayRunID: testOpaqueID(opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, ServingUntil: time.Now()}
 	data, err := json.Marshal(h)
 	if err != nil {
 		t.Fatal(err)

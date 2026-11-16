@@ -22,6 +22,7 @@ func TestRelayReplacementIgnoresRenewedLeaseAndRetainsAssignmentFacts(t *testing
 	original := snapshot.Runs[0].ConnectedRelays
 	renewed := slices.Clone(original)
 	for index := range renewed {
+		renewed[index].ServingUntil = renewed[index].ServingUntil.Add(time.Second)
 		renewed[index].LeaseExpiresAt = renewed[index].LeaseExpiresAt.Add(time.Second)
 	}
 	if len(replacementRelays(original, renewed)) != 0 {

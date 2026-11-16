@@ -97,7 +97,7 @@ func (c leaseTestClient) RenewIngress(ctx context.Context, _ ingressv1.IngressID
 }
 
 func testIngressLease(now time.Time) ingressv1.IngressLease {
-	return ingressv1.IngressLease{IngressId: "ingress", IngressRunId: "run", IngressLeaseRevision: 1, ProtocolVersion: 1, ConnectionCapacity: 10, RegisteredAt: now, RenewedAt: now, LeaseExpiresAt: now.Add(time.Hour)}
+	return ingressv1.IngressLease{IngressId: "ingress", IngressRunId: "run", IngressLeaseRevision: 1, ProtocolVersion: 1, ConnectionCapacity: 10, RegisteredAt: now, RenewedAt: now, ServingUntil: now.Add(time.Hour)}
 }
 
 func testLeaseController(t *testing.T, client ControlClient) *Controller {
@@ -142,7 +142,7 @@ func TestControllerRetriesTransientErrorsButTerminatesStaleRun(t *testing.T) {
 
 func TestControllerExpiresWhileRenewalIsBlocked(t *testing.T) {
 	lease := testIngressLease(time.Now())
-	lease.LeaseExpiresAt = time.Now().Add(50 * time.Millisecond)
+	lease.ServingUntil = time.Now().Add(50 * time.Millisecond)
 	var registrations atomic.Int32
 	client := leaseTestClient{
 		register: func(context.Context, ingressv1.IngressRegistration) (ingressv1.IngressLease, error) {
@@ -178,11 +178,11 @@ func TestControllerRejectsLateRenewalAndChangedRevision(t *testing.T) {
 			updated := lease
 			switch mode {
 			case "late-valid":
-				now = lease.LeaseExpiresAt
+				now = lease.ServingUntil
 				updated = testIngressLease(now)
 				updated.RegisteredAt = lease.RegisteredAt
 			case "expired-response":
-				updated.LeaseExpiresAt = now
+				updated.ServingUntil = now
 			case "changed-revision":
 				updated.IngressLeaseRevision++
 			}

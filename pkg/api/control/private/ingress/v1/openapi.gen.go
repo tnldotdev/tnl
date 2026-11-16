@@ -104,18 +104,18 @@ type IngressLease struct {
 	IngressLeaseRevision int64      `json:"ingress_lease_revision"`
 	IngressRunId         Identifier `json:"ingress_run_id"`
 
-	// LeaseExpiresAt Serving authorization issued at renewed_at; response latency spends this allowance.
-	LeaseExpiresAt time.Time `json:"lease_expires_at"`
-
-	// LivenessExpiresAt Control's separate deadline for process availability and replacement.
-	LivenessExpiresAt time.Time `json:"liveness_expires_at"`
-	ProtocolVersion   int64     `json:"protocol_version"`
+	// LeaseExpiresAt Control's deadline for process availability and replacement.
+	LeaseExpiresAt  time.Time `json:"lease_expires_at"`
+	ProtocolVersion int64     `json:"protocol_version"`
 
 	// Region Exact catalog provider:region identity, such as aws:us-west-2 or fly:sjc. local makes no geographic claim.
 	Region              string    `json:"region"`
 	RegisteredAt        time.Time `json:"registered_at"`
 	RenewedAt           time.Time `json:"renewed_at"`
 	ReportedConnections int64     `json:"reported_connections"`
+
+	// ServingUntil Serving authorization issued at renewed_at; response latency spends this allowance.
+	ServingUntil time.Time `json:"serving_until"`
 }
 
 // IngressLeaseIdentity defines model for IngressLeaseIdentity.
@@ -282,7 +282,10 @@ type ServiceRelay struct {
 	RelayLeaseRevision           int64      `json:"relay_lease_revision"`
 	RelayRunId                   Identifier `json:"relay_run_id"`
 	RelayServiceId               Identifier `json:"relay_service_id"`
-	TlsServerName                string     `json:"tls_server_name"`
+
+	// ServingUntil The connected relay's serving authorization, independent of its availability deadline.
+	ServingUntil  time.Time `json:"serving_until"`
+	TlsServerName string    `json:"tls_server_name"`
 }
 
 // ServiceRunClosureLookup defines model for ServiceRunClosureLookup.

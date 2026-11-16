@@ -250,7 +250,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 			}
 		}
 		controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{RelayServiceId: lease.RelayServiceID, RelayId: lease.RelayID, RelayRunId: lease.RelayRunID,
-			RelayLeaseRevision: int64(lease.RelayLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt, ConnectionCapacity: 1}}
+			RelayLeaseRevision: int64(lease.RelayLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt, ServingUntil: lease.ServingUntil, ConnectionCapacity: 1}}
 		registry := NewServiceRegistry()
 		acceptor, err := NewPublisherAcceptor(PublisherAcceptorConfig{Select: func(string) (ServicePublisherTarget, bool) {
 			return ServicePublisherTarget{Control: controller, Registry: registry}, true

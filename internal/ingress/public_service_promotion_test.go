@@ -224,7 +224,7 @@ func TestPublicServicePromotionRechecksLeaseAndDrainBeforeAuthorization(t *testi
 				current := *f.lease.Load()
 				switch change {
 				case "expired":
-					current.LeaseExpiresAt = now
+					current.ServingUntil = now
 				case "replacement":
 					current.IngressLeaseRevision++
 				case "drain deadline":

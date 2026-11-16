@@ -79,7 +79,7 @@ func TestPrivateClaimReservesOwnerBeforeControl(t *testing.T) {
 	t.Cleanup(unblock)
 	source := netip.MustParseAddr("192.0.2.1")
 	client := &privateClaimControlStub{claim: func() { close(entered); <-release }, source: source}
-	controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{RelayServiceId: "relay-a", RelayId: "relay-a-1", RelayRunId: "process", RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}}
+	controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{RelayServiceId: "relay-a", RelayId: "relay-a-1", RelayRunId: "process", RelayLeaseRevision: 1, ServingUntil: time.Now().Add(time.Minute)}}
 	registry := NewServiceRegistry()
 	acceptor := &PublisherAcceptor{selectTarget: func(string) (ServicePublisherTarget, bool) {
 		return ServicePublisherTarget{Control: controller, Registry: registry}, true
@@ -142,7 +142,7 @@ func TestPrivateClaimReservesOwnerBeforeControl(t *testing.T) {
 func TestServicePublisherClaimRequiresObservedSource(t *testing.T) {
 	client := &privateClaimControlStub{source: netip.MustParseAddr("192.0.2.1")}
 	controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{RelayServiceId: "relay-a",
-		RelayId: "relay-a-1", RelayRunId: "process", RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}}
+		RelayId: "relay-a-1", RelayRunId: "process", RelayLeaseRevision: 1, ServingUntil: time.Now().Add(time.Minute)}}
 	ref := tunnelv1.ServicePublisherConnectionRef{ServiceID: privateRelayID(opaqueid.ServicePrefix), ServiceRunID: privateRelayID(opaqueid.ServiceRunPrefix), RunNumber: 1,
 		PublisherConnectionID: privateRelayID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 1, RelayServiceID: "relay-a"}
 	for _, source := range []netip.Addr{{}, netip.IPv4Unspecified(), netip.IPv6Unspecified(), netip.MustParseAddr("fe80::1%en0")} {
@@ -172,7 +172,7 @@ func TestServicePublisherAcceptRequiresPinnedSourceAndRechecksAfterClaim(t *test
 				disconnect: func(context.Context, string, relayv1.ServicePublisherConnectionTransition) { disconnected.Add(1) }}
 			controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{
 				RelayServiceId: "relay-a", RelayId: "relay-a-1", RelayRunId: "process",
-				RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}}
+				RelayLeaseRevision: 1, ServingUntil: time.Now().Add(time.Minute)}}
 			registry := NewServiceRegistry()
 			selectTarget := func(string) (ServicePublisherTarget, bool) {
 				return ServicePublisherTarget{Control: controller, Registry: registry}, true
@@ -289,7 +289,7 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 		PublisherConnectionID: privateRelayID(opaqueid.PublisherConnectionPrefix), ConnectionSlot: 0, ConnectionAssignmentRevision: 2, RelayServiceID: "relay-a"}
 	publisher, relayPublisher := privateRelayPair(t, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Publisher, Credential: "assigned-publisher", ServiceConnection: &ref})
 	paths := newStreamLifetime(relayPublisher)
-	lease := relayv1.RelayLease{RelayServiceId: ref.RelayServiceID, RelayId: "relay-process", RelayRunId: privateRelayID(opaqueid.RelayRunPrefix), RelayLeaseRevision: 4, LeaseExpiresAt: time.Now().Add(time.Minute), ConnectionCapacity: 4}
+	lease := relayv1.RelayLease{RelayServiceId: ref.RelayServiceID, RelayId: "relay-process", RelayRunId: privateRelayID(opaqueid.RelayRunPrefix), RelayLeaseRevision: 4, ServingUntil: time.Now().Add(time.Minute), ConnectionCapacity: 4}
 	registry := NewServiceRegistry()
 	metrics := observability.New("relay")
 	registry.Instrument(metrics)
@@ -311,7 +311,7 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 		ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
 		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: privateRelayID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 7, DestinationPort: 25443},
 		SourceIP:      "192.0.2.4", VisitorConnectionID: privateRelayID(opaqueid.VisitorConnectionPrefix), ExpiresAt: time.Now().Add(time.Minute)},
-		ConnectionSlot: 0, RelayServiceID: lease.RelayServiceId, RelayID: lease.RelayId, RelayRunID: lease.RelayRunId, RelayLeaseRevision: 4, LeaseExpiresAt: lease.LeaseExpiresAt}
+		ConnectionSlot: 0, RelayServiceID: lease.RelayServiceId, RelayID: lease.RelayId, RelayRunID: lease.RelayRunId, RelayLeaseRevision: 4, ServingUntil: lease.ServingUntil}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	forwarded := relayWorker(t, cancel, func() error {

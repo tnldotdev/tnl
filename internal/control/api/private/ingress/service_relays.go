@@ -33,7 +33,7 @@ func privateRelayResponses(rows []controlstate.ServiceRelay) []ingressv1.Service
 			TlsServerName: relay.TLSServerName, ConnectionSlot: int(relay.ConnectionSlot), RelayServiceId: relay.RelayServiceID,
 			RelayId: relay.RelayID, RelayRunId: relay.RelayRunID, RelayLeaseRevision: relay.RelayLeaseRevision,
 			ConnectionAssignmentRevision: relay.ConnectionAssignmentRevision, InternalRelayAddress: relay.InternalRelayAddress,
-			LeaseExpiresAt: relay.LeaseExpiresAt})
+			LeaseExpiresAt: relay.LeaseExpiresAt, ServingUntil: relay.ServingUntil})
 	}
 	return relays
 }

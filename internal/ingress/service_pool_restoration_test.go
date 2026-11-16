@@ -32,7 +32,7 @@ func restorationSameForwardingHeader(got, want tunnelv1.ServiceForwardingHeader)
 	// json retains exact timestamp instants, not go's monotonic clock or location
 	// representation. normalize only those representations, then compare all fields.
 	got.ExpiresAt, want.ExpiresAt = got.ExpiresAt.UTC(), want.ExpiresAt.UTC()
-	got.LeaseExpiresAt, want.LeaseExpiresAt = got.LeaseExpiresAt.UTC(), want.LeaseExpiresAt.UTC()
+	got.ServingUntil, want.ServingUntil = got.ServingUntil.UTC(), want.ServingUntil.UTC()
 	return reflect.DeepEqual(got, want)
 }
 
@@ -50,11 +50,11 @@ func restorationPoolHeader(t *testing.T, control *publicServiceControlFixture, l
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
 		ServiceID: control.service, ServiceRunID: control.run, RunNumber: 1,
 		PublisherConnectionID: relay.PublisherConnectionId, ConnectionAssignmentRevision: uint64(relay.ConnectionAssignmentRevision),
-		VisitorConnectionID: publicServiceTestID(t, "vc_"), SourceIP: "192.0.2.4", ExpiresAt: lease.LeaseExpiresAt,
+		VisitorConnectionID: publicServiceTestID(t, "vc_"), SourceIP: "192.0.2.4", ExpiresAt: lease.ServingUntil,
 		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: lease.IngressId, IngressRunID: lease.IngressRunId,
 			IngressLeaseRevision: uint64(lease.IngressLeaseRevision), DestinationPort: 443},
 	}, ConnectionSlot: uint8(relay.ConnectionSlot), RelayServiceID: relay.RelayServiceId, RelayID: relay.RelayId,
-		RelayRunID: relay.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLeaseRevision), LeaseExpiresAt: relay.LeaseExpiresAt}
+		RelayRunID: relay.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLeaseRevision), ServingUntil: relay.ServingUntil}
 }
 
 func restorationAcceptIngress(ctx context.Context, transport muxsession.Session) (*tunnel.Session, error) {

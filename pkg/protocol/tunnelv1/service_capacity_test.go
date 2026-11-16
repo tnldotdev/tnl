@@ -36,7 +36,7 @@ func TestServiceCapacityRequestBindsTheWholeStream(t *testing.T) {
 		"ingress-lease": func(h *ServiceForwardingHeader) { h.PublicService.IngressLeaseRevision++ },
 		"port":          func(h *ServiceForwardingHeader) { h.PublicService.DestinationPort++ },
 		"expiry":        func(h *ServiceForwardingHeader) { h.ExpiresAt = h.ExpiresAt.Add(time.Second) },
-		"lease-expiry":  func(h *ServiceForwardingHeader) { h.LeaseExpiresAt = h.LeaseExpiresAt.Add(time.Second) },
+		"serving-expiry": func(h *ServiceForwardingHeader) { h.ServingUntil = h.ServingUntil.Add(time.Second) },
 	}
 	for name, change := range changes {
 		t.Run(name, func(t *testing.T) {

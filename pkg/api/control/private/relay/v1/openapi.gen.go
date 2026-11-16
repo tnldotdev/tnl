@@ -172,12 +172,9 @@ type RelayLease struct {
 	InternalNetworks     []string   `json:"internal_networks"`
 	InternalRelayAddress Identifier `json:"internal_relay_address"`
 
-	// LeaseExpiresAt Serving authorization issued at renewed_at; response latency spends this allowance.
-	LeaseExpiresAt time.Time `json:"lease_expires_at"`
-
-	// LivenessExpiresAt Control's separate deadline for process availability and replacement.
-	LivenessExpiresAt time.Time `json:"liveness_expires_at"`
-	ObservedAddress   *string   `json:"observed_address,omitempty"`
+	// LeaseExpiresAt Control's deadline for process availability and replacement.
+	LeaseExpiresAt  time.Time `json:"lease_expires_at"`
+	ObservedAddress *string   `json:"observed_address,omitempty"`
 
 	// PeerSigningPublicKey Process-run key when registered. Missing-key leases cannot authorize connector pair claims.
 	PeerSigningPublicKey *string `json:"peer_signing_public_key,omitempty"`
@@ -194,8 +191,11 @@ type RelayLease struct {
 	RenewedAt           time.Time  `json:"renewed_at"`
 	ReportedConnections int64      `json:"reported_connections"`
 	ReportedStreams     int64      `json:"reported_streams"`
-	StreamCapacity      int64      `json:"stream_capacity"`
-	TlsServerName       Identifier `json:"tls_server_name"`
+
+	// ServingUntil Serving authorization issued at renewed_at; response latency spends this allowance.
+	ServingUntil   time.Time  `json:"serving_until"`
+	StreamCapacity int64      `json:"stream_capacity"`
+	TlsServerName  Identifier `json:"tls_server_name"`
 }
 
 // RelayLeaseIdentity defines model for RelayLeaseIdentity.

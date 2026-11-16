@@ -265,7 +265,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 			t.Fatal(err)
 		}
 		wireLease := relayv1.RelayLease{RelayServiceId: assigned.RelayServiceID, RelayId: assigned.RelayID,
-			RelayRunId: assigned.RelayRunID, RelayLeaseRevision: int64(assigned.RelayLeaseRevision), LeaseExpiresAt: assigned.LeaseExpiresAt}
+			RelayRunId: assigned.RelayRunID, RelayLeaseRevision: int64(assigned.RelayLeaseRevision), LeaseExpiresAt: assigned.LeaseExpiresAt, ServingUntil: assigned.ServingUntil}
 		return wireLease, proof, ed25519.Sign(keys[assigned.RelayServiceID], claimMessage)
 	}
 	lease0, proof0, signed0 := proofFor(pair, 0)

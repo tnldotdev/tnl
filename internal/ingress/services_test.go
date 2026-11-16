@@ -192,7 +192,7 @@ func TestServiceRoutingRejectsWrongLeaseAndOutOfOrderSnapshots(t *testing.T) {
 func TestServiceRoutingClosesVisitorsAtIngressLeaseExpiry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		lease, snapshot := serviceRoutingFixture(t)
-		lease.LeaseExpiresAt = time.Now().Add(time.Second)
+		lease.ServingUntil = time.Now().Add(time.Second)
 		routing := NewServiceRouting()
 		defer routing.Close()
 		if err := routing.apply(time.Now(), lease, snapshot); err != nil {

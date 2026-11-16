@@ -16,7 +16,7 @@ type ServiceCapacityRequest struct {
 
 func (r ServiceCapacityRequest) Validate() error {
 	if r.Kind != ServiceCapacityStream || r.Stream.PublicService == nil || r.Stream.Validate() != nil ||
-		r.Deadline.IsZero() || r.Deadline.After(r.Stream.ExpiresAt) || r.Deadline.After(r.Stream.LeaseExpiresAt) {
+		r.Deadline.IsZero() || r.Deadline.After(r.Stream.ExpiresAt) || r.Deadline.After(r.Stream.ServingUntil) {
 		return errors.New("tunnelv1: invalid service capacity request")
 	}
 	return nil
@@ -43,12 +43,12 @@ func SameServiceStream(a, b ServiceForwardingHeader) bool {
 	if a.PublicService == nil || b.PublicService == nil || *a.PublicService != *b.PublicService {
 		return false
 	}
-	if !a.ExpiresAt.Equal(b.ExpiresAt) || !a.LeaseExpiresAt.Equal(b.LeaseExpiresAt) {
+	if !a.ExpiresAt.Equal(b.ExpiresAt) || !a.ServingUntil.Equal(b.ServingUntil) {
 		return false
 	}
 	a.PublicService, b.PublicService = nil, nil
 	a.TraceContext, b.TraceContext = TraceContext{}, TraceContext{}
 	a.ExpiresAt, b.ExpiresAt = time.Time{}, time.Time{}
-	a.LeaseExpiresAt, b.LeaseExpiresAt = time.Time{}, time.Time{}
+	a.ServingUntil, b.ServingUntil = time.Time{}, time.Time{}
 	return a == b
 }

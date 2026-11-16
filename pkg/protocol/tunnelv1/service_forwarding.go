@@ -72,7 +72,7 @@ type ServiceForwardingHeader struct {
 	RelayID            string    `json:"relay_id"`
 	RelayRunID         string    `json:"relay_run_id"`
 	RelayLeaseRevision uint64    `json:"relay_lease_revision"`
-	LeaseExpiresAt     time.Time `json:"lease_expires_at"`
+	ServingUntil       time.Time `json:"serving_until"`
 }
 
 func (h ServiceForwardingHeader) Validate() error {
@@ -80,7 +80,7 @@ func (h ServiceForwardingHeader) Validate() error {
 		return err
 	}
 	if h.ConnectionSlot > 1 || !validIdentifier(h.RelayServiceID) || !validIdentifier(h.RelayID) ||
-		!opaqueid.Valid(h.RelayRunID, opaqueid.RelayRunPrefix) || h.RelayLeaseRevision == 0 || h.LeaseExpiresAt.IsZero() {
+		!opaqueid.Valid(h.RelayRunID, opaqueid.RelayRunPrefix) || h.RelayLeaseRevision == 0 || h.ServingUntil.IsZero() {
 		return errors.New("tunnelv1: invalid public service forwarding header")
 	}
 	return nil

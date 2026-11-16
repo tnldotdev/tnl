@@ -257,7 +257,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	}
 	server, err := ingress.New(listener, ingress.Config{MaxConnections: 20, Control: direct, Forwarder: target,
 		AuditSink: sink, CurrentLease: func() ingressv1.IngressLease {
-			return ingressv1.IngressLease{IngressId: lease.IngressID, IngressRunId: lease.IngressRunID, IngressLeaseRevision: int64(lease.IngressLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt}
+			return ingressv1.IngressLease{IngressId: lease.IngressID, IngressRunId: lease.IngressRunID, IngressLeaseRevision: int64(lease.IngressLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt, ServingUntil: lease.ServingUntil}
 		},
 		RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}})
 	if err != nil {

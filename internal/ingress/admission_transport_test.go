@@ -77,7 +77,7 @@ func newAdmissionTransportFixture(t *testing.T) *admissionTransportFixture {
 	lease := relayv1.RelayLease{RelayServiceId: ref.RelayServiceID, RelayId: "relay", RelayRunId: id("rr_"), RelayLeaseRevision: 4,
 		ProtocolVersion: 1, RelayAddress: "relay.test:443", TlsServerName: material.serverName, InternalRelayAddress: "127.0.0.1:9445",
 		InternalNetworks: []string{}, ConnectionCapacity: 4, StreamCapacity: 4,
-		RegisteredAt: now, RenewedAt: now, LeaseExpiresAt: now.Add(time.Minute)}
+		RegisteredAt: now, RenewedAt: now, ServingUntil: now.Add(time.Minute)}
 	backend := admissionRelayControl{lease: lease, ref: ref}
 	leased := make(chan struct{}, 1)
 	controller, err := relay.NewController(relay.ControllerConfig{Client: backend,
@@ -137,14 +137,14 @@ func newAdmissionTransportFixture(t *testing.T) *admissionTransportFixture {
 	f.relay = ingressv1.ServiceRelay{PublisherConnectionId: ref.PublisherConnectionID, ConnectionSlot: int(ref.ConnectionSlot),
 		ConnectionAssignmentRevision: int64(ref.ConnectionAssignmentRevision), RelayServiceId: ref.RelayServiceID,
 		RelayId: lease.RelayId, RelayRunId: lease.RelayRunId, RelayLeaseRevision: lease.RelayLeaseRevision,
-		LeaseExpiresAt: lease.LeaseExpiresAt, InternalRelayAddress: f.server.address(), TlsServerName: material.serverName}
+		ServingUntil: lease.ServingUntil, InternalRelayAddress: f.server.address(), TlsServerName: material.serverName}
 	f.header = tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream, ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID,
 		RunNumber: ref.RunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
-		VisitorConnectionID: id("vc_"), SourceIP: "192.0.2.7", ExpiresAt: lease.LeaseExpiresAt,
+		VisitorConnectionID: id("vc_"), SourceIP: "192.0.2.7", ExpiresAt: lease.ServingUntil,
 		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress", IngressRunID: id("ir_"), IngressLeaseRevision: 1, DestinationPort: 443},
 	}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: lease.RelayServiceId, RelayID: lease.RelayId,
-		RelayRunID: lease.RelayRunId, RelayLeaseRevision: uint64(lease.RelayLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt}
+		RelayRunID: lease.RelayRunId, RelayLeaseRevision: uint64(lease.RelayLeaseRevision), ServingUntil: lease.ServingUntil}
 	f.forwarder = newTestForwarder(t, material)
 	return f
 }

@@ -34,7 +34,7 @@ func restorationTrafficSnapshot(t *testing.T, lease ingressv1.IngressLease, runs
 		run.ValidUntil = snapshot.ValidUntil
 		run.ConnectedRelays = append([]ingressv1.ServiceRelay(nil), run.ConnectedRelays...)
 		for index := range run.ConnectedRelays {
-			run.ConnectedRelays[index].LeaseExpiresAt = lease.LeaseExpiresAt
+			run.ConnectedRelays[index].ServingUntil = lease.ServingUntil
 		}
 		authority, key, err := visitortoken.IssueVisitorSourceAuthority([32]byte{1}, tunnelv1.VisitorSourceAuthority{
 			ServiceID: run.ServiceId, ServiceRunID: run.ServiceRunId, RunNumber: uint64(run.RunNumber),
@@ -57,7 +57,7 @@ func restorationTrafficSnapshot(t *testing.T, lease ingressv1.IngressLease, runs
 func TestServiceTrafficRestorationExhaustedTotalsSurviveRoutingOmissionAndRecovery(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		lease, initial := serviceRoutingFixture(t)
-		lease.LeaseExpiresAt = time.Now().Add(5 * time.Minute)
+		lease.ServingUntil = time.Now().Add(5 * time.Minute)
 		config, control, _, _ := publicServiceTestConfig(t)
 		config.CurrentLease = func() ingressv1.IngressLease { return lease }
 		server := serviceSelectionServer(t, config)
@@ -143,7 +143,7 @@ func (c *restorationClosureControl) ClosedServiceRuns(_ context.Context, id stri
 func TestServiceTrafficRestorationTrustedTerminalQueryCannotReviveSameRun(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		lease, snapshot := serviceRoutingFixture(t)
-		lease.LeaseExpiresAt = time.Now().Add(5 * time.Minute)
+		lease.ServingUntil = time.Now().Add(5 * time.Minute)
 		config, base, _, _ := publicServiceTestConfig(t)
 		config.CurrentLease = func() ingressv1.IngressLease { return lease }
 		run := snapshot.Runs[0]
@@ -422,7 +422,7 @@ func TestServiceTrafficRestorationHTTPUnavailableAuditDoesNotInventRun(t *testin
 			t.Fatal(err)
 		}
 		for index := range snapshot.Runs[0].ConnectedRelays {
-			snapshot.Runs[0].ConnectedRelays[index].LeaseExpiresAt = now.Add(time.Second)
+			snapshot.Runs[0].ConnectedRelays[index].ServingUntil = now.Add(time.Second)
 		}
 		if err := server.services.apply(now, lease, snapshot); err != nil {
 			t.Fatal("valid short relay lease could not install", err)

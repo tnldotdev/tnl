@@ -22,7 +22,7 @@ func serviceAcceptorFixture(t *testing.T, client *privateClaimControlStub, confi
 	ref := tunnel.ServiceForwardingRef(header)
 	controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{
 		RelayServiceId: ref.RelayServiceID, RelayId: header.RelayID, RelayRunId: header.RelayRunID,
-		RelayLeaseRevision: int64(header.RelayLeaseRevision), LeaseExpiresAt: header.LeaseExpiresAt,
+		RelayLeaseRevision: int64(header.RelayLeaseRevision), ServingUntil: header.ServingUntil,
 	}}
 	registry := NewServiceRegistry()
 	t.Cleanup(func() { _ = registry.Close() })

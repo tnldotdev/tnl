@@ -94,7 +94,7 @@ func testControllerInstallsCertificateBeforeReady(t *testing.T, fail bool) {
 		ProtocolVersion: 1, RelayAddress: "relay-a.example.test:443", TlsServerName: "relay-a.example.test",
 		InternalRelayAddress: "relay-a.internal:9445", InternalNetworks: []string{},
 		ConnectionCapacity: 10, StreamCapacity: 100, ReportedConnections: 0, ReportedStreams: 0,
-		RegisteredAt: now, RenewedAt: now, LeaseExpiresAt: now.Add(time.Minute),
+		RegisteredAt: now, RenewedAt: now, ServingUntil: now.Add(time.Minute),
 	}
 	client := &relayCertificateControlStub{lease: lease, certificate: relayv1.RelayTransportCertificate{
 		RelayServiceId: lease.RelayServiceId, TlsServerName: lease.TlsServerName,
@@ -173,7 +173,7 @@ func testControllerDoesNotRegisterAgainAfterAcknowledgingDrain(t *testing.T) {
 		ProtocolVersion: 1, RelayAddress: "relay-a.example.test:443", TlsServerName: "relay-a.example.test",
 		InternalRelayAddress: "relay-a.internal:9445", InternalNetworks: []string{},
 		ConnectionCapacity: 10, StreamCapacity: 100, RegisteredAt: now, RenewedAt: now,
-		LeaseExpiresAt: now.Add(time.Minute),
+		ServingUntil: now.Add(time.Minute),
 	}
 	client := &relayDrainControlStub{lease: lease, secondRenewal: make(chan struct{})}
 	controller, err := NewController(ControllerConfig{
@@ -199,7 +199,7 @@ func testControllerDoesNotRegisterAgainAfterAcknowledgingDrain(t *testing.T) {
 	client.draining = lease
 	client.draining.Draining = true
 	client.draining.DrainDeadline = &deadline
-	client.draining.LeaseExpiresAt = deadline
+	client.draining.ServingUntil = deadline
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := relayWorker(t, cancel, func() error { return controller.Run(ctx) })

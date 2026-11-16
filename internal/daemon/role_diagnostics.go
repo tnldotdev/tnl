@@ -17,6 +17,7 @@ type roleDiagnostic struct {
 	ProcessRunID                   string     `json:"process_run_id,omitempty"`
 	LastSeenAt                     time.Time  `json:"last_seen_at"`
 	LeaseExpiresAt                 time.Time  `json:"lease_expires_at"`
+	ServingUntil                   time.Time  `json:"serving_until"`
 	LeaseRevision                  int64      `json:"lease_revision"`
 	Ready                          bool       `json:"ready"`
 	Draining                       bool       `json:"draining"`
@@ -46,7 +47,7 @@ func (d *daemon) roleDiagnostics(role daemonconfig.Role, now time.Time) processD
 		}
 		lease := runtime.controller.Lease()
 		ready := !snapshot.Draining && runtime.controller.Ready(now) && runtime.server != nil && runtime.server.Ready()
-		entry := roleDiagnostic{Role: "ingress", ConfiguredIdentity: runtime.configuredIdentity, ProcessRunID: runtime.processRunID, LastSeenAt: lease.RenewedAt, LeaseExpiresAt: lease.LeaseExpiresAt, LeaseRevision: lease.IngressLeaseRevision, Ready: ready, Draining: snapshot.Draining || lease.Draining, DrainDeadline: lease.DrainDeadline}
+		entry := roleDiagnostic{Role: "ingress", ConfiguredIdentity: runtime.configuredIdentity, ProcessRunID: runtime.processRunID, LastSeenAt: lease.RenewedAt, LeaseExpiresAt: lease.LeaseExpiresAt, ServingUntil: lease.ServingUntil, LeaseRevision: lease.IngressLeaseRevision, Ready: ready, Draining: snapshot.Draining || lease.Draining, DrainDeadline: lease.DrainDeadline}
 		snapshot.Roles = append(snapshot.Roles, entry)
 	}
 	for _, runtime := range d.relays {
@@ -54,7 +55,7 @@ func (d *daemon) roleDiagnostics(role daemonconfig.Role, now time.Time) processD
 			continue
 		}
 		lease := runtime.controller.Lease()
-		entry := roleDiagnostic{Role: "relay", ConfiguredIdentity: runtime.configuredIdentity, ProcessRunID: runtime.processRunID, LastSeenAt: lease.RenewedAt, LeaseExpiresAt: lease.LeaseExpiresAt, LeaseRevision: lease.RelayLeaseRevision, Ready: !snapshot.Draining && runtime.controller.Ready(now) && runtime.serviceRegistry != nil && runtime.internalListener != nil, Draining: snapshot.Draining || lease.Draining, DrainDeadline: lease.DrainDeadline}
+		entry := roleDiagnostic{Role: "relay", ConfiguredIdentity: runtime.configuredIdentity, ProcessRunID: runtime.processRunID, LastSeenAt: lease.RenewedAt, LeaseExpiresAt: lease.LeaseExpiresAt, ServingUntil: lease.ServingUntil, LeaseRevision: lease.RelayLeaseRevision, Ready: !snapshot.Draining && runtime.controller.Ready(now) && runtime.serviceRegistry != nil && runtime.internalListener != nil, Draining: snapshot.Draining || lease.Draining, DrainDeadline: lease.DrainDeadline}
 		if runtime.serviceRegistry != nil {
 			entry.RegisteredPublisherConnections, entry.VisitorStreams = runtime.serviceRegistry.Load()
 		}

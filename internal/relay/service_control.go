@@ -44,7 +44,7 @@ func validateServiceClaim(ref tunnelv1.ServicePublisherConnectionRef, claimed re
 func (c *Controller) transitionServiceConnection(ctx context.Context, ref tunnelv1.ServicePublisherConnectionRef, lease relayv1.RelayLease, disconnect, unexpected bool) error {
 	current := c.Lease()
 	if !disconnect && (current.RelayServiceId != lease.RelayServiceId || current.RelayId != lease.RelayId || current.RelayRunId != lease.RelayRunId || current.RelayLeaseRevision != lease.RelayLeaseRevision ||
-		current.Draining || !current.LeaseExpiresAt.After(c.now())) {
+		current.Draining || !current.ServingUntil.After(c.now())) {
 		return errors.New("relay: service claim lease is stale")
 	}
 	body := relayv1.ServicePublisherConnectionTransition{ServiceRunId: ref.ServiceRunID, RunNumber: int64(ref.RunNumber), ConnectionAssignmentRevision: int64(ref.ConnectionAssignmentRevision),

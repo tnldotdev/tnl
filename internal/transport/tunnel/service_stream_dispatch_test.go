@@ -16,7 +16,7 @@ func expiredForwardingFixture(t *testing.T) (*ServiceStreamDispatcher, *Session,
 	t.Helper()
 	header := maximumServiceHeader("relay-one")
 	header.ExpiresAt = time.Now().UTC().Add(time.Minute)
-	header.LeaseExpiresAt = header.ExpiresAt
+	header.ServingUntil = header.ExpiresAt
 	ref := ServiceForwardingRef(header)
 	owner, sender := newHeaderBoundsPair(t, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version,
 		Role: tunnelv1.Publisher, Credential: "test-credential", ServiceConnection: &ref})
@@ -87,7 +87,7 @@ func TestServiceDispatcherWaitsAfterExpiredOpeningUntilCallerEnds(t *testing.T) 
 
 func TestServiceDispatcherRejectsEmptyFrameWithoutClosingBorrowedSession(t *testing.T) {
 	header := maximumServiceHeader("relay-one")
-	header.ExpiresAt, header.LeaseExpiresAt = header.ExpiresAt.UTC(), header.LeaseExpiresAt.UTC()
+	header.ExpiresAt, header.ServingUntil = header.ExpiresAt.UTC(), header.ServingUntil.UTC()
 	ref := ServiceForwardingRef(header)
 	owner, sender := newHeaderBoundsPair(t, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version,
 		Role: tunnelv1.Publisher, Credential: "test-credential", ServiceConnection: &ref})

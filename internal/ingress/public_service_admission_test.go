@@ -22,7 +22,7 @@ func TestPublicServiceAdmissionExpiryAtUse(t *testing.T) {
 			if expiry == "run" {
 				p.ExpiresAt = now
 			} else {
-				p.ConnectedRelays[0].LeaseExpiresAt = now
+				p.ConnectedRelays[0].ServingUntil = now
 			}
 			if err := validatePublicServiceAdmission(p, now.Add(-time.Nanosecond)); err != nil {
 				t.Fatalf("live claim rejected: %v", err)
@@ -43,10 +43,10 @@ func TestPublicServiceExpiredAdmissionNeedsFreshControlDecisionNotFreshIngressLe
 				if expiry == "run" {
 					control.initialValidUntil = now
 				} else {
-					control.relays[0].LeaseExpiresAt = now
+					control.relays[0].ServingUntil = now
 				}
 				// renewing only ingress cannot make an expired service claim usable.
-				lease.RenewedAt, lease.LeaseExpiresAt = now, now.Add(time.Hour)
+				lease.RenewedAt, lease.ServingUntil = now, now.Add(time.Hour)
 				server.config.CurrentLease = func() ingressv1.IngressLease { return lease }
 				connection, visitor := net.Pipe()
 				err := server.AcceptPublic(t.Context(), connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"), "", nil)
@@ -60,7 +60,7 @@ func TestPublicServiceExpiredAdmissionNeedsFreshControlDecisionNotFreshIngressLe
 				}
 				control.initialValidUntil = now.Add(time.Minute)
 				for i := range control.relays {
-					control.relays[i].LeaseExpiresAt = now.Add(time.Minute)
+					control.relays[i].ServingUntil = now.Add(time.Minute)
 				}
 				stream, stop := publicServiceActiveStream(t, server, forwarder)
 				header := ingressAwait(t, forwarder.observed)
@@ -101,7 +101,7 @@ func TestPublicServiceVisitorRejectsExpiredOrMalformedClaim(t *testing.T) {
 	for name, change := range map[string]func(*ingressv1.PublicServiceVisitorAdmission){
 		"expired claim": func(p *ingressv1.PublicServiceVisitorAdmission) { p.ExpiresAt = time.Now().Add(-time.Second) },
 		"expired relay with live sibling": func(p *ingressv1.PublicServiceVisitorAdmission) {
-			p.ConnectedRelays[0].LeaseExpiresAt = time.Now().Add(-time.Second)
+			p.ConnectedRelays[0].ServingUntil = time.Now().Add(-time.Second)
 		},
 		"missing service":    func(p *ingressv1.PublicServiceVisitorAdmission) { p.ServiceId = "" },
 		"missing run":        func(p *ingressv1.PublicServiceVisitorAdmission) { p.ServiceRunId = "" },
@@ -116,7 +116,7 @@ func TestPublicServiceVisitorRejectsExpiredOrMalformedClaim(t *testing.T) {
 		"duplicate relay service": func(p *ingressv1.PublicServiceVisitorAdmission) {
 			p.ConnectedRelays[1].RelayServiceId = p.ConnectedRelays[0].RelayServiceId
 		},
-		"missing relay expiry": func(p *ingressv1.PublicServiceVisitorAdmission) { p.ConnectedRelays[0].LeaseExpiresAt = time.Time{} },
+		"missing relay expiry": func(p *ingressv1.PublicServiceVisitorAdmission) { p.ConnectedRelays[0].ServingUntil = time.Time{} },
 		"missing assignment": func(p *ingressv1.PublicServiceVisitorAdmission) {
 			p.ConnectedRelays[0].ConnectionAssignmentRevision = 0
 		},

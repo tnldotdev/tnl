@@ -75,7 +75,7 @@ func TestServiceRoutingFirstConnectionRetainsCancellationAndShutdown(t *testing.
 				ctx, stopCaller := context.WithCancelCause(ctx)
 				defer stopCaller(nil)
 				if stop == "lease" {
-					lease.LeaseExpiresAt = time.Now()
+					lease.ServingUntil = time.Now()
 				}
 				done := make(chan error, 1)
 				go func() { done <- routing.waitForEndpoint(ctx, "route.example", lease) }()

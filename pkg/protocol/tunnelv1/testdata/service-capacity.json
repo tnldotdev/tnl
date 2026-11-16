@@ -22,7 +22,7 @@
     "relay_id": "relay_1",
     "relay_run_id": "rr_1234567890123456789012",
     "relay_lease_revision": 4,
-    "lease_expires_at": "2026-09-04T12:01:00Z"
+    "serving_until": "2026-09-04T12:01:00Z"
   },
   "deadline": "2026-09-04T12:00:05Z"
 }

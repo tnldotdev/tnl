@@ -35,7 +35,7 @@ func TestRelayServingDeadlineDoesNotUseLivenessOrResetOnFailedRefresh(t *testing
 		lease := relayv1.RelayLease{Region: "local", RelayServiceId: "a", RelayId: "a-1", RelayRunId: "run",
 			RelayLeaseRevision: 1, ProtocolVersion: 1, RelayAddress: "relay.example:443", TlsServerName: "relay.example",
 			InternalRelayAddress: "relay.internal:443", InternalNetworks: []string{}, ConnectionCapacity: 10, StreamCapacity: 10,
-			RegisteredAt: started, RenewedAt: started, LivenessExpiresAt: started.Add(time.Second), LeaseExpiresAt: started.Add(3 * time.Second)}
+			RegisteredAt: started, RenewedAt: started, LeaseExpiresAt: started.Add(time.Second), ServingUntil: started.Add(3 * time.Second)}
 		var fenced atomic.Int64
 		var fencedAt time.Time
 		controller, err := NewController(ControllerConfig{
@@ -80,10 +80,10 @@ func TestRelayServingDeadlineWatcherAcceptsShorterConfirmation(t *testing.T) {
 		lease := relayv1.RelayLease{Region: "local", RelayServiceId: "a", RelayId: "a-1", RelayRunId: "run",
 			RelayLeaseRevision: 1, ProtocolVersion: 1, RelayAddress: "relay.example:443", TlsServerName: "relay.example",
 			InternalRelayAddress: "relay.internal:443", InternalNetworks: []string{}, ConnectionCapacity: 10, StreamCapacity: 10,
-			RegisteredAt: started, RenewedAt: started, LeaseExpiresAt: started.Add(time.Minute)}
+			RegisteredAt: started, RenewedAt: started, ServingUntil: started.Add(time.Minute)}
 		control := outageRoleControl{lease: lease, renew: func() (relayv1.RelayLease, error) {
 			shorter := lease
-			shorter.RenewedAt, shorter.LeaseExpiresAt = started.Add(time.Second), started.Add(1500*time.Millisecond)
+			shorter.RenewedAt, shorter.ServingUntil = started.Add(time.Second), started.Add(1500*time.Millisecond)
 			return shorter, nil
 		}}
 		controller, err := NewController(ControllerConfig{Client: control,

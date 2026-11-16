@@ -79,7 +79,7 @@ func (p *connectorPacketSession) stoppedLocked() bool {
 }
 
 func (r *ServiceRegistry) connectorCandidate(ref tunnelv1.ServicePublisherConnectionRef, lease relayv1.RelayLease) (*serviceConnection, bool) {
-	if ref.Validate() != nil || lease.Draining || !lease.LeaseExpiresAt.After(time.Now()) || ref.RelayServiceID != lease.RelayServiceId {
+	if ref.Validate() != nil || lease.Draining || !lease.ServingUntil.After(time.Now()) || ref.RelayServiceID != lease.RelayServiceId {
 		return nil, false
 	}
 	r.mu.Lock()

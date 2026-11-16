@@ -127,7 +127,7 @@ func (c *Controller) watchServingDeadline(ctx context.Context) error {
 		lease := cloneLease(c.lease)
 		updated := c.leaseUpdated
 		if lease.RelayLeaseRevision > 0 {
-			delay = lease.LeaseExpiresAt.Sub(c.now())
+			delay = lease.ServingUntil.Sub(c.now())
 			if delay <= 0 {
 				c.servingLost = true
 				c.lease = relayv1.RelayLease{}
@@ -165,7 +165,7 @@ func (c *Controller) run(ctx context.Context) error {
 		if err == nil {
 			return nil
 		}
-		if lease := c.Lease(); lease.RelayLeaseRevision > 0 && !lease.LeaseExpiresAt.After(c.now()) {
+		if lease := c.Lease(); lease.RelayLeaseRevision > 0 && !lease.ServingUntil.After(c.now()) {
 			c.clearLease()
 		}
 		if !isRetryableControlError(err) {
@@ -252,7 +252,7 @@ func (c *Controller) renew(ctx context.Context) (retErr error) {
 
 func (c *Controller) Ready(now time.Time) bool {
 	lease := c.Lease()
-	return lease.RelayLeaseRevision > 0 && !lease.Draining && lease.LeaseExpiresAt.After(now) &&
+	return lease.RelayLeaseRevision > 0 && !lease.Draining && lease.ServingUntil.After(now) &&
 		(c.certificateChanged == nil || c.certificateCurrent(now))
 }
 
@@ -317,11 +317,11 @@ func (c *Controller) activeLease() (relayv1.RelayLease, error) {
 func (c *Controller) confirmLease(started time.Time, lease relayv1.RelayLease) error {
 	c.confirmationMu.Lock()
 	defer c.confirmationMu.Unlock()
-	next, err := c.confirmation.Confirm(started, lease.RenewedAt, lease.LeaseExpiresAt, c.now())
+	next, err := c.confirmation.Confirm(started, lease.RenewedAt, lease.ServingUntil, c.now())
 	if err != nil {
 		return err
 	}
-	lease.LeaseExpiresAt = next.Deadline
+	lease.ServingUntil = next.Deadline
 	if err := c.setLease(lease); err != nil {
 		return err
 	}
@@ -334,7 +334,7 @@ func (c *Controller) setLease(lease relayv1.RelayLease) error {
 		return err
 	}
 	c.mu.Lock()
-	if c.servingLost || c.lease.RelayLeaseRevision > 0 && !c.lease.LeaseExpiresAt.After(c.now()) {
+	if c.servingLost || c.lease.RelayLeaseRevision > 0 && !c.lease.ServingUntil.After(c.now()) {
 		c.mu.Unlock()
 		return controloutage.ErrDeadline
 	}
@@ -506,7 +506,7 @@ func validateLease(registration relayv1.RelayRegistration, lease relayv1.RelayLe
 		return errors.New("relay: control lease does not match registration")
 	}
 	if lease.RelayLeaseRevision <= 0 || lease.RegisteredAt.IsZero() || lease.RenewedAt.Before(lease.RegisteredAt) ||
-		!lease.LeaseExpiresAt.After(now) || lease.Draining != (lease.DrainDeadline != nil) {
+		!lease.ServingUntil.After(now) || lease.Draining != (lease.DrainDeadline != nil) {
 		return errors.New("relay: control returned an invalid relay lease")
 	}
 	return nil

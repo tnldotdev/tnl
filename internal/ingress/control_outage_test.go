@@ -29,14 +29,14 @@ func TestServiceRoutingServingDeadlineDoesNotReanchorSameSourceAuthority(t *test
 			t.Fatal(err)
 		}
 		defer release()
-		remoteRelayUntil := snapshot.Runs[0].ConnectedRelays[0].LeaseExpiresAt
+		remoteRelayUntil := snapshot.Runs[0].ConnectedRelays[0].ServingUntil
 		time.Sleep(2 * time.Second)
 		snapshot.ObservedAt = time.Now()
 		if err := routing.apply(time.Now(), lease, snapshot); err != nil {
 			t.Fatal(err)
 		}
 		current := routing.lookup("route.example", 443, lease, time.Now())[0]
-		if !current.until.Equal(original.until) || !snapshot.Runs[0].ConnectedRelays[0].LeaseExpiresAt.Equal(remoteRelayUntil) {
+		if !current.until.Equal(original.until) || !snapshot.Runs[0].ConnectedRelays[0].ServingUntil.Equal(remoteRelayUntil) {
 			t.Fatal("new observation extended fixed source authority or mutated the caller's relay facts")
 		}
 		time.Sleep(time.Until(original.until))
@@ -69,7 +69,7 @@ func TestIngressServingDeadlineSurvivesLivenessButExpiresWithoutConfirmation(t *
 		started := time.Now()
 		lease := ingressv1.IngressLease{Region: "local", IngressId: "ingress", IngressRunId: "run", IngressLeaseRevision: 1,
 			ProtocolVersion: 1, ConnectionCapacity: 10, RegisteredAt: started, RenewedAt: started,
-			LivenessExpiresAt: started.Add(time.Second), LeaseExpiresAt: started.Add(3 * time.Second)}
+			LeaseExpiresAt: started.Add(time.Second), ServingUntil: started.Add(3 * time.Second)}
 		controller, err := NewController(ControllerConfig{
 			Client: outageIngressControl{lease: lease},
 			Registration: ingressv1.IngressRegistration{Region: lease.Region, IngressId: lease.IngressId, IngressRunId: lease.IngressRunId,
@@ -102,10 +102,10 @@ func TestIngressServingDeadlineWatcherAcceptsShorterConfirmation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		started := time.Now()
 		lease := ingressv1.IngressLease{Region: "local", IngressId: "ingress", IngressRunId: "run", IngressLeaseRevision: 1,
-			ProtocolVersion: 1, ConnectionCapacity: 10, RegisteredAt: started, RenewedAt: started, LeaseExpiresAt: started.Add(time.Minute)}
+			ProtocolVersion: 1, ConnectionCapacity: 10, RegisteredAt: started, RenewedAt: started, ServingUntil: started.Add(time.Minute)}
 		control := outageIngressControl{lease: lease, renew: func() (ingressv1.IngressLease, error) {
 			shorter := lease
-			shorter.RenewedAt, shorter.LeaseExpiresAt = started.Add(time.Second), started.Add(1500*time.Millisecond)
+			shorter.RenewedAt, shorter.ServingUntil = started.Add(time.Second), started.Add(1500*time.Millisecond)
 			return shorter, nil
 		}}
 		controller, err := NewController(ControllerConfig{Client: control,

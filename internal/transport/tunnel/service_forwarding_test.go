@@ -58,7 +58,7 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 		ExpiresAt: time.Now().Add(time.Minute),
 	}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: ref.RelayServiceID,
 		RelayID: "relay-one-process", RelayRunID: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 2,
-		LeaseExpiresAt: time.Now().Add(time.Minute)}
+		ServingUntil: time.Now().Add(time.Minute)}
 	for _, wrong := range []func(*tunnelv1.ServiceForwardingHeader){
 		func(h *tunnelv1.ServiceForwardingHeader) { h.ServiceID = id(opaqueid.ServicePrefix) },
 		func(h *tunnelv1.ServiceForwardingHeader) { h.ServiceRunID = id(opaqueid.ServiceRunPrefix) },

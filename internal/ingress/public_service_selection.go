@@ -64,7 +64,7 @@ func (s *Server) selectPublicRun(ctx context.Context, lease ingressv1.IngressLea
 			}
 			selected.relays = nil
 			for _, relay := range run.run.ConnectedRelays {
-				if relay.LeaseExpiresAt.After(time.Now()) {
+				if relay.ServingUntil.After(time.Now()) {
 					selected.relays = append(selected.relays, relay)
 				}
 			}

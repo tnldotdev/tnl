@@ -46,7 +46,7 @@ func TestIntegrationIngressServicesReadsReadyRunsWithoutVisitorWrites(t *testing
 			}
 			current := f.leases[relay.RelayServiceID]
 			if !matched || relay.RelayRunID != current.RelayRunID || relay.RelayLeaseRevision != int64(current.RelayLeaseRevision) ||
-				!relay.LeaseExpiresAt.Equal(current.ServingUntil) {
+				!relay.LeaseExpiresAt.Equal(current.LeaseExpiresAt) || !relay.ServingUntil.Equal(current.ServingUntil) {
 				t.Fatal("routing returned a different assignment or relay process")
 			}
 		}

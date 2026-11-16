@@ -26,14 +26,14 @@ func privateLifecycleHeader() tunnelv1.ServiceForwardingHeader {
 		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress", IngressRunID: privateRelayID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 8443},
 		SourceIP:      "192.0.2.4", VisitorConnectionID: privateRelayID(opaqueid.VisitorConnectionPrefix), ExpiresAt: time.Now().UTC().Add(time.Minute),
 	}, ConnectionSlot: 1, RelayServiceID: "relay-a", RelayID: "relay-process", RelayRunID: privateRelayID(opaqueid.RelayRunPrefix),
-		RelayLeaseRevision: 4, LeaseExpiresAt: time.Now().UTC().Add(time.Minute)}
+		RelayLeaseRevision: 4, ServingUntil: time.Now().UTC().Add(time.Minute)}
 }
 
 func TestPrivateCandidateRequiresEveryAssignmentAndLeaseField(t *testing.T) {
 	header := privateLifecycleHeader()
 	now := header.ExpiresAt.Add(-time.Minute)
 	lease := relayv1.RelayLease{RelayServiceId: header.RelayServiceID, RelayId: header.RelayID, RelayRunId: header.RelayRunID,
-		RelayLeaseRevision: int64(header.RelayLeaseRevision), LeaseExpiresAt: header.LeaseExpiresAt}
+		RelayLeaseRevision: int64(header.RelayLeaseRevision), ServingUntil: header.ServingUntil}
 	connection := &serviceConnection{ref: tunnel.ServiceForwardingRef(header), lease: lease}
 	registry := NewServiceRegistry()
 	registry.connections[header.PublisherConnectionID] = connection
@@ -70,7 +70,7 @@ func TestPrivateCandidateRequiresEveryAssignmentAndLeaseField(t *testing.T) {
 		"process":  func(l *relayv1.RelayLease) { l.RelayId += "other" },
 		"run":      func(l *relayv1.RelayLease) { l.RelayRunId += "other" },
 		"revision": func(l *relayv1.RelayLease) { l.RelayLeaseRevision++ },
-		"expired":  func(l *relayv1.RelayLease) { l.LeaseExpiresAt = now },
+		"expired":  func(l *relayv1.RelayLease) { l.ServingUntil = now },
 		"draining": func(l *relayv1.RelayLease) { l.Draining = true },
 	} {
 		t.Run("lease/"+name, func(t *testing.T) {
@@ -87,7 +87,7 @@ func TestPrivateCandidateRequiresEveryAssignmentAndLeaseField(t *testing.T) {
 		if boundary == "run" {
 			expired.ExpiresAt = now
 		} else {
-			expired.LeaseExpiresAt = now
+			expired.ServingUntil = now
 		}
 		if _, ok := registry.candidate(expired, lease, now); ok {
 			t.Fatal("expired service forwarding authority selected", boundary)
@@ -153,7 +153,7 @@ func serviceConnectionFixture(t *testing.T, header tunnelv1.ServiceForwardingHea
 	publisher, relay := privateRelayPair(t, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version,
 		Role: tunnelv1.Publisher, Credential: "service-publisher", ServiceConnection: &ref})
 	lease := relayv1.RelayLease{RelayServiceId: header.RelayServiceID, RelayId: header.RelayID, RelayRunId: header.RelayRunID,
-		RelayLeaseRevision: int64(header.RelayLeaseRevision), LeaseExpiresAt: header.LeaseExpiresAt}
+		RelayLeaseRevision: int64(header.RelayLeaseRevision), ServingUntil: header.ServingUntil}
 	c := &serviceConnection{ref: ref, lease: lease, paths: newStreamLifetime(relay)}
 	t.Cleanup(func() { _ = c.paths.Close() })
 	return c, publisher

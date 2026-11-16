@@ -37,6 +37,7 @@ type ServiceRelay struct {
 	RelayLeaseRevision           int64     `json:"relay_lease_revision,string"`
 	ConnectionAssignmentRevision int64     `json:"connection_assignment_revision,string"`
 	LeaseExpiresAt               time.Time `json:"lease_expires_at"`
+	ServingUntil                 time.Time `json:"serving_until"`
 }
 
 type ServiceSelection struct {

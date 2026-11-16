@@ -30,7 +30,7 @@ func TestLeaseAuditBindingPrecedesVisibilityAndDoesNotRepeatOnRenewal(t *testing
 		t.Fatal(err)
 	}
 	lease.RenewedAt = now.Add(time.Second)
-	lease.LeaseExpiresAt = lease.LeaseExpiresAt.Add(time.Minute)
+	lease.ServingUntil = lease.ServingUntil.Add(time.Minute)
 	if err = controller.setLease(lease); err != nil || calls != 1 {
 		t.Fatal("renewal rebound audit identity", err)
 	}

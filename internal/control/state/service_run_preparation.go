@@ -420,7 +420,7 @@ func (d *Database) validateServiceRunAuthorization(ctx context.Context, tx pgx.T
 
 func privateConnectedRelays(ctx context.Context, tx pgx.Tx, runID string, now time.Time) ([]ServiceRelay, time.Time, error) {
 	rows, err := tx.Query(ctx, `SELECT slot.publisher_connection_id, slot.connection_slot, slot.connection_assignment_revision, slot.relay_service_id,
-		lease.relay_id, lease.relay_run_id, lease.relay_lease_revision, lease.internal_relay_address, lease.serving_until,service.tls_server_name
+		lease.relay_id, lease.relay_run_id, lease.relay_lease_revision, lease.internal_relay_address, lease.lease_expires_at,lease.serving_until,service.tls_server_name
 		FROM control.service_connection_slots slot
 		JOIN control.relay_services service ON service.relay_service_id=slot.relay_service_id
 		JOIN control.relay_leases lease ON lease.relay_id=slot.relay_id
@@ -439,14 +439,14 @@ func privateConnectedRelays(ctx context.Context, tx pgx.Tx, runID string, now ti
 		var relay ServiceRelay
 		if err = rows.Scan(&relay.PublisherConnectionID, &relay.ConnectionSlot, &relay.ConnectionAssignmentRevision, &relay.RelayServiceID,
 			&relay.RelayID, &relay.RelayRunID, &relay.RelayLeaseRevision,
-			&relay.InternalRelayAddress, &relay.LeaseExpiresAt, &relay.TLSServerName); err != nil {
+			&relay.InternalRelayAddress, &relay.LeaseExpiresAt, &relay.ServingUntil, &relay.TLSServerName); err != nil {
 			return nil, time.Time{}, err
 		}
 		if !opaqueid.Valid(relay.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) || relay.ConnectionSlot < 0 || relay.ConnectionSlot > 1 || relay.ConnectionAssignmentRevision < 1 || relay.RelayLeaseRevision < 1 {
 			return nil, time.Time{}, ErrServiceAccess
 		}
-		if relay.LeaseExpiresAt.After(lastRelayExpiry) {
-			lastRelayExpiry = relay.LeaseExpiresAt
+		if relay.ServingUntil.After(lastRelayExpiry) {
+			lastRelayExpiry = relay.ServingUntil
 		}
 		relays = append(relays, relay)
 	}

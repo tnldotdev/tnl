@@ -29,7 +29,7 @@ func TestReadIngressServicesHTTPAndDirectReturnTheSameSnapshot(t *testing.T) {
 			Relays: []controlstate.ServiceRelay{{
 				PublisherConnectionID: "pc_" + strings.Repeat("a", 22), ConnectionSlot: 1, ConnectionAssignmentRevision: 5,
 				RelayServiceID: "relay-service", RelayID: "relay-process", RelayRunID: "rr_" + strings.Repeat("a", 22),
-				RelayLeaseRevision: 6, LeaseExpiresAt: now.Add(time.Minute), InternalRelayAddress: "relay.internal:443", TLSServerName: "relay.example",
+				RelayLeaseRevision: 6, LeaseExpiresAt: now.Add(30 * time.Second), ServingUntil: now.Add(time.Minute), InternalRelayAddress: "relay.internal:443", TLSServerName: "relay.example",
 			}},
 			SourceAuthority: []byte("source evidence"), SourceKey: []byte("source key"),
 		}},
@@ -73,6 +73,10 @@ func TestReadIngressServicesHTTPAndDirectReturnTheSameSnapshot(t *testing.T) {
 		!reflect.DeepEqual(run.ConnectedRelays, privateRelayResponses(current.Runs[0].Relays)) ||
 		!reflect.DeepEqual(run.SourceKey, current.Runs[0].SourceKey) || !reflect.DeepEqual(run.SourceAuthority, current.Runs[0].SourceAuthority) {
 		t.Fatal("routing response omitted endpoint, capacity, relay, or source facts")
+	}
+	relay := run.ConnectedRelays[0]
+	if !relay.LeaseExpiresAt.Equal(now.Add(30*time.Second)) || !relay.ServingUntil.Equal(now.Add(time.Minute)) {
+		t.Fatal("routing response mixed availability with serving authority", relay)
 	}
 }
 

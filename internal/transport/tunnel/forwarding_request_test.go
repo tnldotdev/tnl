@@ -145,7 +145,7 @@ func TestForwardingRequestCopiesShareOneResponder(t *testing.T) {
 }
 
 func TestServiceForwardingMissingIdentityFieldsFailBeforeDispatch(t *testing.T) {
-	for _, field := range []string{"service_id", "service_run_id", "run_number", "publisher_connection_id", "connection_assignment_revision", "relay_service_id", "relay_id", "relay_run_id", "relay_lease_revision", "lease_expires_at", "expires_at"} {
+	for _, field := range []string{"service_id", "service_run_id", "run_number", "publisher_connection_id", "connection_assignment_revision", "relay_service_id", "relay_id", "relay_run_id", "relay_lease_revision", "serving_until", "expires_at"} {
 		t.Run(field, func(t *testing.T) {
 			client, server := newMemoryPair(t)
 			ctx := tunnelContext(t)

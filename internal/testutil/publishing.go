@@ -254,7 +254,7 @@ func (f *PublishingFixture) OpenHTTPVisitor(ctx context.Context, service string,
 		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "fixture-ingress", IngressRunID: publishingID(f.t, opaqueid.IngressRunPrefix),
 			IngressLeaseRevision: 1, DestinationPort: destination.Port()},
 	}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: slot.RelayServiceId, RelayID: "fixture-relay",
-		RelayRunID: publishingID(f.t, opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, LeaseExpiresAt: now.Add(time.Minute)}
+		RelayRunID: publishingID(f.t, opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, ServingUntil: now.Add(time.Minute)}
 	unregister, err := session.RegisterServiceCapacity(ctx, header, func(context.Context) error { return nil })
 	if err != nil {
 		return nil, err

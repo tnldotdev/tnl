@@ -91,7 +91,7 @@ func TestPublicServiceSelectionDoesNotSearchOnNonRunRejection(t *testing.T) {
 				config.Traffic.SourceConnections = 1
 				if mode == "expired lease" {
 					lease := config.CurrentLease()
-					lease.LeaseExpiresAt = time.Now()
+					lease.ServingUntil = time.Now()
 					config.CurrentLease = func() ingressv1.IngressLease { return lease }
 				}
 				server := serviceSelectionServer(t, config)
@@ -293,7 +293,7 @@ func TestPublicServiceSelectionStopsWhenLeaseChangesBetweenCandidates(t *testing
 			control.close = func(context.Context, ingressv1.PublicServiceVisitorLookup) error {
 				switch mode {
 				case "expired":
-					lease.LeaseExpiresAt = time.Now()
+					lease.ServingUntil = time.Now()
 				case "draining":
 					lease.Draining = true
 				case "replacement":

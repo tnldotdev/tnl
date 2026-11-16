@@ -70,7 +70,7 @@ func (s *Session) RequestServiceCapacity(ctx context.Context, header tunnelv1.Se
 	if !ok || !s.serviceCapacityAllowed(header) {
 		return &ProtocolError{Code: tunnelv1.InvalidMessage}
 	}
-	deadline = minTime(deadline, minTime(header.ExpiresAt, minTime(header.LeaseExpiresAt, time.Now().Add(handshakeTimeout))))
+	deadline = minTime(deadline, minTime(header.ExpiresAt, minTime(header.ServingUntil, time.Now().Add(handshakeTimeout))))
 	call, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	if err := context.Cause(call); err != nil {

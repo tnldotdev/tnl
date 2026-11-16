@@ -90,7 +90,7 @@ func startIngress(t *testing.T, config Config, configure ...func(*Server)) (*Ser
 func applyServiceRoutingFixture(t *testing.T, server *Server) {
 	t.Helper()
 	lease := server.config.CurrentLease()
-	if lease.Draining || !lease.LeaseExpiresAt.After(time.Now()) {
+	if lease.Draining || !lease.ServingUntil.After(time.Now()) {
 		return
 	}
 	started := time.Now()

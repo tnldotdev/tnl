@@ -253,10 +253,10 @@ func publicServiceTraffic(limits TrafficLimits) ingressv1.IngressTrafficLimits {
 
 func publicServiceTestConfig(t *testing.T) (Config, *publicServiceControlFixture, *publicServiceForwarderFixture, ingressv1.IngressLease) {
 	t.Helper()
-	lease := ingressv1.IngressLease{IngressId: "ingress-a", IngressRunId: publicServiceTestID(t, opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}
+	lease := ingressv1.IngressLease{IngressId: "ingress-a", IngressRunId: publicServiceTestID(t, opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, ServingUntil: time.Now().Add(time.Minute)}
 	control := &publicServiceControlFixture{service: publicServiceTestID(t, opaqueid.ServicePrefix), run: publicServiceTestID(t, opaqueid.ServiceRunPrefix), traffic: publicServiceTraffic(trafficFixture(t).config.Default)}
 	for slot := range 2 {
-		control.relays = append(control.relays, ingressv1.ServiceRelay{PublisherConnectionId: publicServiceTestID(t, opaqueid.PublisherConnectionPrefix), ConnectionSlot: slot, ConnectionAssignmentRevision: 1, RelayServiceId: []string{"a", "b"}[slot], RelayId: []string{"relay-a", "relay-b"}[slot], RelayRunId: publicServiceTestID(t, opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, InternalRelayAddress: "127.0.0.1:443", TlsServerName: "relay.test", LeaseExpiresAt: time.Now().Add(time.Minute)})
+		control.relays = append(control.relays, ingressv1.ServiceRelay{PublisherConnectionId: publicServiceTestID(t, opaqueid.PublisherConnectionPrefix), ConnectionSlot: slot, ConnectionAssignmentRevision: 1, RelayServiceId: []string{"a", "b"}[slot], RelayId: []string{"relay-a", "relay-b"}[slot], RelayRunId: publicServiceTestID(t, opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, InternalRelayAddress: "127.0.0.1:443", TlsServerName: "relay.test", ServingUntil: time.Now().Add(time.Minute)})
 	}
 	forwarder := &publicServiceForwarderFixture{ctx: t.Context(), observed: make(chan tunnelv1.ServiceForwardingHeader, 8), metadata: make(chan proxyproto.Header, 8), data: make(chan []byte, 8), relayDone: make(chan struct{}, 8)}
 	t.Cleanup(forwarder.workers.Wait)
@@ -387,7 +387,7 @@ func TestPublicServiceVisitorRejectsLeaseLostDuringAdmission(t *testing.T) {
 					case "replacement":
 						current.IngressLeaseRevision++
 					case "expired":
-						current.LeaseExpiresAt = lease.LeaseExpiresAt.Add(-2 * time.Minute)
+						current.ServingUntil = lease.ServingUntil.Add(-2 * time.Minute)
 					}
 				}
 				return current

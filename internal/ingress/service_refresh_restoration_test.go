@@ -96,7 +96,7 @@ func restorationFreshSnapshot(t *testing.T, f *restorationServiceFixture) ingres
 	for index := range snapshot.Runs {
 		run := &snapshot.Runs[index]
 		run.ValidUntil = snapshot.ValidUntil
-		restorationDelegate(t, lease, run, snapshot.ObservedAt, privateMinTime(snapshot.ValidUntil, lease.LeaseExpiresAt))
+		restorationDelegate(t, lease, run, snapshot.ObservedAt, privateMinTime(snapshot.ValidUntil, lease.ServingUntil))
 	}
 	return snapshot
 }
@@ -109,7 +109,7 @@ func TestServiceRefreshRestorationShortLeasesKeepSigningThenFenceOutage(t *testi
 		f := restorationService(t)
 		defer f.server.Close()
 		lease := f.lease.current()
-		lease.LeaseExpiresAt = time.Now().Add(2 * time.Second)
+		lease.ServingUntil = time.Now().Add(2 * time.Second)
 		f.lease.set(lease)
 		var failed atomic.Bool
 		worker := restorationStartRefresh(t, f, func(context.Context, string, ingressv1.IngressLeaseIdentity) (ingressv1.IngressServices, error) {
@@ -122,7 +122,7 @@ func TestServiceRefreshRestorationShortLeasesKeepSigningThenFenceOutage(t *testi
 		synctest.Wait()
 		renewLease := func() {
 			current := f.lease.current()
-			current.LeaseExpiresAt = time.Now().Add(2 * time.Second)
+			current.ServingUntil = time.Now().Add(2 * time.Second)
 			f.lease.set(current)
 		}
 		// process leases renew every 500 ms. RefreshServices retains its current
@@ -236,7 +236,7 @@ func TestServiceRefreshRestorationBlockedReadCannotHideProcessExpiry(t *testing.
 		f := restorationService(t)
 		defer f.server.Close()
 		lease := f.lease.current()
-		lease.LeaseExpiresAt = time.Now().Add(50 * time.Millisecond)
+		lease.ServingUntil = time.Now().Add(50 * time.Millisecond)
 		f.lease.set(lease)
 		if err := f.server.services.apply(time.Now(), lease, f.snapshot); err != nil {
 			t.Fatal(err)
@@ -399,7 +399,7 @@ func TestServiceRefreshRestorationTransientErrorsCannotExtendInstalledDeadline(t
 		restorationAdvance(time.Second)
 		restorationSignSource(t, f)
 		current := f.lease.current()
-		current.LeaseExpiresAt = time.Now().Add(time.Minute)
+		current.ServingUntil = time.Now().Add(time.Minute)
 		f.lease.set(current)
 		restorationAdvance(time.Until(original))
 		if stopped.Load() != 1 || len(f.server.services.lookup("route.example", 443, f.lease.current(), time.Now())) != 0 {
@@ -426,7 +426,7 @@ func TestServiceRefreshRestorationClockTranslationSpendsRequestDelay(t *testing.
 				run := &snapshot.Runs[0]
 				run.ValidUntil = snapshot.ValidUntil
 				for index := range run.ConnectedRelays {
-					run.ConnectedRelays[index].LeaseExpiresAt = controlNow.Add(time.Minute)
+					run.ConnectedRelays[index].ServingUntil = controlNow.Add(time.Minute)
 				}
 				restorationDelegate(t, f.lease.current(), run, controlNow, snapshot.ValidUntil)
 				entered, finish := make(chan struct{}), make(chan struct{})

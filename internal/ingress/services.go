@@ -114,7 +114,7 @@ func (s *Server) RefreshServices(ctx context.Context) error {
 	for {
 		delay := min(s.config.RecheckInterval, time.Second)
 		lease := s.config.CurrentLease()
-		if lease.IngressLeaseRevision > 0 && !lease.Draining && lease.LeaseExpiresAt.After(time.Now()) {
+		if lease.IngressLeaseRevision > 0 && !lease.Draining && lease.ServingUntil.After(time.Now()) {
 			started := time.Now()
 			call, cancel := context.WithTimeout(ctx, min(s.config.RecheckTimeout, 2*time.Second))
 			snapshot, err := s.config.Control.ReadIngressServices(call, lease.IngressId, ingressv1.IngressLeaseIdentity{
@@ -159,7 +159,7 @@ func (s *Server) RefreshServices(ctx context.Context) error {
 func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, snapshot ingressv1.IngressServices) error {
 	now := time.Now()
 	snapshotDeadline, err := controloutage.LocalDeadline(started, snapshot.ObservedAt, snapshot.ValidUntil, now)
-	if err != nil || !lease.LeaseExpiresAt.After(now) || lease.Draining {
+	if err != nil || !lease.ServingUntil.After(now) || lease.Draining {
 		return ErrServiceAdmission
 	}
 	runs := make(map[string]*serviceRoute, len(snapshot.Runs))
@@ -181,7 +181,7 @@ func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, 
 		}
 		run.ConnectedRelays = slices.Clone(run.ConnectedRelays)
 		for i := range run.ConnectedRelays {
-			run.ConnectedRelays[i].LeaseExpiresAt = started.Add(run.ConnectedRelays[i].LeaseExpiresAt.Sub(snapshot.ObservedAt))
+			run.ConnectedRelays[i].ServingUntil = started.Add(run.ConnectedRelays[i].ServingUntil.Sub(snapshot.ObservedAt))
 		}
 		source, err := tunnelv1.ReadVisitorSourceAuthority(run.SourceAuthority)
 		if err != nil || source.ServiceID != run.ServiceId || source.ServiceRunID != run.ServiceRunId ||
@@ -193,7 +193,7 @@ func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, 
 		// use the request's start time so a slow response spends, rather than
 		// extends, the serving deadline. the ingress lease may end sooner.
 		until := started.Add(time.Unix(source.ValidUntil, 0).Sub(snapshot.ObservedAt))
-		route := cloneServiceRoute(&serviceRoute{run: run, source: source, traffic: traffic, until: privateMinTime(until, lease.LeaseExpiresAt),
+		route := cloneServiceRoute(&serviceRoute{run: run, source: source, traffic: traffic, until: privateMinTime(until, lease.ServingUntil),
 			observedAt: snapshot.ObservedAt, startedAt: started})
 		copy(route.sourceKey[:], run.SourceKey)
 		route.run.SourceKey, route.run.SourceAuthority, route.run.Ip = nil, nil, nil
@@ -228,7 +228,7 @@ func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, 
 	r.mu.Lock()
 	now = time.Now()
 	if r.closed || started.Before(r.startedAt) || !snapshot.ObservedAt.After(r.observedAt) ||
-		!now.Before(snapshotDeadline) || !lease.LeaseExpiresAt.After(now) ||
+		!now.Before(snapshotDeadline) || !lease.ServingUntil.After(now) ||
 		r.lease.IngressLeaseRevision > lease.IngressLeaseRevision {
 		r.mu.Unlock()
 		return ErrServiceAdmission
@@ -270,7 +270,7 @@ func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, 
 		route.sequence = counter
 	}
 	r.lease, r.startedAt, r.observedAt, r.runs, r.endpoints = cloneIngressLease(lease), started, snapshot.ObservedAt, runs, endpoints
-	r.validUntil = privateMinTime(snapshotDeadline, lease.LeaseExpiresAt)
+	r.validUntil = privateMinTime(snapshotDeadline, lease.ServingUntil)
 	r.stopping = append(r.stopping, r.expireVisitorsLocked(now)...)
 	close(r.updated)
 	r.updated = make(chan struct{})
@@ -322,7 +322,7 @@ func (r *ServiceRouting) pruneTerminalLocked(lease ingressv1.IngressLease, now t
 func (r *ServiceRouting) retireTerminal(lease ingressv1.IngressLease, refs []ingressv1.ServiceRunReference) bool {
 	r.mu.Lock()
 	now := time.Now()
-	if r.closed || !lease.LeaseExpiresAt.After(now) || lease.Draining ||
+	if r.closed || !lease.ServingUntil.After(now) || lease.Draining ||
 		r.lease.IngressLeaseRevision != 0 && !samePrivateLease(r.lease, lease) {
 		r.mu.Unlock()
 		return false
@@ -346,7 +346,7 @@ func (r *ServiceRouting) retireTerminal(lease ingressv1.IngressLease, refs []ing
 	}
 	identity := ingressv1.IngressLeaseIdentity{IngressId: lease.IngressId, IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision}
 	for _, ref := range refs {
-		until := lease.LeaseExpiresAt
+		until := lease.ServingUntil
 		if previous, ok := r.terminalRuns[ref]; ok {
 			until = privateMinTime(until, previous.until)
 		}
@@ -383,7 +383,7 @@ func (r *ServiceRouting) lookup(hostname string, port int, lease ingressv1.Ingre
 }
 
 func (r *ServiceRouting) lookupLocked(hostname string, port int, lease ingressv1.IngressLease, now time.Time) []*serviceRoute {
-	if r.closed || !samePrivateLease(r.lease, lease) || !lease.LeaseExpiresAt.After(now) || lease.Draining {
+	if r.closed || !samePrivateLease(r.lease, lease) || !lease.ServingUntil.After(now) || lease.Draining {
 		return nil
 	}
 	var result []*serviceRoute
@@ -402,14 +402,14 @@ func (r *ServiceRouting) reserveHTTP(route *serviceRoute, relay ingressv1.Servic
 	defer r.mu.Unlock()
 	now := time.Now()
 	current := r.runs[route.run.ServiceRunId]
-	if r.closed || !samePrivateLease(r.lease, lease) || lease.Draining || !lease.LeaseExpiresAt.After(now) ||
+	if r.closed || !samePrivateLease(r.lease, lease) || lease.Draining || !lease.ServingUntil.After(now) ||
 		current == nil || current.run.ServiceId != route.run.ServiceId || current.run.RunNumber != route.run.RunNumber ||
 		current.run.EndpointRevision != route.run.EndpointRevision || !route.until.After(now) || !current.until.After(now) ||
-		current.ip != nil && !current.ip.Allows(source) || !relay.LeaseExpiresAt.After(now) {
+		current.ip != nil && !current.ip.Allows(source) || !relay.ServingUntil.After(now) {
 		return ErrServiceAdmission
 	}
 	for _, candidate := range current.run.ConnectedRelays {
-		if candidate.LeaseExpiresAt.After(now) && sameServiceRelayAssignment(candidate, relay) {
+		if candidate.ServingUntil.After(now) && sameServiceRelayAssignment(candidate, relay) {
 			return reserve()
 		}
 	}
@@ -425,7 +425,7 @@ func (r *ServiceRouting) waitForEndpoint(ctx context.Context, hostname string, l
 		r.mu.Lock()
 		now := time.Now()
 		available := len(r.lookupLocked(hostname, 443, lease, now)) != 0
-		finished := r.closed || !lease.LeaseExpiresAt.After(now) || lease.Draining || !r.startedAt.Before(entered)
+		finished := r.closed || !lease.ServingUntil.After(now) || lease.Draining || !r.startedAt.Before(entered)
 		updated := r.updated
 		r.mu.Unlock()
 		if err := context.Cause(ctx); err != nil {
@@ -454,7 +454,7 @@ func (r *ServiceRouting) waitForRelayReplacement(ctx context.Context, previous *
 		r.mu.Lock()
 		now := time.Now()
 		current := r.runs[previous.run.ServiceRunId]
-		valid := !r.closed && samePrivateLease(r.lease, lease) && !lease.Draining && lease.LeaseExpiresAt.After(now) &&
+		valid := !r.closed && samePrivateLease(r.lease, lease) && !lease.Draining && lease.ServingUntil.After(now) &&
 			previous.until.After(now) && current != nil && current.until.After(now) &&
 			current.run.ServiceId == previous.run.ServiceId && current.run.RunNumber == previous.run.RunNumber &&
 			current.run.EndpointRevision == previous.run.EndpointRevision && (current.ip == nil || current.ip.Allows(source))
@@ -499,6 +499,7 @@ func replacementRelays(previous, current []ingressv1.ServiceRelay) []ingressv1.S
 
 func sameServiceRelayAssignment(a, b ingressv1.ServiceRelay) bool {
 	a.LeaseExpiresAt, b.LeaseExpiresAt = time.Time{}, time.Time{}
+	a.ServingUntil, b.ServingUntil = time.Time{}, time.Time{}
 	return a == b
 }
 
@@ -530,7 +531,7 @@ func (s *Server) RoutingReady(now time.Time) bool {
 	defer r.mu.Unlock()
 	lease := s.config.CurrentLease()
 	return !r.closed && samePrivateLease(r.lease, lease) && !lease.Draining &&
-		r.validUntil.After(now) && lease.LeaseExpiresAt.After(now)
+		r.validUntil.After(now) && lease.ServingUntil.After(now)
 }
 
 // RoutingObservedAt is control's timestamp for the last applied snapshot.

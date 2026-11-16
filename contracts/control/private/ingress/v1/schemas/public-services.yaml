@@ -134,6 +134,7 @@ schemas:
         relay_run_id,
         relay_lease_revision,
         lease_expires_at,
+        serving_until,
       ]
     properties:
       publisher_connection_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
@@ -146,3 +147,7 @@ schemas:
       relay_run_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
       relay_lease_revision: { type: integer, format: int64, minimum: 1 }
       lease_expires_at: { type: string, format: date-time }
+      serving_until:
+        type: string
+        format: date-time
+        description: The connected relay's serving authorization, independent of its availability deadline.

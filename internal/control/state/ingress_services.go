@@ -95,7 +95,7 @@ func (d *Database) ReadIngressServices(ctx context.Context, identity IngressLeas
 			ConnectionAssignmentRevision: slot.ConnectionAssignmentRevision, RelayServiceID: slot.RelayServiceID,
 			RelayID: slot.RelayID, RelayRunID: slot.RelayRunID, RelayLeaseRevision: slot.RelayLeaseRevision,
 			InternalRelayAddress: slot.InternalRelayAddress, TLSServerName: slot.TlsServerName,
-			LeaseExpiresAt: slot.ServingUntil.Time,
+			LeaseExpiresAt: slot.LeaseExpiresAt.Time, ServingUntil: slot.ServingUntil.Time,
 		})
 	}
 	for _, row := range rows {

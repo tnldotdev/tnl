@@ -407,7 +407,7 @@ func testHTTPAssignment(t *testing.T, restricted bool, browserLogin *bool) {
 			VisitorConnectionID: id(opaqueid.VisitorConnectionPrefix), SourceIP: "192.0.2.10", ExpiresAt: time.Now().Add(10 * time.Second),
 			PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 443}},
 			ConnectionSlot: uint8(slot.ConnectionSlot), RelayServiceID: slot.RelayServiceId, RelayID: "relay-process",
-			RelayRunID: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}
+			RelayRunID: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, ServingUntil: time.Now().Add(time.Minute)}
 		unregister, err := relay.session.RegisterServiceCapacity(ctx, header, func(context.Context) error { return nil })
 		if err != nil {
 			return nil, "", err

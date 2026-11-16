@@ -246,6 +246,6 @@ func serviceStreamHeader() tunnelv1.ServiceForwardingHeader {
 		},
 		ConnectionSlot: ref.ConnectionSlot, RelayServiceID: ref.RelayServiceID,
 		RelayID: "relay_1", RelayRunID: "rr_1234567890123456789012", RelayLeaseRevision: 4,
-		LeaseExpiresAt: time.Now().Add(time.Hour).UTC().Truncate(time.Second),
+		ServingUntil: time.Now().Add(time.Hour).UTC().Truncate(time.Second),
 	}
 }

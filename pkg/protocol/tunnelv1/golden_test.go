@@ -70,7 +70,7 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 			ExpiresAt: now.Add(time.Hour),
 		},
 		ConnectionSlot: 1, RelayServiceID: "relay_service_1", RelayID: "relay_1",
-		RelayRunID: "rr_1234567890123456789012", RelayLeaseRevision: 4, LeaseExpiresAt: now.Add(time.Minute),
+		RelayRunID: "rr_1234567890123456789012", RelayLeaseRevision: 4, ServingUntil: now.Add(time.Minute),
 	}
 	assertGoldenFrame(t, "service-forwarding-header", forwarding, WriteServiceForwardingHeader, ReadServiceForwardingHeader)
 	assertGoldenFrame(t, "service-capacity", ServiceCapacityRequest{

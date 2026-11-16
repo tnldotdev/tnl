@@ -114,10 +114,10 @@ func managedIngressListener(t *testing.T, managed servicestream.Stream, visitors
 		}
 		return value
 	}
-	lease := ingressv1.IngressLease{IngressId: "native", IngressRunId: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}
+	lease := ingressv1.IngressLease{IngressId: "native", IngressRunId: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, ServingUntil: time.Now().Add(time.Minute)}
 	control := nativeIngressControl{port: port, service: id(opaqueid.ServicePrefix), run: id(opaqueid.ServiceRunPrefix)}
 	for index := range 2 {
-		control.relays = append(control.relays, ingressv1.ServiceRelay{PublisherConnectionId: id(opaqueid.PublisherConnectionPrefix), ConnectionSlot: index, ConnectionAssignmentRevision: 1, RelayServiceId: []string{"a", "b"}[index], RelayId: []string{"relay-a", "relay-b"}[index], RelayRunId: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, InternalRelayAddress: "127.0.0.1:9445", LeaseExpiresAt: lease.LeaseExpiresAt})
+		control.relays = append(control.relays, ingressv1.ServiceRelay{PublisherConnectionId: id(opaqueid.PublisherConnectionPrefix), ConnectionSlot: index, ConnectionAssignmentRevision: 1, RelayServiceId: []string{"a", "b"}[index], RelayId: []string{"relay-a", "relay-b"}[index], RelayRunId: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, InternalRelayAddress: "127.0.0.1:9445", ServingUntil: lease.ServingUntil})
 	}
 	var workers sync.WaitGroup
 	forwarder := nativeIngressForwarder{t: t, server: managed, workers: &workers, port: uint16(port)}

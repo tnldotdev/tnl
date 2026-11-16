@@ -60,7 +60,7 @@ func (s *Server) lease(now time.Time) (ingressv1.IngressLease, error) {
 
 func (s *Server) liveLease(now time.Time) (ingressv1.IngressLease, error) {
 	lease := s.config.CurrentLease()
-	if lease.IngressId == "" || lease.IngressRunId == "" || lease.IngressLeaseRevision < 1 || !lease.LeaseExpiresAt.After(now) {
+	if lease.IngressId == "" || lease.IngressRunId == "" || lease.IngressLeaseRevision < 1 || !lease.ServingUntil.After(now) {
 		return ingressv1.IngressLease{}, ErrServiceAdmission
 	}
 	return lease, nil

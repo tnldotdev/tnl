@@ -150,7 +150,7 @@ func TestPublicServiceLiveVisitorCannotExtendExpiredLeaseOrTimedOutCheck(t *test
 				var lateChecks, activeChecks atomic.Int32
 				var draining atomic.Pointer[ingressv1.IngressLease]
 				if boundary == "ingress lease" {
-					lease.LeaseExpiresAt = until
+					lease.ServingUntil = until
 					server.config.HardAuthorizationTTL = time.Second
 					server.config.CurrentLease = func() ingressv1.IngressLease { return lease }
 				} else if boundary == "drain deadline" {

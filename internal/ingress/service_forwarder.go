@@ -22,7 +22,7 @@ func (f *Forwarder) OpenService(ctx context.Context, relay ingressv1.ServiceRela
 		relay.ConnectionSlot < 0 || relay.ConnectionSlot > 1 || relay.ConnectionAssignmentRevision < 1 || relay.RelayLeaseRevision < 1 ||
 		tunnel.ServiceForwardingRef(header) != privateRelayRef(header, relay) ||
 		header.RelayID != relay.RelayId || header.RelayRunID != relay.RelayRunId || header.RelayLeaseRevision != uint64(relay.RelayLeaseRevision) ||
-		!relay.LeaseExpiresAt.After(time.Now()) || !header.ExpiresAt.After(time.Now()) {
+		!relay.ServingUntil.After(time.Now()) || !header.ExpiresAt.After(time.Now()) {
 		return nil, ErrServiceAdmission
 	}
 	target := relayTarget{address: relay.InternalRelayAddress, serverName: relay.TlsServerName, relayServiceID: relay.RelayServiceId,

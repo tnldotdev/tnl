@@ -91,7 +91,7 @@ schemas:
       - registered_at
       - renewed_at
       - lease_expires_at
-      - liveness_expires_at
+      - serving_until
     properties:
       region:
         $ref: "../../../../public/v1/schemas/common.yaml#/schemas/RegionID"
@@ -129,10 +129,10 @@ schemas:
       lease_expires_at:
         type: string
         format: date-time
-        description: Serving authorization issued at renewed_at; response latency spends this allowance.
-      liveness_expires_at:
+        description: Control's deadline for process availability and replacement.
+      serving_until:
         type: string
         format: date-time
-        description: Control's separate deadline for process availability and replacement.
+        description: Serving authorization issued at renewed_at; response latency spends this allowance.
   IngressTrafficLimits:
     $ref: "../../../../public/v1/openapi.yaml#/components/schemas/TrafficLimits"

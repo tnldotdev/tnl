@@ -81,7 +81,7 @@ func (c *wiringControl) RegisterIngress(_ context.Context, r ingressv1.IngressRe
 	now := time.Now()
 	l := ingressv1.IngressLease{IngressId: r.IngressId, IngressRunId: r.IngressRunId, IngressLeaseRevision: 1, ProtocolVersion: r.ProtocolVersion,
 		Region:             r.Region,
-		ConnectionCapacity: r.ConnectionCapacity, RegisteredAt: now, RenewedAt: now, LeaseExpiresAt: now.Add(time.Hour)}
+		ConnectionCapacity: r.ConnectionCapacity, RegisteredAt: now, RenewedAt: now, ServingUntil: now.Add(time.Hour)}
 	c.mu.Lock()
 	c.lease = l
 	c.mu.Unlock()
@@ -168,7 +168,7 @@ func (c *wiringControl) ClosedServiceRuns(_ context.Context, id string, lookup i
 // currentLease requires the caller to hold mu.
 func (c *wiringControl) currentLease(id, run string, revision int64) bool {
 	return id == c.lease.IngressId && run == c.lease.IngressRunId && revision == c.lease.IngressLeaseRevision &&
-		c.lease.LeaseExpiresAt.After(time.Now()) && !c.lease.Draining
+		c.lease.ServingUntil.After(time.Now()) && !c.lease.Draining
 }
 
 func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
@@ -325,7 +325,7 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 			primary := ingressv1.ServiceRelay{
 				PublisherConnectionId: ref.PublisherConnectionID, ConnectionSlot: 0, ConnectionAssignmentRevision: 1,
 				RelayServiceId: ref.RelayServiceID, RelayId: "relay", RelayRunId: wiringServiceID(t, opaqueid.RelayRunPrefix), RelayLeaseRevision: 1,
-				LeaseExpiresAt: now.Add(time.Hour), InternalRelayAddress: relay.Addr().String(), TlsServerName: "pool.example",
+				ServingUntil: now.Add(time.Hour), InternalRelayAddress: relay.Addr().String(), TlsServerName: "pool.example",
 			}
 			alternate := primary
 			alternate.PublisherConnectionId, alternate.ConnectionSlot, alternate.RelayServiceId = wiringServiceID(t, opaqueid.PublisherConnectionPrefix), 1, "alternate-relay"

@@ -145,7 +145,7 @@ func (b *Bound) reserveHTTP(ctx context.Context, ref tunnelv1.ServicePublisherCo
 		b.httpPendingSources = make(map[netip.Prefix]int)
 	}
 	until := now.Add(10 * time.Second)
-	for _, expiry := range []time.Time{header.ExpiresAt, header.LeaseExpiresAt} {
+	for _, expiry := range []time.Time{header.ExpiresAt, header.ServingUntil} {
 		if expiry.Before(until) {
 			until = expiry
 		}

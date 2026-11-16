@@ -141,7 +141,7 @@ func (r *ServiceRegistry) remove(c *serviceConnection) error {
 }
 
 func (r *ServiceRegistry) candidate(h tunnelv1.ServiceForwardingHeader, lease relayv1.RelayLease, now time.Time) (*serviceConnection, bool) {
-	if h.Validate() != nil || !h.ExpiresAt.After(now) || !h.LeaseExpiresAt.After(now) || lease.Draining || !lease.LeaseExpiresAt.After(now) ||
+	if h.Validate() != nil || !h.ExpiresAt.After(now) || !h.ServingUntil.After(now) || lease.Draining || !lease.ServingUntil.After(now) ||
 		h.RelayServiceID != lease.RelayServiceId || h.RelayID != lease.RelayId || h.RelayRunID != lease.RelayRunId || h.RelayLeaseRevision != uint64(lease.RelayLeaseRevision) {
 		return nil, false
 	}

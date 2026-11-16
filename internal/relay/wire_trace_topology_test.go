@@ -98,7 +98,7 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 				return owner
 			}
 			ingressCtx, relayCtx, publisherCtx := newOwner("ingress"), newOwner("relay"), newOwner("publisher")
-			lease := relayv1.RelayLease{RelayServiceId: "relay-service", RelayId: "relay-process", RelayRunId: privateRelayID(opaqueid.RelayRunPrefix), RelayLeaseRevision: 4, LeaseExpiresAt: time.Now().Add(time.Minute), ConnectionCapacity: 4}
+			lease := relayv1.RelayLease{RelayServiceId: "relay-service", RelayId: "relay-process", RelayRunId: privateRelayID(opaqueid.RelayRunPrefix), RelayLeaseRevision: 4, ServingUntil: time.Now().Add(time.Minute), ConnectionCapacity: 4}
 			privateRef := tunnelv1.ServicePublisherConnectionRef{ServiceID: privateRelayID(opaqueid.ServicePrefix), ServiceRunID: privateRelayID(opaqueid.ServiceRunPrefix), RunNumber: 3, PublisherConnectionID: privateRelayID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 2, RelayServiceID: lease.RelayServiceId}
 			hello := tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: 1, Role: tunnelv1.Publisher, Credential: "publisher-secret", ServiceConnection: &privateRef}
 			serviceRegistry := NewServiceRegistry()
@@ -194,8 +194,8 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 				if e != nil {
 					t.Fatal(e)
 				}
-				header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: 1, Kind: tunnelv1.ServiceForwardingStream, ServiceID: privateRef.ServiceID, ServiceRunID: privateRef.ServiceRunID, RunNumber: 3, PublisherConnectionID: privateRef.PublisherConnectionID, ConnectionAssignmentRevision: 2, PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: privateRelayID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 25443}, SourceIP: "192.0.2.1", VisitorConnectionID: visitorID, ExpiresAt: lease.LeaseExpiresAt}, RelayServiceID: lease.RelayServiceId, RelayID: lease.RelayId, RelayRunID: lease.RelayRunId, RelayLeaseRevision: 4, LeaseExpiresAt: lease.LeaseExpiresAt}
-				relay := ingressv1.ServiceRelay{PublisherConnectionId: privateRef.PublisherConnectionID, ConnectionAssignmentRevision: 2, RelayServiceId: lease.RelayServiceId, RelayId: lease.RelayId, RelayRunId: lease.RelayRunId, RelayLeaseRevision: 4, LeaseExpiresAt: lease.LeaseExpiresAt, InternalRelayAddress: address, TlsServerName: "127.0.0.1"}
+				header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: 1, Kind: tunnelv1.ServiceForwardingStream, ServiceID: privateRef.ServiceID, ServiceRunID: privateRef.ServiceRunID, RunNumber: 3, PublisherConnectionID: privateRef.PublisherConnectionID, ConnectionAssignmentRevision: 2, PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: privateRelayID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 25443}, SourceIP: "192.0.2.1", VisitorConnectionID: visitorID, ExpiresAt: lease.ServingUntil}, RelayServiceID: lease.RelayServiceId, RelayID: lease.RelayId, RelayRunID: lease.RelayRunId, RelayLeaseRevision: 4, ServingUntil: lease.ServingUntil}
+				relay := ingressv1.ServiceRelay{PublisherConnectionId: privateRef.PublisherConnectionID, ConnectionAssignmentRevision: 2, RelayServiceId: lease.RelayServiceId, RelayId: lease.RelayId, RelayRunId: lease.RelayRunId, RelayLeaseRevision: 4, ServingUntil: lease.ServingUntil, InternalRelayAddress: address, TlsServerName: "127.0.0.1"}
 				stream, err := forwarder.OpenService(setup, relay, header, nil)
 				if err != nil {
 					t.Fatal(err)

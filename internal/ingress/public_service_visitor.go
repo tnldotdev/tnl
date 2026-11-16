@@ -90,7 +90,7 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 		outcome = observability.VisitorLookupUnavailable
 		return err
 	}
-	setupDeadline := privateMinTime(time.Now().Add(p.config.OpenTimeout), privateMinTime(admission.deadline, lease.LeaseExpiresAt))
+	setupDeadline := privateMinTime(time.Now().Add(p.config.OpenTimeout), privateMinTime(admission.deadline, lease.ServingUntil))
 	admission.deadline = setupDeadline
 	setup, finish := context.WithDeadline(ctx, setupDeadline)
 	defer finish()
@@ -259,7 +259,7 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 			ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream, ServiceID: selected.serviceID, ServiceRunID: selected.runID, RunNumber: uint64(selected.number),
 			PublicService: &tunnelv1.PublicServiceAdmission{IngressID: lease.IngressId, IngressRunID: lease.IngressRunId, IngressLeaseRevision: uint64(lease.IngressLeaseRevision), DestinationPort: destination.Port()},
 			SourceIP:      source.Addr().Unmap().String(), VisitorConnectionID: selected.visitorID, PublisherConnectionID: relay.PublisherConnectionId, ConnectionAssignmentRevision: uint64(relay.ConnectionAssignmentRevision), ExpiresAt: deadline,
-		}, ConnectionSlot: uint8(relay.ConnectionSlot), RelayServiceID: relay.RelayServiceId, RelayID: relay.RelayId, RelayRunID: relay.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLeaseRevision), LeaseExpiresAt: relay.LeaseExpiresAt}
+		}, ConnectionSlot: uint8(relay.ConnectionSlot), RelayServiceID: relay.RelayServiceId, RelayID: relay.RelayId, RelayRunID: relay.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLeaseRevision), ServingUntil: relay.ServingUntil}
 		attemptCtx, stopAttempt := backendAttemptContext(setup, len(relays)-attempt)
 		attemptStarted := time.Now()
 		backend, err := p.openPrivateRelay(attemptCtx, relay, header, proxy, initial, deadline, func(call context.Context) error {
@@ -511,7 +511,7 @@ func (p *Server) retireClosedTrafficRuns(ctx context.Context, lease ingressv1.In
 	current := p.config.CurrentLease()
 	deadline, _ := check.Deadline()
 	if err != nil || check.Err() != nil || !deadline.After(time.Now()) || !samePrivateLease(current, lease) ||
-		!current.LeaseExpiresAt.After(time.Now()) || current.Draining || len(closed.Closed) > len(candidates) {
+		!current.ServingUntil.After(time.Now()) || current.Draining || len(closed.Closed) > len(candidates) {
 		return
 	}
 	for _, ref := range closed.Closed {
@@ -520,7 +520,7 @@ func (p *Server) retireClosedTrafficRuns(ctx context.Context, lease ingressv1.In
 		}
 		delete(requested, ref)
 	}
-	lease.LeaseExpiresAt = privateMinTime(lease.LeaseExpiresAt, current.LeaseExpiresAt)
+	lease.ServingUntil = privateMinTime(lease.ServingUntil, current.ServingUntil)
 	if len(closed.Closed) != 0 && p.services.retireTerminal(lease, closed.Closed) {
 		p.traffic.retireTerminal(closed.Closed)
 	}
@@ -547,7 +547,7 @@ func validateServiceRelays(relays []ingressv1.ServiceRelay, now time.Time) error
 	}
 	services, slots := make(map[string]bool, 2), make(map[int]bool, 2)
 	for _, relay := range relays {
-		if !opaqueid.Valid(relay.PublisherConnectionId, opaqueid.PublisherConnectionPrefix) || relay.ConnectionSlot < 0 || relay.ConnectionSlot > 1 || relay.ConnectionAssignmentRevision < 1 || relay.RelayLeaseRevision < 1 || relay.RelayServiceId == "" || relay.RelayId == "" || !opaqueid.Valid(relay.RelayRunId, opaqueid.RelayRunPrefix) || !relay.LeaseExpiresAt.After(now) || services[relay.RelayServiceId] || slots[relay.ConnectionSlot] {
+		if !opaqueid.Valid(relay.PublisherConnectionId, opaqueid.PublisherConnectionPrefix) || relay.ConnectionSlot < 0 || relay.ConnectionSlot > 1 || relay.ConnectionAssignmentRevision < 1 || relay.RelayLeaseRevision < 1 || relay.RelayServiceId == "" || relay.RelayId == "" || !opaqueid.Valid(relay.RelayRunId, opaqueid.RelayRunPrefix) || !relay.ServingUntil.After(now) || services[relay.RelayServiceId] || slots[relay.ConnectionSlot] {
 			return ErrServiceAdmission
 		}
 		if _, _, err := net.SplitHostPort(relay.InternalRelayAddress); err != nil {
@@ -587,7 +587,7 @@ func (p *Server) watchCertificateAccess(ctx context.Context, control PublicServi
 		if err != nil || !samePrivateLease(current, lease) {
 			return ErrServiceAdmission
 		}
-		deadline = privateMinTime(deadline, current.LeaseExpiresAt)
+		deadline = privateMinTime(deadline, current.ServingUntil)
 		if current.Draining && current.DrainDeadline != nil {
 			deadline = privateMinTime(deadline, *current.DrainDeadline)
 		}
@@ -610,7 +610,7 @@ func (p *Server) watchCertificateAccess(ctx context.Context, control PublicServi
 		if leaseErr != nil || !samePrivateLease(current, lease) {
 			return ErrServiceAdmission
 		}
-		deadline = privateMinTime(deadline, current.LeaseExpiresAt)
+		deadline = privateMinTime(deadline, current.ServingUntil)
 		if current.Draining && current.DrainDeadline != nil {
 			deadline = privateMinTime(deadline, *current.DrainDeadline)
 		}
@@ -621,7 +621,7 @@ func (p *Server) watchCertificateAccess(ctx context.Context, control PublicServi
 			if status.State != ingressv1.PublicServiceVisitorAllowed || !status.ValidUntil.After(time.Now()) {
 				return ErrServiceAdmission
 			}
-			deadline = privateMinTime(status.ValidUntil, privateMinTime(time.Now().Add(p.config.HardAuthorizationTTL), current.LeaseExpiresAt))
+			deadline = privateMinTime(status.ValidUntil, privateMinTime(time.Now().Add(p.config.HardAuthorizationTTL), current.ServingUntil))
 			if current.Draining && current.DrainDeadline != nil {
 				deadline = privateMinTime(deadline, *current.DrainDeadline)
 			}
