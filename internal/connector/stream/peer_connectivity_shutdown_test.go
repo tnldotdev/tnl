@@ -78,6 +78,9 @@ type directShutdownControlStream struct {
 	observed chan tunnelv1.ConnectorVisitorTerminalObserved
 	input    []byte
 	pending  *tunnelv1.ConnectorVisitorTerminalObserved
+	session  muxsession.Session
+	closing  *atomic.Bool
+	retire   func()
 }
 
 // entering the next read proves the previous message's actual handler returned
@@ -88,6 +91,21 @@ func (s *directShutdownControlStream) Read(p []byte) (int, error) {
 		s.pending = nil
 	}
 	n, err := s.Stream.Read(p)
+	if s.session != nil && s.closing != nil && s.closing.Load() && s.retire != nil &&
+		muxsession.NormalSessionCloseOnly(err) {
+		// only the exact normal end from this fixture's owned session stops its
+		// decoder. transport loss and independently failed reads stay failures.
+		var application, ended *quic.ApplicationError
+		select {
+		case <-s.session.Done():
+			sessionErr := s.session.Err()
+			if muxsession.NormalSessionCloseOnly(sessionErr) &&
+				errors.As(err, &application) && errors.As(sessionErr, &ended) && application == ended {
+				s.retire()
+			}
+		default:
+		}
+	}
 	s.input = append(s.input, p[:n]...)
 	for len(s.input) >= 4 {
 		size := int(binary.BigEndian.Uint32(s.input[:4]))
@@ -105,6 +123,12 @@ func (s *directShutdownControlStream) Read(p []byte) (int, error) {
 		s.input = s.input[4+size:]
 	}
 	return n, err
+}
+
+func directShutdownLifetime(ctx context.Context, until time.Time) (context.Context, context.CancelFunc) {
+	// test cancellation is a stop request, not proof that borrowed sessions or
+	// control readers joined. fixture cleanup owns this unchanged packet bound.
+	return context.WithDeadline(context.WithoutCancel(ctx), until)
 }
 
 func (s *directShutdownControlStream) Write(p []byte) (int, error) {
@@ -508,9 +532,11 @@ func directShutdownDiscovery(t *testing.T) net.Addr {
 
 func TestConnectorDirectTerminalCleanup(t *testing.T) {
 	t.Run("real direct packets after serving cancellation", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-		defer cancel()
-		until, _ := ctx.Deadline()
+		budget, finish := context.WithTimeout(t.Context(), 5*time.Second)
+		defer finish()
+		until, _ := budget.Deadline()
+		ctx, cancel := directShutdownLifetime(budget, until)
+		t.Cleanup(cancel)
 		scope := connectorTestControlScope()
 		binding := peer.BindingRevision{PairID: scope.PairID, Generation: 1}
 		key := [32]byte{7, 11, 19}
@@ -534,12 +560,15 @@ func TestConnectorDirectTerminalCleanup(t *testing.T) {
 		var localConnection *directShutdownLocal
 		forwardChecked, observedFailed := false, false
 		var remoteCleanupDone chan error
+		var closing atomic.Bool
 		t.Cleanup(func() {
+			closing.Store(true)
 			releaseJoin()
 			stopApplication()
-			cancel()
 			p.cancel(context.Canceled)
-			p.packetCancel(context.Canceled)
+			if cause := context.Cause(p.packetCtx); cause != nil && ctx.Err() == nil {
+				t.Errorf("fixture stopped packets before connector session cleanup: %v", cause)
+			}
 			closeErr := p.Close(context.WithoutCancel(ctx))
 			if serverSession != nil {
 				if err := serverSession.Close(); err != nil {
@@ -549,6 +578,7 @@ func TestConnectorDirectTerminalCleanup(t *testing.T) {
 			if control != nil {
 				control.Retire()
 			}
+			cancel()
 			if listener != nil {
 				if err := listener.Close(); err != nil {
 					t.Errorf("inner listener cleanup: %v", err)
@@ -662,6 +692,7 @@ func TestConnectorDirectTerminalCleanup(t *testing.T) {
 				var gate tunnel.ConnectorPermissionGate
 				err = control.Serve(&directShutdownControlStream{
 					Stream: stream, joined: remoteJoined, results: results, observed: observed,
+					session: serverSession, closing: &closing, retire: control.Retire,
 				}, &gate)
 			}
 			controlDone <- err
