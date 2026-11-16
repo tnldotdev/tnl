@@ -108,7 +108,7 @@ func TestPolicyConnectorRemovalFencesBeforeCallback(t *testing.T) {
 }
 
 func TestPolicyConnectorCurrentRefusalDoesNotTagStaleOrClosedGuards(t *testing.T) {
-	for _, boundary := range []string{"current refusal", "stale", "guard closed", "lease closed", "revoked"} {
+	for _, boundary := range []string{"current refusal", "stale", "guard closed", "lease closed", "revoked", "closed before refusal", "revoked before refusal"} {
 		t.Run(boundary, func(t *testing.T) {
 			l, u, permission := connectorGuardFixture(t)
 			guard, err := l.BindConnector(permission, netip.MustParseAddr("192.0.2.1"), 5, func() {})
@@ -133,6 +133,16 @@ func TestPolicyConnectorCurrentRefusalDoesNotTagStaleOrClosedGuards(t *testing.T
 				l.Close()
 			case "revoked":
 				guard.Revoke()
+			case "closed before refusal", "revoked before refusal":
+				if boundary == "closed before refusal" {
+					guard.Close()
+				} else {
+					guard.Revoke()
+				}
+				u.Enabled = false
+				if err := l.Apply(l.Begin(), u); err != nil {
+					t.Fatal(err)
+				}
 			}
 			_, err = guard.Current()
 			var refusal *ConnectorPolicyRefusal

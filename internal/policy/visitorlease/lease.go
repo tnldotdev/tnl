@@ -92,6 +92,7 @@ func (l *Lease) Apply(request Request, update Update) error {
 		for guard := range l.guards {
 			if !guard.allowedLocked(now) {
 				delete(l.guards, guard)
+				guard.policyRefused = true
 				stopped = append(stopped, guard)
 			} else {
 				if guard.anonymous || guard.permission.Facts().VisitorPolicyRevision == l.update.View.VisitorPolicyRevision {
@@ -221,6 +222,7 @@ type Guard struct {
 	connection     bool
 	renewable      bool
 	confirmedUntil time.Time
+	policyRefused  bool
 	connector      *connectorPermission
 	publicEndpoint *controlv1.VisitorPublicEndpoint
 }
@@ -350,8 +352,10 @@ func (g *Guard) expire() {
 	l := g.lease
 	l.mu.Lock()
 	_, found := l.guards[g]
-	if found && !g.allowedLocked(l.now()) {
+	now := l.now()
+	if found && !g.allowedLocked(now) {
 		delete(l.guards, g)
+		g.policyRefused = l.phase == leaseCurrent && now.Before(l.update.View.ValidUntil)
 	} else {
 		found = false
 	}
@@ -367,6 +371,7 @@ func (g *Guard) Close() {
 	l := g.lease
 	l.mu.Lock()
 	delete(l.guards, g)
+	g.policyRefused = false
 	if g.timer != nil {
 		g.timer.Stop()
 	}
@@ -411,6 +416,7 @@ func (g *Guard) Revoke() {
 	l.mu.Lock()
 	_, active := l.guards[g]
 	delete(l.guards, g)
+	g.policyRefused = false
 	if g.timer != nil {
 		g.timer.Stop()
 	}

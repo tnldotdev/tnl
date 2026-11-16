@@ -73,11 +73,13 @@ func (n *ConnectorGuard) Current() (time.Time, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
-	if _, active := l.guards[g]; !active || !g.allowedLocked(now) {
+	_, active := l.guards[g]
+	allowed := g.allowedLocked(now)
+	if !active || !allowed {
 		// policy installation fences use before invoking stop callbacks unlocked.
 		// retain that exact refusal even when an i/o check overtakes its callback;
 		// cancellation alone does not establish this provenance.
-		if l.phase == leaseCurrent && now.Before(l.update.View.ValidUntil) && !g.allowedLocked(now) {
+		if l.phase == leaseCurrent && now.Before(l.update.View.ValidUntil) && (g.policyRefused || active && !allowed) {
 			return time.Time{}, &ConnectorPolicyRefusal{}
 		}
 		return time.Time{}, visitortoken.ErrPolicy
