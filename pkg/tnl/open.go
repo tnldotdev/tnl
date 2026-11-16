@@ -31,6 +31,8 @@ type Limits struct {
 }
 
 type Options struct {
+	// NoTelemetry opts this publication out without changing saved preferences.
+	NoTelemetry             bool
 	RequirePostQuantum      bool
 	EnrollmentKey           string
 	PublisherIdentityID     string
@@ -96,7 +98,7 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 	}()
 	ready := make(chan struct{}, 1)
 	go func() {
-		result := adhoc.Run(runCtx, adhoc.Options{
+		result := runSDKPublication(runCtx, state, options, adhoc.Options{
 			RequirePostQuantum: options.RequirePostQuantum,
 			ControlURL:         serverURL, HTTPClient: options.HTTPClient, State: profile,
 			Publisher: native, InvocationID: invocationID, ExpiresAt: options.ExpiresAt,

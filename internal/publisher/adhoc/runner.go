@@ -12,6 +12,7 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
@@ -23,6 +24,7 @@ import (
 )
 
 type Options struct {
+	Telemetry           *clienttelemetry.Collector
 	RequirePostQuantum  bool
 	ControlURL          string
 	HTTPClient          *http.Client
