@@ -3,8 +3,11 @@ package integrations
 import (
 	"context"
 	"crypto/sha256"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"path/filepath"
 	"testing"
 	"time"
@@ -115,6 +118,84 @@ func TestAliasRequestsStopAfterSelectionChange(t *testing.T) {
 	eligible, err := worker.Eligible(t.Context())
 	if err != nil || eligible {
 		t.Fatal("old worktree retained publication eligibility")
+	}
+}
+
+func TestAliasHTTPFailsWhenSelectedAppStopsDespiteHealthySibling(t *testing.T) {
+	f := newAliasFixture(t)
+	store, err := f.state.Server(t.Context(), testServer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "selected-primary")
+	}))
+	t.Cleanup(primary.Close)
+	sibling := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "healthy-feature")
+	}))
+	t.Cleanup(sibling.Close)
+	id, err := opaqueid.New(opaqueid.ServicePrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := AliasPublisher(f.state, store, f.selection, f.main.ID(), func(ctx context.Context) (Snapshot, error) {
+		snapshot, err := aliasSnapshot(f.selection, id)(ctx)
+		snapshot.Config.Target = primary.URL
+		return snapshot, err
+	}, nil)
+	snapshot, err := worker.Prepare(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Config.ServiceID != id || snapshot.Config.PreviewID != "" || snapshot.Config.Feedback {
+		t.Fatal("alias borrowed its receiver's service, preview share, or feedback")
+	}
+	destination, err := url.Parse(snapshot.Config.Target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(destination)
+	alias := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := snapshot.Config.AdmitRequest(r); err != nil {
+			code, _ := diagnostic.CodeOf(err)
+			w.Header().Set("Tnl-Error-Code", string(code))
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(alias.Close)
+	get := func(address string, status int, body, code string) {
+		t.Helper()
+		response, err := alias.Client().Get(address)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := io.ReadAll(response.Body)
+		closeErr := response.Body.Close()
+		if err != nil || closeErr != nil || response.StatusCode != status || string(data) != body || response.Header.Get("Tnl-Error-Code") != code {
+			t.Fatalf("alias HTTP: status=%d body=%s code=%s read=%v close=%v", response.StatusCode, data, response.Header.Get("Tnl-Error-Code"), err, closeErr)
+		}
+	}
+	get(alias.URL, http.StatusOK, "selected-primary", "")
+	get(sibling.URL, http.StatusOK, "healthy-feature", "")
+	if err := f.main.Finish(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+	primary.Close()
+	get(alias.URL, http.StatusServiceUnavailable, "", string(diagnostic.AliasUnavailable))
+	get(sibling.URL, http.StatusOK, "healthy-feature", "")
+	if eligible, err := worker.Eligible(t.Context()); err != nil || eligible {
+		t.Fatal("stopped selected app retained alias eligibility", err)
+	}
+	other := AliasPublisher(f.state, store, f.selection, f.linked.ID(), aliasSnapshot(f.selection, id), nil)
+	if eligible, err := other.Eligible(t.Context()); err != nil || eligible {
+		t.Fatal("healthy sibling silently acquired a stopped app's alias", err)
+	}
+	selection, err := f.state.AliasSelection(t.Context(), f.selection.Scope)
+	if err != nil || selection.Project != f.selection.Project || selection.Revision != f.selection.Revision {
+		t.Fatal("alias failure changed the visible selected worktree", err)
 	}
 }
 
