@@ -27,7 +27,7 @@ import { withProcessEnvironment } from "../helpers/environment.js";
 afterEach(() => vi.useRealTimers());
 
 test.each(["node", "bun", "vite", "next"] as const)(
-  "%s default telemetry and opt-out stay independent across owner rediscovery",
+  "%s default and explicit telemetry choices stay independent across owner rediscovery",
   async (framework) => {
     vi.stubEnv("TNL_NO_TELEMETRY", undefined);
     const requests: unknown[] = [];
@@ -47,20 +47,30 @@ test.each(["node", "bun", "vite", "next"] as const)(
       },
     };
     const disabled = await createPreparedService({ telemetry: false }, framework, dependencies);
-    const enabled = await createPreparedService({}, framework, dependencies);
     onTestFinished(() => disabled.close());
+    const enabled = await createPreparedService({}, framework, dependencies);
     onTestFinished(() => enabled.close());
-    expect(requests).toHaveLength(2);
+    const explicitlyEnabled = await createPreparedService(
+      { telemetry: true },
+      framework,
+      dependencies,
+    );
+    onTestFinished(() => explicitlyEnabled.close());
+    expect(requests).toHaveLength(3);
     expect(requests[0]).toMatchObject({ telemetry_disabled: true });
     expect(requests[1]).toMatchObject({ telemetry_disabled: false });
+    expect(requests[2]).toMatchObject({ telemetry_disabled: false });
     vi.stubEnv("TNL_NO_TELEMETRY", "true");
     failRegistration = true;
     await reportFrameworkTarget(disabled, "http://127.0.0.1:3200");
     failRegistration = true;
     await reportFrameworkTarget(enabled, "http://127.0.0.1:3201");
-    expect(requests).toHaveLength(4);
-    expect(requests[2]).toMatchObject({ telemetry_disabled: true });
-    expect(requests[3]).toMatchObject({ telemetry_disabled: false });
+    failRegistration = true;
+    await reportFrameworkTarget(explicitlyEnabled, "http://127.0.0.1:3202");
+    expect(requests).toHaveLength(6);
+    expect(requests[3]).toMatchObject({ telemetry_disabled: true });
+    expect(requests[4]).toMatchObject({ telemetry_disabled: false });
+    expect(requests[5]).toMatchObject({ telemetry_disabled: false });
   },
 );
 
