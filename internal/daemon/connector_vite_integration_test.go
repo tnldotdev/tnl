@@ -2,32 +2,22 @@ package daemon
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	clientproject "github.com/tnldotdev/tnl/internal/client/project"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
-	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
-	publisherlocal "github.com/tnldotdev/tnl/internal/publisher/local"
-	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
-	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/zalando/go-keyring"
 )
 
 // use the real Vite host filter and native app preparation, not a replacement
@@ -45,121 +35,26 @@ func TestIntegrationConnectorOnlyViteCanonicalHost(t *testing.T) {
 	if _, err := f.inspect.ExecContext(t.Context(), `DELETE FROM control.ingress_service_port_ranges`); err != nil {
 		t.Fatal(err)
 	}
-	const controlURL = "https://control.private.integration.test"
-	if runtime.GOOS == "darwin" {
-		keyring.MockInit()
-	}
-	state, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer state.Close()
-	profile, err := state.Server(t.Context(), controlURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	session, found, err := f.identity.state.ControlSession(t.Context())
-	if err != nil || !found {
-		t.Fatal("fixture lost its control session", err)
-	}
-	if err := profile.SaveControlSession(t.Context(), session); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("TNL_ACCESS_TOKEN", "")
-	t.Setenv("TNL_SERVER", "")
-	original := http.DefaultTransport
 	controlTransport := f.publicHTTP.Transport.(*http.Transport).Clone()
 	controlTransport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		hostname, _, err := net.SplitHostPort(address)
 		if err != nil {
 			return nil, err
 		}
-		if hostname == strings.TrimPrefix(controlURL, "https://") {
+		if hostname == "control.private.integration.test" {
 			address = f.publicControlAddress
 		}
 		return (&net.Dialer{}).DialContext(ctx, network, address)
 	}
-	http.DefaultTransport = controlTransport
-	t.Cleanup(func() {
-		http.DefaultTransport = original
-		controlTransport.CloseIdleConnections()
-	})
-	project := clientproject.Project{Root: directory, Config: config.TNL{Server: new(controlURL),
-		Services: config.Services{"web": {Public: new(false)}, "unrelated": {}}}}
-	snapshot, _, err := project.Snapshot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	routable := make(chan string, 1)
-	options := publisherlocal.Options{Directory: directory, StateDir: state.Root(), Snapshot: bytes.NewReader(snapshot),
-		AttachPublication: func(_ context.Context, _ publisherapp.Service, cfg *publisherservice.RunConfig) error {
-			cfg.RelayQUIC, cfg.RelayTCP = f.connectors()
-			cfg.TransportTLS, cfg.DrainTime = f.roots.Clone(), time.Second
-			onReady := cfg.Ready
-			cfg.Ready = func() error {
-				if onReady != nil {
-					if err := onReady(); err != nil {
-						return err
-					}
-				}
-				select {
-				case routable <- cfg.ServiceID:
-				default:
-				}
-				return nil
-			}
-			return nil
-		}}
-	ownerCtx, stopOwner := context.WithCancel(t.Context())
-	ownerDone := make(chan struct{})
-	var ownerErr error
-	go func() {
-		defer close(ownerDone)
-		ownerErr = publisherlocal.Serve(ownerCtx, options)
-	}()
-	defer func() {
-		stopOwner()
-		if err := waitForDoneWithin(ownerDone, 20*time.Second); err != nil {
-			t.Error("native Vite owner did not join", err)
-		} else if ownerErr != nil {
-			t.Error("native Vite owner", ownerErr)
-		}
-	}()
-	descriptor, err := publisherprotocol.DescriptorPath(state.Root(), directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var owner publisherprotocol.Endpoint
-	privateWait(t, 10*time.Second, func(ctx context.Context) (bool, error) {
-		select {
-		case <-ownerDone:
-			return false, errors.Join(errors.New("native Vite owner stopped before startup"), ownerErr)
-		default:
-		}
-		value, err := publisherprotocol.ReadEndpoint(descriptor)
-		if err != nil {
-			return false, nil
-		}
-		owner = value
-		return publisherlocal.Available(ctx, owner), nil
-	})
-	var endpoint publisherprotocol.Endpoint
-	web := "web"
-	if err := publisherprotocol.Call(t.Context(), owner, http.MethodPost, "/v1/capabilities",
-		publisherprotocol.CapabilityRequest{Scope: "app", Service: &web}, &endpoint); err != nil {
-		t.Fatal(err)
-	}
-	endpointDirectory := t.TempDir()
-	if err := os.Chmod(endpointDirectory, 0700); err != nil {
-		t.Fatal(err)
-	}
-	mounted := filepath.Join(endpointDirectory, "endpoint.json")
-	if err := publisherprotocol.WriteEndpoint(mounted, endpoint); err != nil {
-		t.Fatal(err)
-	}
+	t.Cleanup(controlTransport.CloseIdleConnections)
+	quic, tcp := f.connectors()
+	native := startFrameworkNativeOwner(t, directory, config.Services{"web": {Public: new(false)}, "unrelated": {}},
+		frameworkNativeSetup{controlURL: "https://control.private.integration.test", state: f.identity.state,
+			controlHTTP: &http.Client{Transport: controlTransport}, relayTLS: f.roots, quic: quic, tcp: tcp})
+	defer native.stop()
 	command := exec.Command("node", filepath.Join(integrationRepositoryRoot(t), "packages/ts/test/fixtures/connector-vite.ts"))
 	command.Dir = directory
-	command.Env = append(os.Environ(), "TNL_APP_ENDPOINT="+mounted, "TNL_NO_TELEMETRY=1", "TNL_PREVIEW=required")
+	command.Env = append(os.Environ(), "TNL_APP_ENDPOINT="+native.endpoint, "TNL_NO_TELEMETRY=1", "TNL_PREVIEW=required")
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +99,7 @@ func TestIntegrationConnectorOnlyViteCanonicalHost(t *testing.T) {
 	}
 	var serviceID string
 	select {
-	case serviceID = <-routable:
+	case serviceID = <-native.routable:
 	case <-time.After(35 * time.Second):
 		t.Fatal("connector-only Vite publication did not become routable", stderr.String())
 	}
@@ -220,7 +115,6 @@ func TestIntegrationConnectorOnlyViteCanonicalHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	quic, tcp := f.connectors()
 	listener, stopConnector := startRuntimeConnector(t, f, service, connectorstream.Config{
 		Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp})
 	defer stopConnector()
