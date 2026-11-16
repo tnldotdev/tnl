@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -56,7 +58,10 @@ func TestNonQUICChildCloseAndDeadlinesLeaveSharedQUICAlive(t *testing.T) {
 		t.Run(map[bool]string{false: "transport", true: "source-pinned"}[pinned], func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
+			started := time.Now()
+			until, _ := ctx.Deadline()
 			serverTLS, clientTLS := testTLSConfigs(t)
+			tlsReady := time.Now()
 			config := QUICConfig{}
 			if pinned {
 				config.PinnedRemoteIPLimit = 4
@@ -66,6 +71,7 @@ func TestNonQUICChildCloseAndDeadlinesLeaveSharedQUICAlive(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer listener.Close()
+			listenerReady := time.Now()
 			serverPackets := listener.NonQUICPackets(ctx)
 			defer serverPackets.Close()
 			duplicate := listener.NonQUICPackets(ctx)
@@ -75,8 +81,14 @@ func TestNonQUICChildCloseAndDeadlinesLeaveSharedQUICAlive(t *testing.T) {
 			transport := testQUICTransport(t)
 			clientPackets := transport.NonQUICPackets(ctx)
 			defer clientPackets.Close()
+			dialStarted := time.Now()
+			entryCause := context.Cause(ctx)
 			client, err := (QUICConnector{TLSConfig: clientTLS, Dialer: transport}).Connect(ctx, Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
 			if err != nil {
+				t.Logf("QUIC setup deadline evidence: tls=%s listener=%s packet_views=%s budget_at_dial=%s dial=%s total=%s entry_cause=%v final_cause=%v listener=%s client=%s sources=%v",
+					tlsReady.Sub(started), listenerReady.Sub(tlsReady), dialStarted.Sub(listenerReady),
+					until.Sub(dialStarted), time.Since(dialStarted), time.Since(started), entryCause, context.Cause(ctx),
+					listener.Addr(), transport.LocalAddr(), nonQUICSetupSourceFacts(listener))
 				t.Fatal(err)
 			}
 			defer client.Close()
@@ -134,6 +146,36 @@ func TestNonQUICChildCloseAndDeadlinesLeaveSharedQUICAlive(t *testing.T) {
 				t.Fatal("borrowed dialer did not use the existing physical socket", got)
 			}
 		})
+	}
+}
+
+func nonQUICSetupSourceFacts(listener *QUICListener) []string {
+	if listener.sources == nil {
+		return nil
+	}
+	s := listener.sources
+	if !s.mu.TryLock() {
+		return []string{"source_owner_busy=true"}
+	}
+	defer s.mu.Unlock()
+	facts := []string{fmt.Sprintf("owner_cause=%v pending=%d queued_bytes=%d", context.Cause(s.ctx), s.pending, s.queuedBytes)}
+	for ip, source := range s.sources {
+		facts = append(facts, fmt.Sprintf("source=%s pending=%t active=%d queued_packets=%d age=%s cause=%v",
+			ip, source.pending, source.active, len(source.packets), time.Since(source.created), context.Cause(source.ctx)))
+	}
+	slices.Sort(facts)
+	return facts
+}
+
+func TestNonQUICSetupEvidenceDoesNotWaitForTheSourceOwner(t *testing.T) {
+	source := &sourceQUICListener{ctx: t.Context()}
+	source.mu.Lock()
+	defer source.mu.Unlock()
+	if got := nonQUICSetupSourceFacts(&QUICListener{sources: source}); !reflect.DeepEqual(got, []string{"source_owner_busy=true"}) {
+		t.Fatal("deadline evidence waited on its owner or read unprotected state", got)
+	}
+	if got := nonQUICSetupSourceFacts(new(QUICListener)); got != nil {
+		t.Fatal("an ordinary listener manufactured source-pinned state", got)
 	}
 }
 
