@@ -65,10 +65,13 @@ type RunConfig struct {
 	Mounts                                                []proxy.Mount
 	// ResolveHTTPTarget captures one HTTP request's target and replacement identity.
 	// target trust remains run-approved; discovery with its own TLS uses TargetResolver.
-	ResolveHTTPTarget                      func(*http.Request) (address, identity string, err error)
-	InspectionMode                         inspection.Mode
-	ObserveSummary                         inspection.Observer
-	AdmitRequest                           func(*http.Request) error
+	ResolveHTTPTarget func(*http.Request) (address, identity string, err error)
+	InspectionMode    inspection.Mode
+	ObserveSummary    inspection.Observer
+	AdmitRequest      func(*http.Request) error
+	// http admission receives this serving run's validated facts, not mutable
+	// preparation state shared with another publication.
+	HTTPAdmitRequest                       func(*http.Request, HTTPRun) error
 	ReadinessProof                         func(httpaccess.ReadinessRun) *httpaccess.ReadinessProof
 	Feedback                               bool
 	PreviewID, ProjectService, ProjectRoot string

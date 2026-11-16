@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"net/http"
 	"net/netip"
 	"slices"
 	"time"
@@ -84,6 +85,21 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 	}
 	prepared.inspectionMode, prepared.observeSummary = cfg.InspectionMode, cfg.ObserveSummary
 	prepared.admitRequest = cfg.AdmitRequest
+	if cfg.HTTPAdmitRequest != nil {
+		if approved.Protocol != controlv1.ServiceProtocolHTTP {
+			return nil, ErrPrivateStream
+		}
+		run := HTTPRun{ServiceID: preparation.ServiceId, RunID: preparation.ServiceRunId,
+			Number: preparation.RunNumber, Hostname: preparation.Hostname}
+		prepared.admitRequest = func(request *http.Request) error {
+			if cfg.AdmitRequest != nil {
+				if err := cfg.AdmitRequest(request); err != nil {
+					return err
+				}
+			}
+			return cfg.HTTPAdmitRequest(request, run)
+		}
+	}
 	prepared.managedPublic = approved.Endpoint.Public
 	prepared.metadataRevision = approved.TrustRevision
 	prepared.targetResolver = cfg.TargetResolver
@@ -182,7 +198,7 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 		httpFrontend, closeHTTP, err = PrepareHTTP(ctx, HTTP{
 			AuditSink:      audit,
 			InspectionMode: config.InspectionMode, ObserveSummary: config.ObserveSummary,
-			AdmitRequest: config.AdmitRequest, ReadinessProof: proof,
+			AdmitRequest: prepared.admitRequest, ReadinessProof: proof,
 			ResponseHooks: prepared.httpResponseHooks,
 			Feedback:      config.Feedback, PreviewID: config.PreviewID,
 			ProjectService: config.ProjectService, ProjectRoot: config.ProjectRoot, Demo: config.Demo,

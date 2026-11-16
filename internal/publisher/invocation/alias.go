@@ -284,6 +284,8 @@ func projectAliasPublisher(state *clientstate.Database, services publisherServic
 		if err != nil {
 			return integrations.Snapshot{}, err
 		}
+		// the alias owns OAuth return admission for its own run; do not copy
+		// the ordinary app's HTTPAdmitRequest and consume a return twice.
 		cfg := publisherservice.RunConfig{Telemetry: base.Telemetry, Control: native, State: services.state, Access: native.Access,
 			PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
 			ServiceID: saved.Id, Metadata: publisheridentity.ServiceMetadata(saved), Target: base.Target, Handler: base.Handler,

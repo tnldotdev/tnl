@@ -17,13 +17,31 @@ import (
 // integration workers share the entry tunnel's lifetime and namespace; each
 // elected publisher obtains an exact grant for its ordinary saved service.
 func attachRuntimeIntegrations(ctx context.Context, state *clientstate.Database, project clientproject.Project, service publisherapp.Service, tunnel *clientstate.Tunnel, cfg *publisherservice.RunConfig) (func(), error) {
-	if cfg.Metadata.Protocol != controlv1.ServiceProtocolHTTP || !project.Config.OAuth && len(project.Config.Webhooks) == 0 && len(project.Config.Aliases) == 0 {
+	if cfg.Metadata.Protocol != controlv1.ServiceProtocolHTTP {
 		return nil, nil
 	}
-	if cfg.Control == nil || cfg.Access == nil {
+	if cfg.Control == nil {
 		return nil, publisheridentity.ErrScope
 	}
 	server := cfg.Control.ControlURL()
+	// a replacement must reject known returns even if OAuth was disabled in
+	// its configuration. aliases compose their own admission, not this hook.
+	previousAdmission := cfg.HTTPAdmitRequest
+	admit := integrations.OAuthAdmission(state, server)
+	cfg.HTTPAdmitRequest = func(request *http.Request, run publisherservice.HTTPRun) error {
+		if previousAdmission != nil {
+			if err := previousAdmission(request, run); err != nil {
+				return err
+			}
+		}
+		return admit(request, run)
+	}
+	if !project.Config.OAuth && len(project.Config.Webhooks) == 0 && len(project.Config.Aliases) == 0 {
+		return nil, nil
+	}
+	if cfg.Access == nil {
+		return nil, publisheridentity.ErrScope
+	}
 	access, err := cfg.Access(ctx)
 	if err != nil {
 		return nil, err

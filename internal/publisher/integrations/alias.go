@@ -10,6 +10,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -66,6 +67,7 @@ func AliasPublisher(state *clientstate.Database, store *clientstate.Store, selec
 			admit, prepared, readiness := config.AdmitRequest, config.Prepared, snapshot.Readiness
 			var mu sync.Mutex
 			var run controlv1.ServiceRunPreparation
+			admitOAuth := OAuthAdmission(state, selection.Scope.Server)
 			config.Prepared = func(preparation controlv1.ServiceRunPreparation) error {
 				if preparation.ServiceId != config.ServiceID || preparation.RunNumber < 1 || !opaqueid.Valid(preparation.ServiceRunId, opaqueid.ServiceRunPrefix) {
 					return clientstate.ErrAliasSelectionStale
@@ -95,17 +97,11 @@ func AliasPublisher(state *clientstate.Database, store *clientstate.Store, selec
 				if err != nil {
 					return diagnostic.Wrap(diagnostic.AliasUnavailable, err)
 				}
-				query := request.URL.Query()
-				if request.Method == http.MethodGet && len(query["state"]) == 1 {
-					mu.Lock()
-					captured := run
-					mu.Unlock()
-					if err := state.AdmitAliasOAuthReturn(request.Context(), selection.Scope.Server, current.Hostname,
-						query.Get("state"), request.URL.EscapedPath(), captured.ServiceId, uint64(captured.RunNumber)); err != nil {
-						return diagnostic.Wrap(diagnostic.OAuthCallbackExpired, err)
-					}
-				}
-				return nil
+				mu.Lock()
+				captured := run
+				mu.Unlock()
+				return admitOAuth(request, publisherservice.HTTPRun{Hostname: current.Hostname,
+					ServiceID: captured.ServiceId, RunID: captured.ServiceRunId, Number: captured.RunNumber})
 			}
 			snapshot.Readiness = func(ctx context.Context, ready bool) error {
 				var err error

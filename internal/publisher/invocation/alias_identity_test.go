@@ -73,6 +73,10 @@ func TestProjectAliasPreparesAnExactNativePublisherOnlyForTheSelectedReadyReceiv
 					}
 					return nil
 				},
+				HTTPAdmitRequest: func(*http.Request, publisherservice.HTTPRun) error {
+					t.Error("alias inherited the ordinary app's OAuth return admission")
+					return publisheridentity.ErrScope
+				},
 				HTTPResponseHooks: func(run publisherservice.HTTPRun) httpstream.ResponseHooks {
 					return httpstream.ResponseHooks{Observe: func(*http.Response) error {
 						responses++
@@ -106,7 +110,7 @@ func TestProjectAliasPreparesAnExactNativePublisherOnlyForTheSelectedReadyReceiv
 				cfg := prepared.Config
 				if cfg.ServiceID != f.saved.Id || cfg.PublisherIdentityID != f.identity.ClientId ||
 					cfg.PublisherGrantID != f.identity.GrantId || cfg.PublisherKeyID != f.identity.KeyId ||
-					cfg.Target != base.Target || cfg.Feedback || cfg.PreviewID != "" ||
+					cfg.Target != base.Target || cfg.Feedback || cfg.PreviewID != "" || cfg.HTTPAdmitRequest != nil ||
 					!reflect.DeepEqual(cfg.Metadata.TargetTls, base.Metadata.TargetTls) ||
 					len(cfg.Mounts) != 1 || cfg.Mounts[0].Target != base.Mounts[0].Target ||
 					!prepared.Service.RequirePostQuantum || prepared.Service.HttpLimits.Concurrency == nil || *prepared.Service.HttpLimits.Concurrency != 6 {

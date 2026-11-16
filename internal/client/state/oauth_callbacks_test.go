@@ -7,6 +7,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
@@ -59,33 +60,122 @@ func TestOAuthCallbackNamedBoundariesAndExactStateDigest(t *testing.T) {
 	if _, _, err := state.ConsumeOAuthCallback(t.Context(), expected.Scope.Server, expected.Scope.Hostname, expected.State, expected.Destination.Path); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal("consumed callback was replayed", err)
 	}
-	if err := state.db.QueryRowContext(t.Context(), `SELECT state_digest FROM oauth_alias_handoffs`).Scan(&digest); err != nil || !bytes.Equal(digest, wantDigest) {
+	if err := state.db.QueryRowContext(t.Context(), `SELECT state_digest FROM oauth_callback_handoffs`).Scan(&digest); err != nil || !bytes.Equal(digest, wantDigest) {
 		t.Fatal("alias handoff changed the exact state digest", err)
 	}
 	otherID, err := opaqueid.New(opaqueid.ServicePrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := state.AdmitAliasOAuthReturn(t.Context(), scope.Server, origin.Hostname, expected.State, callback.Path, otherID, origin.RunNumber); !errors.Is(err, sql.ErrNoRows) {
+	if err := state.AdmitOAuthReturn(t.Context(), scope.Server, origin.Hostname, expected.State, callback.Path, otherID, origin.RunNumber); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal("another service at the alias address received a known callback", err)
 	}
 	if err := tunnel.SetIntegrationScope(t.Context(), IntegrationScope{PrimaryProjectRoot: scope.ProjectKey, Namespace: "other." + scope.Namespace}); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.AdmitAliasOAuthReturn(t.Context(), scope.Server, origin.Hostname, expected.State, callback.Path, origin.ServiceID, origin.RunNumber); !errors.Is(err, sql.ErrNoRows) {
+	if err := state.AdmitOAuthReturn(t.Context(), scope.Server, origin.Hostname, expected.State, callback.Path, origin.ServiceID, origin.RunNumber); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal("alias callback reached a reassigned receiver", err)
 	}
 	if err := tunnel.SetIntegrationScope(t.Context(), receiver.IntegrationScope); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.AdmitAliasOAuthReturn(t.Context(), scope.Server, origin.Hostname, expected.State, callback.Path, origin.ServiceID, origin.RunNumber+1); !errors.Is(err, sql.ErrNoRows) {
+	if err := state.AdmitOAuthReturn(t.Context(), scope.Server, origin.Hostname, expected.State, callback.Path, origin.ServiceID, origin.RunNumber+1); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal("replacement alias run received a known callback", err)
 	}
-	if err := state.AdmitAliasOAuthReturn(t.Context(), scope.Server, origin.Hostname, expected.State, callback.Path, origin.ServiceID, origin.RunNumber); err != nil {
+	if err := state.AdmitOAuthReturn(t.Context(), scope.Server, origin.Hostname, expected.State, callback.Path, origin.ServiceID, origin.RunNumber); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.AdmitAliasOAuthReturn(t.Context(), scope.Server, origin.Hostname, expected.State, callback.Path, origin.ServiceID, origin.RunNumber); !errors.Is(err, sql.ErrNoRows) {
+	if err := state.AdmitOAuthReturn(t.Context(), scope.Server, origin.Hostname, expected.State, callback.Path, origin.ServiceID, origin.RunNumber); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal("alias final-hop state was replayed", err)
+	}
+}
+
+func TestOAuthOrdinaryFinalHopKeepsExactDestinationAndOneUse(t *testing.T) {
+	for _, replacement := range []string{"none", "service", "run", "project", "namespace", "hostname", "stopped", "removed", "expired"} {
+		t.Run(replacement, func(t *testing.T) {
+			state, _ := aliasTestDatabase(t)
+			scope := aliasTestScope(t)
+			tunnel, selection := aliasTestTunnel(t, state, scope, scope.ProjectKey, "main", true)
+			_, receiver, err := state.AliasCandidate(t.Context(), selection.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := SaveOAuthCallbackInput{
+				Scope:       OAuthCallbackScope{Server: scope.Server, Hostname: "oauth." + scope.Namespace, IntegrationScope: receiver.IntegrationScope},
+				Origin:      OAuthRedirectOrigin{Hostname: receiver.Hostname, ServiceID: receiver.ServiceID, RunNumber: receiver.PublishRunNumber},
+				Destination: OAuthCallbackDestination{TunnelID: tunnel.ID(), Path: "/callback"}, State: "between-hops",
+			}
+			if err := state.SaveOAuthCallback(t.Context(), input); err != nil {
+				t.Fatal(err)
+			}
+			callback, origin, err := state.ConsumeOAuthCallback(t.Context(), input.Scope.Server, input.Scope.Hostname, input.State, input.Destination.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch replacement {
+			case "service":
+				id, err := opaqueid.New(opaqueid.ServicePrefix)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := state.db.ExecContext(t.Context(), `UPDATE local_tunnels SET service_id=? WHERE id=?`, id, tunnel.ID()); err != nil {
+					t.Fatal(err)
+				}
+				origin.ServiceID = id
+			case "run":
+				if err := tunnel.SetReady(t.Context(), receiver.PublicURL, receiver.PublishRunNumber+1); err != nil {
+					t.Fatal(err)
+				}
+				origin.RunNumber++
+			case "project", "namespace":
+				next := receiver.IntegrationScope
+				if replacement == "project" {
+					next.PrimaryProjectRoot += "-other"
+				} else {
+					next.Namespace = "other." + next.Namespace
+				}
+				if err := tunnel.SetIntegrationScope(t.Context(), next); err != nil {
+					t.Fatal(err)
+				}
+			case "hostname":
+				if err := tunnel.SetReady(t.Context(), "https://other."+scope.Namespace, receiver.PublishRunNumber); err != nil {
+					t.Fatal(err)
+				}
+			case "stopped":
+				if err := tunnel.Finish(t.Context(), nil); err != nil {
+					t.Fatal(err)
+				}
+			case "removed":
+				if _, err := state.db.ExecContext(t.Context(), `DELETE FROM local_tunnels WHERE id=?`, tunnel.ID()); err != nil {
+					t.Fatal(err)
+				}
+			case "expired":
+				now := state.now()
+				state.now = func() time.Time { return now.Add(11 * time.Minute) }
+			}
+			admit := func(value, path string) error {
+				return state.AdmitOAuthReturn(t.Context(), scope.Server, origin.Hostname, value, path, origin.ServiceID, origin.RunNumber)
+			}
+			if err := admit("unknown-app-state", callback.Path); err != nil {
+				t.Fatal("unknown state did not remain an app request", err)
+			}
+			if err := admit(input.State, "/unrelated"); err != nil {
+				t.Fatal("unrelated path consumed callback state", err)
+			}
+			err = admit(input.State, callback.Path)
+			if replacement != "none" {
+				if !errors.Is(err, sql.ErrNoRows) {
+					t.Fatal("final hop reached a replaced or expired destination", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal("current initiating run did not receive its callback", err)
+			}
+			if err := admit(input.State, callback.Path); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatal("final-hop state was replayed", err)
+			}
+		})
 	}
 }
 
@@ -174,5 +264,19 @@ func TestOAuthCallbackConcurrentConsumptionHasOneWinner(t *testing.T) {
 	first, second := <-results, <-results
 	if !(first == nil && errors.Is(second, sql.ErrNoRows) || second == nil && errors.Is(first, sql.ErrNoRows)) {
 		t.Fatalf("concurrent callback results: %v, %v", first, second)
+	}
+	start = make(chan struct{})
+	for _, database := range []*Database{state, other} {
+		workers.Go(func() {
+			<-start
+			results <- database.AdmitOAuthReturn(t.Context(), scope.Server, input.Origin.Hostname, input.State,
+				input.Destination.Path, input.Origin.ServiceID, input.Origin.RunNumber)
+		})
+	}
+	close(start)
+	workers.Wait()
+	first, second = <-results, <-results
+	if !(first == nil && errors.Is(second, sql.ErrNoRows) || second == nil && errors.Is(first, sql.ErrNoRows)) {
+		t.Fatalf("concurrent final-hop results: %v, %v", first, second)
 	}
 }

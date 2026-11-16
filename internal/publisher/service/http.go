@@ -43,7 +43,7 @@ type HTTPControl interface {
 	CreateServiceRunPreview(context.Context, string, string, int64, credentials.ServiceRunToken) (controlv1.Preview, error)
 }
 
-// HTTPRun contains the validated publication facts used by response observers.
+// HTTPRun contains the validated publication facts used by HTTP feature hooks.
 // it contains no publisher, browser, or run credentials.
 type HTTPRun struct {
 	ServiceID, RunID, Hostname string

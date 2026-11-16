@@ -283,10 +283,14 @@ CREATE TABLE alias_publish_runs (
     target_run_number INTEGER NOT NULL CHECK (target_run_number > 0)
 ) STRICT;
 
-CREATE TABLE oauth_alias_handoffs (
+CREATE TABLE oauth_callback_handoffs (
     server_origin TEXT NOT NULL REFERENCES server_profiles(origin) ON DELETE CASCADE,
     hostname TEXT NOT NULL,
     state_digest BLOB NOT NULL CHECK (length(state_digest) = 32),
+    -- retain known returns after tunnel removal so they cannot fall through.
+    tunnel_id TEXT NOT NULL,
+    primary_project_root TEXT NOT NULL CHECK (primary_project_root <> ''),
+    integration_namespace TEXT NOT NULL CHECK (integration_namespace <> ''),
     callback_path TEXT NOT NULL,
     service_id TEXT NOT NULL CHECK (length(service_id) = 26 AND substr(service_id, 1, 4) = 'svc_'),
     run_number INTEGER NOT NULL CHECK (run_number > 0),

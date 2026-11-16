@@ -165,16 +165,19 @@ type LoginOperation struct {
 	UpdatedAt     int64
 }
 
-type OauthAliasHandoff struct {
-	ServerOrigin string
-	Hostname     string
-	StateDigest  []byte
-	CallbackPath string
-	ServiceID    string
-	RunNumber    int64
-	CreatedAt    int64
-	ExpiresAt    int64
-	ConsumedAt   sql.NullInt64
+type OauthCallbackHandoff struct {
+	ServerOrigin         string
+	Hostname             string
+	StateDigest          []byte
+	TunnelID             string
+	PrimaryProjectRoot   string
+	IntegrationNamespace string
+	CallbackPath         string
+	ServiceID            string
+	RunNumber            int64
+	CreatedAt            int64
+	ExpiresAt            int64
+	ConsumedAt           sql.NullInt64
 }
 
 type OauthPendingCallback struct {

@@ -63,6 +63,22 @@ func Observer(state *clientstate.Database, server, hostname string, group client
 	}
 }
 
+// OAuthAdmission checks a known final return against the actual serving run.
+// unknown states still belong to the app; neither its query nor validation changes.
+func OAuthAdmission(state *clientstate.Database, server string) func(*http.Request, publisherservice.HTTPRun) error {
+	return func(request *http.Request, run publisherservice.HTTPRun) error {
+		query := request.URL.Query()
+		if request.Method != http.MethodGet || len(query["state"]) != 1 {
+			return nil
+		}
+		if err := state.AdmitOAuthReturn(request.Context(), server, run.Hostname, query.Get("state"),
+			request.URL.EscapedPath(), run.ServiceID, uint64(run.Number)); err != nil {
+			return diagnostic.Wrap(diagnostic.OAuthCallbackExpired, err)
+		}
+		return nil
+	}
+}
+
 // OAuthHandler returns the browser to the same path on the originating worktree.
 func OAuthHandler(state *clientstate.Database, server, hostname string, onRedirect func()) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

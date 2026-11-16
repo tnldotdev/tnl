@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -42,6 +41,9 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 		name, hostname string
 		callbacks      chan string
 		tunnel         *clientstate.Tunnel
+		config         publisherservice.RunConfig
+		publisher      *integrationPublisher
+		run            controlv1.ServiceRunPreparation
 	}
 	apps := make([]app, 0, 2)
 	for _, name := range []string{"web", "api"} {
@@ -53,7 +55,11 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 				response.Header().Set("Set-Cookie", "session="+name+"; Secure; HttpOnly; SameSite=Lax; Path=/")
 				provider := url.URL{Scheme: "https", Host: "idp.example.test", Path: "/authorize"}
 				query := provider.Query()
-				query.Set("state", name+"-state")
+				value := request.URL.Query().Get("state")
+				if value == "" {
+					value = name + "-state"
+				}
+				query.Set("state", value)
 				query.Set("redirect_uri", "https://"+oauthHost+"/api/auth/callback/provider")
 				provider.RawQuery = query.Encode()
 				response.Header().Set("Location", provider.String())
@@ -79,6 +85,7 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 		config.HTTPResponseHooks = func(run publisherservice.HTTPRun) httpstream.ResponseHooks {
 			return httpstream.ResponseHooks{Observe: func(response *http.Response) error { return observe(response, run) }}
 		}
+		config.HTTPAdmitRequest = integrations.OAuthAdmission(state, server)
 		var binding controlv1.ServiceRunPreparation
 		config.Prepared = func(run controlv1.ServiceRunPreparation) error {
 			binding = run
@@ -90,7 +97,7 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 		handle := startOwnedIntegrationPublisher(t, fixture.owner, config, fixture.diagnostics)
 		ready := waitForPublisherReady(t, handle)
 		waitForReadyPublisherConnections(t, fixture.inspect, ready.ServiceId, ready.RunNumber, 2)
-		apps = append(apps, app{name: name, hostname: hostname, callbacks: observed, tunnel: tunnel})
+		apps = append(apps, app{name: name, hostname: hostname, callbacks: observed, tunnel: tunnel, config: config, publisher: handle, run: ready})
 	}
 	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
 	if err := state.MarkIntegrationURLReady(t.Context(), server, oauthHost, "test-publisher", oauthReady.ServiceId, uint64(oauthReady.RunNumber)); err != nil {
@@ -143,9 +150,10 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 	// observed state, not the currently active service or the latest login.
 	for index := len(apps) - 1; index >= 0; index-- {
 		selected := apps[index]
-		callback := fmt.Sprintf("https://%s/api/auth/callback/provider?code=opaque&state=%s-state", oauthHost, selected.name)
+		query := "code=a%2fb%2Bc+z&state=" + selected.name + "-state&scope=a%20b&scope="
+		callback := "https://" + oauthHost + "/api/auth/callback/provider?" + query
 		redirect := visit(callback)
-		if redirect.StatusCode != http.StatusSeeOther || redirect.Header.Get("Location") != "https://"+selected.hostname+"/api/auth/callback/provider?code=opaque&state="+selected.name+"-state" {
+		if redirect.StatusCode != http.StatusSeeOther || redirect.Header.Get("Location") != "https://"+selected.hostname+"/api/auth/callback/provider?"+query {
 			t.Fatalf("%s routed to %d %q", selected.name, redirect.StatusCode, redirect.Header.Get("Location"))
 		}
 		if response := visit(redirect.Header.Get("Location")); response.StatusCode != http.StatusNoContent {
@@ -153,11 +161,14 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 		}
 		select {
 		case got := <-selected.callbacks:
-			if got != "code=opaque&state="+selected.name+"-state session="+selected.name {
+			if got != query+" session="+selected.name {
 				t.Fatalf("%s callback received %q", selected.name, got)
 			}
 		default:
 			t.Fatalf("%s never received its callback", selected.name)
+		}
+		if response := visit(redirect.Header.Get("Location")); response.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("%s final-hop replay returned %d", selected.name, response.StatusCode)
 		}
 		if response := visit(callback); response.StatusCode != http.StatusGone {
 			t.Fatalf("%s state replay returned %d", selected.name, response.StatusCode)
@@ -167,5 +178,41 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 		if len(app.callbacks) != 0 {
 			t.Fatalf("%s received another service's callback", app.name)
 		}
+	}
+	selected := apps[0]
+	if response := visit("https://" + selected.hostname + "/login?state=between-hops"); response.StatusCode != http.StatusFound {
+		t.Fatal("login before replacement failed")
+	}
+	const providerQuery = "code=a%2fb%2Bc+z&state=between-hops&provider=&provider=x%2Fy"
+	redirect := visit("https://" + oauthHost + "/api/auth/callback/provider?" + providerQuery)
+	if redirect.StatusCode != http.StatusSeeOther || redirect.Header.Get("Location") != "https://"+selected.hostname+"/api/auth/callback/provider?"+providerQuery {
+		t.Fatal("callback before replacement changed provider query bytes", redirect.StatusCode, redirect.Header.Get("Location"))
+	}
+	// hold the final browser request until the same service has a replacement
+	// run. ingress must reach that run, whose admission must reject the code.
+	stopIntegrationPublisher(t, selected.publisher)
+	selected.publisher = startOwnedIntegrationPublisher(t, fixture.owner, selected.config, fixture.diagnostics)
+	replacement := waitForPublisherReady(t, selected.publisher)
+	if replacement.ServiceId != selected.run.ServiceId || replacement.ServiceRunId == selected.run.ServiceRunId || replacement.RunNumber <= selected.run.RunNumber {
+		t.Fatal("app replacement did not use a new run of the same service", selected.run, replacement)
+	}
+	waitForReadyPublisherConnections(t, fixture.inspect, replacement.ServiceId, replacement.RunNumber, 2)
+	waitForAppliedServiceRouting(t, fixture.inspect, replacement.ServiceRunId, fixture.process.metricsAddress)
+	if response := visit(redirect.Header.Get("Location")); response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("replacement admitted final OAuth hop: %d", response.StatusCode)
+	}
+	if len(selected.callbacks) != 0 {
+		t.Fatal("replacement target received the previous run's OAuth response")
+	}
+	if response := visit("https://" + selected.hostname + "/api/auth/callback/provider?state=unknown&code=app-owned"); response.StatusCode != http.StatusNoContent {
+		t.Fatalf("unknown OAuth state did not remain an ordinary app request: %d", response.StatusCode)
+	}
+	select {
+	case got := <-selected.callbacks:
+		if got != "state=unknown&code=app-owned session="+selected.name {
+			t.Fatal("unknown-state request lost the app's query or session", got)
+		}
+	default:
+		t.Fatal("unknown-state request never reached the replacement app")
 	}
 }

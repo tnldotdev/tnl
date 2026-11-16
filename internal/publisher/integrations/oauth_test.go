@@ -208,3 +208,39 @@ func TestOAuthFailuresDoNotExposeCallbackValues(t *testing.T) {
 		t.Fatalf("unexpected callback diagnostic: %d %q", response.Code, response.Header().Get("Tnl-Error-Code"))
 	}
 }
+
+func TestOAuthFinalHopPreservesProviderBytesAndAppValidation(t *testing.T) {
+	state, _ := callbackState(t)
+	tunnel, run := readyTunnel(t, state, "3000", "feature.example.test")
+	readyIntegrationURL(t, state, testOAuthHost, "leader")
+	if err := Observer(state, testServer, testOAuthHost, testIntegrationScope, tunnel.ID())(authorizationResponse("one", ""), run); err != nil {
+		t.Fatal(err)
+	}
+	const query = "code=a%2fb%2Bc+z&state=one&scope=a%20b&provider=&provider=x%2Fy"
+	response := httptest.NewRecorder()
+	OAuthHandler(state, testServer, testOAuthHost, nil).ServeHTTP(response,
+		httptest.NewRequest(http.MethodGet, "https://"+testOAuthHost+"/api/auth/callback/github?"+query, nil))
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "https://"+run.Hostname+"/api/auth/callback/github?"+query {
+		t.Fatal("callback redirect changed provider query bytes", response.Code, response.Header().Get("Location"))
+	}
+	admit := OAuthAdmission(state, testServer)
+	request := httptest.NewRequest(http.MethodGet, response.Header().Get("Location"), nil)
+	other := run
+	other.Number++
+	if err := admit(request, other); err == nil {
+		t.Fatal("replacement run admitted the final callback")
+	}
+	if err := admit(request, run); err != nil {
+		t.Fatal("replacement attempt consumed the initiating run's callback", err)
+	}
+	if request.URL.RawQuery != query {
+		t.Fatal("final admission rewrote opaque provider query bytes")
+	}
+	if err := admit(request, run); err == nil {
+		t.Fatal("final callback was replayed")
+	}
+	request.URL.RawQuery = "code=app-owned&state=unknown"
+	if err := admit(request, other); err != nil {
+		t.Fatal("tnl took over validation of an unknown app OAuth state", err)
+	}
+}

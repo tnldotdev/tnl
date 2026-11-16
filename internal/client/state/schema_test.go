@@ -91,13 +91,13 @@ func TestV1ProjectJournalAndHandoffState(t *testing.T) {
 			t.Fatalf("%s retained an encoded integration projection: %v", table, err)
 		}
 	}
-	if _, err := database.db.ExecContext(ctx, `INSERT INTO oauth_alias_handoffs
-		(server_origin, hostname, state_digest, callback_path, service_id, run_number, created_at, expires_at)
-		VALUES (?, 'alias.example.test', ?, '/callback', 'svc_0123456789abcdefghijkl', 1, ?, ?)`, server, bytes.Repeat([]byte{1}, 32), now, now+int64(time.Minute)); err != nil {
+	if _, err := database.db.ExecContext(ctx, `INSERT INTO oauth_callback_handoffs
+		(server_origin, hostname, state_digest, tunnel_id, primary_project_root, integration_namespace, callback_path, service_id, run_number, created_at, expires_at)
+		VALUES (?, 'alias.example.test', ?, 'tun_0123456789abcdefghijkl', ?, 'member.example.test', '/callback', 'svc_0123456789abcdefghijkl', 1, ?, ?)`, server, bytes.Repeat([]byte{1}, 32), root, now, now+int64(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	for attempt := 1; attempt <= 2; attempt++ {
-		result, err := database.db.ExecContext(ctx, `UPDATE oauth_alias_handoffs SET consumed_at = ?
+		result, err := database.db.ExecContext(ctx, `UPDATE oauth_callback_handoffs SET consumed_at = ?
 			WHERE server_origin = ? AND hostname = 'alias.example.test' AND consumed_at IS NULL AND expires_at > ?`, now+1, server, now+1)
 		if err != nil {
 			t.Fatal(err)
