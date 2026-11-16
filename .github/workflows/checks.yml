@@ -101,7 +101,7 @@ jobs:
       matrix:
         include:
           - framework: next
-            version: "16.3.4"
+            version: "16.4.5"
             vitest-version: "5.0.0"
           - framework: vite
             version: "6.0.9"
