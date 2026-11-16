@@ -2,17 +2,42 @@ package public
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/observability"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+type restoredCertificateMetricStore struct {
+	managedCertificateStore
+	t      *testing.T
+	result controlstate.CertificateIssuance
+	calls  int
+}
+
+func (s *restoredCertificateMetricStore) CreateServiceCertificateIssuance(_ context.Context, service, run, token, directory, key string, number int64, csr []byte, _ time.Time) (controlstate.CertificateIssuance, error) {
+	s.t.Helper()
+	if service != s.result.ServiceID || run != s.result.ServiceRunID || token != "exact-run-token" ||
+		directory != "https://acme.example.test/directory" || key != "same-order" || number != 7 ||
+		!bytes.Equal(csr, []byte("exact-csr")) {
+		s.t.Fatal("certificate request changed its run authority or idempotent intent")
+	}
+	s.calls++
+	result := s.result
+	result.NewOrder = s.calls == 1
+	if !result.NewOrder {
+		result.DomainKind = ""
+	}
+	return result, nil
+}
 
 func TestServiceCertificateRestoredCapturedPlanMetricLabelsAndReplay(t *testing.T) {
 	for _, kind := range []controlstate.DomainKind{controlstate.DomainKindManaged, controlstate.DomainKindCustom} {

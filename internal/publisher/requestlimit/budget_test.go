@@ -155,48 +155,58 @@ func TestAdmissionBurstCancellationAndRefund(t *testing.T) {
 }
 
 func TestHTTPReservationRefundAndFinishAreExclusive(t *testing.T) {
-	for _, refund := range []bool{false, true} {
-		t.Run(map[bool]string{false: "finish", true: "refund"}[refund], func(t *testing.T) {
-			limits, err := NewHTTP(&controlv1.ProjectHTTPApplicationLimits{Total: new(1), Concurrency: new(1),
-				Rate: &controlv1.ProjectApplicationRate{Count: 1, Per: "1h", Burst: new(1)}})
-			if err != nil {
-				t.Fatal(err)
+	for _, first := range []string{"finish", "refund", "race"} {
+		t.Run(first, func(t *testing.T) {
+			attempts := 1
+			if first == "race" {
+				attempts = 100
 			}
-			reservation, ok := limits.Reserve(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
-			if !ok {
-				t.Fatal("initial reservation rejected")
-			}
-			if refund {
-				reservation.Refund()
-			} else {
-				reservation.Finish()
-			}
-			var workers sync.WaitGroup
-			for range 10 {
-				workers.Go(reservation.Refund)
-				workers.Go(reservation.Finish)
-			}
-			workers.Wait()
-			if limits.admission.active != 0 {
-				t.Fatal("cleanup released a slot twice")
-			}
-			select {
-			case <-limits.Completed():
-				if refund {
-					t.Fatal("refund completed the application budget")
+			for range attempts {
+				limits, err := NewHTTP(&controlv1.ProjectHTTPApplicationLimits{Total: new(1), Concurrency: new(1),
+					Rate: &controlv1.ProjectApplicationRate{Count: 1, Per: "1h", Burst: new(1)}})
+				if err != nil {
+					t.Fatal(err)
 				}
-			default:
-				if !refund {
-					t.Fatal("finish did not complete the application budget")
+				reservation, ok := limits.Reserve(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+				if !ok {
+					t.Fatal("initial reservation rejected")
 				}
-			}
-			next, ok := limits.Reserve(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
-			if ok != refund {
-				t.Fatal("refund did not restore total, concurrency, and rate together")
-			}
-			if ok {
-				next.Finish()
-				<-limits.Completed()
+				switch first {
+				case "refund":
+					reservation.Refund()
+				case "finish":
+					reservation.Finish()
+				}
+				var workers sync.WaitGroup
+				for range 10 {
+					workers.Go(reservation.Refund)
+					workers.Go(reservation.Finish)
+				}
+				workers.Wait()
+				a := limits.admission
+				refund := a.used == 0
+				if a.active != 0 || a.used < 0 || a.used > 1 || refund && a.tokens != 1 ||
+					first != "race" && refund != (first == "refund") {
+					t.Fatal("cleanup changed the winning finish/refund or corrupted admission")
+				}
+				select {
+				case <-limits.Completed():
+					if refund {
+						t.Fatal("refund completed the application budget")
+					}
+				default:
+					if !refund {
+						t.Fatal("finish did not complete the application budget")
+					}
+				}
+				next, ok := limits.Reserve(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+				if ok != refund {
+					t.Fatal("refund did not restore total, concurrency, and rate together")
+				}
+				if ok {
+					next.Finish()
+					<-limits.Completed()
+				}
 			}
 		})
 	}
@@ -227,38 +237,6 @@ func TestHTTPCompletionWaitsForEverySharedReservation(t *testing.T) {
 	}
 	second.Finish()
 	<-limits.Completed()
-}
-
-func TestHTTPReservationCancellationRacesFinishAndRefund(t *testing.T) {
-	for range 100 {
-		budget, err := New(applicationlimits.Limits{Requests: 1, Concurrency: 1, RateRequests: 1, RatePer: time.Hour, RateBurst: 1})
-		if err != nil {
-			t.Fatal(err)
-		}
-		ctx, cancel := context.WithCancel(t.Context())
-		reservation, status, _ := budget.Reserve(ctx)
-		if status != 0 {
-			t.Fatal(status)
-		}
-		var workers sync.WaitGroup
-		workers.Go(cancel)
-		workers.Go(reservation.Finish)
-		workers.Go(reservation.Refund)
-		workers.Wait()
-		if budget.active != 0 || budget.used < 0 || budget.used > 1 {
-			t.Fatal("racing cleanup corrupted another request's admission")
-		}
-		select {
-		case <-budget.Completed():
-			if budget.used != 1 {
-				t.Fatal("refunded request completed the budget")
-			}
-		default:
-			if budget.used != 0 || budget.tokens != 1 {
-				t.Fatal("refunded request retained total or rate state")
-			}
-		}
-	}
 }
 
 func TestApplicationAdmissionDrainsTotalBudgetWithoutCountingRejections(t *testing.T) {

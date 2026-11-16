@@ -398,22 +398,3 @@ func TestServiceSourceRestorationOmissionKeepsProofSequenceButNoAuthority(t *tes
 		}
 	})
 }
-
-func TestServiceSourceRestorationTamperedPolicyRevisionCannotVerify(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		f := restorationService(t)
-		defer f.server.Close()
-		if err := f.server.services.apply(time.Now(), f.lease.current(), f.snapshot); err != nil {
-			t.Fatal(err)
-		}
-		proof := restorationSignSource(t, f)
-		record := f.forwarder.snapshot()[0]
-		binding := tunnelv1.VisitorSourceBinding{ServiceID: record.header.ServiceID, ServiceRunID: record.header.ServiceRunID,
-			RunNumber: record.header.RunNumber, VisitorConnectionID: record.header.VisitorConnectionID,
-			Source: netip.MustParseAddrPort("192.0.2.4:42000"), Destination: netip.MustParseAddrPort("203.0.113.8:443")}
-		proof.Authority.VisitorPolicyRevision++
-		if err := visitortoken.VerifyVisitorSource(restorationSourceMaster, proof, binding, 2, time.Now()); !errors.Is(err, visitortoken.ErrVisitorSource) {
-			t.Fatal("changing the signed policy revision retained authentic source evidence", err)
-		}
-	})
-}

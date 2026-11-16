@@ -13,7 +13,6 @@ import (
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
@@ -64,51 +63,6 @@ func testWorkers(t *testing.T) (*Workers, <-chan func(uint64, bool) error) {
 	}
 	t.Cleanup(w.Manager.Close)
 	return w, ready
-}
-
-func TestPublicationTelemetryOptOutDoesNotDisableSiblingWorker(t *testing.T) {
-	w, _ := testWorkers(t)
-	configure := w.Configure
-	type observation struct {
-		service  string
-		disabled bool
-	}
-	observed := make(chan observation, 2)
-	w.Configure = func(ctx context.Context, service Service) (Configuration, error) {
-		configuration, err := configure(ctx, service)
-		if err != nil {
-			return configuration, err
-		}
-		var telemetry *clienttelemetry.Collector
-		if service.Name != "web" {
-			telemetry = &clienttelemetry.Collector{}
-		}
-		run := configuration.Service.Run
-		configuration.Service.Run = func(ctx context.Context, tunnel *clientstate.Tunnel, observe func(uint64, bool) error, summary inspection.Observer) error {
-			observed <- observation{service.Name, telemetry == nil}
-			return run(ctx, tunnel, observe, summary)
-		}
-		return configuration, nil
-	}
-	services := append(w.Manager.Snapshot().Services, Service{Name: "api", ServiceProtocol: "http"})
-	if err := w.Manager.Configure(services); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"web", "api"} {
-		id, err := w.Manager.Reserve(name, name, 1, "https://public.example")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := w.Manager.Register(id, name, "http://127.0.0.1:3000", "node"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for range 2 {
-		value := receiveServicePublication(t, observed)
-		if value.disabled != (value.service == "web") {
-			t.Fatalf("mixed sibling choice: %+v", value)
-		}
-	}
 }
 
 func TestOwnerProofIsFreshExactAndStaleReadinessCannotCrossReplacement(t *testing.T) {

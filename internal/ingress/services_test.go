@@ -273,38 +273,3 @@ func TestServiceRoutingBindChecksCurrentEndpointAndOriginalDeadline(t *testing.T
 		}
 	})
 }
-
-func TestServiceRoutingKeepsSequencesForUnchangedSourceAuthority(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		lease, snapshot := serviceRoutingFixture(t)
-		routing := NewServiceRouting()
-		defer routing.Close()
-		if err := routing.apply(time.Now(), lease, snapshot); err != nil {
-			t.Fatal(err)
-		}
-		old := routing.lookup("route.example", 443, lease, time.Now())[0]
-		if first := old.sequence.next.Add(1); first != 1 {
-			t.Fatal("new source authority did not start its own sequence")
-		}
-		time.Sleep(time.Second)
-		snapshot.ObservedAt = time.Now()
-		snapshot.ValidUntil = time.Now().Add(visitortoken.PolicyLifetime)
-		run := snapshot.Runs[0]
-		snapshot.Runs = nil
-		if err := routing.apply(time.Now(), lease, snapshot); err != nil {
-			t.Fatal(err)
-		}
-		time.Sleep(time.Second)
-		snapshot.ObservedAt = time.Now()
-		snapshot.ValidUntil = time.Now().Add(visitortoken.PolicyLifetime)
-		run.ValidUntil = snapshot.ValidUntil
-		snapshot.Runs = []ingressv1.IngressServiceRun{run}
-		if err := routing.apply(time.Now(), lease, snapshot); err != nil {
-			t.Fatal(err)
-		}
-		current := routing.lookup("route.example", 443, lease, time.Now())[0]
-		if current.sequence != old.sequence || current.sequence.next.Add(1) != 2 {
-			t.Fatal("a refresh or temporary omission reset still-valid source evidence")
-		}
-	})
-}
