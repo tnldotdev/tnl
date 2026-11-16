@@ -16,12 +16,14 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/filelock"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure"
+	publisherdeployment "github.com/tnldotdev/tnl/internal/publisher/deployment"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	processidentity "github.com/tnldotdev/tnl/internal/publisher/processidentity"
 )
 
 type PublisherClients struct {
 	publisheridentity.NativeControl
+	Discovery publisherdeployment.ServerDiscovery
 }
 
 type ClientFactory func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error)
@@ -42,7 +44,7 @@ func Clients(job Job) (PublisherClients, publisheridentity.EnrollmentAuthority, 
 		return PublisherClients{}, nil, err
 	}
 	authority, err := clientauthority.New(job.Server, httpClient, "")
-	return PublisherClients{NativeControl: publisheridentity.NativeControl{Services: control, Runtime: control}}, authority, err
+	return PublisherClients{NativeControl: publisheridentity.NativeControl{Services: control, Runtime: control}, Discovery: control}, authority, err
 }
 
 type Engine struct {

@@ -16,15 +16,15 @@ func (f serverDiscoveryFunc) Discovery(ctx context.Context) (controlv1.ControlDi
 	return f(ctx)
 }
 
-func TestPublicURLAssignmentRequiresServerDiscovery(t *testing.T) {
+func TestPublicHTTPAssignmentRequiresServerDiscovery(t *testing.T) {
 	failure := errors.New("discovery unavailable")
 	p := AssignmentPublisher{Member: controlv1.DeploymentPublisherIdentity{DeploymentId: "deployment-one", DeploymentName: "production"}}
 	a := controlv1.DeploymentPublisherServiceAssignment{
-		ServiceKind: "public_url", Hostname: new("web.example.test"),
-		Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocol("http")), Target: "http://127.0.0.1:3000", PublicUrl: &controlv1.ProjectServicePublicURL{}},
+		TrustRevision: 1,
+		Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocolHTTP), Target: "http://127.0.0.1:3000", Public: new(true)},
 	}
 	if err := p.Publish(t.Context(), a, nil); !errors.Is(err, ErrAssignment) {
-		t.Fatal("public URL assignment accepted missing discovery", err)
+		t.Fatal("public HTTP assignment accepted missing discovery", err)
 	}
 	p.ServerDiscovery = serverDiscoveryFunc(func(ctx context.Context) (controlv1.ControlDiscovery, error) {
 		if ctx != t.Context() {
@@ -33,7 +33,7 @@ func TestPublicURLAssignmentRequiresServerDiscovery(t *testing.T) {
 		return controlv1.ControlDiscovery{}, failure
 	})
 	if err := p.Publish(t.Context(), a, nil); !errors.Is(err, failure) {
-		t.Fatal("public URL assignment hid discovery failure", err)
+		t.Fatal("public HTTP assignment hid discovery failure", err)
 	}
 }
 

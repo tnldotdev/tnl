@@ -291,7 +291,11 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 				if err := json.Unmarshal(body, &request); err != nil {
 					t.Fatal(err)
 				}
-				prepared, err := a.prepareDeploymentInvocation(t.Context(), request)
+				options, err := invocationOptions(request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				prepared, err := a.prepareDeploymentInvocation(t.Context(), request, options)
 				if discovery.failure != nil {
 					if !errors.Is(err, discovery.failure) || otherRequests != 0 {
 						t.Fatal("discovery failure reached publication authority or lost its cause", err, otherRequests)
