@@ -63,20 +63,20 @@ func PythonFacade(configuration config.Project, configPath string) (map[string][
 		if static {
 			nameType = "Never"
 		}
-		fmt.Fprintf(&source, "    async def connect(self, service: %s) -> _tnl.Connection | _tnl.LocalConnection: ...\n", nameType)
-		fmt.Fprintf(&source, "    def client[T](self, service: %s, *, create: Callable[[_tnl.Connection | _tnl.LocalConnection], T | Awaitable[T]], close: Callable[[T], None | Awaitable[None]]) -> _tnl.ClientFactory[T]: ...\n", nameType)
+		fmt.Fprintf(&source, "    async def connect(self, name: %s) -> _tnl.Connection | _tnl.LocalConnection: ...\n", nameType)
+		fmt.Fprintf(&source, "    def client[T](self, name: %s, *, create: Callable[[_tnl.Connection | _tnl.LocalConnection], T | Awaitable[T]], close: Callable[[T], None | Awaitable[None]]) -> _tnl.ClientFactory[T]: ...\n", nameType)
 	} else {
 		for _, protocol := range ordered {
 			if len(ordered) > 1 {
 				source.WriteString("    @overload\n")
 			}
-			fmt.Fprintf(&source, "    async def connect(self, service: Literal[%s]) -> %s: ...\n", strings.Join(groups[protocol], ", "), connectionTypes[protocol])
+			fmt.Fprintf(&source, "    async def connect(self, name: Literal[%s]) -> %s: ...\n", strings.Join(groups[protocol], ", "), connectionTypes[protocol])
 		}
 		for _, protocol := range ordered {
 			if len(ordered) > 1 {
 				source.WriteString("    @overload\n")
 			}
-			fmt.Fprintf(&source, "    def client[T](self, service: Literal[%s], *, create: Callable[[%s], T | Awaitable[T]], close: Callable[[T], None | Awaitable[None]]) -> _tnl.ClientFactory[T]: ...\n", strings.Join(groups[protocol], ", "), connectionTypes[protocol])
+			fmt.Fprintf(&source, "    def client[T](self, name: Literal[%s], *, create: Callable[[%s], T | Awaitable[T]], close: Callable[[T], None | Awaitable[None]]) -> _tnl.ClientFactory[T]: ...\n", strings.Join(groups[protocol], ", "), connectionTypes[protocol])
 		}
 	}
 	source.WriteString("    async def aclose(self) -> None: ...\n\n")
