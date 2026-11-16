@@ -142,6 +142,12 @@ func parseVisitorTokenSource(raw json.RawMessage) (controlstate.VisitorTokenSour
 			return nil, false, invalid
 		}
 		return controlstate.WorkloadTokenSource{Credential: source.Credential}, false, nil
+	case "registered_key":
+		var source controlv1.VisitorTokenRegisteredKeySource
+		if decode(&source) != nil || len(source.Credential) != 47 {
+			return nil, false, invalid
+		}
+		return controlstate.RegisteredKeyTokenSource{Credential: source.Credential}, false, nil
 	case "share":
 		var source controlv1.VisitorTokenShareSource
 		if decode(&source) != nil || !opaqueid.Valid(source.ShareId, opaqueid.SharePrefix) || len(source.Secret) != 43 {
@@ -167,7 +173,7 @@ func parseVisitorTokenSource(raw json.RawMessage) (controlstate.VisitorTokenSour
 
 func writeVisitorTokenProblem(ctx context.Context, w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, controlstate.ErrVisitorPermission), errors.Is(err, controlstate.ErrWorkloadDenied), errors.Is(err, controlstate.ErrPreviewAccess), errors.Is(err, controlstate.ErrServiceAccess):
+	case errors.Is(err, controlstate.ErrVisitorPermission), errors.Is(err, controlstate.ErrPublisherIdentity), errors.Is(err, controlstate.ErrWorkloadDenied), errors.Is(err, controlstate.ErrPreviewAccess), errors.Is(err, controlstate.ErrServiceAccess):
 		writeProblem(w, 403, controlv1.Forbidden, "visitor access denied")
 	case errors.Is(err, controlstate.ErrVisitorSigningKey), errors.Is(err, controlstate.ErrVisitorPolicy):
 		writeProblem(w, 503, controlv1.Unavailable, "visitor token signing is unavailable; retry preparation")

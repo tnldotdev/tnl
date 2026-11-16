@@ -89,6 +89,9 @@ func connectorPairSubjectID(s VisitorSubject) string {
 	if s.Kind == tunnelv1.VisitorHumanDevice {
 		return s.DeviceID
 	}
+	if s.Kind == tunnelv1.VisitorRegisteredKey {
+		return s.GrantID + "." + s.KeyID
+	}
 	return s.WorkloadSessionID
 }
 
@@ -124,7 +127,7 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	}
 	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: r.ServiceID}
 	switch r.Source.(type) {
-	case DeviceTokenSource, WorkloadTokenSource:
+	case DeviceTokenSource, WorkloadTokenSource, RegisteredKeyTokenSource:
 	default:
 		return result, ErrServiceAccess
 	}
@@ -433,6 +436,9 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 		}
 		result.VisitorPermission = IssuedVisitorToken{Token: token, Permission: permission, ServiceTrustRevision: result.Metadata.TrustRevision}
 		recheckUntil = minTime(recheckUntil, permission.ExpiresAt)
+	}
+	if err = d.lockRegisteredVisitorAuthority(ctx, tx, r.Source, permission, clock); err != nil {
+		return ConnectorPeerPair{}, err
 	}
 	// execute deferred constraints while expiry can still roll back every write,
 	// including predecessor deletion and renewal. all authority rows above remain

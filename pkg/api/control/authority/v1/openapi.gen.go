@@ -1096,7 +1096,7 @@ type WorkloadSessionFields struct {
 	RenewalSequence   int64                         `json:"renewal_sequence,string"`
 	ServiceIds        []string                      `json:"service_ids"`
 
-	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	// Subject Exactly identity_id and device_id for human_device; workload_session_id for workload_session; grant_id and key_id for registered_key. A machine never borrows a human device or provider identity.
 	Subject  externalRef0.VisitorSubject `json:"subject"`
 	TeamId   string                      `json:"team_id"`
 	Workload string                      `json:"workload"`

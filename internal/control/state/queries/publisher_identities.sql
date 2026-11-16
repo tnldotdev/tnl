@@ -1,6 +1,12 @@
 -- name: LockPublisherIdentity :one
 SELECT * FROM control.publisher_identities WHERE id = sqlc.arg(id) FOR UPDATE;
 
+-- name: ReadPublisherIdentity :one
+SELECT * FROM control.publisher_identities WHERE id = sqlc.arg(id);
+
+-- name: ReadPublisherGrant :one
+SELECT * FROM control.publisher_grants WHERE id = sqlc.arg(id) AND publisher_identity_id = sqlc.arg(publisher_identity_id);
+
 -- name: InsertPublisherIdentity :one
 INSERT INTO control.publisher_identities(id, team_id, name, kind, created_by_identity_id, guest_id, created_at, ownership, owner_membership_id)
 VALUES (sqlc.arg(id), sqlc.arg(team_id), sqlc.arg(name), sqlc.arg(kind), sqlc.arg(created_by_identity_id), sqlc.narg(guest_id), sqlc.arg(created_at), sqlc.arg(ownership), sqlc.narg(owner_membership_id)) RETURNING *;
@@ -88,7 +94,11 @@ SELECT EXISTS (
     WHERE p.id = sqlc.arg(publisher_identity_id) AND g.id = sqlc.arg(grant_id)
       AND (p.ownership <> 'member' OR control.active_membership(p.owner_membership_id, CURRENT_TIMESTAMP))
       AND (p.kind = 'guest' OR EXISTS (SELECT 1 FROM control.teams t WHERE t.id = p.team_id AND t.deleted_at IS NULL))
-      AND ((g.kind = 'service' AND p.kind <> 'guest' AND s.team_id = p.team_id
+      AND ((g.kind = 'deployment_credential' AND p.kind <> 'guest' AND EXISTS (
+                SELECT 1 FROM control.deployment_management_grants approval
+                WHERE approval.grant_id=g.id AND approval.team_id=p.team_id
+                AND control.deployment_credential_available(g.id))) OR
+           (g.kind = 'service' AND p.kind <> 'guest' AND s.team_id = p.team_id
              AND s.enabled AND s.deleted_at IS NULL
              AND (s.domain_id IS NULL OR d.state='ready' AND d.released_at IS NULL AND (d.kind='managed' OR d.team_id=p.team_id))) OR
           (d.state = 'ready' AND d.released_at IS NULL AND (d.kind = 'managed' OR d.team_id = p.team_id)

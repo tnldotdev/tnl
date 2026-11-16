@@ -6,6 +6,7 @@ schemas:
       - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenBrowserSessionSource" }
       - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenDeviceSource" }
       - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenWorkloadSource" }
+      - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenRegisteredKeySource" }
       - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenShareSource" }
       - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenShareSessionSource" }
       - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenGrantSource" }
@@ -37,6 +38,14 @@ schemas:
     properties:
       kind: { type: string, enum: [workload], x-enum-varnames: [VisitorTokenWorkload] }
       credential: { type: string, minLength: 5, maxLength: 256 }
+  VisitorTokenRegisteredKeySource:
+    type: object
+    additionalProperties: false
+    required: [kind, credential]
+    properties:
+      kind: { type: string, enum: [registered_key], x-enum-varnames: [VisitorTokenRegisteredKey] }
+      credential: { type: string, minLength: 47, maxLength: 47 }
+    description: Access token from the existing signed publisher-token exchange. A connect approval and proof of its exact signing key are required for connector ownership.
   VisitorTokenShareSource:
     type: object
     additionalProperties: false

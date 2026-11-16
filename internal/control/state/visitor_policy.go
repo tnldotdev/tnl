@@ -50,7 +50,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		return result, ErrVisitorPolicy
 	}
 	policy := controlv1.VisitorPolicySnapshot{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(scope.Kind), Id: scope.ID}, Issuer: issuer,
-		VisitorPolicyRevision: revision, KeyRevision: keyRevision, ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime), VerificationKeys: []controlv1.VisitorVerificationKey{}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}
+		VisitorPolicyRevision: revision, KeyRevision: keyRevision, ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime), VerificationKeys: []controlv1.VisitorVerificationKey{}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}, RegisteredKeyLeases: []controlv1.VisitorRegisteredKeyLease{}}
 	for _, key := range keys {
 		policy.VerificationKeys = append(policy.VerificationKeys, controlv1.VisitorVerificationKey{Id: key.ID, PublicKey: key.PublicKey})
 	}
@@ -206,6 +206,39 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 			return result, err
 		}
 		if len(policy.WorkloadLeases) > 4096 {
+			return result, ErrVisitorPolicy
+		}
+		rows, err = tx.Query(ctx, `SELECT approval.grant_id,signing.id,current.public_key,current.expires_at
+		    FROM control.applied_project_services binding
+		    JOIN control.deployment_management_services selected ON selected.team_id=binding.team_id AND selected.project_key=binding.project_key AND selected.service=binding.service AND selected.capability='connect' AND selected.revoked_at IS NULL
+		    JOIN control.deployment_management_grants approval ON approval.grant_id=selected.grant_id
+		    JOIN control.publisher_grants grant_record ON grant_record.id=approval.grant_id
+		    JOIN control.publisher_identity_keys signing ON signing.publisher_identity_id=grant_record.publisher_identity_id AND signing.retired_at IS NULL
+		    CROSS JOIN LATERAL control.deployment_connect_authority(approval.grant_id,signing.id,$1,$2) current
+		    WHERE binding.service_id=$1 ORDER BY approval.grant_id,signing.id LIMIT 4097`, scope.ID, now)
+		if err != nil {
+			return result, err
+		}
+		for rows.Next() {
+			var lease controlv1.VisitorRegisteredKeyLease
+			var public []byte
+			if err = rows.Scan(&lease.GrantId, &lease.KeyId, &public, &lease.ExpiresAt); err != nil {
+				rows.Close()
+				return result, err
+			}
+			lease.KeySha256, err = visitortoken.KeyDigest(ed25519.PublicKey(public))
+			if err != nil {
+				rows.Close()
+				return result, err
+			}
+			policy.RegisteredKeyLeases = append(policy.RegisteredKeyLeases, lease)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return result, err
+		}
+		if len(policy.RegisteredKeyLeases) > 4096 {
 			return result, ErrVisitorPolicy
 		}
 	}

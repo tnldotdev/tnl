@@ -15,11 +15,14 @@ type VisitorSubject struct {
 	IdentityID        string `json:"identity_id,omitempty"`
 	DeviceID          string `json:"device_id,omitempty"`
 	WorkloadSessionID string `json:"workload_session_id,omitempty"`
+	GrantID           string `json:"grant_id,omitempty"`
+	KeyID             string `json:"key_id,omitempty"`
 }
 
 const (
 	VisitorHumanDevice     = "human_device"
 	VisitorWorkloadSession = "workload_session"
+	VisitorRegisteredKey   = "registered_key"
 )
 
 var ErrInvalidVisitorSubject = errors.New("invalid visitor subject")
@@ -39,7 +42,7 @@ func (s *VisitorSubject) UnmarshalJSON(data []byte) error {
 		return ErrInvalidVisitorSubject
 	}
 	r := VisitorSubject(value)
-	if r.Validate() != nil || r.Kind == VisitorHumanDevice && len(fields) != 3 || r.Kind == VisitorWorkloadSession && len(fields) != 2 {
+	if r.Validate() != nil || r.Kind == VisitorHumanDevice && len(fields) != 3 || r.Kind == VisitorWorkloadSession && len(fields) != 2 || r.Kind == VisitorRegisteredKey && len(fields) != 3 {
 		return ErrInvalidVisitorSubject
 	}
 	*s = r
@@ -47,6 +50,9 @@ func (s *VisitorSubject) UnmarshalJSON(data []byte) error {
 }
 
 func (s VisitorSubject) Validate() error {
+	if s.Kind != VisitorRegisteredKey && (s.GrantID != "" || s.KeyID != "") {
+		return ErrInvalidVisitorSubject
+	}
 	switch s.Kind {
 	case VisitorHumanDevice:
 		if opaqueid.Valid(s.IdentityID, opaqueid.IdentityPrefix) && opaqueid.Valid(s.DeviceID, opaqueid.VisitorDevicePrefix) && s.WorkloadSessionID == "" {
@@ -54,6 +60,10 @@ func (s VisitorSubject) Validate() error {
 		}
 	case VisitorWorkloadSession:
 		if opaqueid.Valid(s.WorkloadSessionID, "wls_") && s.IdentityID == "" && s.DeviceID == "" {
+			return nil
+		}
+	case VisitorRegisteredKey:
+		if opaqueid.Valid(s.GrantID, opaqueid.PublisherGrantPrefix) && opaqueid.Valid(s.KeyID, opaqueid.PublisherIdentityKeyPrefix) && s.IdentityID == "" && s.DeviceID == "" && s.WorkloadSessionID == "" {
 			return nil
 		}
 	}

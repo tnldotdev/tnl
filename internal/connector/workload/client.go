@@ -27,6 +27,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -147,8 +148,8 @@ func validateSession(r authorityv1.WorkloadSession) error {
 	if r.ExpiresAt != nil && (!r.ExpiresAt.After(time.Now()) || r.LeaseExpiresAt.After(*r.ExpiresAt)) {
 		return invalidSession()
 	}
-	subject := tunnelv1.VisitorSubject{Kind: string(r.Subject.Kind), WorkloadSessionID: r.Id}
-	if subject.Validate() != nil || r.Subject.WorkloadSessionId == nil || *r.Subject.WorkloadSessionId != r.Id || string(r.Subject.Kind) != tunnelv1.VisitorWorkloadSession || r.Subject.IdentityId != nil || r.Subject.DeviceId != nil || len(r.Credential) != 47 || r.Credential[:4] != "wlc_" || !r.LeaseExpiresAt.After(time.Now()) || len(r.ServiceIds) > 32 {
+	subject, subjectErr := visitorsubject.Parse(r.Subject)
+	if subjectErr != nil || subject.Kind != tunnelv1.VisitorWorkloadSession || subject.WorkloadSessionID != r.Id || len(r.Credential) != 47 || r.Credential[:4] != "wlc_" || !r.LeaseExpiresAt.After(time.Now()) || len(r.ServiceIds) > 32 {
 		return invalidSession()
 	}
 	seen := map[string]bool{}
