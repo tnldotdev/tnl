@@ -172,6 +172,71 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 			t.Fatal("app stopped serving")
 		}
 	}
+	for _, discovery := range []struct {
+		name      string
+		available *bool
+		failure   error
+	}{
+		{name: "available", available: new(true)},
+		{name: "disabled", available: new(false)},
+		{name: "omitted"},
+		{name: "failed", failure: errors.New("discovery unavailable")},
+	} {
+		t.Run("discovery/"+discovery.name, func(t *testing.T) {
+			transport := http.DefaultTransport
+			otherRequests := 0
+			http.DefaultTransport = invocationTransport(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Scheme+"://"+r.URL.Host == remote.URL {
+					if r.URL.Path == "/v1/discovery" {
+						if discovery.failure != nil {
+							return nil, discovery.failure
+						}
+						body, err := json.Marshal(controlv1.ControlDiscovery{BrowserLoginAvailable: discovery.available})
+						if err != nil {
+							return nil, err
+						}
+						return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(string(body))), Request: r}, nil
+					}
+					otherRequests++
+				}
+				return transport.RoundTrip(r)
+			})
+			defer func() { http.DefaultTransport = transport }()
+			for _, service := range []string{"web", ""} {
+				invocation, err := opaqueid.New(opaqueid.InvocationPrefix)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, err := json.Marshal(map[string]any{
+					"invocation_id": invocation, "target": listener.URL,
+					"deployment": map[string]string{"project": "acme/shop", "name": "production", "credential": token, "service": service},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var request publisherprotocol.Invocation
+				if err := json.Unmarshal(body, &request); err != nil {
+					t.Fatal(err)
+				}
+				prepared, err := a.prepareDeploymentInvocation(t.Context(), request)
+				if discovery.failure != nil {
+					if !errors.Is(err, discovery.failure) || otherRequests != 0 {
+						t.Fatal("discovery failure reached publication authority or lost its cause", err, otherRequests)
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if prepared.browserLoginAvailable != (discovery.available != nil && *discovery.available) {
+					t.Fatal("publication ignored the advertised browser sign-in capability")
+				}
+				if err := invocationCleanup(prepared.native, prepared.publicURL, prepared.expiresAt)(); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
 	inspect, err := pgx.Connect(ctx, databaseURL)
 	if err != nil {
 		t.Fatal(err)

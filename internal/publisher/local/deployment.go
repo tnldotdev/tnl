@@ -19,11 +19,12 @@ import (
 )
 
 type deploymentInvocation struct {
-	native    *publisheridentity.Native
-	profile   *clientstate.Store
-	publicURL controlv1.PublicURL
-	limits    applicationlimits.Limits
-	expiresAt time.Time
+	native                *publisheridentity.Native
+	profile               *clientstate.Store
+	publicURL             controlv1.PublicURL
+	limits                applicationlimits.Limits
+	expiresAt             time.Time
+	browserLoginAvailable bool
 }
 
 // deployment authority never selects local configuration or a publisher file.
@@ -49,6 +50,11 @@ func (a *appRuntime) prepareDeploymentInvocation(ctx context.Context, r publishe
 	if err != nil {
 		return result, err
 	}
+	discovery, err := control.Discovery(ctx)
+	if err != nil {
+		return result, err
+	}
+	result.browserLoginAvailable = discovery.BrowserLoginAvailable != nil && *discovery.BrowserLoginAvailable
 	authority, err := clientauthority.New(credential.ControlURL, nil, "")
 	if err != nil {
 		return result, err

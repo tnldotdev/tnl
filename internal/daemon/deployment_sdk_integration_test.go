@@ -45,12 +45,13 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, "tnl.config.ts"), []byte(`throw new Error("remote publication evaluated configuration")`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	mode, protocol := controlv1.Anonymous, controlv1.ServiceProtocol("http")
+	mode, restricted, protocol := controlv1.Anonymous, controlv1.Restricted, controlv1.ServiceProtocol("http")
 	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "sdk-publication", controlv1.ApplyProjectConfigurationRequest{
 		TeamId: f.identity.teamID, Source: &testProjectSource, Deployment: "production",
-		ServiceDeclarations: controlv1.ProjectServiceDeclarations{"web": protocol},
+		ServiceDeclarations: controlv1.ProjectServiceDeclarations{"web": protocol, "restricted": protocol},
 		Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{
-			"web": {Target: "app", Protocol: &protocol, PublicUrl: &controlv1.ProjectServicePublicURL{Access: &controlv1.ProjectPublicAccess{Mode: &mode}}},
+			"web":        {Target: "app", Protocol: &protocol, PublicUrl: &controlv1.ProjectServicePublicURL{Access: &controlv1.ProjectPublicAccess{Mode: &mode}}},
+			"restricted": {Target: "app", Protocol: &protocol, PublicUrl: &controlv1.ProjectServicePublicURL{Access: &controlv1.ProjectPublicAccess{Mode: &restricted}}},
 		}},
 	})
 	if err != nil || applied.Deployments == nil {
@@ -65,7 +66,7 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 		ExpiresIn: 600, DeploymentIds: new([]string{(*applied.Deployments)[0].Id}),
 	}
 	request.Permissions.Publish = &controlv1.DeploymentPublishSelection{
-		Services: new(controlv1.DeploymentCredentialServiceSelection{"web"}), Temporary: new(controlv1.TemporaryPublicationAnonymous),
+		Services: new(controlv1.DeploymentCredentialServiceSelection{"web", "restricted"}), Temporary: new(controlv1.TemporaryPublicationAnonymous),
 	}
 	approval, err := f.identity.routes.RegisterDeploymentCredential(t.Context(), f.identity.teamID, "sdk-publication", "sdk-publication", request)
 	if err != nil {
@@ -150,7 +151,7 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 		}
 	}
 	var savedID, savedURL string
-	for _, variant := range []string{"node", "node-restart", "bun", "fetch", "python", "lost-reply"} {
+	for _, variant := range []string{"node", "node-restart", "node-restricted", "bun", "fetch", "python", "python-restricted", "lost-reply"} {
 		t.Run(variant, func(t *testing.T) {
 			var evidence func() sdkLostReplyEvidence
 			if variant == "lost-reply" {
@@ -177,8 +178,8 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 			defer cancel()
 			var command *exec.Cmd
-			if variant == "python" {
-				command = exec.CommandContext(ctx, "uv", "run", "--frozen", "--project", filepath.Join(repo, "packages/py"), "python", filepath.Join(directory, "publication.py"))
+			if strings.HasPrefix(variant, "python") {
+				command = exec.CommandContext(ctx, "uv", "run", "--frozen", "--project", filepath.Join(repo, "packages/py"), "python", filepath.Join(directory, "publication.py"), variant)
 			} else {
 				executable := "node"
 				if variant == "bun" {
@@ -238,6 +239,31 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 					t.Fatal("lost acknowledgment did not recover and clean the exact allocation", proof.err)
 				}
 				result.URL = proof.url
+			} else if strings.HasSuffix(variant, "-restricted") {
+				address := result.URL + "/settings?tab=profile"
+				response, _, err := f.visitor.requestURL(http.MethodGet, address, nil)
+				if err != nil || response.StatusCode != http.StatusForbidden || response.Header.Get("Location") != "" {
+					t.Fatal("restricted API request started browser sign-in", response, err)
+				}
+				request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request.Header = http.Header{"Sec-Fetch-Mode": {"navigate"}, "Sec-Fetch-Dest": {"document"}, "Accept": {"text/html"}}
+				browser := *f.visitor.client
+				browser.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+				response, err = browser.Do(request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = response.Body.Close()
+				if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/__tnl/team/login?return=%2Fsettings%3Ftab%3Dprofile" {
+					t.Fatal("restricted browser navigation did not start sign-in", response.StatusCode, response.Header)
+				}
+				cookies := response.Cookies()
+				if len(cookies) != 1 || !cookies[0].Secure || !cookies[0].HttpOnly {
+					t.Fatal("browser sign-in did not set its secure attempt cookie", cookies)
+				}
 			} else {
 				response, body, err := f.visitor.requestURL(http.MethodGet, result.URL, nil)
 				if err != nil || response.StatusCode != 200 || string(body) != "SDK publication" {
@@ -271,7 +297,7 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 			if err := f.inspect.QueryRowContext(t.Context(), `SELECT lifecycle_state FROM control.public_urls WHERE id=$1`, id).Scan(&lifecycle); err != nil {
 				t.Fatal(err)
 			}
-			named := variant == "node" || variant == "node-restart"
+			named := variant == "node" || variant == "node-restart" || variant == "node-restricted"
 			if named && lifecycle != "enabled" || !named && lifecycle != "deleted" {
 				t.Fatal("SDK cleanup changed wrong URL lifetime", lifecycle)
 			}

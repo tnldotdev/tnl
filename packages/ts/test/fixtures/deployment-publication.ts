@@ -31,8 +31,8 @@ if (variant === "lost-reply") {
   }
   const server = bun ?? node ?? (() => new Response("SDK publication"));
   const publication =
-    variant === "node" || variant === "node-restart"
-      ? await deployment.publish("web", server)
+    variant === "node" || variant === "node-restart" || variant === "node-restricted"
+      ? await deployment.publish(variant === "node-restricted" ? "restricted" : "web", server)
       : await deployment.publish(server, {
           access: "anonymous",
         });

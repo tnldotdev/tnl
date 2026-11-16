@@ -74,6 +74,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	var profile *clientstate.Store
 	var publicURL controlv1.PublicURL
 	var credentialExpiry time.Time
+	var browserLoginAvailable bool
 	server := ""
 	if request.Deployment != nil {
 		var selection deploymentInvocation
@@ -83,6 +84,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		}
 		native, profile, publicURL, limits = selection.native, selection.profile, selection.publicURL, selection.limits
 		credentialExpiry = selection.expiresAt
+		browserLoginAvailable = selection.browserLoginAvailable
 		server = native.ControlURL()
 	} else {
 		server = valueOrEmpty(a.project.Config.Server)
@@ -163,6 +165,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
 	cfg := publisher.Config{Control: native, Identity: native, Audit: native, VisitorControl: native, BrowserControl: native, Shares: native, ControlURL: server, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, ProjectRoot: a.project.Root, Target: request.Target, ServiceProtocol: "http", Limits: limits, Ephemeral: publicURL.Ephemeral, AssignedPublicURL: &publicURL, TransportTLS: tlsConfig}
 	cfg.PublisherIdentityID = native.PublisherIdentityID()
+	cfg.BrowserLoginAvailable = browserLoginAvailable
 	cfg.RequirePostQuantum = request.RequirePostQuantum
 	if request.Deployment != nil {
 		cfg.RequirePostQuantum = new(publicURL.RequirePostQuantum)

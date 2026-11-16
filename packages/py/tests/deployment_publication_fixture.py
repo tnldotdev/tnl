@@ -19,7 +19,8 @@ async def main() -> None:
     client = tnl.create_client(project="acme/sdk-publication")
     async with client.deployment("production") as deployment:
         async with await deployment.publish(
-            tnl.handler(endpoint), access="anonymous"
+            tnl.handler(endpoint),
+            access="restricted" if sys.argv[1] == "python-restricted" else "anonymous",
         ) as publication:
             print(json.dumps({"url": publication.url}), flush=True)
             await asyncio.to_thread(sys.stdin.readline)
