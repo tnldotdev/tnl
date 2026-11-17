@@ -270,7 +270,7 @@ func writeCommandError(output io.Writer, err error) {
 		_, _ = io.WriteString(output, text+"\n")
 		return
 	}
-	presented := presentFailure(err)
+	presented := presentHumanFailure(err)
 	blocks := []clioutput.Block{clioutput.Text(presented.message)}
 	if typed, ok := failure.Of(err); ok && typed.Reason() == failure.ObservabilityConfigInvalid && typed.Setting() != "" {
 		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "setting", Value: string(typed.Setting())}))

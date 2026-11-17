@@ -6,12 +6,22 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
+	"github.com/tnldotdev/tnl/internal/policy/authorization"
 )
 
 type presentedFailure struct {
 	reason  failure.Reason
 	message string
 	action  string
+}
+
+// presentHumanFailure adds bounded policy guidance without changing machine output.
+func presentHumanFailure(err error) presentedFailure {
+	if failure.Only(err, authorization.ErrIPPrefixLimit) {
+		return presentedFailure{reason: failure.InvalidCommand, message: authorization.ErrIPPrefixLimit.Error(),
+			action: "remove prefixes and retry; equivalent addresses count once"}
+	}
+	return presentFailure(err)
 }
 
 // presentFailure uses authored messages and explicitly approved fields.
