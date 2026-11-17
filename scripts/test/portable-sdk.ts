@@ -14,6 +14,7 @@ import {
   fixtureSchema,
   type PortableFixture,
 } from "../../packages/ts/test/portable-integration/fixture.ts";
+import { portableDiagnosticsSchema } from "../../packages/ts/test/portable-integration/errors.ts";
 import { chromeArguments, workerdConfiguration } from "./portable-sdk-config.ts";
 
 interface BrowserFixture {
@@ -321,6 +322,7 @@ async function workerdSmoke(configuration: PortableFixture) {
         const failure = z
           .object({
             network: z.array(z.string().max(500)).max(64).optional(),
+            diagnostics: portableDiagnosticsSchema.optional(),
             failures: z.array(
               z.object({
                 phase: z.string().max(40),

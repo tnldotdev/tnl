@@ -72,8 +72,15 @@ export async function smoke(input: unknown) {
         controller.close();
       },
     });
-    const upload = await connection.fetch(connection.url + "/echo", { method: "POST", body });
+    const upload = await connection.fetch(connection.url + "/echo", {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body,
+    });
+    step("upload-response");
+    check(upload.status === 200, "streamed upload was rejected before the handler");
     const echoed = new Uint8Array(await upload.arrayBuffer());
+    step("upload-verify");
     check(
       echoed.length === 13 + 128 * 1024 &&
         new TextDecoder().decode(echoed.subarray(0, 13)) === "upload-first\n" &&

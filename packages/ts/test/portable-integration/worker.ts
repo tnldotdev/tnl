@@ -1,4 +1,5 @@
-import { PortableSmokeError, runPortableIsolation, runPortableSmoke } from "./smoke.ts";
+import { runPortableIsolation, runPortableSmoke } from "./smoke.ts";
+import { PortableSmokeError, portableDiagnostics } from "./errors.ts";
 import { fixtureSchema } from "./fixture.ts";
 import { installFixtureHost } from "./host.ts";
 
@@ -77,7 +78,12 @@ export default {
           : [],
       );
       return Response.json(
-        { error: "portable SDK integration failed", failures: phases, network: [...hostRequests] },
+        {
+          error: "portable SDK integration failed",
+          failures: phases,
+          network: [...hostRequests],
+          diagnostics: portableDiagnostics(),
+        },
         { status: 500 },
       );
     }

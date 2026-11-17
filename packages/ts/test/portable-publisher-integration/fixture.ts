@@ -53,6 +53,8 @@ export function publisherFailures(error: unknown, phase: string, depth = 0): unk
     return [{ phase, code: error.code }];
   if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))
     return [{ phase, code: error.name }];
+  if (error instanceof TypeError) return [{ phase, code: "TypeError" }];
+  if (error instanceof RangeError) return [{ phase, code: "RangeError" }];
   return [{ phase, code: "fixture.operation_failed" }];
 }
 

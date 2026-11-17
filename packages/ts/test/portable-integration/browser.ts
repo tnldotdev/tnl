@@ -1,6 +1,7 @@
 import { fixtureSchema } from "./fixture.ts";
 import { installFixtureHost } from "./host.ts";
-import { PortableSmokeError, runPortableIsolation, runPortableSmoke } from "./smoke.ts";
+import { runPortableIsolation, runPortableSmoke } from "./smoke.ts";
+import { PortableSmokeError } from "./errors.ts";
 
 function failure(error: unknown): { phase: string; code: string; detail?: string | undefined }[] {
   const errors = error instanceof AggregateError ? error.errors : [error];

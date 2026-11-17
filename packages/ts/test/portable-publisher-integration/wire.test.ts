@@ -61,6 +61,12 @@ test("Chrome trusts exact fixture pins without disabling TLS verification global
   expect(args).toContain(`--ignore-certificate-errors-spki-list=${fixture.spki_pins.join(",")}`);
 });
 
+test("publisher diagnostics name platform error kinds without their messages", () => {
+  expect(publisherFailures(new TypeError("private payload"), "upload-response")).toEqual([
+    { phase: "upload-response", code: "TypeError" },
+  ]);
+});
+
 test("workerd uses persisted SQLite, static Go/WASM, and no node compatibility mode", () => {
   const config = publisherWorkerdConfiguration(fixture, "/private/tnl.wasm", "/private/storage");
   expect(config).toContain('wasm = embed "/private/tnl.wasm"');

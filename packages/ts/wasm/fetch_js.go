@@ -469,8 +469,9 @@ func (b *responseBody) export(response *http.Response, method string) (js.Value,
 			return nil, nil
 		}
 		if err != nil {
+			err = errors.Join(err, b.close())
 			controller.Call("error", safeError(err))
-			return nil, errors.Join(err, b.close())
+			return nil, err
 		}
 		return nil, nil
 	})

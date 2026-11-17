@@ -11,6 +11,7 @@ import {
 import { Wire } from "./bytes.ts";
 import { MySQLFixtureClient } from "./mysql.ts";
 import { PostgresFixtureClient } from "./postgres.ts";
+import { PortableSmokeError, type Phase } from "./errors.ts";
 
 const services = {
   http: { protocol: "http" },
@@ -20,46 +21,9 @@ const services = {
   kubernetes: { protocol: "kubernetes" },
 } as const;
 
-type Phase =
-  | "http"
-  | "tcp"
-  | "tcp-close"
-  | "mysql"
-  | "kubernetes"
-  | "postgres"
-  | "carrier-loss"
-  | "close-open-tcp"
-  | "close-deployment"
-  | "close-pending-read"
-  | "close-new-work"
-  | "close-tcp-stream"
-  | "isolation"
-  | "cleanup";
-
-export class PortableSmokeError extends Error {
-  readonly phase: Phase;
-  readonly code: string;
-  readonly detail: string | undefined;
-
-  constructor(phase: Phase, error: unknown) {
-    const code =
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      typeof error.code === "string" &&
-      /^sdk\.[a-z_]+$/.test(error.code)
-        ? error.code
-        : "fixture.assertion_failed";
-    super(`portable SDK ${phase} failed (${code})`);
-    this.phase = phase;
-    this.code = code;
-    this.detail = error instanceof FixtureAssertionError ? error.message : undefined;
-  }
-}
-
 async function joinCleanup(
   cleanups: Promise<unknown>[],
-  failed: PortableSmokeError | undefined,
+  failed: PortableSmokeError | AggregateError | undefined,
 ): Promise<void> {
   const results = await Promise.allSettled(cleanups);
   const errors = results.flatMap((result) => {
@@ -71,7 +35,11 @@ async function joinCleanup(
   });
   if (errors.length > 0)
     throw new AggregateError(
-      failed === undefined ? errors : [failed, ...errors],
+      failed === undefined
+        ? errors
+        : failed instanceof AggregateError
+          ? [...failed.errors, ...errors]
+          : [failed, ...errors],
       "portable SDK operation/cleanup failed",
     );
 }
@@ -126,7 +94,7 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
   });
   let blocked: string | undefined;
   let phase: Phase = "http";
-  let failed: PortableSmokeError | undefined;
+  let failed: PortableSmokeError | AggregateError | undefined;
   try {
     const http = await selected.connect("http");
     const response = await http.fetch("/portable-smoke?source=sdk");
@@ -246,7 +214,7 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
 
     // close must settle a pending application read, then reject new work. its
     // peer-close behavior is separately exercised by concurrent Worker requests.
-    phase = "close-open-tcp";
+    phase = "close-open";
     const waiting = await tcp.open({ signal: AbortSignal.timeout(30_000) });
     const reader = waiting.readable.getReader();
     closeWaiting = async () => {
@@ -254,7 +222,7 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
       try {
         await waiting.close();
       } catch (error) {
-        throw new PortableSmokeError("close-tcp-stream", error);
+        throw new PortableSmokeError("close-stream", error);
       }
     };
     const read = reader.read().then(
@@ -263,9 +231,9 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
     );
     phase = "close-deployment";
     await Promise.all([selected.close(), selected.close()]);
-    phase = "close-pending-read";
+    phase = "close-read";
     check(await read, "blocked TCP read returned unexpected target bytes");
-    phase = "close-new-work";
+    phase = "close-reject";
     await closed(selected.connect("tcp"));
     return {
       protocols: ["http", "tcp", "postgres", "mysql", "kubernetes"],
@@ -277,7 +245,11 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
       closed: true,
     };
   } catch (error) {
-    failed = new PortableSmokeError(phase, error);
+    failed =
+      error instanceof AggregateError &&
+      error.errors.every((child: unknown) => child instanceof PortableSmokeError)
+        ? error
+        : new PortableSmokeError(phase, error);
     throw failed;
   } finally {
     await joinCleanup(
