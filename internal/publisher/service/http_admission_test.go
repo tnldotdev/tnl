@@ -14,7 +14,9 @@ import (
 	yamux "github.com/libp2p/go-yamux/v5"
 	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -60,7 +62,9 @@ func openHTTPAdmissionTest(t *testing.T, bound *Bound, slot uint8, wire *httpAdm
 		wire = &httpAdmissionTestConn{}
 	}
 	wire.Conn, wire.entered = server, make(chan struct{})
+	bound.mu.Lock()
 	ref := bound.prepared.connectionRef(bound.connections[slot])
+	bound.mu.Unlock()
 	header := privateHeader(t, ref)
 	header.PublicService.DestinationPort = 443
 	visitor, code := bound.reserveHTTP(t.Context(), ref, wire, header)
@@ -70,6 +74,45 @@ func openHTTPAdmissionTest(t *testing.T, bound *Bound, slot uint8, wire *httpAdm
 		t.Fatal("reserve owned HTTP setup", code)
 	}
 	return visitor.http, client
+}
+
+func TestHTTPAdmissionFixtureReadsCurrentHeartbeatAssignment(t *testing.T) {
+	bound := newHTTPAdmissionTestRun(t, 1)
+	bound.mu.Lock()
+	original := bound.prepared.connectionRef(bound.connections[0])
+	state := controlv1.ServiceRunState{
+		ServiceId: bound.prepared.Preparation.ServiceId, ServiceRunId: bound.prepared.Preparation.ServiceRunId,
+		RunNumber: bound.prepared.Preparation.RunNumber, State: controlv1.ServiceRunStateState("ready"),
+		PublisherExpiresAt:   time.Now().Add(time.Minute),
+		PublisherConnections: append([]controlv1.ConnectionAssignment(nil), bound.connections[:]...),
+	}
+	bound.mu.Unlock()
+	var err error
+	state.PublisherConnections[0].PublisherConnectionId, err = opaqueid.New(opaqueid.PublisherConnectionPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.PublisherConnections[0].ConnectionAssignmentRevision++
+	// the same fixture helper must capture the installed heartbeat replacement,
+	// not a reference copied before the run owner started its workers.
+	updated := make(chan error, 1)
+	go func() { updated <- bound.ApplyHeartbeat(state) }()
+	if err := <-updated; err != nil {
+		t.Fatal(err)
+	}
+	a, client := openHTTPAdmissionTest(t, bound, 0, nil)
+	defer client.Close()
+	defer a.retire()
+	if a.ref == original || a.ref.PublisherConnectionID != state.PublisherConnections[0].PublisherConnectionId ||
+		a.ref.ConnectionAssignmentRevision != uint64(state.PublisherConnections[0].ConnectionAssignmentRevision) ||
+		!bound.current(a.ref) {
+		t.Fatal("HTTP admission fixture used a stale publisher connection reference")
+	}
+	assertHTTPAdmissionCharges(t, a, 1, 0, 0)
+	if err := a.retire(); err != nil {
+		t.Fatal(err)
+	}
+	assertHTTPAdmissionCharges(t, a, 0, 0, 0)
 }
 
 func assertHTTPAdmissionCharges(t *testing.T, a *httpAdmission, pending, sources, final int) {
