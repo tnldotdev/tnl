@@ -222,7 +222,7 @@ func promiseFinally(work func() (any, error), after func()) js.Value {
 func main() {
 	initializeDispatcher()
 	api := js.Global().Get("Object").New()
-	registerConnector(api)
+	registerSelectedConnector(api)
 	registerPublisher(api)
 	done := make(chan struct{})
 	var once sync.Once

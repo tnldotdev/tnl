@@ -128,8 +128,9 @@ test("installed deployment clients use verified HTTP transport on Node and Bun",
     const script = `
       import assert from 'node:assert/strict';
       import {createRequire} from 'node:module';
-       import * as esm from '@tnldotdev/tnl';
-       const cjs = createRequire(import.meta.url)('@tnldotdev/tnl');
+       const entry = 'Bun' in globalThis ? '@tnldotdev/tnl/bun' : '@tnldotdev/tnl/node';
+       const esm = await import(entry);
+       const cjs = createRequire(import.meta.url)(entry);
       const sdkRequire = createRequire(createRequire(import.meta.url).resolve('@tnldotdev/tnl'));
       const {Agent} = sdkRequire('undici/index.js');
       let probes = 0;
@@ -138,9 +139,9 @@ test("installed deployment clients use verified HTTP transport on Node and Bun",
       assert.equal(probes, 'Bun' in globalThis ? 0 : 1);
       await dispatcher.destroy();
        for (const sdk of [esm, cjs]) {
-         const deployment = sdk.createClient({project:'team/project', services:{api:{protocol:'http'}}}).deployment('production');
+         const deployment = sdk.deployment('production', {project:'team/project', services:{api:{protocol:'http'}}});
          try {
-         const settings = await deployment.connect('api');
+         const settings = await sdk.connect(deployment, 'api');
          assert.equal(settings.then, undefined);
          assert.equal(settings.url, 'https://localhost');
          const response = await settings.fetch('/echo', {method:'POST', body:new ReadableStream({start(c){c.enqueue(new TextEncoder().encode('once')); c.close()}})});

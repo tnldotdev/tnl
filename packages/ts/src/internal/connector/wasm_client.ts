@@ -10,7 +10,8 @@ import type {
 } from "../../project.js";
 import { hostnameSchema, protocolSchema, serviceNameSchema } from "../values.js";
 import { clientFactory } from "./client_factory.js";
-import { loadWasm, type WasmRuntime } from "./wasm_loader.js";
+import type { WasmRuntime } from "./wasm_loader.js";
+import type { DeploymentOptions, HTTPNames, ServiceNames as Names } from "./deployment_types.js";
 import type { WasmConnection, WasmDeployment } from "./wasm_abi.js";
 import { isWasmByteStream, wasmStream } from "./wasm_stream.js";
 import type { FetchHandler } from "../publisher/fetch_types.js";
@@ -56,18 +57,12 @@ function isPublisherStorage(value: unknown): value is PublisherStorage {
   );
 }
 
-type Names<Services extends ServiceFacts> = Extract<keyof Services, string>;
-type HTTPNames<Services extends ServiceFacts> = keyof Services extends never
-  ? string
-  : {
-      [Name in Names<Services>]: Services[Name]["protocol"] extends "http" ? Name : never;
-    }[Names<Services>];
 type Connection<
   Services extends ServiceFacts,
   Name extends Names<Services>,
 > = TnlStreamConnectionRegistry[Services[Name]["protocol"]];
 
-/** browser/worker deployment handles own one isolated go runtime each. */
+/** deployment handles own isolated go runtimes and load them on demand. */
 export interface StreamDeployment<Services extends ServiceFacts> {
   connect<Name extends Names<Services>>(name: Name): Promise<Connection<Services, Name>>;
   client<Name extends Names<Services>, Client>(
@@ -91,13 +86,14 @@ export interface StreamDeployment<Services extends ServiceFacts> {
   close(): Promise<void>;
 }
 
-export interface StreamClientOptions<Services extends ServiceFacts> {
-  readonly project?: string;
-  readonly services?: Services;
-  readonly token?: string;
+export interface StreamClientOptions<
+  Services extends ServiceFacts,
+> extends DeploymentOptions<Services> {
   /** application-owned private storage; browsers otherwise use indexeddb. */
   readonly publisherStorage?: PublisherStorage;
 }
+
+export type RuntimeKind = "connector" | "publisher";
 
 // only durable owners supply this context. request-local workers never share a
 // live go runtime, and the context does not confer publisher authority.
@@ -190,7 +186,7 @@ function throwFailures(results: PromiseSettledResult<unknown>[], ignored?: unkno
  */
 export function createStreamClient<const Services extends ServiceFacts = Record<never, never>>(
   options: StreamClientOptions<Services>,
-  module?: WebAssembly.Module,
+  loadRuntime: (kind: RuntimeKind) => Promise<WasmRuntime>,
   context: StreamRuntimeContext = {},
 ) {
   const parsed = optionsSchema.safeParse(options);
@@ -222,15 +218,14 @@ export function createStreamClient<const Services extends ServiceFacts = Record<
       const invalidStreams = new Set<Closable>();
       const streams = new Set<TnlTLSStream>();
       const publications = new Set<PortablePublication>();
-      let runtime: WasmRuntime | undefined;
-      let startingRuntime: Promise<WasmRuntime> | undefined;
+      const runtimes = new Map<RuntimeKind, WasmRuntime>();
+      const startingRuntimes = new Map<RuntimeKind, Promise<WasmRuntime>>();
       let backend: Closable | undefined;
       let loading: Promise<WasmDeployment> | undefined;
       let storageHost = context.storageHost;
       let ownedStorage: ReturnType<typeof createBrowserPublisherStorage> | undefined;
       let closed = false;
       let closing: Promise<void> | undefined;
-      let runtimeClosed = false;
       let backendClosed = false;
 
       function track<Value>(work: Promise<Value>): Promise<Value> {
@@ -247,13 +242,16 @@ export function createStreamClient<const Services extends ServiceFacts = Record<
         if (protocol === undefined) throw new TnlError("sdk.configuration_invalid");
         return protocol;
       }
-      function ownedRuntime(): Promise<WasmRuntime> {
-        startingRuntime ??= loadWasm(module).then((value) => {
-          runtime = value;
+      function ownedRuntime(kind: RuntimeKind): Promise<WasmRuntime> {
+        const existing = startingRuntimes.get(kind);
+        if (existing !== undefined) return existing;
+        const starting = loadRuntime(kind).then((value) => {
+          runtimes.set(kind, value);
           if (closed) throw closedError;
           return value;
         });
-        return startingRuntime;
+        startingRuntimes.set(kind, starting);
+        return starting;
       }
       function publicationStorage(): PublisherStorageHost {
         if (storageHost === undefined) {
@@ -264,7 +262,9 @@ export function createStreamClient<const Services extends ServiceFacts = Record<
       }
       function selected(): Promise<WasmDeployment> {
         loading ??= (async () => {
-          const current = await ownedRuntime();
+          const current = await ownedRuntime("connector");
+          if (typeof current.bridge.createDeployment !== "function")
+            throw new TnlError("sdk.wasm_invalid");
           const value = await current.bridge.createDeployment(
             // facts include publish-only services. connect authorizes the exact
             // requested name, not every declaration in the project.
@@ -465,7 +465,7 @@ export function createStreamClient<const Services extends ServiceFacts = Record<
           const work = (async () => {
             if (signal.aborted) throw operationError(undefined, signal);
             const storage = publicationStorage();
-            const current = await ownedRuntime();
+            const current = await ownedRuntime("publisher");
             return publishPortable({
               bridge: current.bridge,
               selection: {
@@ -561,19 +561,23 @@ export function createStreamClient<const Services extends ServiceFacts = Record<
             if (
               ownersClosed &&
               publications.size === 0 &&
-              backendClosed === (backend !== undefined) &&
-              runtime !== undefined &&
-              !runtimeClosed
+              backendClosed === (backend !== undefined)
             ) {
-              try {
-                await runtime.bridge.close();
-                await runtime.exited;
-                runtimeClosed = true;
-              } catch {
-                results.push({ status: "rejected", reason: new TnlError("sdk.cleanup_failed") });
-              }
+              results.push(
+                ...(await Promise.allSettled(
+                  [...runtimes].map(async ([kind, runtime]) => {
+                    try {
+                      await runtime.bridge.close();
+                      await runtime.exited;
+                      runtimes.delete(kind);
+                    } catch {
+                      throw new TnlError("sdk.cleanup_failed");
+                    }
+                  }),
+                )),
+              );
             }
-            if ((runtime === undefined || runtimeClosed) && ownedStorage !== undefined) {
+            if (runtimes.size === 0 && ownedStorage !== undefined) {
               try {
                 await ownedStorage.close();
                 ownedStorage = undefined;

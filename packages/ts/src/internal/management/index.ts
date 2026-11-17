@@ -1,6 +1,17 @@
 // generated from contracts/control/public/v1 with @hey-api/openapi-ts; do not edit.
 
-export { deployments, type Options, publishers } from "./sdk.gen.js";
+export {
+  createDeployment,
+  createDeploymentPublisherEnrollment,
+  deleteDeployment,
+  getDeployment,
+  getDeploymentPublisher,
+  listDeploymentPublishers,
+  listDeployments,
+  type Options,
+  revokeDeploymentPublisher,
+  updateDeployment,
+} from "./sdk.gen.js";
 export type {
   ClientOptions,
   CreateDeploymentData,

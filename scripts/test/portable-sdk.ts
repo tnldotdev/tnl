@@ -239,7 +239,11 @@ async function workerdSmoke(configuration: PortableFixture) {
       {
         name: "static-sdk-wasm",
         setup(builder) {
-          builder.onResolve({ filter: /\.wasm$/ }, () => ({ path: "tnl.wasm", external: true }));
+          builder.onResolve({ filter: /\.wasm$/ }, (args) => ({
+            path: path.basename(args.path),
+            external: true,
+            sideEffects: false,
+          }));
         },
       },
     ],
@@ -366,7 +370,7 @@ try {
     "go",
     [
       "build",
-      "-tags=tnlwasmtest",
+      "-tags=tnlwasmtest,tnlconnector",
       "-trimpath",
       "-ldflags=-s -w",
       "-o",

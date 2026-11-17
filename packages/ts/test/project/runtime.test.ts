@@ -55,7 +55,7 @@ describe("root runtime", () => {
     vi.stubEnv("TNL_PROJECT_RUNTIME", undefined);
     vi.stubEnv("PORT", undefined);
     vi.resetModules();
-    const runtime = await import("@tnldotdev/tnl");
+    const runtime = await import("@tnldotdev/tnl/node");
     expect(runtime.tnl).toMatchObject({ port: 3000, dev: false });
     expect(() => runtime.tnl.services).toThrow();
     expect(runtime.tnl.namespace).toBeUndefined();
@@ -64,7 +64,7 @@ describe("root runtime", () => {
   test.each([false, true])("exposes validated metadata with dev=%s", async (running) => {
     vi.stubEnv("TNL_PROJECT_RUNTIME", JSON.stringify({ ...project, dev: running }));
     vi.resetModules();
-    const runtime = await import("@tnldotdev/tnl");
+    const runtime = await import("@tnldotdev/tnl/node");
     expect(runtime.tnl.services.api).toEqual(project.services.api);
     expect(runtime.tnl.dev).toBe(running);
     expect(runtime.tnl.prepare).toBeTypeOf("function");
@@ -76,7 +76,7 @@ describe("root runtime", () => {
       "-e",
       `const host = process;
        delete globalThis.process;
-       const { tnl } = await import(${JSON.stringify(new URL("../../dist/index.js", import.meta.url).href)});
+       const { tnl } = await import(${JSON.stringify(new URL("../../dist/node.js", import.meta.url).href)});
         let metadataAbsent = false;
         try { tnl.services; } catch { metadataAbsent = true; }
         host.stdout.write(JSON.stringify({ processAbsent: typeof process === "undefined", metadataAbsent }));`,
@@ -155,7 +155,7 @@ describe("root runtime", () => {
         }),
       );
       vi.resetModules();
-      const runtime = await import("@tnldotdev/tnl");
+      const runtime = await import("@tnldotdev/tnl/node");
       expect(runtime.tnl.services.database).toEqual(service);
       expect(runtime.tnl.services.database?.hostname).toBe(service.hostname);
       expect(runtime.tnl.services.database?.port).toBe(service.port);
@@ -176,14 +176,16 @@ describe("root runtime", () => {
         JSON.stringify({ ...project, services: { api: service }, dev: false }),
       );
       vi.resetModules();
-      await expect(import("@tnldotdev/tnl")).rejects.toMatchObject({ code: "sdk.runtime_invalid" });
+      await expect(import("@tnldotdev/tnl/node")).rejects.toMatchObject({
+        code: "sdk.runtime_invalid",
+      });
     },
   );
 
   test("unprepared metadata fails while absent optional services stay undefined", async () => {
     vi.stubEnv("TNL_PROJECT_RUNTIME", undefined);
     vi.resetModules();
-    const unprepared = await import("@tnldotdev/tnl");
+    const unprepared = await import("@tnldotdev/tnl/node");
     expect(() => unprepared.tnl.services).toThrow(
       expect.objectContaining({ code: "sdk.service_unprepared" }),
     );
@@ -191,18 +193,18 @@ describe("root runtime", () => {
     expect(Reflect.has(unprepared.tnl, "client")).toBe(false);
     vi.stubEnv("TNL_PROJECT_RUNTIME", JSON.stringify({ ...project, dev: true }));
     vi.resetModules();
-    const prepared = await import("@tnldotdev/tnl");
+    const prepared = await import("@tnldotdev/tnl/node");
     expect(prepared.tnl.services.missing).toBeUndefined();
   });
 
   test("respects Node and Bun port settings", async () => {
     vi.stubEnv("PORT", "4300");
     vi.resetModules();
-    expect((await import("@tnldotdev/tnl")).tnl.port).toBe(4300);
+    expect((await import("@tnldotdev/tnl/node")).tnl.port).toBe(4300);
     vi.stubEnv("BUN_PORT", "4400");
     vi.stubGlobal("Bun", {});
     vi.resetModules();
-    expect((await import("@tnldotdev/tnl")).tnl.port).toBe(4400);
+    expect((await import("@tnldotdev/tnl/node")).tnl.port).toBe(4400);
   });
 
   test.each([

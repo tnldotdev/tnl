@@ -3,17 +3,18 @@
 // real SDK subprocess; control authority and native registration are not mocked.
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import { createClient, tnl, TnlError } from "@tnldotdev/tnl";
+import { deployment, publish, tnl, TnlError } from "@tnldotdev/tnl/node";
+import { publish as publishBun } from "@tnldotdev/tnl/bun";
 
 assert.equal("open" in tnl, false);
-const deployment = createClient({ project: "acme/sdk-publication" }).deployment("production");
+const production = deployment("production", { project: "acme/sdk-publication" });
 const variant = process.argv[2];
 if (variant === "lost-reply") {
   await assert.rejects(
-    deployment.publish(() => new Response("SDK publication"), { access: "anonymous" }),
+    publish(production, () => new Response("SDK publication"), { access: "anonymous" }),
     (error: unknown) => error instanceof TnlError && error.code === "sdk.dev_unavailable",
   );
-  await deployment.close();
+  await production.close();
   console.log(JSON.stringify({ recovered: true }));
 } else {
   let node: Server | undefined;
@@ -29,18 +30,21 @@ if (variant === "lost-reply") {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     node = server;
   }
-  const server = bun ?? node ?? (() => new Response("SDK publication"));
+  const server = node ?? (() => new Response("SDK publication"));
+  const temporary = {
+    access: "anonymous",
+    limits: { requests: 10, concurrency: 2, rate: { requests: 100, per: "1s" } },
+  } as const;
   const publication =
-    variant === "node" || variant === "node-restart" || variant === "node-restricted"
-      ? await deployment.publish(variant === "node-restricted" ? "restricted" : "web", server)
-      : await deployment.publish(server, {
-          access: "anonymous",
-          limits: { requests: 10, concurrency: 2, rate: { requests: 100, per: "1s" } },
-        });
+    bun !== undefined
+      ? await publishBun(production, bun, temporary)
+      : variant === "node" || variant === "node-restart" || variant === "node-restricted"
+        ? await publish(production, variant === "node-restricted" ? "restricted" : "web", server)
+        : await publish(production, server, temporary);
   console.log(JSON.stringify({ url: publication.url }));
   await new Promise((resolve) => process.stdin.once("data", resolve));
   await publication.close();
-  await deployment.close();
+  await production.close();
   if (bun !== undefined) {
     assert.equal(await (await fetch(bun.url)).text(), "SDK publication");
     await bun.stop(true);

@@ -31,13 +31,13 @@ export function installPublisherFixtureHost(fixture: PublisherFixture): void {
       check(
         typeof bridge === "object" &&
           bridge !== null &&
-          "publish" in bridge &&
-          typeof bridge.publish === "function" &&
-          "createDeployment" in bridge &&
-          typeof bridge.createDeployment === "function",
-        "actual Go/WASM publisher bridge was not registered",
+          (("createDeployment" in bridge && typeof bridge.createDeployment === "function") ||
+            ("publish" in bridge && typeof bridge.publish === "function")),
+        "actual Go/WASM bridge was not registered",
       );
       starts++;
+      if (!("createDeployment" in bridge) || typeof bridge.createDeployment !== "function")
+        return exited;
       const create = bridge.createDeployment.bind(bridge);
       Reflect.set(
         bridge,

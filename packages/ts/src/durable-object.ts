@@ -1,6 +1,5 @@
 import * as z from "zod";
 import { TnlError } from "./errors.js";
-import { durablePublisherDeployment } from "./internal/portable/durable-deployment.js";
 import type { TnlRatePeriod } from "./config.gen.js";
 import type { FetchHandler } from "./internal/publisher/fetch_types.js";
 import type {
@@ -80,21 +79,6 @@ export type DurableObjectWasmPublisherOptions = Omit<
   DurableObjectPublisherOptions,
   "createDeployment"
 >;
-
-/**
- * create the durable lifetime owner using the same go runtime as createClient.
- * identity returns the utf-8 bytes of an imported portable deployment credential,
- * normally read from a deployed secret. the owner persists it before publishing.
- */
-export function createDurableObjectPublisher(
-  state: DurableObjectPublisherState,
-  options: DurableObjectWasmPublisherOptions,
-): DurableObjectPublisher {
-  return new DurableObjectPublisher(state, {
-    ...options,
-    createDeployment: (context) => durablePublisherDeployment(context),
-  });
-}
 
 const publicationOptionsSchema = z.strictObject({
   targetHostname: z.string().min(1).max(253).exactOptional(),

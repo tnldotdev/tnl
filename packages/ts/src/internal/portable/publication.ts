@@ -163,6 +163,7 @@ export async function publishPortable(options: {
   const lifetime = new AbortController();
   const signal = AbortSignal.any([options.signal, lifetime.signal]);
   if (signal.aborted) throw new DOMException("publication canceled", "AbortError");
+  if (typeof options.bridge.publish !== "function") throw new TnlError("sdk.wasm_invalid");
   let raw: unknown;
   try {
     raw = await options.bridge.publish(JSON.stringify(options.selection), {

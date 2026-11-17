@@ -37,13 +37,13 @@ check(
 const fixture = fixtureSchema.parse(JSON.parse(await readFile(values.fixture, "utf8")));
 const root = path.resolve(import.meta.dirname, "../..");
 const source = path.join(root, "packages/ts/test/portable-publisher-integration");
-const productionWasm = path.join(root, "packages/ts/dist/wasm/tnl.wasm");
+const productionWasm = path.join(root, "packages/ts/dist/wasm/publisher.wasm");
 check((await stat(productionWasm)).size > 1, "build the actual Go/WASM artifact first");
 const temporary = process.platform === "darwin" ? path.join(tmpdir(), "opencode") : tmpdir();
 await mkdir(temporary, { recursive: true, mode: 0o700 });
 const directory = await mkdtemp(path.join(temporary, "tnl-portable-publisher-"));
 const wasm = path.join(directory, "tnl-publisher-fixture.wasm");
-const unoptimizedWasm = path.join(directory, ".tnl-publisher-fixture.unoptimized.wasm");
+const connectorWasm = path.join(directory, "tnl-connector-fixture.wasm");
 const lifetime = new AbortController();
 const stop = () => lifetime.abort();
 process.once("SIGINT", stop);
@@ -116,9 +116,14 @@ async function chromeSmoke(configuration: PublisherFixture) {
           .end(
             '<!doctype html><script type="module">import * as fixture from "/browser/browser.js"; globalThis.publisherFixture = fixture;</script>',
           );
-      } else if (request.url?.endsWith("/wasm/tnl.wasm")) {
+      } else if (
+        request.url?.endsWith("/wasm/publisher.wasm") ||
+        request.url?.endsWith("/wasm/tnl.wasm")
+      ) {
         response.writeHead(200, { "Content-Type": "application/wasm" });
-        const stream = createReadStream(wasm);
+        const stream = createReadStream(
+          request.url.endsWith("/wasm/publisher.wasm") ? wasm : connectorWasm,
+        );
         stream.on("error", () => response.destroy());
         response.on("close", () => stream.destroy());
         stream.pipe(response);
@@ -310,15 +315,23 @@ async function workerdSmoke(configuration: PublisherFixture) {
       {
         name: "static-sdk-wasm",
         setup(builder) {
-          builder.onResolve({ filter: /\.wasm$/ }, () => ({ path: "tnl.wasm", external: true }));
+          builder.onResolve({ filter: /\.wasm$/ }, (args) => ({
+            path: path.basename(args.path),
+            external: true,
+            sideEffects: false,
+          }));
         },
       },
     ],
   });
   const config = path.join(output, "config.capnp");
-  await writeFile(config, publisherWorkerdConfiguration(configuration, wasm, storage), {
-    mode: 0o600,
-  });
+  await writeFile(
+    config,
+    publisherWorkerdConfiguration(configuration, path.relative(output, wasm), storage),
+    {
+      mode: 0o600,
+    },
+  );
   let worker = await startWorker(config);
   try {
     const first = await worker.call("/start");
@@ -406,7 +419,8 @@ function packagedGoRuntime() {
   };
 }
 
-try {
+async function buildFixtureWasm(output: string, tags: string) {
+  const unoptimizedWasm = `${output}.unoptimized`;
   // the fixture variant changes only the connector's trusted service issuer.
   // production artifacts reject that private host field. publication, signing,
   // visitor TLS and both service/connector engines remain the actual Go owners.
@@ -414,7 +428,7 @@ try {
     "go",
     [
       "build",
-      "-tags=tnlwasmtest",
+      `-tags=${tags}`,
       "-trimpath",
       "-ldflags=-s -w",
       "-o",
@@ -436,13 +450,19 @@ try {
       "--enable-bulk-memory",
       "--enable-nontrapping-float-to-int",
       "-o",
-      wasm,
+      output,
     ],
     { cwd: root, signal: lifetime.signal, maxBuffer: 4 << 20 },
   );
   await rm(unoptimizedWasm);
-  if (runtime !== "workerd")
+}
+
+try {
+  await buildFixtureWasm(wasm, "tnlwasmtest,tnlpublisher");
+  if (runtime !== "workerd") {
+    await buildFixtureWasm(connectorWasm, "tnlwasmtest,tnlconnector");
     console.log(JSON.stringify({ runtime: "chrome", proof: await chromeSmoke(fixture) }));
+  }
   if (runtime !== "chrome")
     console.log(JSON.stringify({ runtime: "workerd", proof: await workerdSmoke(fixture) }));
 } catch (error) {

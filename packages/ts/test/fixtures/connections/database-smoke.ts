@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
-import { createClient, type TnlClientFactory } from "@tnldotdev/tnl";
+import {
+  deployment,
+  connect,
+  client as driverClient,
+  type TnlClientFactory,
+} from "@tnldotdev/tnl/node";
 import { createInterface } from "node:readline";
 import mysql from "mysql2/promise";
 import pg from "pg";
 
 const protocol = process.argv[2];
 assert(protocol === "postgres" || protocol === "mysql");
-const deployment = createClient({
+const selectedDeployment = deployment("production", {
   project: "fixture/driver-fixture",
   services: { database: { protocol } },
-}).deployment("production");
+});
 const credentials = { user: "tnl_client", password: "testpass", database: "tnl_fixture" };
 const input = createInterface({ input: process.stdin });
 const lines = input[Symbol.asyncIterator]();
@@ -47,7 +52,7 @@ async function exercise<Client>(
 }
 
 try {
-  const options = await deployment.connect("database");
+  const options = await connect(selectedDeployment, "database");
   if (protocol === "postgres") {
     assert(!("stream" in options));
     assert.equal(options.ssl.rejectUnauthorized, true);
@@ -63,7 +68,7 @@ try {
       await client.end();
     }
     const closed: pg.Pool[] = [];
-    const get = deployment.client("database", {
+    const get = driverClient(selectedDeployment, "database", {
       create(connection) {
         assert(!("stream" in connection));
         return new pg.Pool({
@@ -110,7 +115,7 @@ try {
       await client.end();
     }
     const closed: mysql.Pool[] = [];
-    const get = deployment.client("database", {
+    const get = driverClient(selectedDeployment, "database", {
       create(connection) {
         assert("stream" in connection);
         return mysql.createPool({
@@ -138,5 +143,5 @@ try {
   }
 } finally {
   input.close();
-  await deployment.close();
+  await selectedDeployment.close();
 }

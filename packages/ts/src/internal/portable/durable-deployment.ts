@@ -1,5 +1,6 @@
 import { TnlError } from "../../errors.js";
 import { createStreamClient } from "../connector/wasm_client.js";
+import { loadWasm } from "../connector/wasm_loader.js";
 import type { PublisherStorageHost } from "./storage-host.js";
 
 // the durable owner supplies its persisted opaque credential and storage host.
@@ -11,7 +12,7 @@ export function durablePublisherDeployment(
     readonly storageHost: PublisherStorageHost;
     readonly signal: AbortSignal;
   },
-  module?: WebAssembly.Module,
+  module: WebAssembly.Module,
 ) {
   let token: string;
   try {
@@ -25,8 +26,12 @@ export function durablePublisherDeployment(
   } catch {
     throw new TnlError("sdk.configuration_invalid");
   }
-  return createStreamClient({ project: context.configuration.project, token }, module, {
-    storageHost: context.storageHost,
-    signal: context.signal,
-  }).deployment(context.configuration.deployment);
+  return createStreamClient(
+    { project: context.configuration.project, token },
+    () => loadWasm(module),
+    {
+      storageHost: context.storageHost,
+      signal: context.signal,
+    },
+  ).deployment(context.configuration.deployment);
 }

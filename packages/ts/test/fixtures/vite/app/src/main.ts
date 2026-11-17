@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import { tnl } from "@tnldotdev/tnl";
+import { tnl } from "@tnldotdev/tnl/browser";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 

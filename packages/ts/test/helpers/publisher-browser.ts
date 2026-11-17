@@ -1,4 +1,4 @@
-import { createClient, response } from "../../src/index.browser.js";
+import { deployment, publish, response } from "../../src/browser.js";
 import type { WasmPublisherHost } from "../../src/internal/connector/wasm_abi.js";
 
 export async function exerciseBrowserPublication() {
@@ -47,12 +47,12 @@ export async function exerciseBrowserPublication() {
       },
     },
   };
-  const deployment = createClient({
+  const production = deployment("production", {
     project: "acme/shop",
     token: "private-fixture-credential",
-  }).deployment("production");
-  const publication = await deployment.publish(() => response("browser handler"));
+  });
+  const publication = await publish(production, () => response("browser handler"));
   await publication.close();
-  await deployment.close();
+  await production.close();
   return { restored, applicationResponse };
 }

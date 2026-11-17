@@ -16,10 +16,8 @@ function isBridge(value: unknown): value is WasmBridge {
   return (
     typeof value === "object" &&
     value !== null &&
-    "createDeployment" in value &&
-    typeof value.createDeployment === "function" &&
-    "publish" in value &&
-    typeof value.publish === "function" &&
+    (("createDeployment" in value && typeof value.createDeployment === "function") ||
+      ("publish" in value && typeof value.publish === "function")) &&
     "close" in value &&
     typeof value.close === "function"
   );
@@ -42,7 +40,7 @@ function goConstructor(): Promise<GoConstructor> {
 
 // only immutable compiled code is shared. a deployment always receives a fresh
 // go scheduler and private callback references, including in a worker isolate.
-let compiled: Promise<WebAssembly.Module> | undefined;
+const compiled = new Map<string, Promise<WebAssembly.Module>>();
 export async function compileWasm(response: Response): Promise<WebAssembly.Module> {
   // do not tee the large artifact for a fallback: an unread branch buffers the
   // entire download. invalid wasm cannot be repaired by compiling it twice.
@@ -53,9 +51,12 @@ export async function compileWasm(response: Response): Promise<WebAssembly.Modul
     return WebAssembly.compileStreaming(response);
   return WebAssembly.compile(await response.arrayBuffer());
 }
-function browserModule(): Promise<WebAssembly.Module> {
-  compiled ??= (async () => {
-    const response = await fetch(new URL("../../wasm/tnl.wasm", import.meta.url), {
+function browserModule(url: URL): Promise<WebAssembly.Module> {
+  const key = url.href;
+  const cached = compiled.get(key);
+  if (cached !== undefined) return cached;
+  const loading = (async () => {
+    const response = await fetch(url, {
       credentials: "omit",
       redirect: "error",
       signal: AbortSignal.timeout(45_000),
@@ -63,10 +64,11 @@ function browserModule(): Promise<WebAssembly.Module> {
     if (!response.ok) throw new TnlError("sdk.wasm_unavailable");
     return compileWasm(response);
   })().catch(() => {
-    compiled = undefined;
+    compiled.delete(key);
     throw new TnlError("sdk.wasm_unavailable");
   });
-  return compiled;
+  compiled.set(key, loading);
+  return loading;
 }
 
 export interface WasmRuntime {
@@ -105,7 +107,10 @@ export async function startWasm(
   }
 }
 
-export async function loadWasm(module?: WebAssembly.Module): Promise<WasmRuntime> {
-  const [Go, selected] = await Promise.all([goConstructor(), module ?? browserModule()]);
+export async function loadWasm(source: WebAssembly.Module | URL): Promise<WasmRuntime> {
+  const [Go, selected] = await Promise.all([
+    goConstructor(),
+    source instanceof URL ? browserModule(source) : source,
+  ]);
   return startWasm(selected, Go);
 }

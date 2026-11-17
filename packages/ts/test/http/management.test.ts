@@ -2,8 +2,20 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
-import * as http from "@tnldotdev/tnl/http";
-import { createClient, deployments, publishers, type Deployment } from "@tnldotdev/tnl/http";
+import * as http from "@tnldotdev/tnl/control";
+import {
+  createControlClient,
+  createDeployment,
+  deleteDeployment,
+  getDeployment,
+  listDeployments,
+  updateDeployment,
+  createPublisherEnrollment,
+  getPublisher,
+  listPublishers,
+  revokePublisher,
+  type Deployment,
+} from "@tnldotdev/tnl/control";
 
 const project = { project_key: "shop" };
 const query = { team_id: "team-shop" };
@@ -49,17 +61,18 @@ function mockTransport(implementation: FetchCall) {
 describe("HTTP management entry point", () => {
   it("exports only transport configuration and the nine approved operations", () => {
     expect(Object.keys(http).sort()).toEqual([
-      "createClient",
       "createConfig",
-      "deployments",
-      "publishers",
+      "createControlClient",
+      "createDeployment",
+      "createPublisherEnrollment",
+      "deleteDeployment",
+      "getDeployment",
+      "getPublisher",
+      "listDeployments",
+      "listPublishers",
+      "revokePublisher",
+      "updateDeployment",
     ]);
-    const methods = (container: object) =>
-      Object.getOwnPropertyNames(container)
-        .filter((name) => !["length", "name", "prototype"].includes(name))
-        .sort();
-    expect(methods(deployments)).toEqual(["create", "delete", "get", "list", "update"]);
-    expect(methods(publishers)).toEqual(["createEnrollment", "get", "list", "revoke"]);
   });
 
   it("imports without any Node built-ins or native process dependencies", async () => {
@@ -71,11 +84,39 @@ describe("HTTP management entry point", () => {
         loader,
         "--input-type=module",
         "-e",
-        'const api = await import("@tnldotdev/tnl/http"); console.log(Object.keys(api).sort().join(","));',
+        'const api = await import("@tnldotdev/tnl/control"); console.log(Object.keys(api).sort().join(","));',
       ],
       { cwd: fileURLToPath(new URL("../../", import.meta.url)) },
     );
-    expect(stdout.trim()).toBe("createClient,createConfig,deployments,publishers");
+    expect(stdout.trim()).toBe(Object.keys(http).sort().join(","));
+  });
+
+  it("prefers request Fetch over client Fetch over the current global Fetch", async () => {
+    const requestFetch = mockTransport(async () =>
+      json({ deployments: [], next_cursor: "request" }),
+    );
+    const clientFetch = mockTransport(async () => json({ deployments: [], next_cursor: "client" }));
+    const globalFetch = mockTransport(async () => json({ deployments: [], next_cursor: "global" }));
+    const baseUrl = "https://control.example.test";
+    const client = createControlClient({ baseUrl, fetch: clientFetch });
+    const fallback = createControlClient({ baseUrl });
+    const options = { path: project, query, throwOnError: true as const };
+
+    vi.stubGlobal("fetch", globalFetch);
+    try {
+      expect(
+        (await listDeployments({ ...options, client, fetch: requestFetch })).data.next_cursor,
+      ).toBe("request");
+      expect((await listDeployments({ ...options, client })).data.next_cursor).toBe("client");
+      expect((await listDeployments({ ...options, client: fallback })).data.next_cursor).toBe(
+        "global",
+      );
+      expect(requestFetch).toHaveBeenCalledTimes(1);
+      expect(clientFetch).toHaveBeenCalledTimes(1);
+      expect(globalFetch).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("sends canonical operations, original creation keys, conditions, and bearer auth", async () => {
@@ -107,13 +148,13 @@ describe("HTTP management entry point", () => {
         return json({ deployments: [deployment], next_cursor: "deployment-next" });
       return json(deployment, request.method === "POST" ? 201 : 200);
     });
-    const client = createClient({
+    const client = createControlClient({
       baseUrl: "https://control.example.test",
       auth: "scoped-token",
       fetch: transport,
     });
     const options = { client, query, throwOnError: true as const };
-    const created = await deployments.create({
+    const created = await createDeployment({
       ...options,
       path: project,
       headers: { "Idempotency-Key": "original-create" },
@@ -123,7 +164,7 @@ describe("HTTP management entry point", () => {
     expect(created.response.headers.get("etag")).toBe('"1"');
     expect(
       (
-        await deployments.list({
+        await listDeployments({
           ...options,
           path: project,
           query: { ...query, after: "previous", limit: 1 },
@@ -131,8 +172,8 @@ describe("HTTP management entry point", () => {
         })
       ).data.next_cursor,
     ).toBe("deployment-next");
-    await deployments.get({ ...options, path });
-    await deployments.update({
+    await getDeployment({ ...options, path });
+    await updateDeployment({
       ...options,
       path,
       headers: { "If-Match": '"1"' },
@@ -145,23 +186,21 @@ describe("HTTP management entry point", () => {
         },
       },
     });
-    const enrollment = await publishers.createEnrollment({
+    const enrollment = await createPublisherEnrollment({
       ...options,
       path,
       headers: { "Idempotency-Key": "original-enrollment" },
       body: { services: ["db"], max_members: 1, expires_in: 600 },
     });
     expect(enrollment.data.enrollment_key).toBe("private-enrollment");
-    expect((await publishers.list({ ...options, path })).data.next_cursor).toBe("publisher-next");
+    expect((await listPublishers({ ...options, path })).data.next_cursor).toBe("publisher-next");
     const publisherPath = { ...path, publisher: "pub_customer" };
-    expect((await publishers.get({ ...options, path: publisherPath })).data.services).toEqual({
+    expect((await getPublisher({ ...options, path: publisherPath })).data.services).toEqual({
       db: "postgres",
     });
-    expect((await publishers.revoke({ ...options, path: publisherPath })).response.status).toBe(
-      204,
-    );
+    expect((await revokePublisher({ ...options, path: publisherPath })).response.status).toBe(204);
     expect(
-      (await deployments.delete({ ...options, path, headers: { "If-Match": '"1"' } })).response
+      (await deleteDeployment({ ...options, path, headers: { "If-Match": '"1"' } })).response
         .status,
     ).toBe(204);
     expect(requests).toHaveLength(9);
@@ -204,8 +243,11 @@ describe("HTTP management entry point", () => {
         request_id: "request-test",
       };
       const transport = mockTransport(async () => json(problem, status));
-      const client = createClient({ baseUrl: "https://control.example.test", fetch: transport });
-      const result = await deployments.update({
+      const client = createControlClient({
+        baseUrl: "https://control.example.test",
+        fetch: transport,
+      });
+      const result = await updateDeployment({
         client,
         path,
         query,
@@ -253,7 +295,7 @@ describe("HTTP management entry point", () => {
         }
         return json(deployment, request.method === "POST" ? 201 : 200);
       });
-      const client = createClient({
+      const client = createControlClient({
         baseUrl: "https://control.example.test",
         fetch: transport,
       });
@@ -281,31 +323,31 @@ describe("HTTP management entry point", () => {
       ];
       const originalHeaders = supplied.map((value) => [...new Headers(value)]);
       const options = { client, query, throwOnError: true as const };
-      await deployments.create({
+      await createDeployment({
         ...options,
         path: project,
         headers: createHeaders,
         body: { name: "customer", targets: { db: { address: "db.internal:5432" } } },
       });
-      await deployments.update({
+      await updateDeployment({
         ...options,
         path,
         headers: updateHeaders,
         body: { targets: { db: { address: "replacement.internal:5432" } } },
       });
-      await publishers.createEnrollment({
+      await createPublisherEnrollment({
         ...options,
         path,
         headers: enrollmentHeaders,
         body: { services: ["db"], max_members: 1, expires_in: 600 },
       });
-      await deployments.list({ ...options, path: project, headers: readHeaders });
-      await deployments.get({ ...options, path, headers: readHeaders });
-      await publishers.list({ ...options, path, headers: readHeaders });
+      await listDeployments({ ...options, path: project, headers: readHeaders });
+      await getDeployment({ ...options, path, headers: readHeaders });
+      await listPublishers({ ...options, path, headers: readHeaders });
       const publisherPath = { ...path, publisher: "pub_customer" };
-      await publishers.get({ ...options, path: publisherPath, headers: readHeaders });
-      await publishers.revoke({ ...options, path: publisherPath, headers: readHeaders });
-      await deployments.delete({ ...options, path, headers: deleteHeaders });
+      await getPublisher({ ...options, path: publisherPath, headers: readHeaders });
+      await revokePublisher({ ...options, path: publisherPath, headers: readHeaders });
+      await deleteDeployment({ ...options, path, headers: deleteHeaders });
       expect(requests).toHaveLength(9);
       expect(requests[0]?.headers.get("idempotency-key")).toBe("original-create");
       expect(requests[1]?.headers.get("if-match")).toBe('"9007199254740993"');
@@ -323,13 +365,13 @@ describe("HTTP management entry point", () => {
     { ...deployment, revision: "1" },
     { ...deployment, services: { db: { id: serviceId, protocol: "ssh", trust_revision: 1 } } },
   ])("rejects malformed successful responses", async (invalid) => {
-    const client = createClient({
+    const client = createControlClient({
       baseUrl: "https://control.example.test",
       fetch: mockTransport(async () => json(invalid)),
     });
-    await expect(
-      deployments.get({ client, path, query, throwOnError: true }),
-    ).rejects.toMatchObject({ name: "ZodError" });
+    await expect(getDeployment({ client, path, query, throwOnError: true })).rejects.toMatchObject({
+      name: "ZodError",
+    });
   });
 
   it("keeps independently configured clients isolated during concurrent calls", async () => {
@@ -339,19 +381,19 @@ describe("HTTP management entry point", () => {
       seen.push(`${new URL(request.url).host}:${request.headers.get("authorization")}`);
       return json(deployment);
     });
-    const first = createClient({
+    const first = createControlClient({
       baseUrl: "https://first.example.test",
       auth: "first",
       fetch: transport,
     });
-    const second = createClient({
+    const second = createControlClient({
       baseUrl: "https://second.example.test",
       auth: "second",
       fetch: transport,
     });
     await Promise.all(
       [first, second, first, second].map((client) =>
-        deployments.get({ client, path, query, throwOnError: true }),
+        getDeployment({ client, path, query, throwOnError: true }),
       ),
     );
     expect(seen).toEqual([
@@ -370,8 +412,11 @@ describe("HTTP management entry point", () => {
       expect(request.signal.aborted).toBe(true);
       throw reason;
     });
-    const client = createClient({ baseUrl: "https://control.example.test", fetch: transport });
-    await expect(deployments.get({ client, path, query, signal, throwOnError: true })).rejects.toBe(
+    const client = createControlClient({
+      baseUrl: "https://control.example.test",
+      fetch: transport,
+    });
+    await expect(getDeployment({ client, path, query, signal, throwOnError: true })).rejects.toBe(
       reason,
     );
     expect(transport).toHaveBeenCalledTimes(1);

@@ -161,6 +161,13 @@ binds JavaScript calls to existing operations and joins its resources before
 exiting. A deployment handle owns a fresh Go instance. Workers share compiled
 code, never a live scheduler or a connection across requests. Browser control
 requests use explicit credentials with uncredentialed CORS, not ambient cookies.
+The TypeScript SDK exposes named operations through `/node`, `/bun`, `/browser`,
+and `/cloudflare`. A deployment handle owns cleanup; importing it does not
+select a live transport. The browser loads connector WASM on the first
+connection and publisher WASM only when `publish()` is called. Cloudflare
+bundles the connector for `connect` or the publisher for `durablePublisher`.
+Both artifacts use the same Go runtime shim. `/control` exposes the generated
+Fetch client independently of the runtime or WASM.
 
 Browsers and Durable Objects can own hosted publishers; ordinary Workers own
 request-scoped connectors. A Durable Object persists running or stopped intent

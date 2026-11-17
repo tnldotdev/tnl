@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { inspect } from "node:util";
-import { createClient } from "../../src/index.browser.js";
+import { createClient } from "../helpers/portable-client.js";
 import type { WasmByteStream, WasmConnection } from "../../src/internal/connector/wasm_abi.js";
 import type { TnlStream } from "../../src/project.js";
 

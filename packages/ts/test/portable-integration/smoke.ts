@@ -1,4 +1,4 @@
-import { createClient } from "@tnldotdev/tnl";
+type Runtime = Pick<typeof import("@tnldotdev/tnl/browser"), "deployment" | "connect" | "client">;
 import * as z from "zod";
 import {
   check,
@@ -44,14 +44,14 @@ async function joinCleanup(
     );
 }
 
-function deployment(fixture: PortableFixture) {
+function deployment(runtime: Runtime, fixture: PortableFixture) {
   // the runtime's normal package export selects browser/workerd. no private
   // bridge, native CLI, yamux implementation, or fabricated admission is used.
-  return createClient({
+  return runtime.deployment(fixture.deployment, {
     project: fixture.project,
     token: fixture.token,
     services,
-  }).deployment(fixture.deployment);
+  });
 }
 
 async function closed(operation: Promise<unknown>): Promise<void> {
@@ -80,11 +80,11 @@ export interface SmokeReport {
   closed: true;
 }
 
-export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
+export async function runPortableSmoke(runtime: Runtime, input: unknown): Promise<SmokeReport> {
   const fixture = fixtureSchema.parse(input);
-  const selected = deployment(fixture);
+  const selected = deployment(runtime, fixture);
   let closeWaiting: (() => Promise<void>) | undefined;
-  const postgres = selected.client("postgres", {
+  const postgres = runtime.client(selected, "postgres", {
     create: async (connection) =>
       PostgresFixtureClient.connect(
         await connection.open({ signal: AbortSignal.timeout(60_000) }),
@@ -96,7 +96,7 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
   let phase: Phase = "http";
   let failed: PortableSmokeError | AggregateError | undefined;
   try {
-    const http = await selected.connect("http");
+    const http = await runtime.connect(selected, "http");
     const response = await http.fetch("/portable-smoke?source=sdk");
     check(response.status === 200, "SDK HTTP request failed");
     const observation = z
@@ -109,7 +109,7 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
     check(observation.fixture === "portable-sdk", "SDK HTTP response came from the wrong target");
 
     phase = "tcp";
-    const tcp = await selected.connect("tcp");
+    const tcp = await runtime.connect(selected, "tcp");
     const wire = new Wire(await tcp.open({ signal: AbortSignal.timeout(30_000) }));
     let exchanged = false;
     try {
@@ -128,7 +128,7 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
     }
 
     phase = "mysql";
-    const mysql = await selected.connect("mysql");
+    const mysql = await runtime.connect(selected, "mysql");
     const mysqlClient = await MySQLFixtureClient.connect(
       await mysql.open({ signal: AbortSignal.timeout(30_000) }),
       fixture.mysql,
@@ -141,7 +141,7 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
     }
 
     phase = "kubernetes";
-    const kubernetes = await selected.connect("kubernetes");
+    const kubernetes = await runtime.connect(selected, "kubernetes");
     const pods = await kubernetes.fetch("/api/v1/namespaces/portable/pods", {
       headers: { Authorization: `Bearer ${fixture.kubernetes_token}` },
     });
@@ -234,7 +234,7 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
     phase = "close-read";
     check(await read, "blocked TCP read returned unexpected target bytes");
     phase = "close-reject";
-    await closed(selected.connect("tcp"));
+    await closed(runtime.connect(selected, "tcp"));
     return {
       protocols: ["http", "tcp", "postgres", "mysql", "kubernetes"],
       postgresBackendPID: pid,
@@ -274,13 +274,14 @@ export interface IsolationReport {
 // call these concurrently from two Worker requests in the same workerd isolate.
 // the fixture rendezvous makes peer-close-before-query observable, not timed.
 export async function runPortableIsolation(
+  runtime: Runtime,
   input: unknown,
   role: "first" | "second",
   run: string,
 ): Promise<IsolationReport> {
   const fixture = fixtureSchema.parse(input);
-  const selected = deployment(fixture);
-  const get = selected.client("postgres", {
+  const selected = deployment(runtime, fixture);
+  const get = runtime.client(selected, "postgres", {
     create: async (connection) =>
       PostgresFixtureClient.connect(
         await connection.open({ signal: AbortSignal.timeout(60_000) }),

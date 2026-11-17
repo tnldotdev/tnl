@@ -39,6 +39,7 @@ export type PackageManifest = z.infer<typeof packageManifestSchema>;
 export function assertWasmAssets(packedFiles: ReadonlySet<string>): void {
   for (const file of [
     "dist/wasm/tnl.wasm",
+    "dist/wasm/publisher.wasm",
     "dist/wasm/wasm_exec.js",
     "dist/wasm/go-license.txt",
     "dist/wasm/third-party-licenses.txt",

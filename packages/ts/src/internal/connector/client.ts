@@ -18,6 +18,7 @@ import type { ServiceProtocol } from "../project/runtime.js";
 import { deploymentConnector } from "./connection.js";
 import { captureWorkload, usesWorkload } from "./workload/provider.js";
 import { boundManagement } from "./management.js";
+import type { DeploymentOptions, HTTPNames, ServiceNames as Names } from "./deployment_types.js";
 import type { LocalHTTPServer } from "../publisher/register.js";
 import type { FetchHandler } from "../publisher/fetch_types.js";
 import type {
@@ -28,12 +29,6 @@ import type {
 } from "../publisher/publication.js";
 
 export type { ServiceFacts } from "../../project.js";
-type Names<Services extends ServiceFacts> = Extract<keyof Services, string>;
-type HTTPNames<Services extends ServiceFacts> = keyof Services extends never
-  ? string
-  : {
-      [Name in Names<Services>]: Services[Name]["protocol"] extends "http" ? Name : never;
-    }[Names<Services>];
 type Connection<
   Services extends ServiceFacts,
   Name extends Names<Services>,
@@ -215,11 +210,9 @@ async function localConnection(
 }
 
 /** construct explicit deployment handles from portable service names and protocols. */
-export function createClient<const Services extends ServiceFacts = Record<never, never>>(options: {
-  project?: string;
-  services?: Services;
-  token?: string;
-}) {
+export function createClient<const Services extends ServiceFacts = Record<never, never>>(
+  options: DeploymentOptions<Services>,
+) {
   const parsed = z
     .strictObject({
       project: z

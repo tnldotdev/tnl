@@ -23,8 +23,12 @@ func TestInitConnectsRecognizedAPIServerEntrypoints(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			runtime := "node"
+			if test.name == "hono_bun" {
+				runtime = "bun"
+			}
 			if plan.Framework != "" || plan.NeedsAppRegistration || plan.ServerPath != filepath.Join(root, "src", "index.ts") || !bytes.Equal(plan.ServerSource, []byte(test.source)) ||
-				!strings.Contains(string(plan.ServerReplacement), test.result) || !strings.Contains(string(plan.ServerReplacement), "await publication?.register(") || !strings.Contains(string(plan.ServerReplacement), "tnl.prepare(") || !strings.Contains(string(plan.ServerReplacement), "import { tnl } from '@tnldotdev/tnl'") {
+				!strings.Contains(string(plan.ServerReplacement), test.result) || !strings.Contains(string(plan.ServerReplacement), "await publication?.register(") || !strings.Contains(string(plan.ServerReplacement), "tnl.prepare(") || !strings.Contains(string(plan.ServerReplacement), "import { tnl } from '@tnldotdev/tnl/"+runtime+"'") {
 				t.Fatalf("init plan: %#v", plan)
 			}
 			if err := replaceRecognizedInitFile(plan.ServerPath, plan.ServerSource, plan.ServerReplacement); err != nil {

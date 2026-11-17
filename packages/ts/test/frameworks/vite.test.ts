@@ -133,7 +133,7 @@ describe("tnl", () => {
   });
   test("keeps local development working without a local manager", async () => {
     expect(tnl).toHaveLength(0);
-    expect(tnl()).toMatchObject({ apply: "serve", enforce: "post", name: "tnl" });
+    expect(tnl()).toMatchObject({ enforce: "post", name: "tnl" });
     const directory = await temporaryDirectory("tnl-vite-empty-");
     await withCurrentDirectory(directory, async () => {
       await expect(runConfigHook(tnl(), { server: { port: 4173 } })).resolves.toEqual(

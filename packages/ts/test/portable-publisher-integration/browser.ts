@@ -1,4 +1,4 @@
-import { createClient } from "@tnldotdev/tnl";
+import { connect, deployment, publish } from "@tnldotdev/tnl/browser";
 import * as z from "zod";
 import { check, fixtureCall, fixtureSchema, publisherFailures } from "./fixture.ts";
 import { publisherHandler } from "./handler.ts";
@@ -16,13 +16,13 @@ export async function smoke(input: unknown) {
     token: fixture.token,
     services: { web: { protocol: "http" }, restricted: { protocol: "http" } },
   } as const;
-  const publisher = createClient(options).deployment(fixture.deployment);
+  const publisher = deployment(fixture.deployment, options);
   // a distinct deployment owns another actual go runtime for connector traffic.
-  const connector = createClient({
+  const connector = deployment(fixture.deployment, {
     project: fixture.project,
     token: fixture.token,
     services: { web: { protocol: "http" } },
-  }).deployment(fixture.deployment);
+  });
   const handler = publisherHandler(crypto.randomUUID());
   const restrictedHandler = publisherHandler(crypto.randomUUID());
   let phase = "publish";
@@ -32,7 +32,7 @@ export async function smoke(input: unknown) {
   };
   const operation = async () => {
     step("publish");
-    const publication = await publisher.publish("web", handler.handle);
+    const publication = await publish(publisher, "web", handler.handle);
     step("public-exercise");
     const publicProof = await fixtureCall(fixture, "/exercise", publication.url);
     check(
@@ -42,7 +42,7 @@ export async function smoke(input: unknown) {
       "public visitor did not verify publisher TLS",
     );
     step("connector");
-    const connection = await connector.connect("web");
+    const connection = await connect(connector, "web");
     step("response-stream");
     const response = await connection.fetch(connection.url + "/stream");
     check(response.ok && response.body !== null, "connector-to-WASM publisher stream failed");
@@ -119,7 +119,7 @@ export async function smoke(input: unknown) {
       canceled = evidence.canceled && evidence.requestAborted;
     }
     step("restricted");
-    const restricted = await publisher.publish("restricted", restrictedHandler.handle);
+    const restricted = await publish(publisher, "restricted", restrictedHandler.handle);
     const denied = await fixtureCall(fixture, "/observe", restricted.url);
     check(
       denied.status === 403 && restrictedHandler.calls() === 0,
@@ -137,7 +137,7 @@ export async function smoke(input: unknown) {
     );
 
     step("temporary");
-    const temporary = await publisher.publish(handler.handle, { access: "anonymous" });
+    const temporary = await publish(publisher, handler.handle, { access: "anonymous" });
     const temporaryProof = await fixtureCall(fixture, "/observe", temporary.url);
     check(
       temporaryProof.status === 200 && temporaryProof.body === "portable-publisher",

@@ -1,4 +1,4 @@
-import module from "./wasm/tnl.wasm";
+import module from "./wasm/publisher.wasm";
 import {
   DurableObjectPublisher,
   type DurableObjectPublisherState,
@@ -7,17 +7,15 @@ import {
 import { durablePublisherDeployment } from "./internal/portable/durable-deployment.js";
 
 export {
-  DurableObjectPublisher,
   createDurableObjectPublisherStorage,
   createPublisherStorageHost,
   PublisherStorageError,
 } from "./durable-object.js";
 export type {
+  DurableObjectPublisher,
   DurableObjectPublisherState,
   DurableObjectWasmPublisherOptions,
-  DurableObjectPublisherOptions,
   DurablePublicationConfiguration,
-  DurablePublisherDeployment,
   PublisherSQLiteStorage,
   PublisherStorage,
   PublisherStorageHost,
@@ -25,7 +23,7 @@ export type {
 } from "./durable-object.js";
 
 /** workerd reuses compiled code, not live runtimes or request-scoped sockets. */
-export function createDurableObjectPublisher(
+export function durablePublisher(
   state: DurableObjectPublisherState,
   options: DurableObjectWasmPublisherOptions,
 ): DurableObjectPublisher {

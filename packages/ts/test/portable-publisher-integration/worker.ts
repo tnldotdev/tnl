@@ -1,7 +1,4 @@
-import {
-  createDurableObjectPublisher,
-  type DurableObjectPublisherState,
-} from "@tnldotdev/tnl/durable-object";
+import { durablePublisher, type DurableObjectPublisherState } from "@tnldotdev/tnl/cloudflare";
 import { check, fixtureSchema } from "./fixture.ts";
 import { publisherHandler } from "./handler.ts";
 import { installPublisherFixtureHost, runtimeStarts } from "./host.ts";
@@ -24,7 +21,7 @@ const nativeFetch = globalThis.fetch.bind(globalThis);
 // this is an actual SQLite-backed workerd durable object, not the injected
 // deployment/storage doubles used by portable/durable-object.test.ts.
 export class Publisher {
-  readonly #owner: ReturnType<typeof createDurableObjectPublisher>;
+  readonly #owner: ReturnType<typeof durablePublisher>;
   readonly #runtime = crypto.randomUUID();
   readonly #url: string;
   #identityImports = 0;
@@ -42,7 +39,7 @@ export class Publisher {
         return (index === 0 ? environment.RELAY0 : environment.RELAY1).fetch(request);
       return nativeFetch(request);
     });
-    this.#owner = createDurableObjectPublisher(state, {
+    this.#owner = durablePublisher(state, {
       configuration: { project: fixture.project, deployment: fixture.deployment, service: "web" },
       identity: () => {
         this.#identityImports++;

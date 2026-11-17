@@ -68,8 +68,14 @@ test("publisher diagnostics name platform error kinds without their messages", (
 });
 
 test("workerd uses persisted SQLite, static Go/WASM, and no node compatibility mode", () => {
-  const config = publisherWorkerdConfiguration(fixture, "/private/tnl.wasm", "/private/storage");
-  expect(config).toContain('wasm = embed "/private/tnl.wasm"');
+  const config = publisherWorkerdConfiguration(
+    fixture,
+    "../tnl-publisher-fixture.wasm",
+    "/private/storage",
+  );
+  expect(config).toContain(
+    '(name = "publisher.wasm", wasm = embed "../tnl-publisher-fixture.wasm")',
+  );
   expect(config).toContain('durableObjectStorage = (localDisk = "storage")');
   expect(config).toContain('path = "/private/storage", writable = true');
   expect(config).toContain("enableSql = true");

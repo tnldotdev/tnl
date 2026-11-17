@@ -69,13 +69,19 @@ workload policy. Use a Linux GitHub-hosted runner on x64 or arm64.
 In your existing Drizzle configuration, read the prepared connection settings:
 
 ```ts
-import { tnl } from "@tnldotdev/tnl";
+import { connect, deployment } from "@tnldotdev/tnl/node";
 import { defineConfig } from "drizzle-kit";
+
+const production = deployment("production", {
+  project: "team/project",
+  services: { database: { protocol: "postgres" } },
+});
+const database = await connect(production, "database");
 
 export default defineConfig({
   dialect: "postgresql",
   dbCredentials: {
-    ...tnl.connect("database"),
+    ...database,
     user: process.env.DB_USER!,
     password: process.env.DB_PASSWORD!,
     database: process.env.DB_NAME!,
@@ -108,7 +114,7 @@ The action exports these environment variables to later steps:
 
 | Variable                | Use                                                       |
 | ----------------------- | --------------------------------------------------------- |
-| `TNL_CONNECTION_HANDLE` | Private connection handle read by `tnl.connect(...)`      |
+| `TNL_CONNECTION_HANDLE` | Private connection handle read by the Node and Bun SDKs   |
 | `TNL_PROJECT_RUNTIME`   | Service metadata used by `tnl.services`                   |
 | `KUBECONFIG`            | Session kubeconfig, when the workload includes Kubernetes |
 

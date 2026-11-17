@@ -26,7 +26,7 @@ const config :Workerd.Config = (
     (name = "main", worker = (
       modules = [
         (name = "worker.mjs", esModule = embed "worker.mjs"),
-        (name = "tnl.wasm", wasm = embed ${JSON.stringify(wasm)})
+        (name = "publisher.wasm", wasm = embed ${JSON.stringify(wasm)})
       ],
       compatibilityDate = "2026-10-31",
       durableObjectNamespaces = [(className = "Publisher", uniqueKey = "tnl-portable-publisher-integration-v1", enableSql = true)],

@@ -36,43 +36,35 @@
   ],
   "exports": {
     ".": {
-      "workerd": {
-        "types": "./dist/index.worker.d.ts",
-        "default": "./dist/index.worker.js"
-      },
-      "worker": {
-        "types": "./dist/index.browser.d.ts",
-        "default": "./dist/index.browser.js"
-      },
-      "browser": {
-        "types": "./dist/index.browser.d.ts",
-        "import": "./dist/index.browser.js",
-        "require": "./dist/index.browser.js",
-        "default": "./dist/index.browser.js"
-      },
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.js",
       "default": "./dist/index.js"
     },
-    "./durable-object": {
-      "workerd": {
-        "types": "./dist/durable-object.worker.d.ts",
-        "default": "./dist/durable-object.worker.js"
-      },
-      "types": "./dist/durable-object.d.ts",
-      "import": "./dist/durable-object.js",
-      "default": "./dist/durable-object.js"
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    },
+    "./bun": {
+      "types": "./dist/bun.d.ts",
+      "default": "./dist/bun.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "default": "./dist/browser.js"
+    },
+    "./cloudflare": {
+      "types": "./dist/cloudflare.d.ts",
+      "default": "./dist/cloudflare.js"
     },
     "./config": {
       "types": "./dist/config.d.ts",
       "import": "./dist/config.js",
       "default": "./dist/config.js"
     },
-    "./http": {
-      "types": "./dist/http.d.ts",
-      "import": "./dist/http.js",
-      "default": "./dist/http.js"
+    "./control": {
+      "types": "./dist/control.d.ts",
+      "default": "./dist/control.js"
     },
     "./workload": {
       "types": "./dist/workload.d.ts",

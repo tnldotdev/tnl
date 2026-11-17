@@ -1,4 +1,4 @@
-import { createClient, tnl, type TnlConnectionRegistry } from "@tnldotdev/tnl";
+import { deployment, connect, tnl, type TnlConnectionRegistry } from "@tnldotdev/tnl/node";
 import { assert, assertType, expectTypeOf, test } from "vitest";
 // @ts-expect-error there is no separate server entrypoint.
 import type * as RemovedServer from "@tnldotdev/tnl/server";
@@ -25,11 +25,12 @@ test("SQL settings compose with application-owned credentials in real drivers", 
 test("connections require declared service facts", () => {
   expectTypeOf(tnl.port).toEqualTypeOf<number>();
   expectTypeOf(tnl.dev).toEqualTypeOf<boolean>();
-  const deployment = createClient({ project: "team/project", token: "private" }).deployment(
-    "production",
-  );
+  const selectedDeployment = deployment("production", {
+    project: "team/project",
+    token: "private",
+  });
   // @ts-expect-error service names must come from portable service facts.
-  deployment.connect("any-service");
+  connect(selectedDeployment, "any-service");
 });
 
 test("ungenerated metadata stays readonly, optional, and browser-safe", () => {

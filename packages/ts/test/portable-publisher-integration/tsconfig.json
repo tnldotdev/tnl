@@ -7,8 +7,8 @@
     "lib": ["DOM", "DOM.Iterable", "ESNext"],
     "skipLibCheck": true,
     "paths": {
-      "@tnldotdev/tnl": ["../../src/index.browser.ts"],
-      "@tnldotdev/tnl/durable-object": ["../../src/durable-object.worker.ts"]
+      "@tnldotdev/tnl/browser": ["../../src/browser.ts"],
+      "@tnldotdev/tnl/cloudflare": ["../../src/cloudflare.ts"]
     },
     "types": ["node"]
   },

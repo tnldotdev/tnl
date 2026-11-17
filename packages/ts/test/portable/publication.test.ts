@@ -1,9 +1,16 @@
 import { inspect } from "node:util";
 import { afterEach, expect, test, vi } from "vitest";
-import { createClient, response } from "../../src/index.browser.js";
+import { createClient } from "../helpers/portable-client.js";
+import { connect, deployment as browserDeployment, publish } from "../../src/browser.js";
+import { response } from "../../src/index.js";
 import type { WasmPublisherHost } from "../../src/internal/connector/wasm_abi.js";
 import type { PublisherStorage } from "../../src/internal/portable/storage.js";
-import { createDurableObjectPublisher } from "../../src/durable-object.js";
+import {
+  DurableObjectPublisher,
+  type DurableObjectPublisherState,
+  type DurableObjectWasmPublisherOptions,
+} from "../../src/durable-object.js";
+import { durablePublisherDeployment } from "../../src/internal/portable/durable-deployment.js";
 import { portableSQLite } from "../helpers/portable-sqlite.js";
 
 const mocks = vi.hoisted(() => ({ load: vi.fn(), browserStorage: vi.fn() }));
@@ -96,12 +103,43 @@ function deployment() {
   }).deployment("production");
 }
 
+function createDurableObjectPublisher(
+  state: DurableObjectPublisherState,
+  options: DurableObjectWasmPublisherOptions,
+) {
+  const module = new WebAssembly.Module(Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0));
+  return new DurableObjectPublisher(state, {
+    ...options,
+    createDeployment: (context) => durablePublisherDeployment(context, module),
+  });
+}
+
 afterEach(() => {
   mocks.load.mockReset();
   mocks.browserStorage.mockReset();
 });
 
-test("named publication uses the actual root publisher ABI and browser storage by default", async () => {
+test("browser loads publisher WASM only when publish is called", async () => {
+  fixture();
+  const remote = browserDeployment("production", {
+    project: "acme/shop",
+    token: "private-credential",
+    services: { app: { protocol: "http" }, db: { protocol: "postgres" } },
+  });
+  expect(mocks.load).not.toHaveBeenCalled();
+  await connect(remote, "db");
+  expect(mocks.load).toHaveBeenCalledExactlyOnceWith(
+    new URL("../../src/wasm/tnl.wasm", import.meta.url),
+  );
+  await publish(remote, "app", () => new Response());
+  expect(mocks.load).toHaveBeenNthCalledWith(
+    2,
+    new URL("../../src/wasm/publisher.wasm", import.meta.url),
+  );
+  await remote.close();
+});
+
+test("named publication uses the publisher ABI and browser storage by default", async () => {
   const f = fixture();
   const remote = deployment();
   const handler = vi.fn((request: Request) =>
@@ -168,11 +206,17 @@ test("temporary publication forwards visitor policy and limits without another a
   await remote.close();
 });
 
-test("publishing and connecting coexist in one runtime without requesting publish-only connect grants", async () => {
+test("publishing and connecting load separate modules without requesting publish-only connect grants", async () => {
   const f = fixture();
   const remote = deployment();
   await Promise.all([remote.publish("app", () => new Response("app")), remote.connect("db")]);
-  expect(mocks.load).toHaveBeenCalledOnce();
+  expect(mocks.load.mock.calls).toEqual(
+    expect.arrayContaining([
+      [new URL("https://fixture.test/tnl.wasm")],
+      [new URL("https://fixture.test/publisher.wasm")],
+    ]),
+  );
+  expect(mocks.load).toHaveBeenCalledTimes(2);
   expect(f.bridge.createDeployment).toHaveBeenCalledWith(
     { project: "acme/shop", name: "production", credential: "private-credential", services: [] },
     expect.any(Object),
@@ -182,6 +226,7 @@ test("publishing and connecting coexist in one runtime without requesting publis
   expect(f.connection.close).toHaveBeenCalledOnce();
   expect(f.connector.close).toHaveBeenCalledOnce();
   expect(f.publications[0]?.raw.close).toHaveBeenCalledOnce();
+  expect(f.bridge.close).toHaveBeenCalledTimes(2);
   expect(f.events.at(-1)).toBe("runtime:close");
 });
 

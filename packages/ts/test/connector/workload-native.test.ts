@@ -307,7 +307,7 @@ const options = {
 } as const;
 
 test("all protocols share a verified native identity owner and assertions travel only through private stdin", async () => {
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const deployment = createClient(options).deployment("production");
   const snapshots = await Promise.all(
     (["api", "db", "mysql", "raw", "cluster"] as const).map((name) => deployment.connect(name)),
@@ -362,7 +362,7 @@ test("deployment handles keep all five provider protocols on native selection an
 });
 
 test("control rejection cannot select a cached owner, and one service denial leaves another usable", async () => {
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const deployment = createClient(options).deployment("production");
   await deployment.connect("db");
   fixture.assertion = "forged";
@@ -381,7 +381,7 @@ test("control rejection cannot select a cached owner, and one service denial lea
 
 test("a returned fetch resolves the caller's current verified owner rather than capturing its original file", async () => {
   const dispatch = transport.fetch.mockResolvedValue(new Response("bytes"));
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const deployment = createClient(options).deployment("production");
   const initial = await deployment.connect("api");
   if (!("fetch" in initial)) throw new Error("missing HTTP settings");
@@ -399,7 +399,7 @@ test("a returned fetch resolves the caller's current verified owner rather than 
 });
 
 test("a deployment connection never reuses the last caller's identity on denial", async () => {
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const deployment = createClient(options).deployment("production");
   const first = await deployment.connect("db");
   fixture.assertion = "other";
@@ -415,7 +415,7 @@ test("a deployment connection never reuses the last caller's identity on denial"
 });
 
 test("a late concurrent death proof adopts the recovered owner instead of starting a second native process", async () => {
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const deployment = createClient(options).deployment("production");
   await deployment.connect("db");
   fixture.dead.add("/fixture/owner-0/handle.json");
@@ -425,7 +425,7 @@ test("a late concurrent death proof adopts the recovered owner instead of starti
 });
 
 test("cold and warm helper/control budgets are explicit; rotation revalidates before reuse", async () => {
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const deployment = createClient(options).deployment("production");
   await deployment.connect("api");
   expect(fixture.calls.map((c) => c.args[2])).toEqual(["sdk-prepare"]);

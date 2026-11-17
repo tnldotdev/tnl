@@ -4,7 +4,7 @@ import { expect, test } from "vitest";
 
 test("browser publishing bundles no native process, listener, IPC, or provider implementation", async () => {
   const result = await build({
-    entryPoints: [fileURLToPath(new URL("../../src/index.browser.ts", import.meta.url))],
+    entryPoints: [fileURLToPath(new URL("../../src/browser.ts", import.meta.url))],
     bundle: true,
     write: false,
     format: "esm",

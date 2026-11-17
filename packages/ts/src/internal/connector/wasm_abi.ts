@@ -65,11 +65,11 @@ export interface WasmPublication {
 }
 
 export interface WasmBridge {
-  createDeployment(
+  createDeployment?(
     options: WasmDeploymentOptions,
     host: WasmHost,
     signal: AbortSignal,
   ): Promise<unknown>;
-  publish(optionsJSON: string, host: WasmPublisherHost): Promise<unknown>;
+  publish?(optionsJSON: string, host: WasmPublisherHost): Promise<unknown>;
   close(): Promise<unknown>;
 }

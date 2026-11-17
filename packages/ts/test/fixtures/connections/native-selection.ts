@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import * as z from "zod";
 import { createInterface } from "node:readline";
 import { configureWorkload } from "@tnldotdev/tnl/workload";
-import { createClient } from "@tnldotdev/tnl";
+import { deployment, connect, client as driverClient } from "@tnldotdev/tnl/node";
 
 const lines = createInterface({ input: process.stdin })[Symbol.asyncIterator]();
 const token = (await readFile("assertion", "utf8")).trim();
@@ -29,13 +29,13 @@ const options = {
   project: `${manifest.team}/${manifest.project_key}`,
   services: { api: { protocol: "http" } },
 } as const;
-const deployment = createClient(options).deployment("production");
-const deployments = [deployment];
-const handle = () => deployment.connect("api");
+const selectedDeployment = deployment("production", options);
+const deployments = [selectedDeployment];
+const handle = () => connect(selectedDeployment, "api");
 const handles = nativeProvider ? Array.from({ length: 4 }, handle) : [handle()];
 let copy: string | undefined;
 let copiedWorkload: typeof import("@tnldotdev/tnl/workload") | undefined;
-let copiedSDK: typeof import("@tnldotdev/tnl") | undefined;
+let copiedSDK: typeof import("@tnldotdev/tnl/node") | undefined;
 const listeners = process.listenerCount("beforeExit");
 if (process.argv.includes("copies")) {
   const root = path.resolve(import.meta.dirname, "../../..");
@@ -45,8 +45,8 @@ if (process.argv.includes("copies")) {
   });
   await cp(path.join(root, "dist"), path.join(copy, "dist"), { recursive: true });
   await cp(path.join(root, "package.json"), path.join(copy, "package.json"));
-  const unbundled: typeof import("@tnldotdev/tnl") = await import(
-    pathToFileURL(path.join(copy, "dist/index.js")).href
+  const unbundled: typeof import("@tnldotdev/tnl/node") = await import(
+    pathToFileURL(path.join(copy, "dist/node.js")).href
   );
   copiedSDK = unbundled;
   copiedWorkload = await import(pathToFileURL(path.join(copy, "dist/workload.js")).href);
@@ -66,7 +66,7 @@ assert.equal((await lines.next()).value, "warm");
 if (nativeProvider) process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN = "provider-warm";
 for (let i = 0; i < 10; i++) {
   for (const selected of nativeProvider ? deployments.slice(0, 1) : deployments)
-    assert.equal((await selected.connect("api")).url, first.url);
+    assert.equal((await connect(selected, "api")).url, first.url);
 }
 assert.equal(acquisitions, nativeProvider || rotatingFile ? 0 : deployments.length * 11);
 if (nativeProvider) {
@@ -79,7 +79,7 @@ console.log("warm");
 if (rotatingFile) {
   let created = 0;
   let closed = 0;
-  const getClient = deployment.client("api", {
+  const getClient = driverClient(selectedDeployment, "api", {
     create(connection) {
       assert.ok("fetch" in connection);
       created++;
@@ -137,9 +137,9 @@ if (copiedWorkload !== undefined) {
         },
       });
       assert(copiedSDK);
-      const isolatedDeployment = copiedSDK.createClient(options).deployment("production");
+      const isolatedDeployment = copiedSDK.deployment("production", options);
       deployments.push(isolatedDeployment);
-      const current = await isolatedDeployment.connect("api");
+      const current = await copiedSDK.connect(isolatedDeployment, "api");
       assert.ok("fetch" in current);
       assert.equal(
         settings.some((value) => value.fetch === current.fetch),
@@ -151,7 +151,7 @@ if (copiedWorkload !== undefined) {
       if (previous === undefined) delete process.env[boundary];
       else process.env[boundary] = previous;
     }
-    assert.equal((await deployment.connect("api")).url, first.url);
+    assert.equal((await connect(selectedDeployment, "api")).url, first.url);
   }
   assert.equal(isolatedAcquisitions, 3);
   assert.equal(acquisitions, handles.length * 14);
