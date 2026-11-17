@@ -98,7 +98,7 @@ func (s *TNLDSection) UnmarshalYAML(node *yaml.Node) error {
 			if err != nil {
 				return fmt.Errorf("tnld.%s: invalid duration", name)
 			}
-			value.SetInt(int64(parsed))
+			setTNLDFileDuration(value, parsed)
 		} else if err := valueNode.Decode(value.Addr().Interface()); err != nil {
 			return fmt.Errorf("tnld.%s: %w", name, err)
 		}
