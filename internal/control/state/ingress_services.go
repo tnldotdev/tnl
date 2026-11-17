@@ -21,6 +21,7 @@ import (
 // source authority proves the original socket addresses, not visitor permission.
 type IngressServiceRun struct {
 	ServiceID, RunID, Protocol, Hostname string
+	RunHostname                          *string
 	RunNumber, EndpointRevision          int64
 	Port                                 int
 	ValidUntil                           time.Time
