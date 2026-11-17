@@ -122,15 +122,21 @@ func TestIntegrationConnectorRebindOwnerObservationRechecksExpiryAfterWait(t *te
 }
 
 func TestIntegrationConnectorRebindOwnerObservationExpiryDoesNotRevokePublisher(t *testing.T) {
-	for _, expiry := range []string{"owner", "publisher"} {
+	for _, expiry := range []string{"owner", "publisher", "publisher-liveness"} {
 		t.Run(expiry, func(t *testing.T) {
 			f := newConnectorPairFixture(t)
+			origin := f.now
 			pairs := []ConnectorPeerPair{f.create(t)}
 			f.request.IdempotencyKey = "observations-sibling"
 			f.sign(t, &f.request)
 			pairs = append(pairs, f.create(t))
 			sort.Slice(pairs, func(i, j int) bool { return pairs[i].ID < pairs[j].ID })
 			for _, pair := range pairs {
+				if pair.ServiceID != f.run.ServiceID || pair.ServiceRunID != f.run.RunID || pair.RunNumber != f.run.RunNumber ||
+					pair.Subject != f.request.Subject || pair.Relays != f.request.ExpectedRelays ||
+					!pair.ExpiresAt.Equal(origin.Add(2*time.Minute)) {
+					t.Fatal("observation fixture lost exact owner scope or fixed device serving bound")
+				}
 				f.now = f.now.Add(time.Second)
 				for slot := range 2 {
 					f.claim(t, pair, slot, f.now)
@@ -140,10 +146,22 @@ func TestIntegrationConnectorRebindOwnerObservationExpiryDoesNotRevokePublisher(
 			}
 			query, id := `UPDATE control.connector_peer_pairs SET expires_at=$2 WHERE id=$1`, pairs[0].ID
 			if expiry == "publisher" {
+				query, id = `UPDATE control.service_runs SET serving_until=$2 WHERE id=$1`, pairs[0].ServiceRunID
+			} else if expiry == "publisher-liveness" {
 				query, id = `UPDATE control.service_runs SET publisher_expires_at=$2 WHERE id=$1`, pairs[0].ServiceRunID
 			}
-			if _, err := f.d.pool.Exec(t.Context(), query, id, f.now.Add(time.Second)); err != nil {
+			until := f.now.Add(time.Second)
+			if _, err := f.d.pool.Exec(t.Context(), query, id, until); err != nil {
 				t.Fatal(err)
+			}
+			var liveness, serving time.Time
+			if err := f.d.pool.QueryRow(t.Context(), `SELECT publisher_expires_at,serving_until FROM control.service_runs WHERE id=$1`, pairs[0].ServiceRunID).
+				Scan(&liveness, &serving); err != nil {
+				t.Fatal(err)
+			}
+			if expiry == "publisher" && (!serving.Equal(until) || !liveness.Equal(origin.Add(45*time.Second))) ||
+				expiry == "publisher-liveness" && (!liveness.Equal(until) || !serving.Equal(origin.Add(5*time.Minute))) {
+				t.Fatal("publisher observation fixture did not separate serving and liveness expiry")
 			}
 			before := [2][]byte{connectorPairSavedAuthority(t, f.d, pairs[0].ID), connectorPairSavedAuthority(t, f.d, pairs[1].ID)}
 			gate, err := f.d.pool.Begin(t.Context())
@@ -171,20 +189,33 @@ func TestIntegrationConnectorRebindOwnerObservationExpiryDoesNotRevokePublisher(
 			timer := time.NewTimer(time.Until(started.Add(time.Second + 10*time.Millisecond)))
 			defer timer.Stop()
 			<-timer.C
+			releasedAt := f.now.Add(time.Since(started))
+			if !releasedAt.After(until) || !releasedAt.Before(origin.Add(45*time.Second)) {
+				t.Fatal("publisher observation wait did not cross only the chosen earlier deadline")
+			}
+			t.Logf("observation expiry=%s entry=%s release=%s liveness=%s serving=%s", expiry, f.now, releasedAt, liveness, serving)
 			if err := gate.Commit(ctx); err != nil {
 				t.Fatal(err)
 			}
 			err = awaitIntegrationResult(t, ctx, done)
 			if expiry == "publisher" {
-				if !errors.Is(err, ErrServiceAccess) {
+				if !errors.Is(err, ErrServiceAccess) || len(page.Items) != 0 || page.NextAfter != "" {
 					t.Fatal("listing retained expired publisher authority", err)
 				}
 			} else {
 				if err != nil || len(page.Items) != 2 {
 					t.Fatal("one expired owner rejected the healthy publisher listing", err)
 				}
-				if page.Items[0].OwnerAuthority != nil || page.Items[1].OwnerAuthority == nil || page.Items[1].PairID != pairs[1].ID {
+				if page.Items[0].PairID != pairs[0].ID || page.Items[0].DeliveryGeneration != pairs[0].DeliveryGeneration ||
+					page.Items[1].OwnerAuthority == nil || page.Items[1].PairID != pairs[1].ID ||
+					page.Items[1].DeliveryGeneration != pairs[1].DeliveryGeneration ||
+					!page.Items[1].OwnerAuthority.ExpiresAt.Equal(origin.Add(2*time.Minute)) {
 					t.Fatal("listing retained expired authority or discarded the healthy sibling")
+				}
+				if expiry == "owner" && page.Items[0].OwnerAuthority != nil ||
+					expiry == "publisher-liveness" && (page.Items[0].OwnerAuthority == nil ||
+						!page.Items[0].OwnerAuthority.ExpiresAt.Equal(origin.Add(2*time.Minute))) {
+					t.Fatal("listing confused one owner's expiry or publisher liveness with serving authority")
 				}
 			}
 			for index, pair := range pairs {

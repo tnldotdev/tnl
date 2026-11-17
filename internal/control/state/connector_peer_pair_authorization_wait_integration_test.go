@@ -17,6 +17,7 @@ func TestIntegrationConnectorPeerPairAuthorizationExpiryDuringWait(t *testing.T)
 		{"create", "request", "run"},
 		{"create", "subject", "run"},
 		{"create", "publisher", "run"},
+		{"create", "publisher-liveness", "run"},
 		{"create", "certificate", "run"},
 		{"create", "relay", "run"},
 		{"create-reply", "pair", "pair"},
@@ -69,6 +70,8 @@ func TestIntegrationConnectorPeerPairAuthorizationExpiryDuringWait(t *testing.T)
 			case "subject":
 				query, id = `UPDATE control.control_sessions SET access_expires_at=$2 WHERE id=$1`, f.visitor.Value(controlPrincipalKey{}).(ControlPrincipal).SessionID
 			case "publisher":
+				query, id = `UPDATE control.service_runs SET serving_until=$2 WHERE id=$1`, r.ServiceRunID
+			case "publisher-liveness":
 				query, id = `UPDATE control.service_runs SET publisher_expires_at=$2 WHERE id=$1`, r.ServiceRunID
 			case "certificate":
 				query, id = `UPDATE control.service_runs SET certificate_expires_at=$2 WHERE id=$1`, r.ServiceRunID
@@ -80,6 +83,17 @@ func TestIntegrationConnectorPeerPairAuthorizationExpiryDuringWait(t *testing.T)
 			if query != "" {
 				if _, err := f.d.pool.Exec(t.Context(), query, id, until); err != nil {
 					t.Fatal(err)
+				}
+			}
+			if test.authority == "publisher" || test.authority == "publisher-liveness" {
+				var liveness, serving time.Time
+				if err := f.d.pool.QueryRow(t.Context(), `SELECT publisher_expires_at,serving_until FROM control.service_runs WHERE id=$1`, r.ServiceRunID).
+					Scan(&liveness, &serving); err != nil {
+					t.Fatal(err)
+				}
+				if test.authority == "publisher" && (!serving.Equal(until) || !liveness.Equal(f.now.Add(45*time.Second))) ||
+					test.authority == "publisher-liveness" && (!liveness.Equal(until) || !serving.Equal(f.now.Add(5*time.Minute))) {
+					t.Fatal("authorization wait fixture coupled publisher liveness and serving expiry")
 				}
 			}
 			saved := func() []byte {
@@ -118,14 +132,17 @@ func TestIntegrationConnectorPeerPairAuthorizationExpiryDuringWait(t *testing.T)
 				t.Fatal(err)
 			}
 			entered := make(chan time.Time, 1)
+			var result ConnectorPeerPair
 			done, join := connectorPairWorker(t, f.visitor, func(ctx context.Context) error {
 				entered <- time.Now()
 				at := f.now.Add(2 * time.Millisecond)
 				if r.Action == "renew" {
-					_, err := f.d.RenewConnectorPeerPair(ctx, "https://control.example.test", r, at)
+					var err error
+					result, err = f.d.RenewConnectorPeerPair(ctx, "https://control.example.test", r, at)
 					return err
 				}
-				_, err := f.d.PrepareConnectorPeerPair(ctx, r, at)
+				var err error
+				result, err = f.d.PrepareConnectorPeerPair(ctx, r, at)
 				return err
 			})
 			defer join()
@@ -136,15 +153,37 @@ func TestIntegrationConnectorPeerPairAuthorizationExpiryDuringWait(t *testing.T)
 			timer := time.NewTimer(time.Until(started.Add(time.Second + 10*time.Millisecond)))
 			defer timer.Stop()
 			<-timer.C
+			releasedAt := f.now.Add(2*time.Millisecond + time.Since(started))
+			if !releasedAt.After(until) || !releasedAt.Before(f.now.Add(45*time.Second)) {
+				t.Fatal("authorization wait did not cross only the chosen earlier deadline")
+			}
+			t.Logf("authorization action=%s authority=%s entry=%s deadline=%s release=%s", test.action, test.authority, f.now.Add(2*time.Millisecond), until, releasedAt)
 			if err := gate.Commit(ctx); err != nil {
 				t.Fatal(err)
 			}
 			err = awaitIntegrationResult(t, ctx, done)
+			if test.authority == "publisher-liveness" {
+				wantExpiry := f.now.Add(2*time.Minute + 2*time.Millisecond)
+				if err != nil || result.ID == "" || result.Key == "" || result.DeliveryGeneration < 1 ||
+					result.ServiceID != r.ServiceID || result.ServiceRunID != r.ServiceRunID || result.RunNumber != r.RunNumber ||
+					result.PublisherIdentityID != r.PublisherIdentityID || result.Subject != r.Subject || result.Relays != r.ExpectedRelays ||
+					result.Relays[0].RelayLease.RelayServiceID == result.Relays[1].RelayLease.RelayServiceID ||
+					!result.ExpiresAt.Equal(wantExpiry) {
+					t.Fatal("publisher liveness expiry changed exact pair authority before serving expiry", err)
+				}
+				var count int
+				var expiry time.Time
+				if err := f.d.pool.QueryRow(ctx, `SELECT count(*),min(expires_at) FROM control.connector_peer_pairs WHERE service_run_id=$1`, r.ServiceRunID).
+					Scan(&count, &expiry); err != nil || count != 1 || !expiry.Equal(wantExpiry) {
+					t.Fatal("liveness contrast did not persist one exact bounded owner", err)
+				}
+				return
+			}
 			want := ErrServiceAccess
 			if test.authority == "pair" && (test.action == "create-reply" || test.action == "replace-reply") && test.gate == "pair" {
 				want = ErrServiceConflict
 			}
-			if !errors.Is(err, want) || !bytes.Equal(before, saved()) {
+			if !errors.Is(err, want) || result.ID != "" || result.Key != "" || !bytes.Equal(before, saved()) {
 				t.Fatal("database wait revived authority or changed denied durable state", err)
 			}
 		})
