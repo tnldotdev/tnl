@@ -26,13 +26,14 @@ const testClusterSecret = "0123456789abcdef0123456789abcdef"
 const testStorageKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 type integrationProcessOptions struct {
-	context           context.Context
-	acmeHTTPClient    *http.Client
-	serviceHTTPClient *http.Client
-	relayClientTLS    *tls.Config
-	dns               dnsBackend
-	listeners         runtimeListeners
-	owner             *runtimeTopology
+	context                  context.Context
+	acmeHTTPClient           *http.Client
+	serviceHTTPClient        *http.Client
+	relayClientTLS           *tls.Config
+	dns                      dnsBackend
+	listeners                runtimeListeners
+	owner                    *runtimeTopology
+	observeOperationalReport func(operationalReport)
 }
 
 type integrationProcess struct {
@@ -191,6 +192,7 @@ func startIntegrationProcessWithOptions(t *testing.T, cfg daemonconfig.Config, o
 		err := serveRuntime(ctx, cfg, runtimeOptions{
 			acmeHTTPClient: options.acmeHTTPClient, serviceHTTPClient: options.serviceHTTPClient,
 			relayClientTLS: options.relayClientTLS, dns: options.dns, listeners: options.listeners,
+			observeOperationalReport: options.observeOperationalReport,
 		})
 		process.mu.Lock()
 		process.err = err

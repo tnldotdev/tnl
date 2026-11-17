@@ -61,7 +61,13 @@ type heldVisitorAuditRun struct {
 
 func TestIntegrationHeldVisitorsShareIngressAndKeepExactAuditHistories(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	f := newSplitPublishFixture(t, "held-visitors")
+	reports := &eventRecorder[operationalReport]{}
+	histories := make(map[string]heldForwardingHistory)
+	complete := false
+	// register before the existing topology: inspect callback records only after
+	// its ordinary joined cleanup. do not change carrier or visitor teardown.
+	t.Cleanup(func() { assertHeldForwardingReports(t, reports, histories, complete) })
+	f := newSplitPublishFixtureWithOptions(t, "held-visitors", splitPublishOptions{observeOperationalReport: reports.append})
 	quic, _ := f.connectors()
 	// one transport is sufficient for this composition proof; the transport
 	// matrix belongs to the existing public stream and run-capacity suites.
@@ -253,8 +259,9 @@ func TestIntegrationHeldVisitorsShareIngressAndKeepExactAuditHistories(t *testin
 	stopIntegrationProcess(t, f.ingress)
 	seenVisitors := make(map[string]bool)
 	for _, run := range runs {
-		assertHeldVisitorAuditHistory(t, f.inspect, f.identity.teamID, run, seenVisitors)
+		assertHeldVisitorAuditHistory(t, f.inspect, f.identity.teamID, run, seenVisitors, histories)
 	}
+	complete = true
 }
 
 func openHeldAuditVisitor(t *testing.T, ctx context.Context, f *splitPublishFixture, run *heldVisitorAuditRun) {
@@ -322,7 +329,7 @@ func assertHeldVisitorIngressSourceDenied(t *testing.T, ctx context.Context, f *
 	}
 }
 
-func assertHeldVisitorAuditHistory(t *testing.T, database *sql.DB, team string, run *heldVisitorAuditRun, seen map[string]bool) {
+func assertHeldVisitorAuditHistory(t *testing.T, database *sql.DB, team string, run *heldVisitorAuditRun, seen map[string]bool, reports map[string]heldForwardingHistory) {
 	t.Helper()
 	committed, reportErr := run.committed.snapshot()
 	if reportErr != nil || len(committed) != 5 {
@@ -374,6 +381,9 @@ func assertHeldVisitorAuditHistory(t *testing.T, database *sql.DB, team string, 
 				t.Fatal("real ingress queue lost its run-less source-policy denial")
 			}
 			seen[event.VisitorConnectionID] = true
+			reports[event.VisitorConnectionID] = heldForwardingHistory{
+				kind: "source-denied", service: run.ready.ServiceId, run: run.ready.ServiceRunId, number: uint64(run.ready.RunNumber),
+			}
 			ingressDenials++
 			continue
 		}
@@ -401,8 +411,10 @@ func assertHeldVisitorAuditHistory(t *testing.T, database *sql.DB, team string, 
 		switch {
 		case reflect.DeepEqual(history, wantHeld):
 			held++
+			reports[visitor] = heldForwardingHistory{kind: "held", service: run.ready.ServiceId, run: run.ready.ServiceRunId, number: uint64(run.ready.RunNumber)}
 		case reflect.DeepEqual(history, wantOverflow):
 			overflow++
+			reports[visitor] = heldForwardingHistory{kind: "overflow", service: run.ready.ServiceId, run: run.ready.ServiceRunId, number: uint64(run.ready.RunNumber)}
 		default:
 			t.Fatal("unexpected held/overflow audit history", history)
 		}
