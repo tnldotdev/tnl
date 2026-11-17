@@ -9,6 +9,45 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
+// connectorLegRenewalDenial is a decoded, request-matched denial from this
+// session's relay. local validation and transport failures do not produce it.
+type connectorLegRenewalDenial struct {
+	session *Session
+	err     *ProtocolError
+}
+
+func (e *connectorLegRenewalDenial) Error() string { return e.err.Error() }
+func (e *connectorLegRenewalDenial) Unwrap() error { return e.err }
+
+// ConnectorLegRenewalDenied reports only a current relay's explicit denial.
+// independent joined errors remain in err; this fact does not classify cleanup.
+func (s *Session) ConnectorLegRenewalDenied(err error) bool {
+	var denial *connectorLegRenewalDenial
+	return errors.As(err, &denial) && denial != nil && denial.session == s
+}
+
+// ConnectorLegRenewalDeniedOnly excludes independent cleanup/transport results.
+// the caller can report this completed serving decision without calling it a
+// failed resource close. a denial joined with any other failure stays mixed.
+func (s *Session) ConnectorLegRenewalDeniedOnly(err error) bool {
+	switch cause := err.(type) {
+	case *connectorLegRenewalDenial:
+		return cause != nil && cause.session == s
+	case interface{ Unwrap() []error }:
+		children := cause.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !s.ConnectorLegRenewalDeniedOnly(child) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
 // RenewConnectorLeg exchanges a fresh proof on the existing native control stream.
 // it cannot move a claim to a different assignment or accepted source. callers
 // still fence their old local deadline before installing the returned duration.
@@ -47,11 +86,17 @@ func (s *Session) RenewConnectorLeg(ctx context.Context, requestID string, proof
 		return receipt, errors.New("tunnel: connector renewal response does not match request")
 	}
 	if response.Type == tunnelv1.Error {
+		var closeErr error
 		if response.Code != tunnelv1.Unavailable {
-			_ = s.control.CloseWrite()
+			if err := s.control.CloseWrite(); err != nil {
+				closeErr = &SessionCleanupError{Err: err}
+			}
 		}
 		synchronized = true
-		return receipt, &ProtocolError{Code: response.Code}
+		if response.Code == tunnelv1.Unauthenticated {
+			return receipt, errors.Join(&connectorLegRenewalDenial{session: s, err: &ProtocolError{Code: response.Code}}, closeErr)
+		}
+		return receipt, errors.Join(&ProtocolError{Code: response.Code}, closeErr)
 	}
 	if response.Type != tunnelv1.ConnectorLegRenewed || response.ConnectorPairLegAccepted == nil ||
 		response.ConnectorPairLegAccepted.Match(proof, previous.DeliveryID, started, time.Now()) != nil || response.ConnectorPairLegAccepted.SourceIP != previous.SourceIP {

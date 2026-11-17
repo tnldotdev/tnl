@@ -57,6 +57,8 @@ type connectorConnection struct {
 	packetCancel    context.CancelCauseFunc
 	cleanup         *connectorCleanup
 	retirement      *connectorRetirement
+	terminalDenied  error
+	servingErr      error
 	parentStop      func() bool
 	parentDone      chan struct{}
 	packetStopOnce  sync.Once
@@ -313,6 +315,12 @@ func (p *connectorConnection) idleLegStop() error {
 }
 
 func (p *connectorConnection) recordLegRecoveryFailure(err, canceled error) {
+	if denied, ok := err.(*connectorReceivedLegDenial); ok && denied != nil && denied.owner == p {
+		p.mu.Lock()
+		p.servingErr = errors.Join(p.servingErr, err)
+		p.mu.Unlock()
+		return
+	}
 	if stopped, ok := err.(*connectorIdleLegStop); ok && stopped != nil &&
 		stopped.owner == p && stopped.lifetime == p.ctx && p.ctx.Err() != nil {
 		return
@@ -801,6 +809,7 @@ func (p *connectorConnection) refreshAuthority() error {
 	p.mu.Unlock()
 	call, stop := context.WithDeadline(p.ctx, minConnectorCall(until))
 	renewal, bound, err := renewConnectorPair(call, p.config.Control, p.signer, run, p.owner, previous)
+	p.observeControlDenial(err)
 	pair, permission, next := renewal.Pair, renewal.VisitorPermission, run
 	if err == nil {
 		if pair.ObservedAt.Equal(previous.ObservedAt) {
@@ -1010,6 +1019,12 @@ func (p *connectorConnection) maintainConnectorLeg(binding context.Context, slot
 				return retirePath, p.idleLegStop()
 			}
 			receipt, err = leg.session.RenewConnectorLeg(call, request, proof, leg.receipt)
+			if leg.session.ConnectorLegRenewalDenied(err) {
+				p.denyTerminalAuthority(err)
+			}
+			if leg.session.ConnectorLegRenewalDeniedOnly(err) {
+				return terminateConnection, &connectorReceivedLegDenial{owner: p, err: err}
+			}
 		}
 	}
 	if cause := context.Cause(p.ctx); cause != nil {
@@ -1055,13 +1070,10 @@ func (p *connectorConnection) reconnectLeg(binding context.Context, slot int, pr
 		p.mu.Lock()
 		pair := p.pair
 		until := earliestConnectorDeadline(previous.until, p.until, p.preparedUntil, p.run.ValidUntil, p.permission.ExpiresAt)
-		current := p.currentLocked() && pair.Relays[slot] == previous.relay
+		stateErr := p.reconnectStateErrorLocked(binding, slot, previous, until)
 		p.mu.Unlock()
-		if cause := context.Cause(p.ctx); cause != nil {
-			return retirePath, cause
-		}
-		if !current || !until.After(time.Now()) {
-			return retirePath, ErrServiceConnection
+		if stateErr != nil {
+			return retirePath, stateErr
 		}
 		call, stop := context.WithDeadline(binding, until)
 		timer := time.NewTimer(delay)
@@ -1089,17 +1101,14 @@ func (p *connectorConnection) reconnectLeg(binding context.Context, slot int, pr
 			continue
 		}
 		p.mu.Lock()
-		current = p.currentLocked() && until.After(time.Now()) && p.pair.Relays[slot] == previous.relay
+		stateErr = p.reconnectStateErrorLocked(binding, slot, previous, until)
 		p.mu.Unlock()
-		if !current {
+		if stateErr != nil {
 			closeErr := connectorCleanupFailure(next.Close())
 			if closeErr != nil {
-				return terminateConnection, errors.Join(ErrServiceConnection, context.Cause(p.ctx), closeErr)
+				return terminateConnection, errors.Join(stateErr, closeErr)
 			}
-			if cause := context.Cause(p.ctx); cause != nil {
-				return retirePath, errors.Join(cause, closeErr)
-			}
-			return retirePath, errors.Join(ErrServiceConnection, closeErr)
+			return retirePath, stateErr
 		}
 		// no authority lock spans physical cancellation or joined carrier work.
 		if err := p.paths[slot].carrier.Install(connectorLegCarrier{next}); err != nil {
@@ -1109,25 +1118,37 @@ func (p *connectorConnection) reconnectLeg(binding context.Context, slot int, pr
 			return retirePath, err
 		}
 		p.mu.Lock()
-		current = p.currentLocked() && until.After(time.Now())
-		if current {
+		stateErr = p.reconnectStateErrorLocked(binding, slot, previous, until)
+		if stateErr == nil {
 			p.paths[slot].leg = next
 			p.paths[slot].inspected = false
 			p.paths[slot].probeAfter = time.Now().Add(3 * time.Second)
 		}
 		p.mu.Unlock()
-		if !current {
+		if stateErr != nil {
 			closeErr := connectorCleanupFailure(errors.Join(p.paths[slot].carrier.Install(nil), next.Close()))
 			if closeErr != nil {
-				return terminateConnection, errors.Join(ErrServiceConnection, context.Cause(p.ctx), closeErr)
+				return terminateConnection, errors.Join(stateErr, closeErr)
 			}
-			if cause := context.Cause(p.ctx); cause != nil {
-				return retirePath, errors.Join(cause, closeErr)
-			}
-			return retirePath, errors.Join(ErrServiceConnection, closeErr)
+			return retirePath, stateErr
 		}
 		return retryAttempt, nil
 	}
+}
+
+// capture the guard's own decision before unlocked physical cleanup. a later
+// binding/owner stop must not replace an already-observed authority failure.
+func (p *connectorConnection) reconnectStateErrorLocked(binding context.Context, slot int, previous *connectorRelayLeg, until time.Time) error {
+	if cause := context.Cause(p.ctx); cause != nil {
+		return cause
+	}
+	if cause := context.Cause(binding); cause != nil {
+		return cause
+	}
+	if !p.currentLocked() || !until.After(time.Now()) || p.pair.Relays[slot] != previous.relay {
+		return ErrServiceConnection
+	}
+	return nil
 }
 
 type reconnectDisposition uint8
@@ -1317,6 +1338,11 @@ func (c *connectorLocalConn) CloseWrite() error {
 }
 
 func (p *connectorConnection) Close(ctx context.Context) error {
+	operation, cleanup := p.close(ctx)
+	return errors.Join(operation, cleanup)
+}
+
+func (p *connectorConnection) close(ctx context.Context) (operation, cleanup error) {
 	p.once.Do(func() {
 		// publish the actual serving stop before closing changes currentLocked.
 		// reconnect workers can then return its cause, not a synthetic failure.
@@ -1420,5 +1446,5 @@ func (p *connectorConnection) Close(ctx context.Context) error {
 		}
 		p.config.telemetry.Close()
 	})
-	return p.closeErr
+	return p.servingErr, p.closeErr
 }

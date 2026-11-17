@@ -154,8 +154,10 @@ func serveConnections(ctx context.Context, config Config, consume connectionCons
 		return err
 	}
 	defer func() {
-		if err := p.Close(config.cleanup.context()); err != nil {
-			result = errors.Join(result, &CleanupError{Err: err})
+		operation, cleanup := p.close(config.cleanup.context())
+		result = errors.Join(result, operation)
+		if cleanup != nil {
+			result = errors.Join(result, &CleanupError{Err: cleanup})
 		}
 	}()
 	finish(nil)

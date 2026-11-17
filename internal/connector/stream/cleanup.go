@@ -5,15 +5,44 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
+	"net/http"
 	"sync"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+// this result comes only from an exact, decoded relay renewal denial without an
+// independent transport/cleanup error. it remains a serving failure after join.
+type connectorReceivedLegDenial struct {
+	owner *connectorConnection
+	err   error
+}
+
+func (e *connectorReceivedLegDenial) Error() string { return e.err.Error() }
+func (e *connectorReceivedLegDenial) Unwrap() error { return e.err }
+
+// a current authority decision fences new terminal work as well as serving.
+// it cannot complete an exchange that entered earlier or erase its failure.
+func (p *connectorConnection) denyTerminalAuthority(err error) {
+	p.mu.Lock()
+	p.terminalDenied = errors.Join(p.terminalDenied, err)
+	p.mu.Unlock()
+}
+
+func (p *connectorConnection) observeControlDenial(err error) {
+	var problem *clientcontrol.ProblemError
+	if errors.As(err, &problem) && problem != nil &&
+		(problem.Status == http.StatusUnauthorized && problem.Problem.Code == controlv1.Unauthenticated ||
+			problem.Status == http.StatusForbidden && problem.Problem.Code == controlv1.Forbidden) {
+		p.denyTerminalAuthority(err)
+	}
+}
 
 // the existing connection and adapter share one first-stop cleanup budget.
 type connectorCleanup struct {
@@ -181,6 +210,16 @@ func (p *connectorConnection) terminalUse(use *connectorUse, operation error) er
 		return operation
 	}
 	p.mu.Lock()
+	denied := p.terminalDenied
+	if denied != nil {
+		p.mu.Unlock()
+		// no exchange entered under this denied authority. retain the visitor's
+		// operation and require signed retirement under the negative-work budget.
+		if operation != nil {
+			return operation
+		}
+		return errors.Join(ErrServiceConnection, denied)
+	}
 	// a stopped coordinator cannot reactivate its suspended packet binding.
 	// report that unavailable exchange now, leaving the original cleanup budget
 	// for authenticated retirement rather than waiting on an impossible reply.

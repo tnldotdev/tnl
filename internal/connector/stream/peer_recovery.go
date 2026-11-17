@@ -111,6 +111,11 @@ func (p *connectorConnection) requestRecovery(next connectorRecoveryState) {
 		p.mu.Unlock()
 		return
 	}
+	if next == connectorRebinding && p.bindingCancel != nil {
+		// publish the old binding's stop with its state transition. reconnect
+		// guards hold this lock, so none can see rebinding before its cause.
+		p.bindingCancel()
+	}
 	p.recoveryState = next
 	if next == connectorRebinding && p.recoveryStarted.IsZero() {
 		p.recoveryStarted = time.Now()
@@ -121,7 +126,7 @@ func (p *connectorConnection) requestRecovery(next connectorRecoveryState) {
 			p.connectivity.Suspend()
 		}
 	}
-	until, stop := p.until, p.bindingCancel
+	until := p.until
 	active := make([]*PreparedConnector, 0, len(p.active))
 	if next == connectorRebinding {
 		for use := range p.active {
@@ -133,9 +138,6 @@ func (p *connectorConnection) requestRecovery(next connectorRecoveryState) {
 	p.notifyLocked()
 	p.mu.Unlock()
 	if next == connectorRebinding {
-		if stop != nil {
-			stop()
-		}
 		if p.permissions != nil {
 			if err := p.permissions.Suspend(until); err != nil {
 				p.cancel(err)
@@ -182,6 +184,7 @@ func (p *connectorConnection) callRebind(phase *connectorRebindPhase) (controlv1
 	defer stop()
 	state, err := p.config.Control.RebindConnectorPeerPair(call, run.ServiceID, original.PairId, phase.request)
 	if err != nil {
+		p.observeControlDenial(err)
 		return state, time.Time{}, err
 	}
 	pendingUntil, err := validateConnectorRebindState(call, p.signer, run, original, phase.request, state, phase.started, highWater)

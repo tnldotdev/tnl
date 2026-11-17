@@ -18,7 +18,7 @@ import (
 // no replacement dial or renewal has entered; that local stop must not become a
 // synthetic authority failure in the retained owner's eventual cleanup result.
 func TestConnectorRebindingStopsOldReconnectBeforeReplacement(t *testing.T) {
-	for _, kind := range []string{"binding stop", "independent close failure", "live authority expiry"} {
+	for _, kind := range []string{"binding stop", "binding publication", "independent close failure", "live authority expiry"} {
 		t.Run(kind, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				budget, finish := context.WithTimeout(t.Context(), 5*time.Second)
@@ -44,7 +44,7 @@ func TestConnectorRebindingStopsOldReconnectBeforeReplacement(t *testing.T) {
 					t.Fatal(err)
 				}
 				assertLegRetryHello(t, budget, raw)
-				defer leg.Close()
+				defer func() { releaseClose(); _ = leg.Close() }()
 				p.paths[0] = connectorPath{leg: leg, carrier: peer.NewCarrierSlot()}
 				defer p.paths[0].carrier.Close()
 				var replacements atomic.Int32
@@ -65,6 +65,25 @@ func TestConnectorRebindingStopsOldReconnectBeforeReplacement(t *testing.T) {
 				<-entered
 				if kind == "live authority expiry" {
 					p.run.ValidUntil = time.Now().Add(-time.Second)
+				} else if kind == "binding publication" {
+					cancelEntered, cancelRelease, recoveryDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
+					releaseCancel := sync.OnceFunc(func() { close(cancelRelease) })
+					stopBinding := p.bindingCancel
+					p.bindingCancel = func() {
+						close(cancelEntered)
+						<-cancelRelease
+						stopBinding()
+					}
+					defer func() { releaseCancel(); <-recoveryDone }()
+					go func() { p.requestRecovery(connectorRebinding); close(recoveryDone) }()
+					<-cancelEntered
+					if p.mu.TryLock() {
+						state, cause := p.recoveryState, context.Cause(p.bindingCtx)
+						p.mu.Unlock()
+						t.Fatal("reconnect could observe an unfinished binding transition", state, cause)
+					}
+					releaseCancel()
+					<-recoveryDone
 				} else {
 					p.requestRecovery(connectorRebinding)
 					if context.Cause(p.ctx) != nil || context.Cause(p.bindingCtx) != context.Canceled {
