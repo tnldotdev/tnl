@@ -38,8 +38,8 @@ tasks:
   test:race:
     desc: Run routine Go tests with the race detector
     cmds:
-      - go test -race ./...
-      - go test -race ./pkg/tnl/testdata/publicapi
+      - go test -race -json ./...
+      - go test -race -json ./pkg/tnl/testdata/publicapi
 
   test:harness:
     desc: Check disposable orchestration and stable shard selection
