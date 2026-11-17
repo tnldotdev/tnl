@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -236,6 +237,17 @@ func (f *Forwarder) connect(ctx context.Context, key relaySessionKey, target rel
 		return
 	}
 	capacityErr := session.ServeServiceCapacity(f.context)
+	// the pool reports and replaces a lost relay session. its observed terminal
+	// read is not a failure of closing the recovered pool later. retain every
+	// independent read error and owned stream cleanup, even with the same cause.
+	var streamCleanup *tunnel.SessionCleanupError
+	if terminal := session.Err(); terminal != nil && !errors.As(capacityErr, &streamCleanup) && failure.Only(capacityErr, terminal) {
+		select {
+		case <-session.Done():
+			capacityErr = nil
+		default:
+		}
+	}
 	cleanupErr := session.Close()
 	f.mu.Lock()
 	f.closeErr = errors.Join(f.closeErr, capacityErr, cleanupErr)

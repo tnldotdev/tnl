@@ -119,7 +119,7 @@ func (s *Session) ServeServiceCapacity(ctx context.Context) (result error) {
 	recordCleanup := func(err error) {
 		if err != nil {
 			cleanupMu.Lock()
-			cleanupErr = errors.Join(cleanupErr, err)
+			cleanupErr = errors.Join(cleanupErr, &SessionCleanupError{Err: err})
 			cleanupMu.Unlock()
 			cancel()
 		}
