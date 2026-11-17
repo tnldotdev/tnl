@@ -25,7 +25,7 @@ func TestSignedCloudAssignmentProductionCallbackAndTargetTLS(t *testing.T) {
 			fixture := deploymentdiscovery.New(t)
 			// keep this publication at the observed boundary until cancellation,
 			// rather than allowing the deployment to retry while the target records TLS.
-			fixture.HoldHeartbeat.Store(true)
+			fixture.HoldPublication.Store(true)
 			metrics := observability.New("publisher")
 			defer metrics.Shutdown(context.Background())
 			ctx, cancel := context.WithCancel(observability.WithMetrics(t.Context(), metrics))

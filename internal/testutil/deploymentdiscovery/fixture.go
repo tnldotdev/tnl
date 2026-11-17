@@ -59,7 +59,7 @@ type Fixture struct {
 	Stops            atomic.Int32
 	Closes           atomic.Int32
 	Block            atomic.Bool
-	HoldHeartbeat    atomic.Bool
+	HoldPublication  atomic.Bool
 	mu               sync.Mutex
 	assignment       controlv1.DeploymentPublisherAssignments
 	service          controlv1.Service
@@ -174,7 +174,19 @@ func (f *Fixture) verify(t *testing.T, proof, scope, audience string) bool {
 
 func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
+	hold := false
+	defer func() {
+		f.mu.Unlock()
+		if hold {
+			// publication waits without blocking signed control cleanup.
+			// HTTP/1 disconnect detection starts only after the body is read.
+			// a client that cancels during that read has already ended the wait.
+			if _, err := io.Copy(io.Discard, r.Body); err != nil {
+				return
+			}
+			<-r.Context().Done()
+		}
+	}()
 	if r.TLS == nil {
 		t.Error("control request was not HTTPS")
 		w.WriteHeader(400)
@@ -267,14 +279,19 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 		case f.Heartbeat <- health:
 		default:
 		}
-		if f.HoldHeartbeat.Load() {
-			<-r.Context().Done()
+		if f.HoldPublication.Load() {
+			hold = true
+			return
 		}
 		// stop before relay admission: the fixture proves connector preparation and
 		// real verified target preflight, without inventing a ready relay.
 		serverhttp.WriteProblem(w, http.StatusServiceUnavailable, "unavailable", "fixture heartbeat boundary", "")
 	default:
 		if strings.HasSuffix(r.URL.Path, "/certificate-issuances") {
+			if f.HoldPublication.Load() {
+				hold = true
+				return
+			}
 			serverhttp.WriteProblem(w, http.StatusServiceUnavailable, "unavailable", "fixture certificate boundary", "")
 			return
 		}

@@ -17,7 +17,7 @@ import (
 
 func TestDeploymentPublisherDiscoveryForegroundUsesNativeTLS(t *testing.T) {
 	fixture := deploymentdiscovery.New(t)
-	fixture.HoldHeartbeat.Store(true)
+	fixture.HoldPublication.Store(true)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	var result error
