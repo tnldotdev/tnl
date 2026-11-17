@@ -50,6 +50,7 @@ type ServiceStreamDispatcher struct {
 	once      sync.Once
 	acceptErr error
 	closeErr  error
+	resultErr error
 }
 
 type queuedForward struct {
@@ -86,7 +87,7 @@ func (d *ServiceStreamDispatcher) acceptLoop() {
 	for d.ctx.Err() == nil {
 		stream, err := d.outer.AcceptStream(d.ctx)
 		if err != nil {
-			err = d.recordError(err)
+			err = d.operationError(err)
 			d.mu.Lock()
 			d.acceptErr = err
 			d.mu.Unlock()
@@ -151,11 +152,18 @@ func (d *ServiceStreamDispatcher) release(stream muxsession.Stream, closeStream 
 	}
 }
 
-// retain owned transport and physical-close failures, not malformed visitor input
-// or pure expected shutdown. one matching cause cannot hide a joined failure.
-func (d *ServiceStreamDispatcher) recordError(err error) error {
+func (d *ServiceStreamDispatcher) operationError(err error) error {
 	if err == nil || muxsession.NormalSessionCloseOnly(err) ||
 		d.ctx.Err() != nil && (failure.Only(err, context.Cause(d.ctx)) || failure.Only(err, d.ctx.Err())) {
+		return nil
+	}
+	return err
+}
+
+// retain owned stream work and physical-close failures, not malformed visitor
+// input or pure expected shutdown. terminal accepts are a separate operation.
+func (d *ServiceStreamDispatcher) recordError(err error) error {
+	if err = d.operationError(err); err == nil {
 		return nil
 	}
 	d.mu.Lock()
@@ -306,10 +314,16 @@ func (d *ServiceStreamDispatcher) AcceptForwardingStream(ctx context.Context) (m
 	}
 }
 
-// Close interrupts and joins classification and peer introduction workers.
-// the caller still owns both the outer session and the peer owner.
+// Close interrupts and joins classification and peer introduction workers,
+// returning both the terminal accept result and owned cleanup. the caller still
+// owns both the outer session and the peer owner.
 func (d *ServiceStreamDispatcher) Close() error {
 	d.once.Do(func() {
+		defer func() {
+			d.mu.Lock()
+			d.resultErr = errors.Join(d.acceptErr, d.closeErr)
+			d.mu.Unlock()
+		}()
 		d.cancel()
 		d.mu.Lock()
 		for stream := range d.active {
@@ -327,6 +341,16 @@ func (d *ServiceStreamDispatcher) Close() error {
 			}
 		}
 	})
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.resultErr
+}
+
+// CloseCleanup joins the same work but returns only owned cleanup. a serving
+// owner must collect Close's full operation result before retiring the claim;
+// an earlier accept failure is not a failure to clean up that retired claim.
+func (d *ServiceStreamDispatcher) CloseCleanup() error {
+	_ = d.Close()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.closeErr

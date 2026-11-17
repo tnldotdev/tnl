@@ -438,7 +438,7 @@ func (c *Claimed) Close() error {
 			c.endObservation(nil, true)
 		}
 		if c.dispatcher != nil {
-			c.closeErr = errors.Join(c.closeErr, c.dispatcher.Close())
+			c.closeErr = errors.Join(c.closeErr, c.dispatcher.CloseCleanup())
 		}
 		if c.packets != nil {
 			c.closeErr = errors.Join(c.closeErr, c.packets.Close())

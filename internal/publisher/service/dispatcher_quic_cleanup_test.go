@@ -325,26 +325,28 @@ func TestServiceDispatcherQUICClosureRetainsOnlyIndependentCleanupFailures(t *te
 			// transport evidence must remain typed even when owned cleanup is normal.
 			assertDispatcherQUICCleanupCause(t, fixture.claimed.session.Err(), test.code, test.remote, test.timeout)
 			for name, result := range map[string]error{"serve": serveErr, "dispatcher": dispatchErr, "claimed": claimErr, "retired slots": slotsErr} {
+				operationResult := name == "serve" || name == "dispatcher"
 				retainClose := name != "dispatcher" && (name != "serve" || !test.contextOnlyClose)
-				retain := test.timeout || test.code != 0 || test.acceptFailure != nil || retainClose && test.closeFailure != nil
+				retainOperation := operationResult && (test.timeout || test.code != 0 || test.acceptFailure != nil)
+				retain := retainOperation || retainClose && test.closeFailure != nil
 				if !retain {
 					if result != nil {
 						t.Errorf("%s cached a normal QUIC close as cleanup failure: %v", name, result)
 					}
 					continue
 				}
-				if test.timeout || test.code != 0 || test.acceptFailure != nil {
+				if retainOperation {
 					assertDispatcherQUICCleanupCause(t, result, test.code, test.remote, test.timeout)
 				}
 				for _, cause := range []error{cleanup, context.Canceled, context.DeadlineExceeded, io.ErrShortWrite, reset} {
-					want := errors.Is(test.acceptFailure, cause) || retainClose && errors.Is(test.closeFailure, cause)
+					want := operationResult && errors.Is(test.acceptFailure, cause) || retainClose && errors.Is(test.closeFailure, cause)
 					if errors.Is(result, cause) != want {
 						t.Errorf("%s lost or invented independent cause %v: %v", name, cause, result)
 					}
 				}
 				// zero-sized QUIC timeout values are typed facts, not unique sentinels.
 				var expectedTimeout, retainedTimeout *quic.IdleTimeoutError
-				wantTimeout := test.timeout || errors.As(test.acceptFailure, &expectedTimeout) ||
+				wantTimeout := operationResult && (test.timeout || errors.As(test.acceptFailure, &expectedTimeout)) ||
 					retainClose && errors.As(test.closeFailure, &expectedTimeout)
 				if errors.As(result, &retainedTimeout) != wantTimeout {
 					t.Errorf("%s lost or invented a typed idle timeout: %v", name, result)
@@ -353,7 +355,7 @@ func TestServiceDispatcherQUICClosureRetainsOnlyIndependentCleanupFailures(t *te
 					t.Errorf("%s lost the original physical cleanup tree: %v", name, result)
 				}
 				var expectedPhysical, retainedPhysical *muxsession.QUICTransportCloseError
-				wantPhysical := errors.As(test.acceptFailure, &expectedPhysical) ||
+				wantPhysical := operationResult && errors.As(test.acceptFailure, &expectedPhysical) ||
 					retainClose && errors.As(test.closeFailure, &expectedPhysical)
 				if errors.As(result, &retainedPhysical) != wantPhysical ||
 					wantPhysical && (retainedPhysical != expectedPhysical || !errors.Is(result, expectedPhysical.Err)) {
@@ -377,8 +379,21 @@ func TestServiceDispatcherQUICClosureRetainsOnlyIndependentCleanupFailures(t *te
 }
 
 func TestServiceDispatcherQUICRetiredNormalCloseDoesNotPoisonReplacement(t *testing.T) {
+	testServiceDispatcherQUICRetiredClose(t, false)
+}
+
+func TestServiceDispatcherQUICRetiredLossDoesNotPoisonReplacement(t *testing.T) {
+	testServiceDispatcherQUICRetiredClose(t, true)
+}
+
+func testServiceDispatcherQUICRetiredClose(t *testing.T, timeout bool) {
+	t.Helper()
 	_, bound, _, _ := privateFixture(t, "127.0.0.1:1")
-	old := newDispatcherQUICCleanupFixture(t, bound, 30*time.Second, nil, nil, nil)
+	idle := 30 * time.Second
+	if timeout {
+		idle = time.Second
+	}
+	old := newDispatcherQUICCleanupFixture(t, bound, idle, nil, nil, nil)
 	next, ended := make(chan *Claimed, 1), make(chan error, 2)
 	preferences := make(chan bool, 2)
 	observed := make(chan error, 1)
@@ -412,15 +427,21 @@ func TestServiceDispatcherQUICRetiredNormalCloseDoesNotPoisonReplacement(t *test
 	if claimedAwait(t, preferences) {
 		t.Fatal("original QUIC assignment unexpectedly preferred TCP")
 	}
-	if err := old.local.CloseWithError(0, "retire original"); err != nil {
+	if timeout {
+		old.packets.drop.Store(true)
+	} else if err := old.local.CloseWithError(0, "retire original"); err != nil {
 		t.Fatal(err)
 	}
-	if err := claimedAwait(t, ended); err != nil {
+	if err := claimedAwait(t, ended); timeout {
+		assertDispatcherQUICCleanupCause(t, err, 0, false, true)
+	} else if err != nil {
 		t.Error("normal original closure became a serving failure", err)
 	}
 	waitDispatcherQUICCleanupSlot(t, slots, nil)
-	if err := claimedAwait(t, observed); err == nil {
-		t.Error("normal cleanup erased the unexpected live-owner transport-loss observation")
+	if err := claimedAwait(t, observed); timeout {
+		assertDispatcherQUICCleanupCause(t, err, 0, false, true)
+	} else if err == nil {
+		t.Error("cleanup erased the unexpected live-owner transport-loss observation")
 	}
 	bound.mu.Lock()
 	assignments := bound.connections

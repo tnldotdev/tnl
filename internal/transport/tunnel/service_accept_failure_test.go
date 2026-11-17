@@ -76,6 +76,9 @@ func TestServiceAcceptOwnersRetainIndependentTerminalFailures(t *testing.T) {
 						if again := dispatcher.Close(); errors.Is(again, sentinel) != independent {
 							t.Fatal("repeated close lost terminal accept failure", again)
 						}
+						if err := dispatcher.CloseCleanup(); err != nil {
+							t.Fatal("terminal accept operation became retired cleanup", err)
+						}
 					}
 				})
 			}
@@ -103,6 +106,9 @@ func TestServiceDispatcherRetainsRejectedStreamCloseFailure(t *testing.T) {
 	}
 	if err := d.Close(); !errors.Is(err, sentinel) {
 		t.Fatal("dispatcher discarded owned rejected-stream close failure", err)
+	}
+	if err := d.CloseCleanup(); !errors.Is(err, sentinel) {
+		t.Fatal("dispatcher discarded rejected-stream cleanup provenance", err)
 	}
 	if client.Err() != nil || server.Err() != nil {
 		t.Fatal("dispatcher closed its borrowed session")
