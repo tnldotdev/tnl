@@ -26,6 +26,7 @@ import (
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -312,6 +313,11 @@ func outageTerminalOnly(err error) bool {
 	if err == nil {
 		return true
 	}
+	// a physical close failure cannot borrow an expected expiry cause.
+	var physical *muxsession.QUICTransportCloseError
+	if errors.As(err, &physical) {
+		return false
+	}
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {
 		for _, child := range joined.Unwrap() {
 			if !outageTerminalOnly(child) {
@@ -325,6 +331,12 @@ func outageTerminalOnly(err error) bool {
 		failure.Only(err, controloutage.ErrDeadline) || failure.Only(err, ingress.ErrIngressLeaseLost) ||
 		failure.Only(err, connectorstream.ErrServiceConnection) {
 		return true
+	}
+	// cleanup may wrap a join of different expected expiry causes. inspect every
+	// leaf instead of requiring that the whole wrapped join match one cause.
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		cause := wrapped.Unwrap()
+		return cause != nil && outageTerminalOnly(cause)
 	}
 	return false
 }
